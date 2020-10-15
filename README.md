@@ -37,15 +37,15 @@ proxy_pass proxy_type
 * bind: set bind information.
 * proxy_pass: list of relay/relay+rewrites.
 * bind_object: (format: "address:port" or "unix:path") default: "0.0.0.0:25565".
-** address: the address you wish to bind as an Internet Service. Only x.x.x.x allowed.
-** port: the address you wish to bind as an Internet Service. Valid range: 1-65535.
-** path: the socket file you wish to bind as an UNIX Socket.
+>* address: the address you wish to bind as an Internet Service. Only x.x.x.x allowed.
+>* port: the address you wish to bind as an Internet Service. Valid range: 1-65535.
+>* path: the socket file you wish to bind as an UNIX Socket.
 * proxy_type: type of proxies, "relay" for raw relay, "rewrite" for relay with server address camouflage enabled.
 * ident_name: name of destination identification. Usually a Fully Qualified Domain Name(FQDN) by CNAME to your server.
 * destination_object: (format: "address_d:port" or "unix:path")
-** address_d: the address you wish to bind as an Internet Service. Both FQDN or x.x.x.x allowed.
-** port: the address you wish to bind as an Internet Service. Valid range: 1-65535.
-** path: the socket file you wish to bind as an UNIX Socket.
+>* address_d: the address you wish to bind as an Internet Service. Both FQDN or x.x.x.x allowed.
+>* port: the address you wish to bind as an Internet Service. Valid range: 1-65535.
+>* path: the socket file you wish to bind as an UNIX Socket.
 ### Example
 <pre>
 bind 0.0.0.0:25565
