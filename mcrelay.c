@@ -19,7 +19,7 @@
 #define TYPE_INET 2
 struct p_handshake
 {
-	int id_part1,version,version_fml,nextstate,id_part2;
+	unsigned long id_part1,version,version_fml,nextstate,id_part2;
 	char * addr,* user;
 	unsigned short port;
 };
@@ -43,9 +43,10 @@ struct conf
 	int relay_count;
 	struct conf_map relay[128];
 };
-int math_pow(int x,int y)
+long math_pow(int x,int y)
 {
-	int i,result;
+	int i;
+	long result;
 	result=1;
 	for(i=1;i<=y;i++)
 	{
@@ -53,11 +54,11 @@ int math_pow(int x,int y)
 	}
 	return result;
 }
-unsigned char * varint2int(unsigned char * source, unsigned int * output)
+unsigned char * varint2int(unsigned char * source, unsigned long * output)
 {
 	unsigned char * recent_ptr=source;
 	unsigned char recent_char;
-	int data=0;
+	unsigned long data=0;
 	int char_num=0;
 	while(1)
 	{
@@ -78,11 +79,11 @@ unsigned char * varint2int(unsigned char * source, unsigned int * output)
 	*output=data;
 	return recent_ptr;
 }
-unsigned char * int2varint(int data, unsigned char * output)
+unsigned char * int2varint(unsigned long data, unsigned char * output)
 {
 	unsigned char * ptr_output=output;
 	unsigned char current_byte;
-	int data_old,data_new;
+	unsigned long data_old,data_new;
 	data_old=data;
 	int length=0;
 	while(1)
@@ -110,7 +111,7 @@ unsigned char * int2varint(int data, unsigned char * output)
 struct p_handshake packet_read(unsigned char * sourcepacket)
 {
 	struct p_handshake result;
-	int size_part1,size_part2,addr_length,recidx,addr_length_new,user_length;
+	unsigned long size_part1,size_part2,addr_length,recidx,addr_length_new,user_length;
 	unsigned char addr[BUFSIZ],user[BUFSIZ],addr_extra[BUFSIZ];
 	char char_now;
 	bzero(addr,BUFSIZ);
@@ -150,10 +151,10 @@ struct p_handshake packet_read(unsigned char * sourcepacket)
 	result.port=sourcepacket[0]*256+sourcepacket[1];
 	sourcepacket=sourcepacket+2;
 	sourcepacket=varint2int(sourcepacket,&result.nextstate);
+	sourcepacket=varint2int(sourcepacket,&size_part2);
+	sourcepacket=varint2int(sourcepacket,&result.id_part2);
 	if(result.nextstate==2)
 	{
-		sourcepacket=varint2int(sourcepacket,&size_part2);
-		sourcepacket=varint2int(sourcepacket,&result.id_part2);
 		sourcepacket=varint2int(sourcepacket,&user_length);
 		for(recidx=0;recidx<user_length;recidx++)
 		{
@@ -166,7 +167,8 @@ struct p_handshake packet_read(unsigned char * sourcepacket)
 }
 int packet_rewrite(unsigned char * source, unsigned char * target, unsigned char * server_address, unsigned int server_port)
 {
-	int recidx,source_size1,source_id1,source_version,source_addrlen,source_addrlen_pure,source_exaddrlen,source_nextstate,source_size2,source_id2,source_userlen,target_size,target_size1,target_addrlen_pure,target_addrlen,target_size2;
+	int recidx;
+	unsigned long source_size1,source_id1,source_version,source_addrlen,source_addrlen_pure,source_exaddrlen,source_nextstate,source_size2,source_id2,source_userlen,target_size,target_size1,target_addrlen_pure,target_addrlen,target_size2;
 	unsigned char source_addr[BUFSIZ],source_exaddr[BUFSIZ],source_user[BUFSIZ],target1[BUFSIZ],target2[BUFSIZ],target_port_high,target_port_low;
 	unsigned short source_port;
 	unsigned char * ptr_source,* ptr_source_addr_offset,* ptr_target,* ptr_target1,* ptr_target2;
@@ -240,22 +242,22 @@ int packet_rewrite(unsigned char * source, unsigned char * target, unsigned char
 		*ptr_target=target1[recidx];
 		ptr_target++;
 	}
+	ptr_target2=int2varint(source_id2,ptr_target2);
 	if(source_nextstate==2)
 	{
-		ptr_target2=int2varint(source_id2,ptr_target2);
 		ptr_target2=int2varint(source_userlen,ptr_target2);
 		for(recidx=0;recidx<source_userlen;recidx++)
 		{
 			*ptr_target2=source_user[recidx];
 			ptr_target2++;
 		}
-		target_size2=ptr_target2-target2;
-		ptr_target=int2varint(target_size2,ptr_target);
-		for(recidx=0;recidx<target_size2;recidx++)
-		{
-			*ptr_target=target2[recidx];
-			ptr_target++;
-		}
+	}
+	target_size2=ptr_target2-target2;
+	ptr_target=int2varint(target_size2,ptr_target);
+	for(recidx=0;recidx<target_size2;recidx++)
+	{
+		*ptr_target=target2[recidx];
+		ptr_target++;
 	}
 	target_size=ptr_target-target;
 	return target_size;
@@ -517,7 +519,37 @@ int main(int argc, char * argv[])
 			bzero(outbound,BUFSIZ);
 			bzero(rewrited,BUFSIZ);
 			packlen_inbound=recv(socket_inbound_client,inbound,BUFSIZ,0);
+			if(inbound[0]!=2)
+			{
+				printf("[WARN] Client connected with unsupported protocol, ditched connection with the client.\n");
+				if(config.bind.type==TYPE_INET)
+				{
+					printf("[INFO] Client %s:%d disconnected.\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
+				}
+				else if(config.bind.type==TYPE_UNIX)
+				{
+					printf("[INFO] Client disconnected.\n");
+				}
+				shutdown(socket_inbound_client,SHUT_RDWR);
+				close(socket_inbound_client);
+				return 3;
+			}
 			struct p_handshake inbound_info=packet_read(inbound);
+			if(inbound_info.version==0)
+			{
+				printf("[WARN] Client connected with unsupported protocol, ditched connection with the client.\n");
+				if(config.bind.type==TYPE_INET)
+				{
+					printf("[INFO] Client %s:%d disconnected.\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
+				}
+				else if(config.bind.type==TYPE_UNIX)
+				{
+					printf("[INFO] Client disconnected.\n");
+				}
+				shutdown(socket_inbound_client,SHUT_RDWR);
+				close(socket_inbound_client);
+				return 3;
+			}
 			int rec_relay,found_relay;
 			found_relay=0;
 			for(rec_relay=0;rec_relay<config.relay_count;rec_relay++)
@@ -544,7 +576,7 @@ int main(int argc, char * argv[])
 								}
 								shutdown(socket_inbound_client,SHUT_RDWR);
 								close(socket_inbound_client);
-								return 3;
+								return 4;
 							}
 							else
 							{
@@ -562,7 +594,7 @@ int main(int argc, char * argv[])
 									}
 									shutdown(socket_inbound_client,SHUT_RDWR);
 									close(socket_inbound_client);
-									return 4;
+									return 5;
 								}
 							}
 						}
@@ -582,7 +614,7 @@ int main(int argc, char * argv[])
 								}
 								shutdown(socket_inbound_client,SHUT_RDWR);
 								close(socket_inbound_client);
-								return 4;
+								return 5;
 							}
 						}
 					}
@@ -604,7 +636,7 @@ int main(int argc, char * argv[])
 							}
 							shutdown(socket_inbound_client,SHUT_RDWR);
 							close(socket_inbound_client);
-							return 4;
+							return 5;
 						}
 					}
 					break;
@@ -623,7 +655,7 @@ int main(int argc, char * argv[])
 				}
 				shutdown(socket_inbound_client,SHUT_RDWR);
 				close(socket_inbound_client);
-				return 4;
+				return 6;
 			}
 			if(config.relay[rec_relay].to_type==TYPE_INET)
 			{
