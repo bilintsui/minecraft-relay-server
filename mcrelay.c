@@ -519,7 +519,7 @@ int main(int argc, char * argv[])
 			bzero(outbound,BUFSIZ);
 			bzero(rewrited,BUFSIZ);
 			packlen_inbound=recv(socket_inbound_client,inbound,BUFSIZ,0);
-			if(inbound[0]!=2)
+			if(inbound[0]==2)
 			{
 				printf("[WARN] Client connected with unsupported protocol, ditched connection with the client.\n");
 				if(config.bind.type==TYPE_INET)
