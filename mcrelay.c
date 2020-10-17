@@ -108,6 +108,16 @@ unsigned char * int2varint(unsigned long data, unsigned char * output)
 	}
 	return ptr_output;
 }
+int datcat(char * dst, int dst_size, char * src, int src_size)
+{
+	int recidx,total_size;
+	for(recidx=0;recidx<src_size;recidx++)
+	{
+		dst[dst_size+recidx]=src[recidx];
+	}
+	total_size=dst_size+src_size;
+	return total_size;
+}
 struct p_handshake packet_read(unsigned char * sourcepacket)
 {
 	struct p_handshake result;
@@ -414,6 +424,71 @@ struct conf config_load(char * filename)
 	}
 	return result;
 }
+int make_kickreason_legacy(unsigned char * source, unsigned char * target)
+{
+	int size,recidx,string_length;
+	unsigned char tmp[256];
+	unsigned char * ptr_tmp=tmp;
+	unsigned char * ptr_source=source;
+	unsigned char * ptr_target=target;
+	while(*ptr_source!='\0')
+	{
+		*ptr_tmp=0;
+		ptr_tmp++;
+		*ptr_tmp=*ptr_source;
+		ptr_tmp++;
+		ptr_source++;
+	}
+	string_length=ptr_tmp-tmp;
+	ptr_tmp=tmp;
+	ptr_target[0]=255;
+	ptr_target[1]=0;
+	ptr_target[2]=ptr_source-source;
+	ptr_target=ptr_target+3;
+	for(recidx=0;recidx<string_length;recidx++)
+	{
+		*ptr_target=*ptr_tmp;
+		ptr_target++;
+		ptr_tmp++;
+	}
+	size=ptr_target-target;
+	ptr_target=target;
+	return size;
+}
+int make_kickreason(unsigned char * mid_source, unsigned char * target)
+{
+	int size,recidx,string_length,payload_size;
+	unsigned char pre_source[]="{\"extra\":[{\"text\":\"";
+	unsigned char post_source[]="\"}],\"text\":\"\"}";
+	unsigned char source[BUFSIZ],tmp[BUFSIZ];
+	unsigned char * ptr_tmp=tmp;
+	unsigned char * ptr_source=source;
+	unsigned char * ptr_target=target;
+	strcat(source,pre_source);
+	strcat(source,mid_source);
+	strcat(source,post_source);
+	*ptr_tmp=0;
+	ptr_tmp++;
+	string_length=strlen(source);
+	ptr_tmp=int2varint(string_length,ptr_tmp);
+	for(recidx=0;recidx<string_length;recidx++)
+	{
+		*ptr_tmp=*ptr_source;
+		ptr_tmp++;
+		ptr_source++;
+	}
+	payload_size=ptr_tmp-tmp;
+	ptr_tmp=tmp;
+	ptr_target=int2varint(payload_size,ptr_target);
+	for(recidx=0;recidx<payload_size;recidx++)
+	{
+		*ptr_target=*ptr_tmp;
+		ptr_target++;
+		ptr_tmp++;
+	}
+	size=ptr_target-target;
+	return size;
+}
 struct sockaddr_in genSockConf(unsigned short family, unsigned long addr, unsigned short port)
 {
 	struct sockaddr_in result;
@@ -511,7 +586,7 @@ int main(int argc, char * argv[])
 			{
 				printf("[INFO] Client connected.\n");
 			}
-			char inbound[BUFSIZ],outbound[BUFSIZ],rewrited[BUFSIZ];
+			unsigned char inbound[BUFSIZ],outbound[BUFSIZ],rewrited[BUFSIZ];
 			int socket_outbound,packlen_inbound,packlen_outbound,packlen_rewrited;
 			struct sockaddr_in addr_outbound;
 			struct sockaddr_un uddr_outbound;
@@ -519,9 +594,20 @@ int main(int argc, char * argv[])
 			bzero(outbound,BUFSIZ);
 			bzero(rewrited,BUFSIZ);
 			packlen_inbound=recv(socket_inbound_client,inbound,BUFSIZ,0);
+			if((inbound[packlen_inbound-1]==1)||(inbound[packlen_inbound-1]==2))
+			{
+				int packlen_inbound_part1,packlen_inbound_part2;
+				unsigned char inbound_part2[BUFSIZ];
+				bzero(inbound_part2,BUFSIZ);
+				packlen_inbound_part1=packlen_inbound;
+				packlen_inbound_part2=recv(socket_inbound_client,inbound_part2,BUFSIZ,0);
+				packlen_inbound=datcat(inbound,packlen_inbound_part1,inbound_part2,packlen_inbound_part2);
+			}
 			if(inbound[0]==2)
 			{
 				printf("[WARN] Client connected with unsupported protocol, ditched connection with the client.\n");
+				packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 13w42a or later!",rewrited);
+				send(socket_inbound_client,rewrited,packlen_rewrited,0);
 				if(config.bind.type==TYPE_INET)
 				{
 					printf("[INFO] Client %s:%d disconnected.\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
@@ -537,6 +623,8 @@ int main(int argc, char * argv[])
 			struct p_handshake inbound_info=packet_read(inbound);
 			if(inbound_info.version==0)
 			{
+				packlen_rewrited=make_kickreason("Proxy: Unsupported client, use 13w42a or later!",rewrited);
+				send(socket_inbound_client,rewrited,packlen_rewrited,0);
 				printf("[WARN] Client connected with unsupported protocol, ditched connection with the client.\n");
 				if(config.bind.type==TYPE_INET)
 				{
@@ -565,6 +653,8 @@ int main(int argc, char * argv[])
 							char ** addresses=getaddresses(config.relay[rec_relay].to_inet_addr);
 							if(addresses==NULL)
 							{
+								packlen_rewrited=make_kickreason("Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.",rewrited);
+								send(socket_inbound_client,rewrited,packlen_rewrited,0);
 								printf("[WARN] Cannot resolve host: %s, ditched connection with the client.\n",config.relay[rec_relay].to_inet_addr);
 								if(config.bind.type==TYPE_INET)
 								{
@@ -583,6 +673,8 @@ int main(int argc, char * argv[])
 								addr_outbound=genSockConf(AF_INET,htonl(inet_addr(inet_ntop(AF_INET,addresses[0],str,sizeof(str)))),config.relay[rec_relay].to_inet_port);
 								if(connect(socket_outbound,(struct sockaddr*)&addr_outbound,sizeof(struct sockaddr))==-1)
 								{
+									packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
+									send(socket_inbound_client,rewrited,packlen_rewrited,0);
 									printf("[WARN] Cannot connect to the target server, ditched connection with the client.\n");
 									if(config.bind.type==TYPE_INET)
 									{
@@ -603,6 +695,8 @@ int main(int argc, char * argv[])
 							addr_outbound=genSockConf(AF_INET,htonl(inet_addr(config.relay[rec_relay].to_inet_addr)),config.relay[rec_relay].to_inet_port);
 							if(connect(socket_outbound,(struct sockaddr*)&addr_outbound,sizeof(struct sockaddr))==-1)
 							{
+								packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
+								send(socket_inbound_client,rewrited,packlen_rewrited,0);
 								printf("[WARN] Cannot connect to the target server, ditched connection with the client.\n");
 								if(config.bind.type==TYPE_INET)
 								{
@@ -625,6 +719,8 @@ int main(int argc, char * argv[])
 						strcpy(uddr_outbound.sun_path,config.relay[rec_relay].to_unix_path);
 						if(connect(socket_outbound,(struct sockaddr*)&uddr_outbound,sizeof(struct sockaddr))==-1)
 						{
+							packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
+							send(socket_inbound_client,rewrited,packlen_rewrited,0);
 							printf("[WARN] Cannot connect to the target socket, ditched connection with the client.\n");
 							if(config.bind.type==TYPE_INET)
 							{
@@ -644,6 +740,8 @@ int main(int argc, char * argv[])
 			}
 			if(found_relay==0)
 			{
+				packlen_rewrited=make_kickreason("Proxy: Please use a legit name to connect!",rewrited);
+				send(socket_inbound_client,rewrited,packlen_rewrited,0);
 				printf("[WARN] Client using an invalid hostname, ditched connection with the client.\n");
 				if(config.bind.type==TYPE_INET)
 				{
