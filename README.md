@@ -16,6 +16,7 @@ Minecraft Versions before 13w42a are **NOT SUPPORTED**!<br/>
 ## Files
 * mcrelay.c: Source code of Main program.
 * mcrelay.conf.example: config file example of mcrelay.
+* mcrelay.service.example: service unit file of mcrelay for systemd.
 
 ## Compile
 <pre>
