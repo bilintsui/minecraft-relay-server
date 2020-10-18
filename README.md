@@ -30,6 +30,7 @@ mcrelay config_file
 ## Config
 ### Format
 <pre>
+log logfile_path
 bind bind_object
 proxy_pass proxy_type
 	ident_name destination_object
@@ -37,8 +38,10 @@ proxy_pass proxy_type
 	ident_name destination_object
 </pre>
 ### Explanation
+* log: set log file.
 * bind: set bind information.
 * proxy_pass: list of relay/relay+rewrites.
+* logfile_path: path of the file which logs saved to.
 * bind_object: (format: "address:port" or "unix:path") default: "0.0.0.0:25565".
 >* address: the address you wish to bind as an Internet Service. Only x.x.x.x allowed.
 >* port: the address you wish to bind as an Internet Service. Valid range: 1-65535.

@@ -13,7 +13,10 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 #define TYPE_UNIX 1
 #define TYPE_INET 2
@@ -38,11 +41,39 @@ struct conf_map
 };
 struct conf
 {
-//	char log[512];
+	char log[512];
 	struct conf_bind bind;
 	int relay_count;
 	struct conf_map relay[128];
 };
+void gettime(unsigned char * target)
+{
+	time_t timestamp;
+	time(&timestamp);
+	struct tm * times_gmt=gmtime(&timestamp);
+	int mingmt=(times_gmt->tm_hour)*60+(times_gmt->tm_min);
+	struct tm * times_local=localtime(&timestamp);
+	int minlocal=(times_local->tm_hour)*60+(times_local->tm_min);
+	int mindiff=minlocal-mingmt;
+	int hourdiff=mindiff/60;
+	mindiff=mindiff-hourdiff*60;
+	if(mindiff<0)
+	{
+		mindiff=-mindiff;
+	}
+	if(times_local->tm_isdst==1)
+	{
+		hourdiff=hourdiff-1;
+	}
+	if(hourdiff<0)
+	{
+		sprintf(target,"%04d-%02d-%02d %02d:%02d:%02d UTC-%02d:%02d",times_local->tm_year+1900,times_local->tm_mon,times_local->tm_mday,times_local->tm_hour,times_local->tm_min,times_local->tm_sec,-hourdiff,mindiff);
+	}
+	else
+	{
+		sprintf(target,"%04d-%02d-%02d %02d:%02d:%02d UTC+%02d:%02d",times_local->tm_year+1900,times_local->tm_mon,times_local->tm_mday,times_local->tm_hour,times_local->tm_min,times_local->tm_sec,hourdiff,mindiff);
+	}
+}
 long math_pow(int x,int y)
 {
 	int i;
@@ -323,7 +354,7 @@ struct conf config_load(char * filename)
 		sscanf(buffer[line_reccount],"%s%s",key,value);
 		if(strcmp(key,"log")==0)
 		{
-//			strcpy(result.log,value);
+			strcpy(result.log,value);
 		}
 		else if(strcmp(key,"bind")==0)
 		{
@@ -406,11 +437,11 @@ struct conf config_load(char * filename)
 			result.relay_count=rec_relay;
 		}
 	}
-/*	if(strcmp(result.log,"")==0)
+	if(strcmp(result.log,"")==0)
 	{
 		printf("[CRIT] Error in configurations: Argument \"log\" is missing.\n");
 		exit(22);
-	}*/
+	}
 	if(!((strcmp(result.bind.unix_path,"")!=0)||((strcmp(result.bind.inet_addr,"")!=0)&&(result.bind.inet_port!=0))))
 	{
 		printf("%d,%d,%d\n",strcmp(result.bind.unix_path,""),strcmp(result.bind.inet_addr,""),result.bind.inet_port);
@@ -455,18 +486,13 @@ int make_kickreason_legacy(unsigned char * source, unsigned char * target)
 	ptr_target=target;
 	return size;
 }
-int make_kickreason(unsigned char * mid_source, unsigned char * target)
+int make_message(unsigned char * source, unsigned char * target)
 {
 	int size,recidx,string_length,payload_size;
-	unsigned char pre_source[]="{\"extra\":[{\"text\":\"";
-	unsigned char post_source[]="\"}],\"text\":\"\"}";
-	unsigned char source[BUFSIZ],tmp[BUFSIZ];
+	unsigned char tmp[BUFSIZ];
 	unsigned char * ptr_tmp=tmp;
 	unsigned char * ptr_source=source;
 	unsigned char * ptr_target=target;
-	strcat(source,pre_source);
-	strcat(source,mid_source);
-	strcat(source,post_source);
 	*ptr_tmp=0;
 	ptr_tmp++;
 	string_length=strlen(source);
@@ -489,6 +515,22 @@ int make_kickreason(unsigned char * mid_source, unsigned char * target)
 	size=ptr_target-target;
 	return size;
 }
+int make_kickreason(unsigned char * source, unsigned char * target)
+{
+	int size;
+	unsigned char input[BUFSIZ];
+	sprintf(input,"{\"extra\":[{\"text\":\"%s\"}],\"text\":\"\"}",source);
+	size=make_message(input,target);
+	return size;
+}
+int make_motd(unsigned long version, unsigned char * description, unsigned char * target)
+{
+	int size;
+	unsigned char input[BUFSIZ];
+	sprintf(input,"{\"version\":{\"name\":\"\",\"protocol\":%ld},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},\"description\":{\"text\":\"%s\"}}",version,description);
+	size=make_message(input,target);
+	return size;
+}
 struct sockaddr_in genSockConf(unsigned short family, unsigned long addr, unsigned short port)
 {
 	struct sockaddr_in result;
@@ -499,7 +541,7 @@ struct sockaddr_in genSockConf(unsigned short family, unsigned long addr, unsign
 }
 int main(int argc, char * argv[])
 {
-	char str[INET_ADDRSTRLEN];
+	char str[INET_ADDRSTRLEN],time_str[32];
 	char *bindip,*connip;
 	char **addresses;
 	int socket_inbound_server,strulen,socket_inbound_client,connip_resolved;
@@ -507,7 +549,6 @@ int main(int argc, char * argv[])
 	struct sockaddr_un uddr_inbound_server,uddr_inbound_client;
 	struct conf config;
 	unsigned short bindport,connport;
-	signal(SIGCHLD, SIG_IGN);
 	connip_resolved=0;
 	printf("Minecraft Relay Server [Version:1.1-beta1]\n(C) 2020 Bilin Tsui. All rights reserved.\n\n");
 	if(argc!=2)
@@ -519,6 +560,15 @@ int main(int argc, char * argv[])
 	bindport=25565;
 	printf("[INFO] Loading configurations from file: %s\n\n",argv[1]);
 	config=config_load(argv[1]);
+	if(config.log[0]!='/')
+	{
+		char cwd[512],log_full[BUFSIZ];
+		bzero(cwd,512);
+		bzero(log_full,BUFSIZ);
+		getcwd(cwd,BUFSIZ);
+		sprintf(log_full,"%s/%s",cwd,config.log);
+		strcpy(config.log,log_full);
+	}
 	if(config.bind.type==TYPE_INET)
 	{
 		if(inet_addr(config.bind.inet_addr)==-1)
@@ -555,9 +605,30 @@ int main(int argc, char * argv[])
 		if(bind(socket_inbound_server,(struct sockaddr *)&uddr_inbound_server,strulen)==-1){printf("[CRIT] Bind Failed!\n");return 2;}
 		printf("[INFO] Bind Successful.\n\n");
 	}
+	printf("[INFO] For more information, watch log file: %s\n",config.log);
+	int pid;
+	pid=fork();
+	if(pid>0)
+	{
+		printf("[INFO] Server running on PID: %d\n",pid);
+		exit(0);
+	}
+	else if(pid<0)
+	{
+		exit(10);
+	}
+	setsid();
+	fclose(stdin);
+	fclose(stdout);
+	fclose(stderr);
+	chdir("/");
+	umask(0);
+	signal(SIGCHLD, SIG_IGN);
 	while(1)
 	{
 		while(listen(socket_inbound_server,1)==-1);
+		bzero(time_str,32);
+		gettime(time_str);
 		if(config.bind.type==TYPE_INET)
 		{
 			socket_inbound_client=accept(socket_inbound_server,(struct sockaddr *)&addr_inbound_client,&strulen);
@@ -566,7 +637,7 @@ int main(int argc, char * argv[])
 		{
 			socket_inbound_client=accept(socket_inbound_server,(struct sockaddr *)&uddr_inbound_client,&strulen);
 		}
-		int pid=fork();
+		pid=fork();
 		if(pid>0)
 		{
 			close(socket_inbound_client);
@@ -578,14 +649,6 @@ int main(int argc, char * argv[])
 		else
 		{
 			close(socket_inbound_server);
-			if(config.bind.type==TYPE_INET)
-			{
-				printf("[INFO] Client %s:%d connected.\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
-			}
-			else if(config.bind.type==TYPE_UNIX)
-			{
-				printf("[INFO] Client connected.\n");
-			}
 			unsigned char inbound[BUFSIZ],outbound[BUFSIZ],rewrited[BUFSIZ];
 			int socket_outbound,packlen_inbound,packlen_outbound,packlen_rewrited;
 			struct sockaddr_in addr_outbound;
@@ -605,17 +668,8 @@ int main(int argc, char * argv[])
 			}
 			if(inbound[0]==2)
 			{
-				printf("[WARN] Client connected with unsupported protocol, ditched connection with the client.\n");
 				packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 13w42a or later!",rewrited);
 				send(socket_inbound_client,rewrited,packlen_rewrited,0);
-				if(config.bind.type==TYPE_INET)
-				{
-					printf("[INFO] Client %s:%d disconnected.\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
-				}
-				else if(config.bind.type==TYPE_UNIX)
-				{
-					printf("[INFO] Client disconnected.\n");
-				}
 				shutdown(socket_inbound_client,SHUT_RDWR);
 				close(socket_inbound_client);
 				return 3;
@@ -623,23 +677,22 @@ int main(int argc, char * argv[])
 			struct p_handshake inbound_info=packet_read(inbound);
 			if(inbound_info.version==0)
 			{
-				packlen_rewrited=make_kickreason("Proxy: Unsupported client, use 13w42a or later!",rewrited);
+				if(inbound_info.nextstate==1)
+				{
+					packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Use 13w42a or later to play!",rewrited);
+				}
+				else if(inbound_info.nextstate==2)
+				{
+					packlen_rewrited=make_kickreason("Proxy: Unsupported client, use 13w42a or later!",rewrited);
+				}
 				send(socket_inbound_client,rewrited,packlen_rewrited,0);
-				printf("[WARN] Client connected with unsupported protocol, ditched connection with the client.\n");
-				if(config.bind.type==TYPE_INET)
-				{
-					printf("[INFO] Client %s:%d disconnected.\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
-				}
-				else if(config.bind.type==TYPE_UNIX)
-				{
-					printf("[INFO] Client disconnected.\n");
-				}
 				shutdown(socket_inbound_client,SHUT_RDWR);
 				close(socket_inbound_client);
 				return 3;
 			}
 			int rec_relay,found_relay;
 			found_relay=0;
+			FILE * logfd=fopen(config.log,"a");
 			for(rec_relay=0;rec_relay<config.relay_count;rec_relay++)
 			{
 				if(strcmp(config.relay[rec_relay].from,inbound_info.addr)==0)
@@ -653,17 +706,15 @@ int main(int argc, char * argv[])
 							char ** addresses=getaddresses(config.relay[rec_relay].to_inet_addr);
 							if(addresses==NULL)
 							{
-								packlen_rewrited=make_kickreason("Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.",rewrited);
+								if(inbound_info.nextstate==1)
+								{
+									packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
+								}
+								else if(inbound_info.nextstate==2)
+								{
+									packlen_rewrited=make_kickreason("Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.",rewrited);
+								}
 								send(socket_inbound_client,rewrited,packlen_rewrited,0);
-								printf("[WARN] Cannot resolve host: %s, ditched connection with the client.\n",config.relay[rec_relay].to_inet_addr);
-								if(config.bind.type==TYPE_INET)
-								{
-									printf("[INFO] Client %s:%d disconnected.\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
-								}
-								else if(config.bind.type==TYPE_UNIX)
-								{
-									printf("[INFO] Client disconnected.\n");
-								}
 								shutdown(socket_inbound_client,SHUT_RDWR);
 								close(socket_inbound_client);
 								return 4;
@@ -673,20 +724,29 @@ int main(int argc, char * argv[])
 								addr_outbound=genSockConf(AF_INET,htonl(inet_addr(inet_ntop(AF_INET,addresses[0],str,sizeof(str)))),config.relay[rec_relay].to_inet_port);
 								if(connect(socket_outbound,(struct sockaddr*)&addr_outbound,sizeof(struct sockaddr))==-1)
 								{
-									packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
+									if(inbound_info.nextstate==1)
+									{
+										packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
+									}
+									else if(inbound_info.nextstate==2)
+									{
+										packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
+									}
 									send(socket_inbound_client,rewrited,packlen_rewrited,0);
-									printf("[WARN] Cannot connect to the target server, ditched connection with the client.\n");
-									if(config.bind.type==TYPE_INET)
-									{
-										printf("[INFO] Client %s:%d disconnected.\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
-									}
-									else if(config.bind.type==TYPE_UNIX)
-									{
-										printf("[INFO] Client disconnected.\n");
-									}
 									shutdown(socket_inbound_client,SHUT_RDWR);
 									close(socket_inbound_client);
 									return 5;
+								}
+								else
+								{
+									if(inbound_info.nextstate==1)
+									{
+										fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr);
+									}
+									else if(inbound_info.nextstate==2)
+									{
+										fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr,inbound_info.user);
+									}
 								}
 							}
 						}
@@ -695,20 +755,29 @@ int main(int argc, char * argv[])
 							addr_outbound=genSockConf(AF_INET,htonl(inet_addr(config.relay[rec_relay].to_inet_addr)),config.relay[rec_relay].to_inet_port);
 							if(connect(socket_outbound,(struct sockaddr*)&addr_outbound,sizeof(struct sockaddr))==-1)
 							{
-								packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
+								if(inbound_info.nextstate==1)
+								{
+									packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
+								}
+								else if(inbound_info.nextstate==2)
+								{
+									packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
+								}
 								send(socket_inbound_client,rewrited,packlen_rewrited,0);
-								printf("[WARN] Cannot connect to the target server, ditched connection with the client.\n");
-								if(config.bind.type==TYPE_INET)
-								{
-									printf("[INFO] Client %s:%d disconnected.\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
-								}
-								else if(config.bind.type==TYPE_UNIX)
-								{
-									printf("[INFO] Client disconnected.\n");
-								}
 								shutdown(socket_inbound_client,SHUT_RDWR);
 								close(socket_inbound_client);
 								return 5;
+							}
+							else
+							{
+								if(inbound_info.nextstate==1)
+								{
+									fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr);
+								}
+								else if(inbound_info.nextstate==2)
+								{
+									fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr,inbound_info.user);
+								}
 							}
 						}
 					}
@@ -719,38 +788,46 @@ int main(int argc, char * argv[])
 						strcpy(uddr_outbound.sun_path,config.relay[rec_relay].to_unix_path);
 						if(connect(socket_outbound,(struct sockaddr*)&uddr_outbound,sizeof(struct sockaddr))==-1)
 						{
-							packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
+							if(inbound_info.nextstate==1)
+							{
+								packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
+							}
+							else if(inbound_info.nextstate==2)
+							{
+								packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
+							}
 							send(socket_inbound_client,rewrited,packlen_rewrited,0);
-							printf("[WARN] Cannot connect to the target socket, ditched connection with the client.\n");
-							if(config.bind.type==TYPE_INET)
-							{
-								printf("[INFO] Client %s:%d disconnected.\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
-							}
-							else if(config.bind.type==TYPE_UNIX)
-							{
-								printf("[INFO] Client disconnected.\n");
-							}
 							shutdown(socket_inbound_client,SHUT_RDWR);
 							close(socket_inbound_client);
 							return 5;
+						}
+						else
+						{
+							if(inbound_info.nextstate==1)
+							{
+								fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.addr);
+							}
+							else if(inbound_info.nextstate==2)
+							{
+								fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.addr,inbound_info.user);
+							}
 						}
 					}
 					break;
 				}
 			}
+			fclose(logfd);
 			if(found_relay==0)
 			{
-				packlen_rewrited=make_kickreason("Proxy: Please use a legit name to connect!",rewrited);
+				if(inbound_info.nextstate==1)
+				{
+					packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Use a legit address to play!",rewrited);
+				}
+				else if(inbound_info.nextstate==2)
+				{
+					packlen_rewrited=make_kickreason("Proxy: Please use a legit name to connect!",rewrited);
+				}
 				send(socket_inbound_client,rewrited,packlen_rewrited,0);
-				printf("[WARN] Client using an invalid hostname, ditched connection with the client.\n");
-				if(config.bind.type==TYPE_INET)
-				{
-					printf("[INFO] Client %s:%d disconnected.\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
-				}
-				else if(config.bind.type==TYPE_UNIX)
-				{
-					printf("[INFO] Client disconnected.\n");
-				}
 				shutdown(socket_inbound_client,SHUT_RDWR);
 				close(socket_inbound_client);
 				return 6;
@@ -785,14 +862,6 @@ int main(int argc, char * argv[])
 					shutdown(socket_outbound,SHUT_RDWR);
 					close(socket_inbound_client);
 					close(socket_outbound);
-					if(config.bind.type==TYPE_INET)
-					{
-						printf("[INFO] Client %s:%d disconnected.\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
-					}
-					else if(config.bind.type==TYPE_UNIX)
-					{
-						printf("[INFO] Client disconnected.\n");
-					}
 					return 0;
 				}
 				packlen_outbound=recv(socket_outbound,outbound,BUFSIZ,MSG_DONTWAIT);
@@ -807,14 +876,6 @@ int main(int argc, char * argv[])
 					shutdown(socket_outbound,SHUT_RDWR);
 					close(socket_inbound_client);
 					close(socket_outbound);
-					if(config.bind.type==TYPE_INET)
-					{
-						printf("[INFO] Client %s:%d disconnected.\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
-					}
-					else if(config.bind.type==TYPE_UNIX)
-					{
-						printf("[INFO] Client disconnected.\n");
-					}
 					return 0;
 				} 
 			}
