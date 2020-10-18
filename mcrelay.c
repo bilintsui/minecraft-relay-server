@@ -1,7 +1,7 @@
 /*
-	Minecraft Relay Server, version 1.1-beta1
+	Minecraft Relay Server, version 1.1-beta2
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
-	This is a Freedom Software, absolutely no warranty.
+	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	It basically means you have free rights for uncommerical use and modify, also restricted you to comply the license, whether part of original release or modified part by you.
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
@@ -550,7 +550,7 @@ int main(int argc, char * argv[])
 	struct conf config;
 	unsigned short bindport,connport;
 	connip_resolved=0;
-	printf("Minecraft Relay Server [Version:1.1-beta1]\n(C) 2020 Bilin Tsui. All rights reserved.\n\n");
+	printf("Minecraft Relay Server [Version:1.1-beta2]\n(C) 2020 Bilin Tsui. All rights reserved.\n\n");
 	if(argc!=2)
 	{
 		printf("Usage: %s config_file\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",argv[0]);
@@ -603,6 +603,7 @@ int main(int argc, char * argv[])
 		strulen=sizeof(uddr_inbound_server);
 		printf("[INFO] Binding on %s...\n",uddr_inbound_server.sun_path);
 		if(bind(socket_inbound_server,(struct sockaddr *)&uddr_inbound_server,strulen)==-1){printf("[CRIT] Bind Failed!\n");return 2;}
+		if(chmod(config.bind.unix_path,S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH)==-1){printf("[CRIT] Set Permission Failed!\n");return 13;}
 		printf("[INFO] Bind Successful.\n\n");
 	}
 	printf("[INFO] For more information, watch log file: %s\n",config.log);
@@ -741,11 +742,26 @@ int main(int argc, char * argv[])
 								{
 									if(inbound_info.nextstate==1)
 									{
-										fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr);
+										if(config.bind.type==TYPE_UNIX)
+										{
+											fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.addr);
+										}
+										else if(config.bind.type==TYPE_INET)
+										{
+											fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr);
+										}
+										
 									}
 									else if(inbound_info.nextstate==2)
 									{
-										fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr,inbound_info.user);
+										if(config.bind.type==TYPE_UNIX)
+										{
+											fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.addr,inbound_info.user);
+										}
+										else if(config.bind.type==TYPE_INET)
+										{
+											fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr,inbound_info.user);
+										}
 									}
 								}
 							}
@@ -772,11 +788,26 @@ int main(int argc, char * argv[])
 							{
 								if(inbound_info.nextstate==1)
 								{
-									fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr);
+									if(config.bind.type==TYPE_UNIX)
+									{
+										fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.addr);
+									}
+									else if(config.bind.type==TYPE_INET)
+									{
+										fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr);
+									}
+									
 								}
 								else if(inbound_info.nextstate==2)
 								{
-									fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr,inbound_info.user);
+									if(config.bind.type==TYPE_UNIX)
+									{
+										fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.addr,inbound_info.user);
+									}
+									else if(config.bind.type==TYPE_INET)
+									{
+										fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr,inbound_info.user);
+									}
 								}
 							}
 						}
@@ -805,11 +836,26 @@ int main(int argc, char * argv[])
 						{
 							if(inbound_info.nextstate==1)
 							{
-								fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.addr);
+								if(config.bind.type==TYPE_UNIX)
+								{
+									fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.addr);
+								}
+								else if(config.bind.type==TYPE_INET)
+								{
+									fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr);
+								}
+								
 							}
 							else if(inbound_info.nextstate==2)
 							{
-								fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.addr,inbound_info.user);
+								if(config.bind.type==TYPE_UNIX)
+								{
+									fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.addr,inbound_info.user);
+								}
+								else if(config.bind.type==TYPE_INET)
+								{
+									fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr,inbound_info.user);
+								}
 							}
 						}
 					}
