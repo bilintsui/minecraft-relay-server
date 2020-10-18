@@ -54,6 +54,7 @@ proxy_pass proxy_type
 >* path: the socket file you wish to bind as an UNIX Socket.
 ### Example
 <pre>
+log /var/log/mcrelay/mcrelay.log
 bind 0.0.0.0:25565
 proxy_pass rewrite
 	hypixel.example.com mc.hypixel.net:25565
