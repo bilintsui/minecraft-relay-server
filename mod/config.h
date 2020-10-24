@@ -1,5 +1,5 @@
 /*
-	proto_modern.h: Functions for Config reading on Minecraft Relay Server
+	config.h: Functions for Config reading on Minecraft Relay Server
 	A component of Minecraft Relay Server.
 	
 	Minecraft Relay Server, version 1.2-beta2
