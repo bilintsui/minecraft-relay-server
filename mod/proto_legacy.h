@@ -1,5 +1,5 @@
 /*
-	proto_modern.h: Functions for Legacy Protocol (12w04a-13w39b) on Minecraft Relay Server
+	proto_legacy.h: Functions for Legacy Protocol (12w04a-13w39b) on Minecraft Relay Server
 	A component of Minecraft Relay Server.
 	
 	Minecraft Relay Server, version 1.2-beta2
