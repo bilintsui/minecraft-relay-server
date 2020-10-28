@@ -2,7 +2,7 @@
 	basic.h: Basic Functions for Minecraft Relay Server
 	A component of Minecraft Relay Server.
 	
-	Minecraft Relay Server, version 1.2-beta2
+	Minecraft Relay Server, version 1.1-beta2
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Freedom Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -210,6 +210,20 @@ int packetshrink(unsigned char * source, int source_length, unsigned char * targ
 			*ptr_target=source[recidx];
 			ptr_target++;
 		}
+	}
+	size=ptr_target-target;
+	return size;
+}
+int packetexpand(unsigned char * source, int source_length, unsigned char * target)
+{
+	int size,recidx;
+	unsigned char * ptr_target=target;
+	for(recidx=0;recidx<source_length;recidx++)
+	{
+		*ptr_target=0;
+		ptr_target++;
+		*ptr_target=source[recidx];
+		ptr_target++;
 	}
 	size=ptr_target-target;
 	return size;

@@ -3,7 +3,7 @@
 	A component of Minecraft Relay Server.
 	Requires: mod/basic.h, please manually include it in main source code.
 	
-	Minecraft Relay Server, version 1.2-beta2
+	Minecraft Relay Server, version 1.1-beta2
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Freedom Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -85,6 +85,55 @@ struct p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int
 	}
 	return result;
 }
+int packet_write_legacy_login(struct p_login_legacy source, unsigned char * target)
+{
+	unsigned char tmp[BUFSIZ];
+	unsigned int tmp_length,size;
+	bzero(tmp,BUFSIZ);
+	target[0]=2;
+	size=1;
+	if(source.proto_ver==PVER_L_LEGACY2)
+	{
+		unsigned char login_field[512],login_field_full[512];
+		bzero(login_field,512);
+		bzero(login_field_full,512);
+		sprintf(login_field,"%s;%s:%d",source.username,source.address,source.port);
+		unsigned int login_field_length=strlen(login_field);
+		login_field_full[0]=login_field_length;
+		unsigned int login_field_full_length=datcat(login_field_full,1,login_field,login_field_length);
+		tmp_length=packetexpand(login_field_full,login_field_full_length,tmp);
+		size=datcat(target,size,tmp,tmp_length);
+	}
+	else
+	{
+		if(source.proto_ver!=PVER_L_LEGACY1)
+		{
+			target[1]=source.version;
+			size=2;
+		}
+		unsigned char username[128];
+		unsigned int username_length=strlen(source.username);
+		username[0]=username_length;
+		username_length=datcat(username,1,source.username,username_length);
+		tmp_length=packetexpand(username,username_length,tmp);
+		size=datcat(target,size,tmp,tmp_length);
+		if(source.proto_ver==PVER_L_LEGACY4)
+		{
+			unsigned char address[128];
+			unsigned int address_length=strlen(source.address);
+			address[0]=address_length;
+			address_length=datcat(address,1,source.address,address_length);
+			tmp_length=packetexpand(address,address_length,tmp);
+			size=datcat(target,size,tmp,tmp_length);
+			target[size]=0;
+			target[size+1]=0;
+			target[size+2]=source.port/256;
+			target[size+3]=source.port-target[size+2]*256;
+			size=size+4;
+		}
+	}
+	return size;
+}
 int legacy_motd_protocol_identify(unsigned char * source)
 {
 	int proto_version=0;
@@ -131,6 +180,42 @@ struct p_motd_legacy packet_read_legacy_motd(unsigned char * sourcepacket, int s
 	}
 	result.port=ptr_source[0]*256+ptr_source[1];
 	return result;
+}
+int packet_write_legacy_motd(struct p_motd_legacy source, unsigned char * target)
+{
+	unsigned int size,tmp_length,conststr_full_length;
+	unsigned char tmp[BUFSIZ],conststr_full[128];
+	unsigned char conststr[]="MC|PingHost";
+	bzero(tmp,BUFSIZ);
+	bzero(conststr_full,128);
+	target[0]=0xFE;
+	target[1]=1;
+	target[2]=0xFA;
+	size=3;
+	conststr_full[0]=strlen(conststr);
+	conststr_full_length=datcat(conststr_full,1,conststr,strlen(conststr));
+	tmp_length=packetexpand(conststr_full,conststr_full_length,tmp);
+	size=datcat(target,size,tmp,tmp_length);
+	unsigned char pingfield[128],pingfield_full[128];
+	unsigned int pingfield_length,pingfield_full_length;
+	bzero(pingfield,128);
+	bzero(pingfield_full,128);
+	pingfield_length=packetexpand(source.address,strlen(source.address),pingfield);
+	pingfield_full[0]=source.version;
+	pingfield_full[1]=0;
+	pingfield_full[2]=strlen(source.address);
+	pingfield_full_length=3;
+	pingfield_full_length=datcat(pingfield_full,pingfield_full_length,pingfield,pingfield_length);
+	pingfield_full[pingfield_full_length]=0;
+	pingfield_full[pingfield_full_length+1]=0;
+	pingfield_full[pingfield_full_length+2]=source.port/256;
+	pingfield_full[pingfield_full_length+3]=source.port-pingfield_full[pingfield_full_length+2]*256;
+	pingfield_full_length=pingfield_full_length+4;
+	target[size]=0;
+	target[size+1]=pingfield_full_length;
+	size=size+2;
+	size=datcat(target,size,pingfield_full,pingfield_full_length);
+	return size;
 }
 int make_message_legacy(unsigned char * source, unsigned int source_length, unsigned char * target)
 {
