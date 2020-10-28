@@ -138,14 +138,22 @@ int main(int argc, char * argv[])
 			bzero(outbound,BUFSIZ);
 			bzero(rewrited,BUFSIZ);
 			packlen_inbound=recv(socket_inbound_client,inbound,BUFSIZ,0);
-			if((inbound[packlen_inbound-1]==1)||(inbound[packlen_inbound-1]==2))
+			if(inbound[0]==0xFE)
 			{
-				int packlen_inbound_part1,packlen_inbound_part2;
-				unsigned char inbound_part2[BUFSIZ];
-				bzero(inbound_part2,BUFSIZ);
-				packlen_inbound_part1=packlen_inbound;
-				packlen_inbound_part2=recv(socket_inbound_client,inbound_part2,BUFSIZ,0);
-				packlen_inbound=datcat(inbound,packlen_inbound_part1,inbound_part2,packlen_inbound_part2);
+				int motd_version=legacy_motd_protocol_identify(inbound);
+				if(motd_version==PVER_M_LEGACY3)
+				{
+					struct p_motd_legacy motd_info=packet_read_legacy_motd(inbound,packlen_inbound);
+					packlen_rewrited=make_motd_legacy(motd_info.version,"Proxy: Use 13w42a or later!",legacy_motd_protocol_identify(inbound),rewrited);
+				}
+				else
+				{
+					packlen_rewrited=make_motd_legacy(0,"Proxy: Please use direct connect.",legacy_motd_protocol_identify(inbound),rewrited);
+				}
+				send(socket_inbound_client,rewrited,packlen_rewrited,0);
+				shutdown(socket_inbound_client,SHUT_RDWR);
+				close(socket_inbound_client);
+				return 3;
 			}
 			if(inbound[0]==2)
 			{
@@ -154,6 +162,15 @@ int main(int argc, char * argv[])
 				shutdown(socket_inbound_client,SHUT_RDWR);
 				close(socket_inbound_client);
 				return 3;
+			}
+			if((inbound[packlen_inbound-1]==1)||(inbound[packlen_inbound-1]==2))
+			{
+				int packlen_inbound_part1,packlen_inbound_part2;
+				unsigned char inbound_part2[BUFSIZ];
+				bzero(inbound_part2,BUFSIZ);
+				packlen_inbound_part1=packlen_inbound;
+				packlen_inbound_part2=recv(socket_inbound_client,inbound_part2,BUFSIZ,0);
+				packlen_inbound=datcat(inbound,packlen_inbound_part1,inbound_part2,packlen_inbound_part2);
 			}
 			struct p_handshake inbound_info=packet_read(inbound);
 			if(inbound_info.version==0)

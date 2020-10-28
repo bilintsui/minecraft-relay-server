@@ -12,7 +12,15 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
+#define PVER_L_ORIGPRO 0
+#define PVER_L_LEGACY1 1
+#define PVER_L_LEGACY2 2
+#define PVER_L_LEGACY3 3
+#define PVER_L_LEGACY4 4
+#define PVER_L_MODERN1 5
+#define PVER_L_MODERN2 6
 void gettime(unsigned char * target)
 {
 	time_t timestamp;
@@ -133,4 +141,103 @@ struct sockaddr_in genSockConf(unsigned short family, unsigned long addr, unsign
 	result.sin_addr.s_addr=htonl(addr);
 	result.sin_port=htons(port);
 	return result;
+}
+int handshake_protocol_identify(unsigned char * source, unsigned int length)
+{
+	int protocol_version=0;
+	int semicolon_found=0;
+	int colon_found=0;
+	int i;
+	switch(source[0])
+	{
+		case 1:
+			protocol_version=PVER_L_ORIGPRO;
+			break;
+		case 2:
+			switch(source[1])
+			{
+				case 0:
+					for(i=0;i<length;i++)
+					{
+						if(source[i]==';')
+						{
+							semicolon_found=1;
+						}
+						if(source[i]==':')
+						{
+							colon_found=1;
+						}
+					}
+					if((semicolon_found==1)&&(colon_found==1))
+					{
+						protocol_version=PVER_L_LEGACY2;
+					}
+					else
+					{
+						protocol_version=PVER_L_LEGACY1;
+					}
+					break;
+				case 0x1f:
+					protocol_version=PVER_L_LEGACY3;
+					break;
+				default:
+					protocol_version=PVER_L_LEGACY4;
+					break;
+			}
+			break;
+		default:
+			switch(source[2])
+			{
+				case 0:
+					protocol_version=PVER_L_MODERN1;
+					break;
+				default:
+					protocol_version=PVER_L_MODERN2;
+					break;
+			}
+			break;
+	}
+	return protocol_version;
+}
+int packetshrink(unsigned char * source, int source_length, unsigned char * target)
+{
+	int size,recidx;
+	unsigned char * ptr_target=target;
+	for(recidx=0;recidx<source_length;recidx++)
+	{
+		if(source[recidx]!=0)
+		{
+			*ptr_target=source[recidx];
+			ptr_target++;
+		}
+	}
+	size=ptr_target-target;
+	return size;
+}
+unsigned char * strsplit(unsigned char * string, char delim, unsigned char * firstfield)
+{
+	int recidx,pos_delim,delim_found;
+	unsigned char * ptr_string=string;
+	delim_found=0;
+	for(recidx=0;recidx<strlen(string);recidx++)
+	{
+		if(*ptr_string==delim)
+		{
+			pos_delim=recidx;
+			delim_found=1;
+			ptr_string++;
+			break;
+		}
+		ptr_string++;
+	}
+	if(delim_found==0)
+	{
+		strcpy(firstfield,string);
+		return ptr_string;
+	}
+	for(recidx=0;recidx<pos_delim;recidx++)
+	{
+		firstfield[recidx]=string[recidx];
+	}
+	return ptr_string;
 }
