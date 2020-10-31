@@ -14,42 +14,31 @@
 #include <string.h>
 struct p_handshake
 {
-	unsigned long id_part1,version,version_fml,nextstate,id_part2;
-	char * addr,* user;
-	unsigned short port;
+	unsigned long id_part1,version,nextstate,id_part2;
+	unsigned char address[128],username[128];
+	unsigned short version_fml,port;
 };
 struct p_handshake packet_read(unsigned char * sourcepacket)
 {
 	struct p_handshake result;
-	unsigned long size_part1,size_part2,addr_length,recidx,addr_length_new,user_length;
-	unsigned char addr[BUFSIZ],user[BUFSIZ],addr_extra[BUFSIZ];
-	char char_now;
-	bzero(addr,BUFSIZ);
-	bzero(user,BUFSIZ);
-	bzero(addr_extra,BUFSIZ);
+	unsigned long size_part1,address_length,address_length_pure,size_part2,username_length;
+	unsigned char * address_extra_start;
+	bzero(result.address,128);
+	bzero(result.username,128);
 	sourcepacket=varint2int(sourcepacket,&size_part1);
 	sourcepacket=varint2int(sourcepacket,&result.id_part1);
 	sourcepacket=varint2int(sourcepacket,&result.version);
-	sourcepacket=varint2int(sourcepacket,&addr_length);
-	for(recidx=0;recidx<addr_length;recidx++)
+	sourcepacket=varint2int(sourcepacket,&address_length);
+	datcat(result.address,0,sourcepacket,address_length);
+	address_length_pure=strlen(result.address);
+	if(address_length!=address_length_pure)
 	{
-		addr[recidx]=*sourcepacket;
-		sourcepacket++;
-	}
-	result.addr=addr;
-	addr_length_new=strlen(addr);
-	if(addr_length!=addr_length_new)
-	{
-		for(recidx=0;(recidx+addr_length_new+2)<=addr_length;recidx++)
-		{
-			addr_extra[recidx]=addr[addr_length_new+recidx+1];
-			addr[addr_length_new+recidx+1]='\0';
-		}
-		if(strcmp(addr_extra,"FML")==0)
+		address_extra_start=sourcepacket+address_length_pure+1;
+		if(strcmp(address_extra_start,"FML")==0)
 		{
 			result.version_fml=1;
 		}
-		else if(strcmp(addr_extra,"FML2")==0)
+		else if(strcmp(address_extra_start,"FML2")==0)
 		{
 			result.version_fml=2;
 		}
@@ -58,119 +47,63 @@ struct p_handshake packet_read(unsigned char * sourcepacket)
 	{
 		result.version_fml=0;
 	}
+	sourcepacket=sourcepacket+address_length;
 	result.port=sourcepacket[0]*256+sourcepacket[1];
 	sourcepacket=sourcepacket+2;
 	sourcepacket=varint2int(sourcepacket,&result.nextstate);
 	sourcepacket=varint2int(sourcepacket,&size_part2);
 	sourcepacket=varint2int(sourcepacket,&result.id_part2);
-	if(result.nextstate==2)
-	{
-		sourcepacket=varint2int(sourcepacket,&user_length);
-		for(recidx=0;recidx<user_length;recidx++)
-		{
-			user[recidx]=*sourcepacket;
-			sourcepacket++;
-		}
-		result.user=user;
-	}
+	sourcepacket=varint2int(sourcepacket,&username_length);
+	datcat(result.username,0,sourcepacket,username_length);
 	return result;
 }
-int packet_rewrite(unsigned char * source, unsigned char * target, unsigned char * server_address, unsigned int server_port)
+int packet_write(struct p_handshake source, unsigned char * target)
 {
-	int recidx;
-	unsigned long source_size1,source_id1,source_version,source_addrlen,source_addrlen_pure,source_exaddrlen,source_nextstate,source_size2,source_id2,source_userlen,target_size,target_size1,target_addrlen_pure,target_addrlen,target_size2;
-	unsigned char source_addr[BUFSIZ],source_exaddr[BUFSIZ],source_user[BUFSIZ],target1[BUFSIZ],target2[BUFSIZ],target_port_high,target_port_low;
-	unsigned short source_port;
-	unsigned char * ptr_source,* ptr_source_addr_offset,* ptr_target,* ptr_target1,* ptr_target2;
-	source_exaddrlen=0;
-	bzero(source_addr,BUFSIZ);
-	bzero(source_exaddr,BUFSIZ);
-	bzero(source_user,BUFSIZ);
-	bzero(target1,BUFSIZ);
-	bzero(target2,BUFSIZ);
-	ptr_source=source;
-	ptr_target=target;
-	ptr_target1=target1;
-	ptr_target2=target2;
-	ptr_source=varint2int(ptr_source,&source_size1);
-	ptr_source=varint2int(ptr_source,&source_id1);
-	ptr_source=varint2int(ptr_source,&source_version);
-	ptr_source=varint2int(ptr_source,&source_addrlen);
-	ptr_source_addr_offset=ptr_source;
-	for(recidx=0;recidx<source_addrlen;recidx++)
+	int size;
+	unsigned long address_length,size_part1,username_length,size_part2;
+	unsigned char part1[512],part2[512],address[128];
+	unsigned char * ptr_target=target;
+	unsigned char * ptr_part1=part1;
+	unsigned char * ptr_part2=part2;
+	bzero(part1,512);
+	bzero(part2,512);
+	bzero(address,128);
+	ptr_part1=int2varint(source.id_part1,ptr_part1);
+	ptr_part1=int2varint(source.version,ptr_part1);
+	address_length=datcat(address,0,source.address,strlen(source.address));
+	if(source.version_fml==1)
 	{
-		source_addr[recidx]=*ptr_source;
-		ptr_source++;
+		address_length=datcat(address,address_length,"\0FML\0",5);
 	}
-	source_addrlen_pure=strlen(source_addr);
-	if(source_addrlen!=source_addrlen_pure)
+	else if(source.version_fml==2)
 	{
-		source_exaddrlen=source_addrlen-source_addrlen_pure;
-		for(recidx=0;recidx<source_exaddrlen-1;recidx++)
-		{
-			source_exaddr[recidx]=ptr_source_addr_offset[recidx+source_addrlen_pure+1];
-			ptr_source_addr_offset[recidx+source_addrlen_pure+1]='\0';
-		}
+		address_length=datcat(address,address_length,"\0FML2\0",6);
 	}
-	source_port=ptr_source[0]*256+ptr_source[1];
-	ptr_source=ptr_source+2;
-	ptr_source=varint2int(ptr_source,&source_nextstate);
-	ptr_source=varint2int(ptr_source,&source_size2);
-	ptr_source=varint2int(ptr_source,&source_id2);
-	ptr_source=varint2int(ptr_source,&source_userlen);
-	for(recidx=0;recidx<source_userlen;recidx++)
+	ptr_part1=int2varint(address_length,ptr_part1);
+	datcat(ptr_part1,0,address,address_length);
+	ptr_part1=ptr_part1+address_length;
+	ptr_part1[0]=source.port/256;
+	ptr_part1[1]=source.port-ptr_part1[0]*256;
+	ptr_part1=ptr_part1+2;
+	ptr_part1=int2varint(source.nextstate,ptr_part1);
+	size_part1=ptr_part1-part1;
+	ptr_part2=int2varint(source.id_part2,ptr_part2);
+	if(source.nextstate==2)
 	{
-		source_user[recidx]=ptr_source[recidx];
+		username_length=strlen(source.username);
+		ptr_part2=int2varint(username_length,ptr_part2);
+		datcat(ptr_part2,0,source.username,username_length);
+		ptr_part2=ptr_part2+username_length;
 	}
-	target_addrlen_pure=strlen(server_address);
-	target_addrlen=target_addrlen_pure+source_exaddrlen;
-	ptr_target1=int2varint(source_id1,ptr_target1);
-	ptr_target1=int2varint(source_version,ptr_target1);
-	ptr_target1=int2varint(target_addrlen,ptr_target1);
-	for(recidx=0;recidx<target_addrlen_pure;recidx++)
-	{
-		*ptr_target1=server_address[recidx];
-		ptr_target1++;
-	}
-	if(source_exaddrlen!=0)
-	{
-		ptr_target1++;
-		for(recidx=0;recidx<source_exaddrlen-1;recidx++)
-		{
-			*ptr_target1=source_exaddr[recidx];
-			ptr_target1++;
-		}
-	}
-	ptr_target1[0]=target_port_high=server_port/256;
-	ptr_target1[1]=target_port_low=server_port-target_port_high*256;
-	ptr_target1=ptr_target1+2;
-	ptr_target1=int2varint(source_nextstate,ptr_target1);
-	target_size1=ptr_target1-target1;
-	ptr_target=int2varint(target_size1,ptr_target);
-	for(recidx=0;recidx<target_size1;recidx++)
-	{
-		*ptr_target=target1[recidx];
-		ptr_target++;
-	}
-	ptr_target2=int2varint(source_id2,ptr_target2);
-	if(source_nextstate==2)
-	{
-		ptr_target2=int2varint(source_userlen,ptr_target2);
-		for(recidx=0;recidx<source_userlen;recidx++)
-		{
-			*ptr_target2=source_user[recidx];
-			ptr_target2++;
-		}
-	}
-	target_size2=ptr_target2-target2;
-	ptr_target=int2varint(target_size2,ptr_target);
-	for(recidx=0;recidx<target_size2;recidx++)
-	{
-		*ptr_target=target2[recidx];
-		ptr_target++;
-	}
-	target_size=ptr_target-target;
-	return target_size;
+	size_part2=ptr_part2-part2;
+	ptr_target=int2varint(size_part1,ptr_target);
+	datcat(ptr_target,0,part1,size_part1);
+	ptr_target=ptr_target+size_part1;
+	ptr_target=int2varint(size_part2,ptr_target);
+	datcat(ptr_target,0,part2,size_part2);
+	ptr_target=ptr_target+size_part2;
+	size=ptr_target-target;
+	return size;
 }
 int make_message(unsigned char * source, unsigned char * target)
 {

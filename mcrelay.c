@@ -316,7 +316,7 @@ int main(int argc, char * argv[])
 					close(socket_inbound_client);
 					return 0;
 				}
-				struct conf_map * proxyinfo=getproxyinfo(&config,inbound_info.addr);
+				struct conf_map * proxyinfo=getproxyinfo(&config,inbound_info.address);
 				if(proxyinfo==NULL)
 				{
 					if(inbound_info.nextstate==1)
@@ -349,11 +349,11 @@ int main(int argc, char * argv[])
 						{
 							if(config.bind.type==TYPE_UNIX)
 							{
-								fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.addr);
+								fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.address);
 							}
 							else if(config.bind.type==TYPE_INET)
 							{
-								fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr);
+								fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address);
 							}
 							
 						}
@@ -361,16 +361,18 @@ int main(int argc, char * argv[])
 						{
 							if(config.bind.type==TYPE_UNIX)
 							{
-								fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.addr,inbound_info.user);
+								fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.address,inbound_info.username);
 							}
 							else if(config.bind.type==TYPE_INET)
 							{
-								fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr,inbound_info.user);
+								fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address,inbound_info.username);
 							}
 						}
 						if(proxyinfo->enable_rewrite==1)
 						{
-							packlen_rewrited=packet_rewrite(inbound,rewrited,proxyinfo->to_inet_addr,proxyinfo->to_inet_port);
+							strcpy(inbound_info.address,proxyinfo->to_inet_addr);
+							inbound_info.port=proxyinfo->to_inet_port;
+							packlen_rewrited=packet_write(inbound_info,rewrited);
 							send(socket_outbound,rewrited,packlen_rewrited,0);
 						}
 						else
