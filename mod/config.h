@@ -1,10 +1,11 @@
 /*
 	config.h: Functions for Config reading on Minecraft Relay Server
 	A component of Minecraft Relay Server.
+	Requires: mod/basic.h, please manually include it in main source code.
 	
 	Minecraft Relay Server, version 1.1-beta2
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
-	This is a Freedom Software, absolutely no warranty.
+	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	It basically means you have free rights for uncommerical use and modify, also restricted you to comply the license, whether part of original release or modified part by you.
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
@@ -12,8 +13,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define TYPE_UNIX 1
-#define TYPE_INET 2
 struct conf_bind
 {
 	unsigned short type;
@@ -166,13 +165,25 @@ struct conf config_load(char * filename)
 	if(!((strcmp(result.bind.unix_path,"")!=0)||((strcmp(result.bind.inet_addr,"")!=0)&&(result.bind.inet_port!=0))))
 	{
 		printf("%d,%d,%d\n",strcmp(result.bind.unix_path,""),strcmp(result.bind.inet_addr,""),result.bind.inet_port);
-		printf("[CRIT] Erorr in configurations: Argument \"bind\" is missing or invalid.\n");
+		printf("[CRIT] Error in configurations: Argument \"bind\" is missing or invalid.\n");
 		exit(22);
 	}
 	if(result.relay_count==0)
 	{
-		printf("[CRIT] Erorr in configurations: You don't have any valid record for relay.\n");
+		printf("[CRIT] Error in configurations: You don't have any valid record for relay.\n");
 		exit(22);
 	}
 	return result;
+}
+struct conf_map * getproxyinfo(struct conf * source, unsigned char * proxyname)
+{
+	int recidx;
+	for(recidx=0;recidx<source->relay_count;recidx++)
+	{
+		if(strcmp(source->relay[recidx].from,proxyname)==0)
+		{
+			return &(source->relay[recidx]);
+		}
+	}
+	return NULL;
 }

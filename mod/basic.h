@@ -4,7 +4,7 @@
 	
 	Minecraft Relay Server, version 1.1-beta2
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
-	This is a Freedom Software, absolutely no warranty.
+	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	It basically means you have free rights for uncommerical use and modify, also restricted you to comply the license, whether part of original release or modified part by you.
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
@@ -14,6 +14,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#define TYPE_UNIX 1
+#define TYPE_INET 2
 #define PVER_L_ORIGPRO 0
 #define PVER_L_LEGACY1 1
 #define PVER_L_LEGACY2 2
@@ -21,6 +23,10 @@
 #define PVER_L_LEGACY4 4
 #define PVER_L_MODERN1 5
 #define PVER_L_MODERN2 6
+#define PVER_M_UNIDENT 0
+#define PVER_M_LEGACY1 1
+#define PVER_M_LEGACY2 2
+#define PVER_M_LEGACY3 3
 void gettime(unsigned char * target)
 {
 	time_t timestamp;

@@ -13,10 +13,10 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/un.h>
 #include <unistd.h>
 #include "mod/basic.h"
 #include "mod/config.h"
+#include "mod/network.h"
 #include "mod/proto_legacy.h"
 #include "mod/proto_modern.h"
 int main(int argc, char * argv[])
@@ -138,183 +138,262 @@ int main(int argc, char * argv[])
 			bzero(outbound,BUFSIZ);
 			bzero(rewrited,BUFSIZ);
 			packlen_inbound=recv(socket_inbound_client,inbound,BUFSIZ,0);
+			FILE * logfd=fopen(config.log,"a");
 			if(inbound[0]==0xFE)
 			{
 				int motd_version=legacy_motd_protocol_identify(inbound);
 				if(motd_version==PVER_M_LEGACY3)
 				{
-					struct p_motd_legacy motd_info=packet_read_legacy_motd(inbound,packlen_inbound);
-					packlen_rewrited=make_motd_legacy(motd_info.version,"Proxy: Use 13w42a or later!",legacy_motd_protocol_identify(inbound),rewrited);
+					struct p_motd_legacy inbound_info=packet_read_legacy_motd(inbound,packlen_inbound);
+					struct conf_map * proxyinfo=getproxyinfo(&config,inbound_info.address);
+					if(proxyinfo==NULL)
+					{
+						packlen_rewrited=make_motd_legacy(inbound_info.version,"[Proxy] Use a legit address to play!",motd_version,rewrited);
+						send(socket_inbound_client,rewrited,packlen_rewrited,0);
+						shutdown(socket_inbound_client,SHUT_RDWR);
+						close(socket_inbound_client);
+						return 0;
+					}
+					else
+					{
+						int dstconnect_status;
+						if(proxyinfo->to_type==TYPE_INET)
+						{
+							dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,&socket_outbound);
+						}
+						else if(proxyinfo->to_type==TYPE_UNIX)
+						{
+							dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_unix_path,0,&socket_outbound);
+						}
+						if(dstconnect_status!=0)
+						{
+							packlen_rewrited=make_motd_legacy(inbound_info.version,"[Proxy] Server Temporary Unavailable.",motd_version,rewrited);
+							send(socket_inbound_client,rewrited,packlen_rewrited,0);
+							shutdown(socket_inbound_client,SHUT_RDWR);
+							close(socket_inbound_client);
+							return 3;
+						}
+						else
+						{
+							if(config.bind.type==TYPE_UNIX)
+							{
+								fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.address);
+							}
+							else if(config.bind.type==TYPE_INET)
+							{
+								fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address);
+							}
+							if(proxyinfo->enable_rewrite==1)
+							{
+								strcpy(inbound_info.address,proxyinfo->to_inet_addr);
+								inbound_info.port=proxyinfo->to_inet_port;
+								packlen_rewrited=packet_write_legacy_motd(inbound_info,rewrited);
+								send(socket_outbound,rewrited,packlen_rewrited,0);
+							}
+							else
+							{
+								send(socket_outbound,inbound,packlen_inbound,0);
+							}
+						}
+					}
 				}
 				else
 				{
 					packlen_rewrited=make_motd_legacy(0,"Proxy: Please use direct connect.",legacy_motd_protocol_identify(inbound),rewrited);
+					send(socket_inbound_client,rewrited,packlen_rewrited,0);
+					shutdown(socket_inbound_client,SHUT_RDWR);
+					close(socket_inbound_client);
+					return 0;
 				}
-				send(socket_inbound_client,rewrited,packlen_rewrited,0);
-				shutdown(socket_inbound_client,SHUT_RDWR);
-				close(socket_inbound_client);
-				return 3;
 			}
-			if(inbound[0]==2)
+			else if(inbound[0]==2)
 			{
-				packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 13w42a or later!",rewrited);
-				send(socket_inbound_client,rewrited,packlen_rewrited,0);
-				shutdown(socket_inbound_client,SHUT_RDWR);
-				close(socket_inbound_client);
-				return 3;
-			}
-			if((inbound[packlen_inbound-1]==1)||(inbound[packlen_inbound-1]==2))
-			{
-				int packlen_inbound_part1,packlen_inbound_part2;
-				unsigned char inbound_part2[BUFSIZ];
-				bzero(inbound_part2,BUFSIZ);
-				packlen_inbound_part1=packlen_inbound;
-				packlen_inbound_part2=recv(socket_inbound_client,inbound_part2,BUFSIZ,0);
-				packlen_inbound=datcat(inbound,packlen_inbound_part1,inbound_part2,packlen_inbound_part2);
-			}
-			struct p_handshake inbound_info=packet_read(inbound);
-			if(inbound_info.version==0)
-			{
-				if(inbound_info.nextstate==1)
+				int login_version=handshake_protocol_identify(inbound,packlen_inbound);
+				if(login_version==PVER_L_LEGACY1)
 				{
-					packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Use 13w42a or later to play!",rewrited);
+					packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 12w04a or later!",rewrited);
+					send(socket_inbound_client,rewrited,packlen_rewrited,0);
+					shutdown(socket_inbound_client,SHUT_RDWR);
+					close(socket_inbound_client);
+					return 0;
 				}
-				else if(inbound_info.nextstate==2)
+				else if(login_version==PVER_L_LEGACY3)
 				{
-					packlen_rewrited=make_kickreason("Proxy: Unsupported client, use 13w42a or later!",rewrited);
+					packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 12w18a or later!",rewrited);
+					send(socket_inbound_client,rewrited,packlen_rewrited,0);
+					shutdown(socket_inbound_client,SHUT_RDWR);
+					close(socket_inbound_client);
+					return 0;
 				}
-				send(socket_inbound_client,rewrited,packlen_rewrited,0);
-				shutdown(socket_inbound_client,SHUT_RDWR);
-				close(socket_inbound_client);
-				return 3;
-			}
-			int rec_relay,found_relay;
-			found_relay=0;
-			FILE * logfd=fopen(config.log,"a");
-			for(rec_relay=0;rec_relay<config.relay_count;rec_relay++)
-			{
-				if(strcmp(config.relay[rec_relay].from,inbound_info.addr)==0)
-				{	
-					found_relay=1;
-					if(config.relay[rec_relay].to_type==TYPE_INET)
+				else
+				{
+					struct p_login_legacy inbound_info=packet_read_legacy_login(inbound,packlen_inbound,login_version);
+					struct conf_map * proxyinfo=getproxyinfo(&config,inbound_info.address);
+					if(proxyinfo==NULL)
 					{
-						socket_outbound=socket(AF_INET,SOCK_STREAM,0);
-						if(inet_addr(config.relay[rec_relay].to_inet_addr)==-1)
+						packlen_rewrited=make_kickreason_legacy("Proxy: Please use a legit name to connect!",rewrited);
+						send(socket_inbound_client,rewrited,packlen_rewrited,0);
+						shutdown(socket_inbound_client,SHUT_RDWR);
+						close(socket_inbound_client);
+						return 0;
+					}
+					else
+					{
+						int dstconnect_status;
+						if(proxyinfo->to_type==TYPE_INET)
 						{
-							char ** addresses=getaddresses(config.relay[rec_relay].to_inet_addr);
-							if(addresses==NULL)
+							dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,&socket_outbound);
+						}
+						else if(proxyinfo->to_type==TYPE_UNIX)
+						{
+							dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_unix_path,0,&socket_outbound);
+						}
+						if(dstconnect_status==0)
+						{
+							if(config.bind.type==TYPE_UNIX)
 							{
-								if(inbound_info.nextstate==1)
-								{
-									packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
-								}
-								else if(inbound_info.nextstate==2)
-								{
-									packlen_rewrited=make_kickreason("Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.",rewrited);
-								}
-								send(socket_inbound_client,rewrited,packlen_rewrited,0);
-								shutdown(socket_inbound_client,SHUT_RDWR);
-								close(socket_inbound_client);
-								return 4;
+								fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.address,inbound_info.username);
+							}
+							else if(config.bind.type==TYPE_INET)
+							{
+								fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address,inbound_info.username);
+							}
+							if(proxyinfo->enable_rewrite==1)
+							{
+								strcpy(inbound_info.address,proxyinfo->to_inet_addr);
+								inbound_info.port=proxyinfo->to_inet_port;
+								packlen_rewrited=packet_write_legacy_login(inbound_info,rewrited);
+								send(socket_outbound,rewrited,packlen_rewrited,0);
 							}
 							else
 							{
-								addr_outbound=genSockConf(AF_INET,htonl(inet_addr(inet_ntop(AF_INET,addresses[0],str,sizeof(str)))),config.relay[rec_relay].to_inet_port);
-								if(connect(socket_outbound,(struct sockaddr*)&addr_outbound,sizeof(struct sockaddr))==-1)
-								{
-									if(inbound_info.nextstate==1)
-									{
-										packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
-									}
-									else if(inbound_info.nextstate==2)
-									{
-										packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
-									}
-									send(socket_inbound_client,rewrited,packlen_rewrited,0);
-									shutdown(socket_inbound_client,SHUT_RDWR);
-									close(socket_inbound_client);
-									return 5;
-								}
-								else
-								{
-									if(inbound_info.nextstate==1)
-									{
-										if(config.bind.type==TYPE_UNIX)
-										{
-											fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.addr);
-										}
-										else if(config.bind.type==TYPE_INET)
-										{
-											fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr);
-										}
-										
-									}
-									else if(inbound_info.nextstate==2)
-									{
-										if(config.bind.type==TYPE_UNIX)
-										{
-											fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.addr,inbound_info.user);
-										}
-										else if(config.bind.type==TYPE_INET)
-										{
-											fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr,inbound_info.user);
-										}
-									}
-								}
+								send(socket_outbound,inbound,packlen_inbound,0);
 							}
+						}
+						else if(dstconnect_status==1)
+						{
+							packlen_rewrited=make_kickreason_legacy("Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.",rewrited);
+							send(socket_inbound_client,rewrited,packlen_rewrited,0);
+							shutdown(socket_inbound_client,SHUT_RDWR);
+							close(socket_inbound_client);
+							return 0;
+						}
+						else if(dstconnect_status==2)
+						{
+							packlen_rewrited=make_kickreason_legacy("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
+							send(socket_inbound_client,rewrited,packlen_rewrited,0);
+							shutdown(socket_inbound_client,SHUT_RDWR);
+							close(socket_inbound_client);
+							return 0;
+						}
+					}
+				}
+			}
+			else
+			{
+				if((inbound[packlen_inbound-1]==1)||(inbound[packlen_inbound-1]==2))
+				{
+					int packlen_inbound_part1,packlen_inbound_part2;
+					unsigned char inbound_part2[BUFSIZ];
+					bzero(inbound_part2,BUFSIZ);
+					packlen_inbound_part1=packlen_inbound;
+					packlen_inbound_part2=recv(socket_inbound_client,inbound_part2,BUFSIZ,0);
+					packlen_inbound=datcat(inbound,packlen_inbound_part1,inbound_part2,packlen_inbound_part2);
+				}
+				struct p_handshake inbound_info=packet_read(inbound);
+				if(inbound_info.version==0)
+				{
+					if(inbound_info.nextstate==1)
+					{
+						packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Use 13w42a or later to play!",rewrited);
+					}
+					else if(inbound_info.nextstate==2)
+					{
+						packlen_rewrited=make_kickreason("Proxy: Unsupported client, use 13w42a or later!",rewrited);
+					}
+					send(socket_inbound_client,rewrited,packlen_rewrited,0);
+					shutdown(socket_inbound_client,SHUT_RDWR);
+					close(socket_inbound_client);
+					return 0;
+				}
+				struct conf_map * proxyinfo=getproxyinfo(&config,inbound_info.addr);
+				if(proxyinfo==NULL)
+				{
+					if(inbound_info.nextstate==1)
+					{
+						packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Use a legit address to play!",rewrited);
+					}
+					else if(inbound_info.nextstate==2)
+					{
+						packlen_rewrited=make_kickreason("Proxy: Please use a legit name to connect!",rewrited);
+					}
+					send(socket_inbound_client,rewrited,packlen_rewrited,0);
+					shutdown(socket_inbound_client,SHUT_RDWR);
+					close(socket_inbound_client);
+					return 0;
+				}
+				else
+				{
+					int dstconnect_status;
+					if(proxyinfo->to_type==TYPE_INET)
+					{
+						dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,&socket_outbound);
+					}
+					else if(proxyinfo->to_type==TYPE_UNIX)
+					{
+						dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_unix_path,0,&socket_outbound);
+					}
+					if(dstconnect_status==0)
+					{
+						if(inbound_info.nextstate==1)
+						{
+							if(config.bind.type==TYPE_UNIX)
+							{
+								fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.addr);
+							}
+							else if(config.bind.type==TYPE_INET)
+							{
+								fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr);
+							}
+							
+						}
+						else if(inbound_info.nextstate==2)
+						{
+							if(config.bind.type==TYPE_UNIX)
+							{
+								fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.addr,inbound_info.user);
+							}
+							else if(config.bind.type==TYPE_INET)
+							{
+								fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr,inbound_info.user);
+							}
+						}
+						if(proxyinfo->enable_rewrite==1)
+						{
+							packlen_rewrited=packet_rewrite(inbound,rewrited,proxyinfo->to_inet_addr,proxyinfo->to_inet_port);
+							send(socket_outbound,rewrited,packlen_rewrited,0);
 						}
 						else
 						{
-							addr_outbound=genSockConf(AF_INET,htonl(inet_addr(config.relay[rec_relay].to_inet_addr)),config.relay[rec_relay].to_inet_port);
-							if(connect(socket_outbound,(struct sockaddr*)&addr_outbound,sizeof(struct sockaddr))==-1)
-							{
-								if(inbound_info.nextstate==1)
-								{
-									packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
-								}
-								else if(inbound_info.nextstate==2)
-								{
-									packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
-								}
-								send(socket_inbound_client,rewrited,packlen_rewrited,0);
-								shutdown(socket_inbound_client,SHUT_RDWR);
-								close(socket_inbound_client);
-								return 5;
-							}
-							else
-							{
-								if(inbound_info.nextstate==1)
-								{
-									if(config.bind.type==TYPE_UNIX)
-									{
-										fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.addr);
-									}
-									else if(config.bind.type==TYPE_INET)
-									{
-										fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr);
-									}
-									
-								}
-								else if(inbound_info.nextstate==2)
-								{
-									if(config.bind.type==TYPE_UNIX)
-									{
-										fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.addr,inbound_info.user);
-									}
-									else if(config.bind.type==TYPE_INET)
-									{
-										fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr,inbound_info.user);
-									}
-								}
-							}
+							send(socket_outbound,inbound,packlen_inbound,0);
 						}
 					}
-					else if(config.relay[rec_relay].to_type==TYPE_UNIX)
-					{
-						socket_outbound=socket(AF_UNIX,SOCK_STREAM,0);
-						uddr_outbound.sun_family=AF_UNIX;
-						strcpy(uddr_outbound.sun_path,config.relay[rec_relay].to_unix_path);
-						if(connect(socket_outbound,(struct sockaddr*)&uddr_outbound,sizeof(struct sockaddr))==-1)
+					else if(dstconnect_status==1)
+						{
+							if(inbound_info.nextstate==1)
+							{
+								packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
+							}
+							else if(inbound_info.nextstate==2)
+							{
+								packlen_rewrited=make_kickreason("Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.",rewrited);
+							}
+							send(socket_inbound_client,rewrited,packlen_rewrited,0);
+							shutdown(socket_inbound_client,SHUT_RDWR);
+							close(socket_inbound_client);
+							return 0;
+						}
+						else if(dstconnect_status==2)
 						{
 							if(inbound_info.nextstate==1)
 							{
@@ -327,70 +406,11 @@ int main(int argc, char * argv[])
 							send(socket_inbound_client,rewrited,packlen_rewrited,0);
 							shutdown(socket_inbound_client,SHUT_RDWR);
 							close(socket_inbound_client);
-							return 5;
+							return 0;
 						}
-						else
-						{
-							if(inbound_info.nextstate==1)
-							{
-								if(config.bind.type==TYPE_UNIX)
-								{
-									fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.addr);
-								}
-								else if(config.bind.type==TYPE_INET)
-								{
-									fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr);
-								}
-								
-							}
-							else if(inbound_info.nextstate==2)
-							{
-								if(config.bind.type==TYPE_UNIX)
-								{
-									fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.addr,inbound_info.user);
-								}
-								else if(config.bind.type==TYPE_INET)
-								{
-									fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr,inbound_info.user);
-								}
-							}
-						}
-					}
-					break;
 				}
 			}
 			fclose(logfd);
-			if(found_relay==0)
-			{
-				if(inbound_info.nextstate==1)
-				{
-					packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Use a legit address to play!",rewrited);
-				}
-				else if(inbound_info.nextstate==2)
-				{
-					packlen_rewrited=make_kickreason("Proxy: Please use a legit name to connect!",rewrited);
-				}
-				send(socket_inbound_client,rewrited,packlen_rewrited,0);
-				shutdown(socket_inbound_client,SHUT_RDWR);
-				close(socket_inbound_client);
-				return 6;
-			}
-			if(config.relay[rec_relay].to_type==TYPE_INET)
-			{
-				if(config.relay[rec_relay].enable_rewrite==1)
-				{
-					packlen_rewrited=packet_rewrite(inbound,rewrited,config.relay[rec_relay].to_inet_addr,config.relay[rec_relay].to_inet_port);
-					send(socket_outbound,rewrited,packlen_rewrited,0);
-				}
-				else
-				{
-					send(socket_outbound,inbound,packlen_inbound,0);
-				}
-			}
-			else if(config.relay[rec_relay].to_type==TYPE_UNIX)
-			{
-				send(socket_outbound,inbound,packlen_inbound,0);
-			}
 			while(1)
 			{
 				packlen_inbound=recv(socket_inbound_client,inbound,BUFSIZ,MSG_DONTWAIT);
