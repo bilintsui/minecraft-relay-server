@@ -1,0 +1,14 @@
+[Unit]
+Description=Minecraft Relay Server
+After=network.target network-online.target
+
+[Service]
+Type=forking
+User=nobody
+Group=nogroup
+Restart=on-failure
+RestartSec=5s
+ExecStart=/usr/bin/mcrelay /etc/mcrelay/mcrelay.conf
+
+[Install]
+WantedBy=multi-user.target

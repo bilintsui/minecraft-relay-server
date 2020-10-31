@@ -1,544 +1,24 @@
 /*
-	Minecraft Relay Server, version 1.1-beta1
+	mcrelay.c: Main source code for Minecraft Relay Server
+	A component of Minecraft Relay Server.
+
+	Minecraft Relay Server, version 1.1-beta2
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
-	This is a Freedom Software, absolutely no warranty.
+	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	It basically means you have free rights for uncommerical use and modify, also restricted you to comply the license, whether part of original release or modified part by you.
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
-#include <arpa/inet.h>
-#include <netdb.h>
 #include <signal.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/un.h>
-#include <time.h>
 #include <unistd.h>
-#define TYPE_UNIX 1
-#define TYPE_INET 2
-struct p_handshake
-{
-	unsigned long id_part1,version,version_fml,nextstate,id_part2;
-	char * addr,* user;
-	unsigned short port;
-};
-struct conf_bind
-{
-	unsigned short type;
-	char unix_path[BUFSIZ],inet_addr[BUFSIZ];
-	unsigned short inet_port;
-};
-struct conf_map
-{
-	unsigned short enable_rewrite;
-	char from[512],to_unix_path[512],to_inet_addr[512];
-	unsigned short to_type;
-	unsigned short to_inet_port;
-};
-struct conf
-{
-	char log[512];
-	struct conf_bind bind;
-	int relay_count;
-	struct conf_map relay[128];
-};
-void gettime(unsigned char * target)
-{
-	time_t timestamp;
-	time(&timestamp);
-	struct tm * times_gmt=gmtime(&timestamp);
-	int mingmt=(times_gmt->tm_hour)*60+(times_gmt->tm_min);
-	struct tm * times_local=localtime(&timestamp);
-	int minlocal=(times_local->tm_hour)*60+(times_local->tm_min);
-	int mindiff=minlocal-mingmt;
-	int hourdiff=mindiff/60;
-	mindiff=mindiff-hourdiff*60;
-	if(mindiff<0)
-	{
-		mindiff=-mindiff;
-	}
-	if(times_local->tm_isdst==1)
-	{
-		hourdiff=hourdiff-1;
-	}
-	if(hourdiff<0)
-	{
-		sprintf(target,"%04d-%02d-%02d %02d:%02d:%02d UTC-%02d:%02d",times_local->tm_year+1900,times_local->tm_mon,times_local->tm_mday,times_local->tm_hour,times_local->tm_min,times_local->tm_sec,-hourdiff,mindiff);
-	}
-	else
-	{
-		sprintf(target,"%04d-%02d-%02d %02d:%02d:%02d UTC+%02d:%02d",times_local->tm_year+1900,times_local->tm_mon,times_local->tm_mday,times_local->tm_hour,times_local->tm_min,times_local->tm_sec,hourdiff,mindiff);
-	}
-}
-long math_pow(int x,int y)
-{
-	int i;
-	long result;
-	result=1;
-	for(i=1;i<=y;i++)
-	{
-		result=result*x;
-	}
-	return result;
-}
-unsigned char * varint2int(unsigned char * source, unsigned long * output)
-{
-	unsigned char * recent_ptr=source;
-	unsigned char recent_char;
-	unsigned long data=0;
-	int char_num=0;
-	while(1)
-	{
-		recent_char=*recent_ptr;
-		if(recent_char>=128)
-		{
-			data=data+((recent_char-128)*math_pow(128,char_num));
-		}
-		else
-		{
-			data=data+(recent_char*math_pow(128,char_num));
-			recent_ptr++;
-			break;
-		}
-		recent_ptr++;
-		char_num++;
-	}
-	*output=data;
-	return recent_ptr;
-}
-unsigned char * int2varint(unsigned long data, unsigned char * output)
-{
-	unsigned char * ptr_output=output;
-	unsigned char current_byte;
-	unsigned long data_old,data_new;
-	data_old=data;
-	int length=0;
-	while(1)
-	{
-		if(data_old>=128)
-		{
-			data_new=data_old/128;
-			current_byte=data_old-data_new*128+128;
-			*ptr_output=current_byte;
-			data_old=data_new;
-			ptr_output++;
-			length++;
-		}
-		else
-		{
-			current_byte=data_old;
-			*ptr_output=current_byte;
-			ptr_output++;
-			length++;
-			break;
-		}
-	}
-	return ptr_output;
-}
-int datcat(char * dst, int dst_size, char * src, int src_size)
-{
-	int recidx,total_size;
-	for(recidx=0;recidx<src_size;recidx++)
-	{
-		dst[dst_size+recidx]=src[recidx];
-	}
-	total_size=dst_size+src_size;
-	return total_size;
-}
-struct p_handshake packet_read(unsigned char * sourcepacket)
-{
-	struct p_handshake result;
-	unsigned long size_part1,size_part2,addr_length,recidx,addr_length_new,user_length;
-	unsigned char addr[BUFSIZ],user[BUFSIZ],addr_extra[BUFSIZ];
-	char char_now;
-	bzero(addr,BUFSIZ);
-	bzero(user,BUFSIZ);
-	bzero(addr_extra,BUFSIZ);
-	sourcepacket=varint2int(sourcepacket,&size_part1);
-	sourcepacket=varint2int(sourcepacket,&result.id_part1);
-	sourcepacket=varint2int(sourcepacket,&result.version);
-	sourcepacket=varint2int(sourcepacket,&addr_length);
-	for(recidx=0;recidx<addr_length;recidx++)
-	{
-		addr[recidx]=*sourcepacket;
-		sourcepacket++;
-	}
-	result.addr=addr;
-	addr_length_new=strlen(addr);
-	if(addr_length!=addr_length_new)
-	{
-		for(recidx=0;(recidx+addr_length_new+2)<=addr_length;recidx++)
-		{
-			addr_extra[recidx]=addr[addr_length_new+recidx+1];
-			addr[addr_length_new+recidx+1]='\0';
-		}
-		if(strcmp(addr_extra,"FML")==0)
-		{
-			result.version_fml=1;
-		}
-		else if(strcmp(addr_extra,"FML2")==0)
-		{
-			result.version_fml=2;
-		}
-	}
-	else
-	{
-		result.version_fml=0;
-	}
-	result.port=sourcepacket[0]*256+sourcepacket[1];
-	sourcepacket=sourcepacket+2;
-	sourcepacket=varint2int(sourcepacket,&result.nextstate);
-	sourcepacket=varint2int(sourcepacket,&size_part2);
-	sourcepacket=varint2int(sourcepacket,&result.id_part2);
-	if(result.nextstate==2)
-	{
-		sourcepacket=varint2int(sourcepacket,&user_length);
-		for(recidx=0;recidx<user_length;recidx++)
-		{
-			user[recidx]=*sourcepacket;
-			sourcepacket++;
-		}
-		result.user=user;
-	}
-	return result;
-}
-int packet_rewrite(unsigned char * source, unsigned char * target, unsigned char * server_address, unsigned int server_port)
-{
-	int recidx;
-	unsigned long source_size1,source_id1,source_version,source_addrlen,source_addrlen_pure,source_exaddrlen,source_nextstate,source_size2,source_id2,source_userlen,target_size,target_size1,target_addrlen_pure,target_addrlen,target_size2;
-	unsigned char source_addr[BUFSIZ],source_exaddr[BUFSIZ],source_user[BUFSIZ],target1[BUFSIZ],target2[BUFSIZ],target_port_high,target_port_low;
-	unsigned short source_port;
-	unsigned char * ptr_source,* ptr_source_addr_offset,* ptr_target,* ptr_target1,* ptr_target2;
-	source_exaddrlen=0;
-	bzero(source_addr,BUFSIZ);
-	bzero(source_exaddr,BUFSIZ);
-	bzero(source_user,BUFSIZ);
-	bzero(target1,BUFSIZ);
-	bzero(target2,BUFSIZ);
-	ptr_source=source;
-	ptr_target=target;
-	ptr_target1=target1;
-	ptr_target2=target2;
-	ptr_source=varint2int(ptr_source,&source_size1);
-	ptr_source=varint2int(ptr_source,&source_id1);
-	ptr_source=varint2int(ptr_source,&source_version);
-	ptr_source=varint2int(ptr_source,&source_addrlen);
-	ptr_source_addr_offset=ptr_source;
-	for(recidx=0;recidx<source_addrlen;recidx++)
-	{
-		source_addr[recidx]=*ptr_source;
-		ptr_source++;
-	}
-	source_addrlen_pure=strlen(source_addr);
-	if(source_addrlen!=source_addrlen_pure)
-	{
-		source_exaddrlen=source_addrlen-source_addrlen_pure;
-		for(recidx=0;recidx<source_exaddrlen-1;recidx++)
-		{
-			source_exaddr[recidx]=ptr_source_addr_offset[recidx+source_addrlen_pure+1];
-			ptr_source_addr_offset[recidx+source_addrlen_pure+1]='\0';
-		}
-	}
-	source_port=ptr_source[0]*256+ptr_source[1];
-	ptr_source=ptr_source+2;
-	ptr_source=varint2int(ptr_source,&source_nextstate);
-	ptr_source=varint2int(ptr_source,&source_size2);
-	ptr_source=varint2int(ptr_source,&source_id2);
-	ptr_source=varint2int(ptr_source,&source_userlen);
-	for(recidx=0;recidx<source_userlen;recidx++)
-	{
-		source_user[recidx]=ptr_source[recidx];
-	}
-	target_addrlen_pure=strlen(server_address);
-	target_addrlen=target_addrlen_pure+source_exaddrlen;
-	ptr_target1=int2varint(source_id1,ptr_target1);
-	ptr_target1=int2varint(source_version,ptr_target1);
-	ptr_target1=int2varint(target_addrlen,ptr_target1);
-	for(recidx=0;recidx<target_addrlen_pure;recidx++)
-	{
-		*ptr_target1=server_address[recidx];
-		ptr_target1++;
-	}
-	if(source_exaddrlen!=0)
-	{
-		ptr_target1++;
-		for(recidx=0;recidx<source_exaddrlen-1;recidx++)
-		{
-			*ptr_target1=source_exaddr[recidx];
-			ptr_target1++;
-		}
-	}
-	ptr_target1[0]=target_port_high=server_port/256;
-	ptr_target1[1]=target_port_low=server_port-target_port_high*256;
-	ptr_target1=ptr_target1+2;
-	ptr_target1=int2varint(source_nextstate,ptr_target1);
-	target_size1=ptr_target1-target1;
-	ptr_target=int2varint(target_size1,ptr_target);
-	for(recidx=0;recidx<target_size1;recidx++)
-	{
-		*ptr_target=target1[recidx];
-		ptr_target++;
-	}
-	ptr_target2=int2varint(source_id2,ptr_target2);
-	if(source_nextstate==2)
-	{
-		ptr_target2=int2varint(source_userlen,ptr_target2);
-		for(recidx=0;recidx<source_userlen;recidx++)
-		{
-			*ptr_target2=source_user[recidx];
-			ptr_target2++;
-		}
-	}
-	target_size2=ptr_target2-target2;
-	ptr_target=int2varint(target_size2,ptr_target);
-	for(recidx=0;recidx<target_size2;recidx++)
-	{
-		*ptr_target=target2[recidx];
-		ptr_target++;
-	}
-	target_size=ptr_target-target;
-	return target_size;
-}
-char ** getaddresses(char * hostname)
-{
-	struct hostent * resolve_result;
-	resolve_result = gethostbyname2(hostname,AF_INET);
-	if(resolve_result == NULL)
-	{
-		return NULL;
-	}
-	return (resolve_result->h_addr_list);
-}
-struct conf config_load(char * filename)
-{
-	char rec_char,buffer[128][BUFSIZ],tmp_buffer[BUFSIZ],key[512],value[512],key2[512],value2[512],key3[512],value3[512];
-	int line_reccount=0;
-	int line_count=0;
-	int rec_relay=0;
-	int sscanf_status;
-	struct conf result;
-	FILE * conffd=fopen(filename,"r");
-	if(conffd==NULL)
-	{
-		printf("[CRIT] Cannot read config file: %s\n",filename);
-		exit(2);
-	}
-	unsigned char charnow[2];
-	charnow[1]='\0';
-	while((charnow[0]=fgetc(conffd))!=0xFF)
-	{
-		if((charnow[0]!=10)&&(charnow[0]!=13))
-		{
-			strcat(buffer[line_count],charnow);
-		}
-		else
-		{
-			while((charnow[0]=fgetc(conffd))!=0xFF)
-			{
-				if((charnow[0]!=10)&&(charnow[0]!=13))
-				{
-					line_count++;
-					strcat(buffer[line_count],charnow);
-					break;
-				}
-			}
-		}
-	}
-	fclose(conffd);
-	for(line_reccount=0;line_reccount<line_count;line_reccount++)
-	{
-		sscanf(buffer[line_reccount],"%s%s",key,value);
-		if(strcmp(key,"log")==0)
-		{
-			strcpy(result.log,value);
-		}
-		else if(strcmp(key,"bind")==0)
-		{
-			char * token=strtok(value,":");
-			strcpy(key2,token);
-			token=strtok(NULL,":");
-			strcpy(value2,token);
-			if(strcmp(key2,"unix")==0)
-			{
-				result.bind.type=TYPE_UNIX;
-				strcpy(result.bind.unix_path,value2);
-			}
-			else
-			{
-				result.bind.type=TYPE_INET;
-				strcpy(result.bind.inet_addr,key2);
-				result.bind.inet_port=atoi(value2);
-			}
-		}
-		else if(strcmp(key,"proxy_pass")==0)
-		{
-			int enable_rewrite;
-			if(strcmp(value,"rewrite")==0)
-			{
-				enable_rewrite=1;
-			}
-			else if(strcmp(value,"relay")==0)
-			{
-				enable_rewrite=0;
-			}
-			else
-			{
-				continue;
-			}
-			strcpy(tmp_buffer,buffer[line_reccount+1]);
-			while(tmp_buffer[0]=='\t')
-			{
-				result.relay[rec_relay].enable_rewrite=enable_rewrite;
-				if(sscanf(tmp_buffer,"%s%s",key2,value2)!=2)
-				{
-					line_reccount++;
-					strcpy(tmp_buffer,buffer[line_reccount+1]);
-					continue;
-				}
-				strcpy(result.relay[rec_relay].from,key2);
-				char * token=strtok(value2,":");
-				strcpy(key3,token);
-				token=strtok(NULL,":");
-				if(token==NULL)
-				{
-					line_reccount++;
-					strcpy(tmp_buffer,buffer[line_reccount+1]);
-					continue;
-				}
-				strcpy(value3,token);
-				if(strcmp(key3,"unix")==0)
-				{
-					result.relay[rec_relay].to_type=TYPE_UNIX;
-					strcpy(result.relay[rec_relay].to_unix_path,value3);
-				}
-				else
-				{
-					result.relay[rec_relay].to_type=TYPE_INET;
-					strcpy(result.relay[rec_relay].to_inet_addr,key3);
-					if((atoi(value3)<1)||(atoi(value3)>65535))
-					{
-						line_reccount++;
-						strcpy(tmp_buffer,buffer[line_reccount+1]);
-						continue;
-					}
-					else
-					{
-						result.relay[rec_relay].to_inet_port=atoi(value3);
-					}
-				}
-				rec_relay++;
-				line_reccount++;
-				strcpy(tmp_buffer,buffer[line_reccount+1]);
-			}
-			result.relay_count=rec_relay;
-		}
-	}
-	if(strcmp(result.log,"")==0)
-	{
-		printf("[CRIT] Error in configurations: Argument \"log\" is missing.\n");
-		exit(22);
-	}
-	if(!((strcmp(result.bind.unix_path,"")!=0)||((strcmp(result.bind.inet_addr,"")!=0)&&(result.bind.inet_port!=0))))
-	{
-		printf("%d,%d,%d\n",strcmp(result.bind.unix_path,""),strcmp(result.bind.inet_addr,""),result.bind.inet_port);
-		printf("[CRIT] Erorr in configurations: Argument \"bind\" is missing or invalid.\n");
-		exit(22);
-	}
-	if(result.relay_count==0)
-	{
-		printf("[CRIT] Erorr in configurations: You don't have any valid record for relay.\n");
-		exit(22);
-	}
-	return result;
-}
-int make_kickreason_legacy(unsigned char * source, unsigned char * target)
-{
-	int size,recidx,string_length;
-	unsigned char tmp[256];
-	unsigned char * ptr_tmp=tmp;
-	unsigned char * ptr_source=source;
-	unsigned char * ptr_target=target;
-	while(*ptr_source!='\0')
-	{
-		*ptr_tmp=0;
-		ptr_tmp++;
-		*ptr_tmp=*ptr_source;
-		ptr_tmp++;
-		ptr_source++;
-	}
-	string_length=ptr_tmp-tmp;
-	ptr_tmp=tmp;
-	ptr_target[0]=255;
-	ptr_target[1]=0;
-	ptr_target[2]=ptr_source-source;
-	ptr_target=ptr_target+3;
-	for(recidx=0;recidx<string_length;recidx++)
-	{
-		*ptr_target=*ptr_tmp;
-		ptr_target++;
-		ptr_tmp++;
-	}
-	size=ptr_target-target;
-	ptr_target=target;
-	return size;
-}
-int make_message(unsigned char * source, unsigned char * target)
-{
-	int size,recidx,string_length,payload_size;
-	unsigned char tmp[BUFSIZ];
-	unsigned char * ptr_tmp=tmp;
-	unsigned char * ptr_source=source;
-	unsigned char * ptr_target=target;
-	*ptr_tmp=0;
-	ptr_tmp++;
-	string_length=strlen(source);
-	ptr_tmp=int2varint(string_length,ptr_tmp);
-	for(recidx=0;recidx<string_length;recidx++)
-	{
-		*ptr_tmp=*ptr_source;
-		ptr_tmp++;
-		ptr_source++;
-	}
-	payload_size=ptr_tmp-tmp;
-	ptr_tmp=tmp;
-	ptr_target=int2varint(payload_size,ptr_target);
-	for(recidx=0;recidx<payload_size;recidx++)
-	{
-		*ptr_target=*ptr_tmp;
-		ptr_target++;
-		ptr_tmp++;
-	}
-	size=ptr_target-target;
-	return size;
-}
-int make_kickreason(unsigned char * source, unsigned char * target)
-{
-	int size;
-	unsigned char input[BUFSIZ];
-	sprintf(input,"{\"extra\":[{\"text\":\"%s\"}],\"text\":\"\"}",source);
-	size=make_message(input,target);
-	return size;
-}
-int make_motd(unsigned long version, unsigned char * description, unsigned char * target)
-{
-	int size;
-	unsigned char input[BUFSIZ];
-	sprintf(input,"{\"version\":{\"name\":\"\",\"protocol\":%ld},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},\"description\":{\"text\":\"%s\"}}",version,description);
-	size=make_message(input,target);
-	return size;
-}
-struct sockaddr_in genSockConf(unsigned short family, unsigned long addr, unsigned short port)
-{
-	struct sockaddr_in result;
-	result.sin_family=family;
-	result.sin_addr.s_addr=htonl(addr);
-	result.sin_port=htons(port);
-	return result;
-}
+#include "mod/basic.h"
+#include "mod/config.h"
+#include "mod/network.h"
+#include "mod/proto_legacy.h"
+#include "mod/proto_modern.h"
 int main(int argc, char * argv[])
 {
 	char str[INET_ADDRSTRLEN],time_str[32];
@@ -550,7 +30,7 @@ int main(int argc, char * argv[])
 	struct conf config;
 	unsigned short bindport,connport;
 	connip_resolved=0;
-	printf("Minecraft Relay Server [Version:1.1-beta1]\n(C) 2020 Bilin Tsui. All rights reserved.\n\n");
+	printf("Minecraft Relay Server [Version:1.1-beta2]\n(C) 2020 Bilin Tsui. All rights reserved.\n\n");
 	if(argc!=2)
 	{
 		printf("Usage: %s config_file\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",argv[0]);
@@ -603,6 +83,7 @@ int main(int argc, char * argv[])
 		strulen=sizeof(uddr_inbound_server);
 		printf("[INFO] Binding on %s...\n",uddr_inbound_server.sun_path);
 		if(bind(socket_inbound_server,(struct sockaddr *)&uddr_inbound_server,strulen)==-1){printf("[CRIT] Bind Failed!\n");return 2;}
+		if(chmod(config.bind.unix_path,S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH)==-1){printf("[CRIT] Set Permission Failed!\n");return 13;}
 		printf("[INFO] Bind Successful.\n\n");
 	}
 	printf("[INFO] For more information, watch log file: %s\n",config.log);
@@ -657,136 +138,264 @@ int main(int argc, char * argv[])
 			bzero(outbound,BUFSIZ);
 			bzero(rewrited,BUFSIZ);
 			packlen_inbound=recv(socket_inbound_client,inbound,BUFSIZ,0);
-			if((inbound[packlen_inbound-1]==1)||(inbound[packlen_inbound-1]==2))
-			{
-				int packlen_inbound_part1,packlen_inbound_part2;
-				unsigned char inbound_part2[BUFSIZ];
-				bzero(inbound_part2,BUFSIZ);
-				packlen_inbound_part1=packlen_inbound;
-				packlen_inbound_part2=recv(socket_inbound_client,inbound_part2,BUFSIZ,0);
-				packlen_inbound=datcat(inbound,packlen_inbound_part1,inbound_part2,packlen_inbound_part2);
-			}
-			if(inbound[0]==2)
-			{
-				packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 13w42a or later!",rewrited);
-				send(socket_inbound_client,rewrited,packlen_rewrited,0);
-				shutdown(socket_inbound_client,SHUT_RDWR);
-				close(socket_inbound_client);
-				return 3;
-			}
-			struct p_handshake inbound_info=packet_read(inbound);
-			if(inbound_info.version==0)
-			{
-				if(inbound_info.nextstate==1)
-				{
-					packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Use 13w42a or later to play!",rewrited);
-				}
-				else if(inbound_info.nextstate==2)
-				{
-					packlen_rewrited=make_kickreason("Proxy: Unsupported client, use 13w42a or later!",rewrited);
-				}
-				send(socket_inbound_client,rewrited,packlen_rewrited,0);
-				shutdown(socket_inbound_client,SHUT_RDWR);
-				close(socket_inbound_client);
-				return 3;
-			}
-			int rec_relay,found_relay;
-			found_relay=0;
 			FILE * logfd=fopen(config.log,"a");
-			for(rec_relay=0;rec_relay<config.relay_count;rec_relay++)
+			if(inbound[0]==0xFE)
 			{
-				if(strcmp(config.relay[rec_relay].from,inbound_info.addr)==0)
-				{	
-					found_relay=1;
-					if(config.relay[rec_relay].to_type==TYPE_INET)
+				int motd_version=legacy_motd_protocol_identify(inbound);
+				if(motd_version==PVER_M_LEGACY3)
+				{
+					struct p_motd_legacy inbound_info=packet_read_legacy_motd(inbound,packlen_inbound);
+					struct conf_map * proxyinfo=getproxyinfo(&config,inbound_info.address);
+					if(proxyinfo==NULL)
 					{
-						socket_outbound=socket(AF_INET,SOCK_STREAM,0);
-						if(inet_addr(config.relay[rec_relay].to_inet_addr)==-1)
+						packlen_rewrited=make_motd_legacy(inbound_info.version,"[Proxy] Use a legit address to play!",motd_version,rewrited);
+						send(socket_inbound_client,rewrited,packlen_rewrited,0);
+						shutdown(socket_inbound_client,SHUT_RDWR);
+						close(socket_inbound_client);
+						return 0;
+					}
+					else
+					{
+						int dstconnect_status;
+						if(proxyinfo->to_type==TYPE_INET)
 						{
-							char ** addresses=getaddresses(config.relay[rec_relay].to_inet_addr);
-							if(addresses==NULL)
-							{
-								if(inbound_info.nextstate==1)
-								{
-									packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
-								}
-								else if(inbound_info.nextstate==2)
-								{
-									packlen_rewrited=make_kickreason("Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.",rewrited);
-								}
-								send(socket_inbound_client,rewrited,packlen_rewrited,0);
-								shutdown(socket_inbound_client,SHUT_RDWR);
-								close(socket_inbound_client);
-								return 4;
-							}
-							else
-							{
-								addr_outbound=genSockConf(AF_INET,htonl(inet_addr(inet_ntop(AF_INET,addresses[0],str,sizeof(str)))),config.relay[rec_relay].to_inet_port);
-								if(connect(socket_outbound,(struct sockaddr*)&addr_outbound,sizeof(struct sockaddr))==-1)
-								{
-									if(inbound_info.nextstate==1)
-									{
-										packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
-									}
-									else if(inbound_info.nextstate==2)
-									{
-										packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
-									}
-									send(socket_inbound_client,rewrited,packlen_rewrited,0);
-									shutdown(socket_inbound_client,SHUT_RDWR);
-									close(socket_inbound_client);
-									return 5;
-								}
-								else
-								{
-									if(inbound_info.nextstate==1)
-									{
-										fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr);
-									}
-									else if(inbound_info.nextstate==2)
-									{
-										fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr,inbound_info.user);
-									}
-								}
-							}
+							dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,&socket_outbound);
+						}
+						else if(proxyinfo->to_type==TYPE_UNIX)
+						{
+							dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_unix_path,0,&socket_outbound);
+						}
+						if(dstconnect_status!=0)
+						{
+							packlen_rewrited=make_motd_legacy(inbound_info.version,"[Proxy] Server Temporary Unavailable.",motd_version,rewrited);
+							send(socket_inbound_client,rewrited,packlen_rewrited,0);
+							shutdown(socket_inbound_client,SHUT_RDWR);
+							close(socket_inbound_client);
+							return 3;
 						}
 						else
 						{
-							addr_outbound=genSockConf(AF_INET,htonl(inet_addr(config.relay[rec_relay].to_inet_addr)),config.relay[rec_relay].to_inet_port);
-							if(connect(socket_outbound,(struct sockaddr*)&addr_outbound,sizeof(struct sockaddr))==-1)
+							if(config.bind.type==TYPE_UNIX)
 							{
-								if(inbound_info.nextstate==1)
-								{
-									packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
-								}
-								else if(inbound_info.nextstate==2)
-								{
-									packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
-								}
-								send(socket_inbound_client,rewrited,packlen_rewrited,0);
-								shutdown(socket_inbound_client,SHUT_RDWR);
-								close(socket_inbound_client);
-								return 5;
+								fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.address);
+							}
+							else if(config.bind.type==TYPE_INET)
+							{
+								fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address);
+							}
+							if(proxyinfo->enable_rewrite==1)
+							{
+								strcpy(inbound_info.address,proxyinfo->to_inet_addr);
+								inbound_info.port=proxyinfo->to_inet_port;
+								packlen_rewrited=packet_write_legacy_motd(inbound_info,rewrited);
+								send(socket_outbound,rewrited,packlen_rewrited,0);
 							}
 							else
 							{
-								if(inbound_info.nextstate==1)
-								{
-									fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr);
-								}
-								else if(inbound_info.nextstate==2)
-								{
-									fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.addr,inbound_info.user);
-								}
+								send(socket_outbound,inbound,packlen_inbound,0);
 							}
 						}
 					}
-					else if(config.relay[rec_relay].to_type==TYPE_UNIX)
+				}
+				else
+				{
+					packlen_rewrited=make_motd_legacy(0,"Proxy: Please use direct connect.",legacy_motd_protocol_identify(inbound),rewrited);
+					send(socket_inbound_client,rewrited,packlen_rewrited,0);
+					shutdown(socket_inbound_client,SHUT_RDWR);
+					close(socket_inbound_client);
+					return 0;
+				}
+			}
+			else if(inbound[0]==2)
+			{
+				int login_version=handshake_protocol_identify(inbound,packlen_inbound);
+				if(login_version==PVER_L_LEGACY1)
+				{
+					packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 12w04a or later!",rewrited);
+					send(socket_inbound_client,rewrited,packlen_rewrited,0);
+					shutdown(socket_inbound_client,SHUT_RDWR);
+					close(socket_inbound_client);
+					return 0;
+				}
+				else if(login_version==PVER_L_LEGACY3)
+				{
+					packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 12w18a or later!",rewrited);
+					send(socket_inbound_client,rewrited,packlen_rewrited,0);
+					shutdown(socket_inbound_client,SHUT_RDWR);
+					close(socket_inbound_client);
+					return 0;
+				}
+				else
+				{
+					struct p_login_legacy inbound_info=packet_read_legacy_login(inbound,packlen_inbound,login_version);
+					struct conf_map * proxyinfo=getproxyinfo(&config,inbound_info.address);
+					if(proxyinfo==NULL)
 					{
-						socket_outbound=socket(AF_UNIX,SOCK_STREAM,0);
-						uddr_outbound.sun_family=AF_UNIX;
-						strcpy(uddr_outbound.sun_path,config.relay[rec_relay].to_unix_path);
-						if(connect(socket_outbound,(struct sockaddr*)&uddr_outbound,sizeof(struct sockaddr))==-1)
+						packlen_rewrited=make_kickreason_legacy("Proxy: Please use a legit name to connect!",rewrited);
+						send(socket_inbound_client,rewrited,packlen_rewrited,0);
+						shutdown(socket_inbound_client,SHUT_RDWR);
+						close(socket_inbound_client);
+						return 0;
+					}
+					else
+					{
+						int dstconnect_status;
+						if(proxyinfo->to_type==TYPE_INET)
+						{
+							dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,&socket_outbound);
+						}
+						else if(proxyinfo->to_type==TYPE_UNIX)
+						{
+							dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_unix_path,0,&socket_outbound);
+						}
+						if(dstconnect_status==0)
+						{
+							if(config.bind.type==TYPE_UNIX)
+							{
+								fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.address,inbound_info.username);
+							}
+							else if(config.bind.type==TYPE_INET)
+							{
+								fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address,inbound_info.username);
+							}
+							if(proxyinfo->enable_rewrite==1)
+							{
+								strcpy(inbound_info.address,proxyinfo->to_inet_addr);
+								inbound_info.port=proxyinfo->to_inet_port;
+								packlen_rewrited=packet_write_legacy_login(inbound_info,rewrited);
+								send(socket_outbound,rewrited,packlen_rewrited,0);
+							}
+							else
+							{
+								send(socket_outbound,inbound,packlen_inbound,0);
+							}
+						}
+						else if(dstconnect_status==1)
+						{
+							packlen_rewrited=make_kickreason_legacy("Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.",rewrited);
+							send(socket_inbound_client,rewrited,packlen_rewrited,0);
+							shutdown(socket_inbound_client,SHUT_RDWR);
+							close(socket_inbound_client);
+							return 0;
+						}
+						else if(dstconnect_status==2)
+						{
+							packlen_rewrited=make_kickreason_legacy("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
+							send(socket_inbound_client,rewrited,packlen_rewrited,0);
+							shutdown(socket_inbound_client,SHUT_RDWR);
+							close(socket_inbound_client);
+							return 0;
+						}
+					}
+				}
+			}
+			else
+			{
+				if((inbound[packlen_inbound-1]==1)||(inbound[packlen_inbound-1]==2))
+				{
+					int packlen_inbound_part1,packlen_inbound_part2;
+					unsigned char inbound_part2[BUFSIZ];
+					bzero(inbound_part2,BUFSIZ);
+					packlen_inbound_part1=packlen_inbound;
+					packlen_inbound_part2=recv(socket_inbound_client,inbound_part2,BUFSIZ,0);
+					packlen_inbound=datcat(inbound,packlen_inbound_part1,inbound_part2,packlen_inbound_part2);
+				}
+				struct p_handshake inbound_info=packet_read(inbound);
+				if(inbound_info.version==0)
+				{
+					if(inbound_info.nextstate==1)
+					{
+						packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Use 13w42a or later to play!",rewrited);
+					}
+					else if(inbound_info.nextstate==2)
+					{
+						packlen_rewrited=make_kickreason("Proxy: Unsupported client, use 13w42a or later!",rewrited);
+					}
+					send(socket_inbound_client,rewrited,packlen_rewrited,0);
+					shutdown(socket_inbound_client,SHUT_RDWR);
+					close(socket_inbound_client);
+					return 0;
+				}
+				struct conf_map * proxyinfo=getproxyinfo(&config,inbound_info.address);
+				if(proxyinfo==NULL)
+				{
+					if(inbound_info.nextstate==1)
+					{
+						packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Use a legit address to play!",rewrited);
+					}
+					else if(inbound_info.nextstate==2)
+					{
+						packlen_rewrited=make_kickreason("Proxy: Please use a legit name to connect!",rewrited);
+					}
+					send(socket_inbound_client,rewrited,packlen_rewrited,0);
+					shutdown(socket_inbound_client,SHUT_RDWR);
+					close(socket_inbound_client);
+					return 0;
+				}
+				else
+				{
+					int dstconnect_status;
+					if(proxyinfo->to_type==TYPE_INET)
+					{
+						dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,&socket_outbound);
+					}
+					else if(proxyinfo->to_type==TYPE_UNIX)
+					{
+						dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_unix_path,0,&socket_outbound);
+					}
+					if(dstconnect_status==0)
+					{
+						if(inbound_info.nextstate==1)
+						{
+							if(config.bind.type==TYPE_UNIX)
+							{
+								fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.address);
+							}
+							else if(config.bind.type==TYPE_INET)
+							{
+								fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address);
+							}
+							
+						}
+						else if(inbound_info.nextstate==2)
+						{
+							if(config.bind.type==TYPE_UNIX)
+							{
+								fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.address,inbound_info.username);
+							}
+							else if(config.bind.type==TYPE_INET)
+							{
+								fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address,inbound_info.username);
+							}
+						}
+						if(proxyinfo->enable_rewrite==1)
+						{
+							strcpy(inbound_info.address,proxyinfo->to_inet_addr);
+							inbound_info.port=proxyinfo->to_inet_port;
+							packlen_rewrited=packet_write(inbound_info,rewrited);
+							send(socket_outbound,rewrited,packlen_rewrited,0);
+						}
+						else
+						{
+							send(socket_outbound,inbound,packlen_inbound,0);
+						}
+					}
+					else if(dstconnect_status==1)
+						{
+							if(inbound_info.nextstate==1)
+							{
+								packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
+							}
+							else if(inbound_info.nextstate==2)
+							{
+								packlen_rewrited=make_kickreason("Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.",rewrited);
+							}
+							send(socket_inbound_client,rewrited,packlen_rewrited,0);
+							shutdown(socket_inbound_client,SHUT_RDWR);
+							close(socket_inbound_client);
+							return 0;
+						}
+						else if(dstconnect_status==2)
 						{
 							if(inbound_info.nextstate==1)
 							{
@@ -799,55 +408,11 @@ int main(int argc, char * argv[])
 							send(socket_inbound_client,rewrited,packlen_rewrited,0);
 							shutdown(socket_inbound_client,SHUT_RDWR);
 							close(socket_inbound_client);
-							return 5;
+							return 0;
 						}
-						else
-						{
-							if(inbound_info.nextstate==1)
-							{
-								fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.addr);
-							}
-							else if(inbound_info.nextstate==2)
-							{
-								fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.addr,inbound_info.user);
-							}
-						}
-					}
-					break;
 				}
 			}
 			fclose(logfd);
-			if(found_relay==0)
-			{
-				if(inbound_info.nextstate==1)
-				{
-					packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Use a legit address to play!",rewrited);
-				}
-				else if(inbound_info.nextstate==2)
-				{
-					packlen_rewrited=make_kickreason("Proxy: Please use a legit name to connect!",rewrited);
-				}
-				send(socket_inbound_client,rewrited,packlen_rewrited,0);
-				shutdown(socket_inbound_client,SHUT_RDWR);
-				close(socket_inbound_client);
-				return 6;
-			}
-			if(config.relay[rec_relay].to_type==TYPE_INET)
-			{
-				if(config.relay[rec_relay].enable_rewrite==1)
-				{
-					packlen_rewrited=packet_rewrite(inbound,rewrited,config.relay[rec_relay].to_inet_addr,config.relay[rec_relay].to_inet_port);
-					send(socket_outbound,rewrited,packlen_rewrited,0);
-				}
-				else
-				{
-					send(socket_outbound,inbound,packlen_inbound,0);
-				}
-			}
-			else if(config.relay[rec_relay].to_type==TYPE_UNIX)
-			{
-				send(socket_outbound,inbound,packlen_inbound,0);
-			}
 			while(1)
 			{
 				packlen_inbound=recv(socket_inbound_client,inbound,BUFSIZ,MSG_DONTWAIT);

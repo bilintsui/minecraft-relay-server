@@ -1,8 +1,8 @@
 # mcrelay
 Minecraft Relay Server<br/>
 A minecraft reverse proxy server with server address rewrite.<br/>
-Supports Minecraft Servers and Clients with version 13w42a or later. (Basically means release 1.7.2 and later.)<br/>
-Minecraft Versions before 13w42a are **NOT SUPPORTED**!<br/>
+Supports Minecraft Servers and Clients with version 12w04a or later. (Basically means release 1.2.1 and later.)<br/>
+Minecraft Versions before 12w04a are **NOT SUPPORTED**!<br/>
 
 ## Features
 * Support reverse proxy for Minecraft servers by server address in the handshake packet which client send to.
@@ -11,15 +11,25 @@ Minecraft Versions before 13w42a are **NOT SUPPORTED**!<br/>
 
 ## Requirements
 * Linux
-* Both Minecraft client and server with version 13w42a and later.
+
+## Compatibility
+**Due to Minecraft Handshake restrictions, this server supports:**<br/>
+* Game relay on server & client with version 12w04a and later, except version 12w17a, 13w41a and 13w41b.
+* MOTD relay / MOTD status notice on server & client with version 1.6.1 and later, except version 13w41a and 13w41b.
 
 ## Files
 * mcrelay.c: Source code of Main program.
 * mcrelay.conf.example: config file example of mcrelay.
+* mcrelay.service.example: service unit file of mcrelay for systemd.
+* mod/*.h: header files of essential modules.
 
 ## Compile
 <pre>
 gcc -o mcrelay mcrelay.c
+</pre>
+or
+<pre>
+make
 </pre>
 
 ## Usage
