@@ -32,9 +32,19 @@ void gettime(unsigned char * target)
 	time_t timestamp;
 	time(&timestamp);
 	struct tm * times_gmt=gmtime(&timestamp);
+	int mdgmt=times_gmt->tm_mday;
 	int mingmt=(times_gmt->tm_hour)*60+(times_gmt->tm_min);
 	struct tm * times_local=localtime(&timestamp);
-	int minlocal=(times_local->tm_hour)*60+(times_local->tm_min);
+	int mdlocal=times_local->tm_mday;
+	int minlocal;
+	if(mdgmt!=mdlocal)
+	{
+		minlocal=((times_local->tm_hour)+24)*60+(times_local->tm_min);
+	}
+	else
+	{
+		minlocal=(times_local->tm_hour)*60+(times_local->tm_min);
+	}
 	int mindiff=minlocal-mingmt;
 	int hourdiff=mindiff/60;
 	mindiff=mindiff-hourdiff*60;
@@ -48,11 +58,11 @@ void gettime(unsigned char * target)
 	}
 	if(hourdiff<0)
 	{
-		sprintf(target,"%04d-%02d-%02d %02d:%02d:%02d UTC-%02d:%02d",times_local->tm_year+1900,times_local->tm_mon,times_local->tm_mday,times_local->tm_hour,times_local->tm_min,times_local->tm_sec,-hourdiff,mindiff);
+		sprintf(target,"%04d-%02d-%02d %02d:%02d:%02d UTC-%02d:%02d",times_local->tm_year+1900,times_local->tm_mon+1,times_local->tm_mday,times_local->tm_hour,times_local->tm_min,times_local->tm_sec,-hourdiff,mindiff);
 	}
 	else
 	{
-		sprintf(target,"%04d-%02d-%02d %02d:%02d:%02d UTC+%02d:%02d",times_local->tm_year+1900,times_local->tm_mon,times_local->tm_mday,times_local->tm_hour,times_local->tm_min,times_local->tm_sec,hourdiff,mindiff);
+		sprintf(target,"%04d-%02d-%02d %02d:%02d:%02d UTC+%02d:%02d",times_local->tm_year+1900,times_local->tm_mon+1,times_local->tm_mday,times_local->tm_hour,times_local->tm_min,times_local->tm_sec,hourdiff,mindiff);
 	}
 }
 long math_pow(int x,int y)
