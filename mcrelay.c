@@ -381,35 +381,35 @@ int main(int argc, char * argv[])
 						}
 					}
 					else if(dstconnect_status==1)
+					{
+						if(inbound_info.nextstate==1)
 						{
-							if(inbound_info.nextstate==1)
-							{
-								packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
-							}
-							else if(inbound_info.nextstate==2)
-							{
-								packlen_rewrited=make_kickreason("Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.",rewrited);
-							}
-							send(socket_inbound_client,rewrited,packlen_rewrited,0);
-							shutdown(socket_inbound_client,SHUT_RDWR);
-							close(socket_inbound_client);
-							return 0;
+							packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
 						}
-						else if(dstconnect_status==2)
+						else if(inbound_info.nextstate==2)
 						{
-							if(inbound_info.nextstate==1)
-							{
-								packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
-							}
-							else if(inbound_info.nextstate==2)
-							{
-								packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
-							}
-							send(socket_inbound_client,rewrited,packlen_rewrited,0);
-							shutdown(socket_inbound_client,SHUT_RDWR);
-							close(socket_inbound_client);
-							return 0;
+							packlen_rewrited=make_kickreason("Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.",rewrited);
 						}
+						send(socket_inbound_client,rewrited,packlen_rewrited,0);
+						shutdown(socket_inbound_client,SHUT_RDWR);
+						close(socket_inbound_client);
+						return 0;
+					}
+					else if(dstconnect_status==2)
+					{
+						if(inbound_info.nextstate==1)
+						{
+							packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
+						}
+						else if(inbound_info.nextstate==2)
+						{
+							packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
+						}
+						send(socket_inbound_client,rewrited,packlen_rewrited,0);
+						shutdown(socket_inbound_client,SHUT_RDWR);
+						close(socket_inbound_client);
+						return 0;
+					}
 				}
 			}
 			fclose(logfd);

@@ -39,6 +39,18 @@ int dstconnect(int dst_type, char * dst_addr, unsigned short dst_port, int * dst
 				}
 			}
 		}
+		else
+		{
+			struct sockaddr_in conninfo=genSockConf(AF_INET,htonl(inet_addr(dst_addr)),dst_port);
+			if(connect(*dst_socket,(struct sockaddr*)&conninfo,sizeof(struct sockaddr))==-1)
+			{
+				return 2;
+			}
+			else
+			{
+				return 0;
+			}
+		}
 	}
 	else if(dst_type==TYPE_UNIX)
 	{
