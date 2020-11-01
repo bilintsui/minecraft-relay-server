@@ -2,7 +2,8 @@
 	basic.h: Basic Functions for Minecraft Relay Server
 	A component of Minecraft Relay Server.
 	
-	Minecraft Relay Server, version 1.1-beta2
+	
+	Minecraft Relay Server, version 1.1-beta3
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -140,24 +141,6 @@ int datcat(char * dst, int dst_size, char * src, int src_size)
 	total_size=dst_size+src_size;
 	return total_size;
 }
-char ** getaddresses(char * hostname)
-{
-	struct hostent * resolve_result;
-	resolve_result = gethostbyname2(hostname,AF_INET);
-	if(resolve_result == NULL)
-	{
-		return NULL;
-	}
-	return (resolve_result->h_addr_list);
-}
-struct sockaddr_in genSockConf(unsigned short family, unsigned long addr, unsigned short port)
-{
-	struct sockaddr_in result;
-	result.sin_family=family;
-	result.sin_addr.s_addr=htonl(addr);
-	result.sin_port=htons(port);
-	return result;
-}
 int handshake_protocol_identify(unsigned char * source, unsigned int length)
 {
 	int protocol_version=0;
@@ -270,4 +253,19 @@ unsigned char * strsplit(unsigned char * string, char delim, unsigned char * fir
 		firstfield[recidx]=string[recidx];
 	}
 	return ptr_string;
+}
+int strsplit_fieldcount(unsigned char * string, char delim)
+{
+	int recidx,count;
+	unsigned char * ptr_string=string;
+	count=1;
+	for(recidx=0;recidx<strlen(string);recidx++)
+	{
+		if(*ptr_string==delim)
+		{
+			count++;
+		}
+		ptr_string++;
+	}
+	return count;
 }

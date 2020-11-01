@@ -1,8 +1,9 @@
 /*
 	mcrelay.c: Main source code for Minecraft Relay Server
 	A component of Minecraft Relay Server.
+	
 
-	Minecraft Relay Server, version 1.1-beta2
+	Minecraft Relay Server, version 1.1-beta3
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -30,7 +31,7 @@ int main(int argc, char * argv[])
 	struct conf config;
 	unsigned short bindport,connport;
 	connip_resolved=0;
-	printf("Minecraft Relay Server [Version:1.1-beta2]\n(C) 2020 Bilin Tsui. All rights reserved.\n\n");
+	printf("Minecraft Relay Server [Version:1.1-beta3]\n(C) 2020 Bilin Tsui. All rights reserved.\n\n");
 	if(argc!=2)
 	{
 		printf("Usage: %s config_file\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",argv[0]);
@@ -159,6 +160,15 @@ int main(int argc, char * argv[])
 						int dstconnect_status;
 						if(proxyinfo->to_type==TYPE_INET)
 						{
+							if(proxyinfo->to_inet_hybridmode==1)
+							{
+								struct srvrec srvrec[128];
+								if(getsrvrecord(proxyinfo->to_inet_addr,srvrec)>0)
+								{
+									strcpy(proxyinfo->to_inet_addr,srvrec[0].target);
+									proxyinfo->to_inet_port=srvrec[0].port;
+								}
+							}
 							dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,&socket_outbound);
 						}
 						else if(proxyinfo->to_type==TYPE_UNIX)
@@ -242,6 +252,15 @@ int main(int argc, char * argv[])
 						int dstconnect_status;
 						if(proxyinfo->to_type==TYPE_INET)
 						{
+							if(proxyinfo->to_inet_hybridmode==1)
+							{
+								struct srvrec srvrec[128];
+								if(getsrvrecord(proxyinfo->to_inet_addr,srvrec)>0)
+								{
+									strcpy(proxyinfo->to_inet_addr,srvrec[0].target);
+									proxyinfo->to_inet_port=srvrec[0].port;
+								}
+							}
 							dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,&socket_outbound);
 						}
 						else if(proxyinfo->to_type==TYPE_UNIX)
@@ -337,6 +356,15 @@ int main(int argc, char * argv[])
 					int dstconnect_status;
 					if(proxyinfo->to_type==TYPE_INET)
 					{
+						if(proxyinfo->to_inet_hybridmode==1)
+						{
+							struct srvrec srvrec[128];
+							if(getsrvrecord(proxyinfo->to_inet_addr,srvrec)>0)
+							{
+								strcpy(proxyinfo->to_inet_addr,srvrec[0].target);
+								proxyinfo->to_inet_port=srvrec[0].port;
+							}
+						}
 						dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,&socket_outbound);
 					}
 					else if(proxyinfo->to_type==TYPE_UNIX)

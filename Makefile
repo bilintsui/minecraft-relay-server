@@ -1,2 +1,2 @@
 mcrelay:
-	gcc -o mcrelay mcrelay.c
+	gcc -o mcrelay mcrelay.c -lresolv

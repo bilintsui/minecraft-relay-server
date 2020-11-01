@@ -11,6 +11,7 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!<br/>
 
 ## Requirements
 * Linux
+* libresolv.so
 
 ## Compatibility
 **Due to Minecraft Handshake restrictions, this server supports:**<br/>
@@ -25,7 +26,7 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!<br/>
 
 ## Compile
 <pre>
-gcc -o mcrelay mcrelay.c
+gcc -o mcrelay mcrelay.c -lresolv
 </pre>
 or
 <pre>
@@ -53,15 +54,18 @@ proxy_pass proxy_type
 * bind: set bind information.
 >* bind_object: (format: "address:port" or "unix:path") default: "0.0.0.0:25565".
 >>* address: the address you wish to bind as an Internet Service. Only x.x.x.x allowed.
->>* port: the address you wish to bind as an Internet Service. Valid range: 1-65535.
+>>* port: the port you wish to bind as an Internet Service. Valid range: 1-65535.
 >>* path: the socket file you wish to bind as an UNIX Socket.
 * proxy_pass: list of relay/relay+rewrites.
 >* proxy_type: type of proxies, "relay" for raw relay, "rewrite" for relay with server address camouflage enabled.
 >* ident_name: name of destination identification. Usually a Fully Qualified Domain Name(FQDN) by CNAME to your server.
->* destination_object: (format: "address_d:port" or "unix:path")
->>* address_d: the address you wish to bind as an Internet Service. Both FQDN or x.x.x.x allowed.
->>* port: the address you wish to bind as an Internet Service. Valid range: 1-65535.
->>* path: the socket file you wish to bind as an UNIX Socket.
+>* destination_object: (format: "address_d[:port]" or "unix:path")
+>>* address_d: the address you wish to connect. Both FQDN or x.x.x.x allowed.
+>>* port: optional, the port you wish to connect. Valid range: 1-65535.<br/>
+If not set, the server will detect SRV record first(defined in address_d).<br/>
+If SRV record resolve failed, it will fallback to normal address resolve, also connect to this address with port 25565.<br/>
+**For rewrite enabled relay, it will use actual connect configuration to rewrite.**
+>>* path: the socket file you wish to connect.
 ### Example
 <pre>
 log /var/log/mcrelay/mcrelay.log
