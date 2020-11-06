@@ -20,36 +20,157 @@
 #include "mod/network.h"
 #include "mod/proto_legacy.h"
 #include "mod/proto_modern.h"
-int main(int argc, char * argv[])
+struct conf config;
+char configfile[512],cwd[512],config_logfull[BUFSIZ];
+void deal_sigterm()
 {
-	char str[INET_ADDRSTRLEN],time_str[32];
+	unlink("/tmp/mcrelay.pid");
+	exit(0);
+}
+void deal_sigusr1()
+{
+	struct conf config_new;
+	char time_str[32],configfile_full[BUFSIZ];
+	FILE * logfd=fopen(config_logfull,"a");
+	bzero(time_str,32);
+	gettime(time_str);
+	fprintf(logfd,"[%s] [INFO] Reload config from file: %s\n",time_str,configfile);
+	bzero(configfile_full,BUFSIZ);
+	sprintf(configfile_full,"%s/%s",cwd,configfile);
+	switch(config_load(configfile_full,&config_new))
+	{
+		case 1:
+			fprintf(logfd,"[%s] [WARN] Cannot read config file: %s, will keep your old configurations.\n",time_str,configfile);
+			break;
+		case 2:
+			fprintf(logfd,"[%s] [WARN] Error in configurations: Argument \"log\" is missing, will keep your old configurations.\n",time_str);
+			break;
+		case 3:
+			fprintf(logfd,"[%s] [WARN] Error in configurations: Argument \"bind\" is missing or invalid, will keep your old configurations.\n",time_str);
+			break;
+		case 4:
+			fprintf(logfd,"[%s] [WARN] Error in configurations: You don't have any valid record for relay, will keep your old configurations.\n",time_str);
+			break;
+	}
+	config=config_new;
+	if(config.log[0]!='/')
+	{
+		sprintf(config_logfull,"%s/%s",cwd,config.log);
+	}
+	else
+	{
+		sprintf(config_logfull,"%s",config.log);
+	}
+	fprintf(logfd,"[%s] [INFO] Configuration reloaded.\n",time_str);
+	fclose(logfd);
+}
+int main(int argc, char ** argv)
+{
+	char time_str[32];
 	char *bindip,*connip;
 	char **addresses;
 	int socket_inbound_server,strulen,socket_inbound_client,connip_resolved;
 	struct sockaddr_in addr_inbound_server,addr_inbound_client;
 	struct sockaddr_un uddr_inbound_server,uddr_inbound_client;
-	struct conf config;
 	unsigned short bindport,connport;
+	signal(SIGTERM,deal_sigterm);
 	connip_resolved=0;
-	printf("Minecraft Relay Server [Version:1.1-beta3]\n(C) 2020 Bilin Tsui. All rights reserved.\n\n");
+	bzero(cwd,512);
+	getcwd(cwd,512);
 	if(argc!=2)
 	{
-		printf("Usage: %s config_file\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",argv[0]);
-		return 1;
+		printf("Minecraft Relay Server [Version:1.1-beta3]\n(C) 2020 Bilin Tsui. All rights reserved.\n\nUsage: %s <arguments|config_file>\n\nArguments\n\t-r:\tReload config on the running instance.\n\t-t:\tTerminate the running instance\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",argv[0]);
+		return 22;
 	}
+	FILE * pidfd=fopen("/tmp/mcrelay.pid","r");
+	int prevpid;
+	char * ptr_argv1=argv[1];
+	if(*ptr_argv1=='-')
+	{
+		ptr_argv1++;
+		if(strcmp(ptr_argv1,"r")==0)
+		{
+			if(pidfd==NULL)
+			{
+				printf("[CRIT] Error: Cannot read /tmp/mcrelay.pid.\n");
+				return 2;
+			}
+			fscanf(pidfd,"%d",&prevpid);
+			fclose(pidfd);
+			if(kill(prevpid,SIGUSR1)==0)
+			{
+				printf("[INFO] Successfully send reload signal to currently running process.\n");
+				return 0;
+			}
+			else
+			{
+				printf("[CRIT] Failed on send reload signal to currently running process.\n");
+				return 3;
+			}
+		}
+		else if(strcmp(ptr_argv1,"t")==0)
+		{
+			if(pidfd==NULL)
+			{
+				printf("[CRIT] Error: Cannot read /tmp/mcrelay.pid.\n");
+				return 2;
+			}
+			fscanf(pidfd,"%d",&prevpid);
+			fclose(pidfd);
+			if(kill(prevpid,SIGTERM)==0)
+			{
+				printf("[INFO] Successfully send terminate signal to currently running process.\n");
+				return 0;
+			}
+			else
+			{
+				printf("[CRIT] Failed on send terminate signal to currently running process.\n");
+				return 3;
+			}
+		}
+	}
+	else
+	{
+		if(pidfd!=NULL)
+		{
+			fscanf(pidfd,"%d",&prevpid);
+			if(kill(prevpid,0)==0)
+			{
+				printf("[CRIT] You cannot running multiple instances in one time. Previous running process PID: %d.\n",prevpid);
+				return 1;
+			}
+		}
+	}
+	printf("Minecraft Relay Server [Version:1.1-beta3]\n(C) 2020 Bilin Tsui. All rights reserved.\n\n");
 	bindip="0.0.0.0";
 	bindport=25565;
-	printf("[INFO] Loading configurations from file: %s\n\n",argv[1]);
-	config=config_load(argv[1]);
+	bzero(configfile,512);
+	strcpy(configfile,argv[1]);
+	printf("[INFO] Loading configurations from file: %s\n\n",configfile);
+	switch(config_load(configfile,&config))
+	{
+		case 1:
+			printf("[CRIT] Cannot read config file: %s\n",configfile);
+			return 2;
+		case 2:
+			printf("[CRIT] Error in configurations: Argument \"log\" is missing.\n");
+			return 22;
+		case 3:
+			printf("[CRIT] Error in configurations: Argument \"bind\" is missing or invalid.\n");
+			return 22;
+		case 4:
+			printf("[CRIT] Error in configurations: You don't have any valid record for relay.\n");
+			return 22;
+	}
 	if(config.log[0]!='/')
 	{
-		char cwd[512],log_full[BUFSIZ];
-		bzero(cwd,512);
-		bzero(log_full,BUFSIZ);
-		getcwd(cwd,BUFSIZ);
-		sprintf(log_full,"%s/%s",cwd,config.log);
-		strcpy(config.log,log_full);
+		sprintf(config_logfull,"%s/%s",cwd,config.log);
 	}
+	else
+	{
+		sprintf(config_logfull,"%s",config.log);
+	}
+	signal(SIGUSR1,deal_sigusr1);
 	if(config.bind.type==TYPE_INET)
 	{
 		if(inet_addr(config.bind.inet_addr)==-1)
@@ -92,6 +213,9 @@ int main(int argc, char * argv[])
 	pid=fork();
 	if(pid>0)
 	{
+		FILE * pidfd=fopen("/tmp/mcrelay.pid","w");
+		fprintf(pidfd,"%d",pid);
+		fclose(pidfd);
 		printf("[INFO] Server running on PID: %d\n",pid);
 		exit(0);
 	}
@@ -105,7 +229,7 @@ int main(int argc, char * argv[])
 	fclose(stderr);
 	chdir("/");
 	umask(0);
-	signal(SIGCHLD, SIG_IGN);
+	signal(SIGCHLD,SIG_IGN);
 	while(1)
 	{
 		while(listen(socket_inbound_server,1)==-1);
@@ -130,6 +254,7 @@ int main(int argc, char * argv[])
 		}
 		else
 		{
+			signal(SIGUSR1,SIG_DFL);
 			close(socket_inbound_server);
 			unsigned char inbound[BUFSIZ],outbound[BUFSIZ],rewrited[BUFSIZ];
 			int socket_outbound,packlen_inbound,packlen_outbound,packlen_rewrited;
@@ -139,7 +264,7 @@ int main(int argc, char * argv[])
 			bzero(outbound,BUFSIZ);
 			bzero(rewrited,BUFSIZ);
 			packlen_inbound=recv(socket_inbound_client,inbound,BUFSIZ,0);
-			FILE * logfd=fopen(config.log,"a");
+			FILE * logfd=fopen(config_logfull,"a");
 			if(inbound[0]==0xFE)
 			{
 				int motd_version=legacy_motd_protocol_identify(inbound);
@@ -181,7 +306,7 @@ int main(int argc, char * argv[])
 							send(socket_inbound_client,rewrited,packlen_rewrited,0);
 							shutdown(socket_inbound_client,SHUT_RDWR);
 							close(socket_inbound_client);
-							return 3;
+							return 0;
 						}
 						else
 						{

@@ -8,7 +8,10 @@ User=nobody
 Group=nogroup
 Restart=on-failure
 RestartSec=5s
+PID=/tmp/mcrelay.pid
 ExecStart=/usr/bin/mcrelay /etc/mcrelay/mcrelay.conf
+ExecStop=/usr/bin/mcrelay -t
+ExecReload=/usr/bin/mcrelay -r
 
 [Install]
 WantedBy=multi-user.target

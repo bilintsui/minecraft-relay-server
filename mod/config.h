@@ -34,7 +34,7 @@ struct conf
 	int relay_count;
 	struct conf_map relay[128];
 };
-struct conf config_load(char * filename)
+int config_load(char * filename, struct conf * result)
 {
 	char rec_char,buffer[128][BUFSIZ],tmp_buffer[BUFSIZ],key[512],value[512],key2[512],value2[512],key3[512],value3[512];
 	char * tmpptr;
@@ -42,12 +42,10 @@ struct conf config_load(char * filename)
 	int line_count=0;
 	int rec_relay=0;
 	int sscanf_status;
-	struct conf result;
 	FILE * conffd=fopen(filename,"r");
 	if(conffd==NULL)
 	{
-		printf("[CRIT] Cannot read config file: %s\n",filename);
-		exit(2);
+		return 1;
 	}
 	unsigned char charnow[2];
 	charnow[1]='\0';
@@ -78,7 +76,7 @@ struct conf config_load(char * filename)
 		tmpptr=strsplit(tmpptr,' ',value);
 		if(strcmp(key,"log")==0)
 		{
-			strcpy(result.log,value);
+			strcpy(result->log,value);
 		}
 		else if(strcmp(key,"bind")==0)
 		{
@@ -87,14 +85,14 @@ struct conf config_load(char * filename)
 			tmpptr=strsplit(tmpptr,':',value2);
 			if(strcmp(key2,"unix")==0)
 			{
-				result.bind.type=TYPE_UNIX;
-				strcpy(result.bind.unix_path,value2);
+				result->bind.type=TYPE_UNIX;
+				strcpy(result->bind.unix_path,value2);
 			}
 			else
 			{
-				result.bind.type=TYPE_INET;
-				strcpy(result.bind.inet_addr,key2);
-				result.bind.inet_port=atoi(value2);
+				result->bind.type=TYPE_INET;
+				strcpy(result->bind.inet_addr,key2);
+				result->bind.inet_port=atoi(value2);
 			}
 		}
 		else if(strcmp(key,"proxy_pass")==0)
@@ -117,37 +115,37 @@ struct conf config_load(char * filename)
 			while(*tmpptr=='\t')
 			{
 				tmpptr++;
-				result.relay[rec_relay].enable_rewrite=enable_rewrite;
+				result->relay[rec_relay].enable_rewrite=enable_rewrite;
 				if(strsplit_fieldcount(tmpptr,' ')!=2)
 				{
 					line_reccount++;
 					strcpy(tmp_buffer,buffer[line_reccount+1]);
 					continue;
 				}
-				tmpptr=strsplit(tmpptr,' ',result.relay[rec_relay].from);
+				tmpptr=strsplit(tmpptr,' ',result->relay[rec_relay].from);
 				if(strsplit_fieldcount(tmpptr,':')==1)
 				{
-					result.relay[rec_relay].to_type=TYPE_INET;
-					result.relay[rec_relay].to_inet_hybridmode=1;
-					tmpptr=strsplit(tmpptr,':',result.relay[rec_relay].to_inet_addr);
-					result.relay[rec_relay].to_inet_port=25565;
+					result->relay[rec_relay].to_type=TYPE_INET;
+					result->relay[rec_relay].to_inet_hybridmode=1;
+					tmpptr=strsplit(tmpptr,':',result->relay[rec_relay].to_inet_addr);
+					result->relay[rec_relay].to_inet_port=25565;
 					rec_relay++;
 					line_reccount++;
 					strcpy(tmp_buffer,buffer[line_reccount+1]);
 					continue;
 				}
-				result.relay[rec_relay].to_inet_hybridmode=0;
+				result->relay[rec_relay].to_inet_hybridmode=0;
 				tmpptr=strsplit(tmpptr,':',key3);
 				tmpptr=strsplit(tmpptr,':',value3);
 				if(strcmp(key3,"unix")==0)
 				{
-					result.relay[rec_relay].to_type=TYPE_UNIX;
-					strcpy(result.relay[rec_relay].to_unix_path,value3);
+					result->relay[rec_relay].to_type=TYPE_UNIX;
+					strcpy(result->relay[rec_relay].to_unix_path,value3);
 				}
 				else
 				{
-					result.relay[rec_relay].to_type=TYPE_INET;
-					strcpy(result.relay[rec_relay].to_inet_addr,key3);
+					result->relay[rec_relay].to_type=TYPE_INET;
+					strcpy(result->relay[rec_relay].to_inet_addr,key3);
 					if((atoi(value3)<1)||(atoi(value3)>65535))
 					{
 						line_reccount++;
@@ -156,32 +154,29 @@ struct conf config_load(char * filename)
 					}
 					else
 					{
-						result.relay[rec_relay].to_inet_port=atoi(value3);
+						result->relay[rec_relay].to_inet_port=atoi(value3);
 					}
 				}
 				rec_relay++;
 				line_reccount++;
 				strcpy(tmp_buffer,buffer[line_reccount+1]);
 			}
-			result.relay_count=rec_relay;
+			result->relay_count=rec_relay;
 		}
 	}
-	if(strcmp(result.log,"")==0)
+	if(strcmp(result->log,"")==0)
 	{
-		printf("[CRIT] Error in configurations: Argument \"log\" is missing.\n");
-		exit(22);
+		return 2;
 	}
-	if(!((strcmp(result.bind.unix_path,"")!=0)||((strcmp(result.bind.inet_addr,"")!=0)&&(result.bind.inet_port!=0))))
+	if(!((strcmp(result->bind.unix_path,"")!=0)||((strcmp(result->bind.inet_addr,"")!=0)&&(result->bind.inet_port!=0))))
 	{
-		printf("[CRIT] Error in configurations: Argument \"bind\" is missing or invalid.\n");
-		exit(22);
+		return 3;
 	}
-	if(result.relay_count==0)
+	if(result->relay_count==0)
 	{
-		printf("[CRIT] Error in configurations: You don't have any valid record for relay.\n");
-		exit(22);
+		return 4;
 	}
-	return result;
+	return 0;
 }
 struct conf_map * getproxyinfo(struct conf * source, unsigned char * proxyname)
 {
