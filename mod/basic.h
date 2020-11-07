@@ -10,8 +10,6 @@
 	It basically means you have free rights for uncommerical use and modify, also restricted you to comply the license, whether part of original release or modified part by you.
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
-#include <arpa/inet.h>
-#include <netdb.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>

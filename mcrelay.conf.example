@@ -1,3 +1,4 @@
+runmode run_mode
 log logfile_path
 bind bind_object
 proxy_pass proxy_type

@@ -1,5 +1,5 @@
 /*
-	proto_modern.h: Functions for Modern Protocol (13w41a+) on Minecraft Relay Server
+	proto_modern.h: Functions for Modern Protocol (13w41a and later) on Minecraft Relay Server
 	A component of Minecraft Relay Server.
 	Requires: mod/basic.h, please manually include it in main source code.
 	

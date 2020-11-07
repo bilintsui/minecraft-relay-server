@@ -10,11 +10,7 @@
 	It basically means you have free rights for uncommerical use and modify, also restricted you to comply the license, whether part of original release or modified part by you.
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
-#include <signal.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
 #include "mod/basic.h"
 #include "mod/config.h"
 #include "mod/network.h"
@@ -39,29 +35,34 @@ void deal_sigusr1()
 	sprintf(configfile_full,"%s/%s",cwd,configfile);
 	switch(config_load(configfile_full,&config_new))
 	{
+		case 0:
+			config=config_new;
+			if(config.log[0]!='/')
+			{
+				sprintf(config_logfull,"%s/%s",cwd,config.log);
+			}
+			else
+			{
+				sprintf(config_logfull,"%s",config.log);
+			}
+			fprintf(logfd,"[%s] [INFO] Configuration reloaded.\n",time_str);
+			break;
 		case 1:
 			fprintf(logfd,"[%s] [WARN] Cannot read config file: %s, will keep your old configurations.\n",time_str,configfile);
 			break;
 		case 2:
-			fprintf(logfd,"[%s] [WARN] Error in configurations: Argument \"log\" is missing, will keep your old configurations.\n",time_str);
+			fprintf(logfd,"[%s] [WARN] Error in configurations: Argument \"runmode\" is missing, will keep your old configurations.\n",time_str);
 			break;
 		case 3:
-			fprintf(logfd,"[%s] [WARN] Error in configurations: Argument \"bind\" is missing or invalid, will keep your old configurations.\n",time_str);
+			fprintf(logfd,"[%s] [WARN] Error in configurations: Argument \"log\" is missing, will keep your old configurations.\n",time_str);
 			break;
 		case 4:
+			fprintf(logfd,"[%s] [WARN] Error in configurations: Argument \"bind\" is missing or invalid, will keep your old configurations.\n",time_str);
+			break;
+		case 5:
 			fprintf(logfd,"[%s] [WARN] Error in configurations: You don't have any valid record for relay, will keep your old configurations.\n",time_str);
 			break;
 	}
-	config=config_new;
-	if(config.log[0]!='/')
-	{
-		sprintf(config_logfull,"%s/%s",cwd,config.log);
-	}
-	else
-	{
-		sprintf(config_logfull,"%s",config.log);
-	}
-	fprintf(logfd,"[%s] [INFO] Configuration reloaded.\n",time_str);
 	fclose(logfd);
 }
 int main(int argc, char ** argv)
@@ -74,12 +75,13 @@ int main(int argc, char ** argv)
 	struct sockaddr_un uddr_inbound_server,uddr_inbound_client;
 	unsigned short bindport,connport;
 	signal(SIGTERM,deal_sigterm);
+	signal(SIGINT,deal_sigterm);
 	connip_resolved=0;
 	bzero(cwd,512);
 	getcwd(cwd,512);
 	if(argc!=2)
 	{
-		printf("Minecraft Relay Server [Version:1.1-beta3]\n(C) 2020 Bilin Tsui. All rights reserved.\n\nUsage: %s <arguments|config_file>\n\nArguments\n\t-r:\tReload config on the running instance.\n\t-t:\tTerminate the running instance\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",argv[0]);
+		fprintf(stderr,"Minecraft Relay Server [Version:1.1-beta3]\n(C) 2020 Bilin Tsui. All rights reserved.\n\nUsage: %s <arguments|config_file>\n\nArguments\n\t-r:\tReload config on the running instance.\n\t-t:\tTerminate the running instance\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",argv[0]);
 		return 22;
 	}
 	FILE * pidfd=fopen("/tmp/mcrelay.pid","r");
@@ -92,7 +94,7 @@ int main(int argc, char ** argv)
 		{
 			if(pidfd==NULL)
 			{
-				printf("[CRIT] Error: Cannot read /tmp/mcrelay.pid.\n");
+				fprintf(stderr,"[CRIT] Error: Cannot read /tmp/mcrelay.pid.\n");
 				return 2;
 			}
 			fscanf(pidfd,"%d",&prevpid);
@@ -104,7 +106,7 @@ int main(int argc, char ** argv)
 			}
 			else
 			{
-				printf("[CRIT] Failed on send reload signal to currently running process.\n");
+				fprintf(stderr,"[CRIT] Failed on send reload signal to currently running process.\n");
 				return 3;
 			}
 		}
@@ -112,19 +114,19 @@ int main(int argc, char ** argv)
 		{
 			if(pidfd==NULL)
 			{
-				printf("[CRIT] Error: Cannot read /tmp/mcrelay.pid.\n");
+				fprintf(stderr,"[CRIT] Error: Cannot read /tmp/mcrelay.pid.\n");
 				return 2;
 			}
 			fscanf(pidfd,"%d",&prevpid);
 			fclose(pidfd);
 			if(kill(prevpid,SIGTERM)==0)
 			{
-				printf("[INFO] Successfully send terminate signal to currently running process.\n");
+				fprintf(stdout,"[INFO] Successfully send terminate signal to currently running process.\n");
 				return 0;
 			}
 			else
 			{
-				printf("[CRIT] Failed on send terminate signal to currently running process.\n");
+				fprintf(stderr,"[CRIT] Failed on send terminate signal to currently running process.\n");
 				return 3;
 			}
 		}
@@ -136,46 +138,50 @@ int main(int argc, char ** argv)
 			fscanf(pidfd,"%d",&prevpid);
 			if(kill(prevpid,0)==0)
 			{
-				printf("[CRIT] You cannot running multiple instances in one time. Previous running process PID: %d.\n",prevpid);
+				fprintf(stderr,"[CRIT] You cannot running multiple instances in one time. Previous running process PID: %d.\n",prevpid);
 				return 1;
 			}
 		}
 	}
-	printf("Minecraft Relay Server [Version:1.1-beta3]\n(C) 2020 Bilin Tsui. All rights reserved.\n\n");
+	fprintf(stdout,"Minecraft Relay Server [Version:1.1-beta3]\n(C) 2020 Bilin Tsui. All rights reserved.\n\n");
 	bindip="0.0.0.0";
 	bindport=25565;
 	bzero(configfile,512);
 	strcpy(configfile,argv[1]);
-	printf("[INFO] Loading configurations from file: %s\n\n",configfile);
+	fprintf(stdout,"[INFO] Loading configurations from file: %s\n\n",configfile);
 	switch(config_load(configfile,&config))
 	{
+		case 0:
+			if(config.log[0]!='/')
+			{
+				sprintf(config_logfull,"%s/%s",cwd,config.log);
+			}
+			else
+			{
+				sprintf(config_logfull,"%s",config.log);
+			}
+			break;
 		case 1:
-			printf("[CRIT] Cannot read config file: %s\n",configfile);
+			fprintf(stderr,"[CRIT] Cannot read config file: %s\n",configfile);
 			return 2;
 		case 2:
-			printf("[CRIT] Error in configurations: Argument \"log\" is missing.\n");
+			fprintf(stderr,"[CRIT] Error in configurations: Argument \"runmode\" is missing.\n");
 			return 22;
 		case 3:
-			printf("[CRIT] Error in configurations: Argument \"bind\" is missing or invalid.\n");
+			fprintf(stderr,"[CRIT] Error in configurations: Argument \"log\" is missing.\n");
 			return 22;
 		case 4:
-			printf("[CRIT] Error in configurations: You don't have any valid record for relay.\n");
+			fprintf(stderr,"[CRIT] Error in configurations: Argument \"bind\" is missing or invalid.\n");
+			return 22;
+		case 5:
+			fprintf(stderr,"[CRIT] Error in configurations: You don't have any valid record for relay.\n");
 			return 22;
 	}
-	if(config.log[0]!='/')
-	{
-		sprintf(config_logfull,"%s/%s",cwd,config.log);
-	}
-	else
-	{
-		sprintf(config_logfull,"%s",config.log);
-	}
-	signal(SIGUSR1,deal_sigusr1);
 	if(config.bind.type==TYPE_INET)
 	{
 		if(inet_addr(config.bind.inet_addr)==-1)
 		{
-			printf("[WARN] Bad argument: bind_address. Use default address %s.\n",bindip);
+			fprintf(stdout,"[WARN] Bad argument: bind_address. Use default address %s.\n",bindip);
 		}
 		else
 		{
@@ -183,52 +189,62 @@ int main(int argc, char ** argv)
 		}
 		if((config.bind.inet_port<1)||(config.bind.inet_port>65535))
 		{
-			printf("[WARN] Bad argument: bind_port. Use default port %d.\n",bindport);
+			fprintf(stdout,"[WARN] Bad argument: bind_port. Use default port %d.\n",bindport);
 		}
 		else
 		{
 			bindport=config.bind.inet_port;
 		}
 		socket_inbound_server=socket(AF_INET,SOCK_STREAM,0);
-		addr_inbound_server=genSockConf(AF_INET,htonl(inet_addr(bindip)),bindport);
+		addr_inbound_server=net_mksockaddr_in(AF_INET,htonl(inet_addr(bindip)),bindport);
 		strulen=sizeof(struct sockaddr_in);
-		printf("[INFO] Binding on %s:%d...\n",inet_ntoa(addr_inbound_server.sin_addr),ntohs(addr_inbound_server.sin_port));
-		if(bind(socket_inbound_server,(struct sockaddr *)&addr_inbound_server,strulen)==-1){printf("[CRIT] Bind Failed!\n");return 2;}
-		printf("[INFO] Bind Successful.\n\n");
+		fprintf(stdout,"[INFO] Binding on %s:%d...\n",inet_ntoa(addr_inbound_server.sin_addr),ntohs(addr_inbound_server.sin_port));
+		if(bind(socket_inbound_server,(struct sockaddr *)&addr_inbound_server,strulen)==-1){fprintf(stderr,"[CRIT] Bind Failed!\n");return 2;}
+		fprintf(stdout,"[INFO] Bind Successful.\n\n");
 	}
 	else if(config.bind.type==TYPE_UNIX)
 	{
 		unlink(config.bind.unix_path);
 		socket_inbound_server=socket(AF_UNIX,SOCK_STREAM,0);
-		uddr_inbound_server.sun_family=AF_UNIX;
-		strcpy(uddr_inbound_server.sun_path,config.bind.unix_path);
+		uddr_inbound_server=net_mksockaddr_un(config.bind.unix_path);
 		strulen=sizeof(uddr_inbound_server);
-		printf("[INFO] Binding on %s...\n",uddr_inbound_server.sun_path);
-		if(bind(socket_inbound_server,(struct sockaddr *)&uddr_inbound_server,strulen)==-1){printf("[CRIT] Bind Failed!\n");return 2;}
-		if(chmod(config.bind.unix_path,S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH)==-1){printf("[CRIT] Set Permission Failed!\n");return 13;}
-		printf("[INFO] Bind Successful.\n\n");
+		fprintf(stdout,"[INFO] Binding on %s...\n",uddr_inbound_server.sun_path);
+		if(bind(socket_inbound_server,(struct sockaddr *)&uddr_inbound_server,strulen)==-1){fprintf(stderr,"[CRIT] Bind Failed!\n");return 2;}
+		if(chmod(config.bind.unix_path,S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH)==-1){fprintf(stderr,"[CRIT] Set Permission Failed!\n");return 13;}
+		fprintf(stdout,"[INFO] Bind Successful.\n\n");
 	}
-	printf("[INFO] For more information, watch log file: %s\n",config.log);
+	fprintf(stdout,"[INFO] For more information, watch log file: %s\n",config.log);
 	int pid;
-	pid=fork();
-	if(pid>0)
+	if(config.runmode==2)
 	{
+		pid=fork();
+		if(pid>0)
+		{
+			FILE * pidfd=fopen("/tmp/mcrelay.pid","w");
+			fprintf(pidfd,"%d",pid);
+			fclose(pidfd);
+			fprintf(stdout,"[INFO] Server running on PID: %d\n",pid);
+			return 0;
+		}
+		else if(pid<0)
+		{
+			return 10;
+		}
+		setsid();
+		fclose(stdin);
+		fclose(stdout);
+		fclose(stderr);
+		chdir("/");
+		umask(0);
+	}
+	else
+	{
+		pid=getpid();
 		FILE * pidfd=fopen("/tmp/mcrelay.pid","w");
 		fprintf(pidfd,"%d",pid);
 		fclose(pidfd);
-		printf("[INFO] Server running on PID: %d\n",pid);
-		exit(0);
 	}
-	else if(pid<0)
-	{
-		exit(10);
-	}
-	setsid();
-	fclose(stdin);
-	fclose(stdout);
-	fclose(stderr);
-	chdir("/");
-	umask(0);
+	signal(SIGUSR1,deal_sigusr1);
 	signal(SIGCHLD,SIG_IGN);
 	while(1)
 	{
@@ -282,25 +298,25 @@ int main(int argc, char ** argv)
 					}
 					else
 					{
-						int dstconnect_status;
+						int mkoutbound_status;
 						if(proxyinfo->to_type==TYPE_INET)
 						{
 							if(proxyinfo->to_inet_hybridmode==1)
 							{
-								struct srvrec srvrec[128];
-								if(getsrvrecord(proxyinfo->to_inet_addr,srvrec)>0)
+								struct stru_net_srvrecord srvrecords[128];
+								if(net_srvresolve(proxyinfo->to_inet_addr,srvrecords)>0)
 								{
-									strcpy(proxyinfo->to_inet_addr,srvrec[0].target);
-									proxyinfo->to_inet_port=srvrec[0].port;
+									strcpy(proxyinfo->to_inet_addr,srvrecords[0].target);
+									proxyinfo->to_inet_port=srvrecords[0].port;
 								}
 							}
-							dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,&socket_outbound);
+							mkoutbound_status=net_mkoutbound(proxyinfo->to_type,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,&socket_outbound);
 						}
 						else if(proxyinfo->to_type==TYPE_UNIX)
 						{
-							dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_unix_path,0,&socket_outbound);
+							mkoutbound_status=net_mkoutbound(proxyinfo->to_type,proxyinfo->to_unix_path,0,&socket_outbound);
 						}
-						if(dstconnect_status!=0)
+						if(mkoutbound_status!=0)
 						{
 							packlen_rewrited=make_motd_legacy(inbound_info.version,"[Proxy] Server Temporary Unavailable.",motd_version,rewrited);
 							send(socket_inbound_client,rewrited,packlen_rewrited,0);
@@ -374,25 +390,25 @@ int main(int argc, char ** argv)
 					}
 					else
 					{
-						int dstconnect_status;
+						int mkoutbound_status;
 						if(proxyinfo->to_type==TYPE_INET)
 						{
 							if(proxyinfo->to_inet_hybridmode==1)
 							{
-								struct srvrec srvrec[128];
-								if(getsrvrecord(proxyinfo->to_inet_addr,srvrec)>0)
+								struct stru_net_srvrecord srvrecords[128];
+								if(net_srvresolve(proxyinfo->to_inet_addr,srvrecords)>0)
 								{
-									strcpy(proxyinfo->to_inet_addr,srvrec[0].target);
-									proxyinfo->to_inet_port=srvrec[0].port;
+									strcpy(proxyinfo->to_inet_addr,srvrecords[0].target);
+									proxyinfo->to_inet_port=srvrecords[0].port;
 								}
 							}
-							dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,&socket_outbound);
+							mkoutbound_status=net_mkoutbound(proxyinfo->to_type,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,&socket_outbound);
 						}
 						else if(proxyinfo->to_type==TYPE_UNIX)
 						{
-							dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_unix_path,0,&socket_outbound);
+							mkoutbound_status=net_mkoutbound(proxyinfo->to_type,proxyinfo->to_unix_path,0,&socket_outbound);
 						}
-						if(dstconnect_status==0)
+						if(mkoutbound_status==0)
 						{
 							if(config.bind.type==TYPE_UNIX)
 							{
@@ -414,7 +430,7 @@ int main(int argc, char ** argv)
 								send(socket_outbound,inbound,packlen_inbound,0);
 							}
 						}
-						else if(dstconnect_status==1)
+						else if(mkoutbound_status==1)
 						{
 							packlen_rewrited=make_kickreason_legacy("Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.",rewrited);
 							send(socket_inbound_client,rewrited,packlen_rewrited,0);
@@ -422,7 +438,7 @@ int main(int argc, char ** argv)
 							close(socket_inbound_client);
 							return 0;
 						}
-						else if(dstconnect_status==2)
+						else if(mkoutbound_status==2)
 						{
 							packlen_rewrited=make_kickreason_legacy("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
 							send(socket_inbound_client,rewrited,packlen_rewrited,0);
@@ -478,25 +494,25 @@ int main(int argc, char ** argv)
 				}
 				else
 				{
-					int dstconnect_status;
+					int mkoutbound_status;
 					if(proxyinfo->to_type==TYPE_INET)
 					{
 						if(proxyinfo->to_inet_hybridmode==1)
 						{
-							struct srvrec srvrec[128];
-							if(getsrvrecord(proxyinfo->to_inet_addr,srvrec)>0)
+							struct stru_net_srvrecord srvrecords[128];
+							if(net_srvresolve(proxyinfo->to_inet_addr,srvrecords)>0)
 							{
-								strcpy(proxyinfo->to_inet_addr,srvrec[0].target);
-								proxyinfo->to_inet_port=srvrec[0].port;
+								strcpy(proxyinfo->to_inet_addr,srvrecords[0].target);
+								proxyinfo->to_inet_port=srvrecords[0].port;
 							}
 						}
-						dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,&socket_outbound);
+						mkoutbound_status=net_mkoutbound(proxyinfo->to_type,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,&socket_outbound);
 					}
 					else if(proxyinfo->to_type==TYPE_UNIX)
 					{
-						dstconnect_status=dstconnect(proxyinfo->to_type,proxyinfo->to_unix_path,0,&socket_outbound);
+						mkoutbound_status=net_mkoutbound(proxyinfo->to_type,proxyinfo->to_unix_path,0,&socket_outbound);
 					}
-					if(dstconnect_status==0)
+					if(mkoutbound_status==0)
 					{
 						if(inbound_info.nextstate==1)
 						{
@@ -533,7 +549,7 @@ int main(int argc, char ** argv)
 							send(socket_outbound,inbound,packlen_inbound,0);
 						}
 					}
-					else if(dstconnect_status==1)
+					else if(mkoutbound_status==1)
 					{
 						if(inbound_info.nextstate==1)
 						{
@@ -548,7 +564,7 @@ int main(int argc, char ** argv)
 						close(socket_inbound_client);
 						return 0;
 					}
-					else if(dstconnect_status==2)
+					else if(mkoutbound_status==2)
 					{
 						if(inbound_info.nextstate==1)
 						{
@@ -566,36 +582,9 @@ int main(int argc, char ** argv)
 				}
 			}
 			fclose(logfd);
-			while(1)
+			if(net_relay(&socket_inbound_client,&socket_outbound)==0)
 			{
-				packlen_inbound=recv(socket_inbound_client,inbound,BUFSIZ,MSG_DONTWAIT);
-				if(packlen_inbound>0)
-				{
-					send(socket_outbound,inbound,packlen_inbound,0);
-					bzero(inbound,BUFSIZ);
-				}
-				else if(packlen_inbound==0)
-				{
-					shutdown(socket_inbound_client,SHUT_RDWR);
-					shutdown(socket_outbound,SHUT_RDWR);
-					close(socket_inbound_client);
-					close(socket_outbound);
-					return 0;
-				}
-				packlen_outbound=recv(socket_outbound,outbound,BUFSIZ,MSG_DONTWAIT);
-				if(packlen_outbound>0)
-				{
-					send(socket_inbound_client,outbound,packlen_outbound,0);
-					bzero(outbound,BUFSIZ);
-				}
-				else if(packlen_outbound==0)
-				{
-					shutdown(socket_inbound_client,SHUT_RDWR);
-					shutdown(socket_outbound,SHUT_RDWR);
-					close(socket_inbound_client);
-					close(socket_outbound);
-					return 0;
-				} 
+				return 0;
 			}
 		}
 	}

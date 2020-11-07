@@ -29,6 +29,7 @@ struct conf_map
 };
 struct conf
 {
+	int runmode;
 	char log[512];
 	struct conf_bind bind;
 	int relay_count;
@@ -42,6 +43,7 @@ int config_load(char * filename, struct conf * result)
 	int line_count=0;
 	int rec_relay=0;
 	int sscanf_status;
+	bzero(buffer,sizeof(buffer));
 	FILE * conffd=fopen(filename,"r");
 	if(conffd==NULL)
 	{
@@ -71,10 +73,28 @@ int config_load(char * filename, struct conf * result)
 	fclose(conffd);
 	for(line_reccount=0;line_reccount<line_count;line_reccount++)
 	{
+		bzero(tmp_buffer,sizeof(tmp_buffer));
+		bzero(key,sizeof(key));
+		bzero(value,sizeof(value));
+		bzero(key2,sizeof(key2));
+		bzero(value2,sizeof(value2));
+		bzero(key3,sizeof(key3));
+		bzero(value3,sizeof(value3));
 		tmpptr=buffer[line_reccount];
 		tmpptr=strsplit(tmpptr,' ',key);
 		tmpptr=strsplit(tmpptr,' ',value);
-		if(strcmp(key,"log")==0)
+		if(strcmp(key,"runmode")==0)
+		{
+			if(strcmp(value,"simple")==0)
+			{
+				result->runmode=1;
+			}
+			else if(strcmp(value,"forking")==0)
+			{
+				result->runmode=2;
+			}
+		}
+		else if(strcmp(key,"log")==0)
 		{
 			strcpy(result->log,value);
 		}
@@ -164,17 +184,21 @@ int config_load(char * filename, struct conf * result)
 			result->relay_count=rec_relay;
 		}
 	}
-	if(strcmp(result->log,"")==0)
+	if((result->runmode!=1)&&(result->runmode!=2))
 	{
 		return 2;
 	}
-	if(!((strcmp(result->bind.unix_path,"")!=0)||((strcmp(result->bind.inet_addr,"")!=0)&&(result->bind.inet_port!=0))))
+	if(strcmp(result->log,"")==0)
 	{
 		return 3;
 	}
-	if(result->relay_count==0)
+	if(!((strcmp(result->bind.unix_path,"")!=0)||((strcmp(result->bind.inet_addr,"")!=0)&&(result->bind.inet_port!=0))))
 	{
 		return 4;
+	}
+	if(result->relay_count==0)
+	{
+		return 5;
 	}
 	return 0;
 }

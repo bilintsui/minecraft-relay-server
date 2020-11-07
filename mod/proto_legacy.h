@@ -1,5 +1,5 @@
 /*
-	proto_legacy.h: Functions for Legacy Protocol (12w04a-13w39b) on Minecraft Relay Server
+	proto_legacy.h: Functions for Legacy Protocol (13w39b and before) on Minecraft Relay Server
 	A component of Minecraft Relay Server.
 	Requires: mod/basic.h, please manually include it in main source code.
 	

@@ -21,7 +21,8 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!<br/>
 ## Files
 * mcrelay.c: Source code of Main program.
 * mcrelay.conf.example: config file example of mcrelay.
-* mcrelay.service.example: service unit file of mcrelay for systemd.
+* mcrelay.service.forking.example: service unit file of mcrelay for systemd(using runmode: forking).
+* mcrelay.service.simple.example: service unit file of mcrelay for systemd(using runmode: simple).
 * mod/*.h: header files of essential modules.
 
 ## Compile
@@ -41,6 +42,7 @@ mcrelay config_file
 ## Config
 ### Format
 <pre>
+runmode run_mode
 log logfile_path
 bind bind_object
 proxy_pass proxy_type
@@ -49,6 +51,8 @@ proxy_pass proxy_type
 	ident_name destination_object
 </pre>
 ### Explanation
+* runmode: set program's runmode.
+>* run_mode: type of program's runmode, "simple" for a normal, non-exit program, "forking" for a daemonized program. In forking, it will store the PID in /tmp/mcrelay.pid.
 * log: set log file.
 >* logfile_path: path of the file which logs saved to.
 * bind: set bind information.
@@ -68,6 +72,7 @@ If SRV record resolve failed, it will fallback to normal address resolve, also c
 >>* path: the socket file you wish to connect.
 ### Example
 <pre>
+runmode forking
 log /var/log/mcrelay/mcrelay.log
 bind 0.0.0.0:25565
 proxy_pass rewrite

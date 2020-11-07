@@ -12,16 +12,18 @@
 */
 #include <arpa/inet.h>
 #include <arpa/nameser.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <resolv.h>
 #include <string.h>
 #include <sys/un.h>
-struct srvrec
+#include <unistd.h>
+struct stru_net_srvrecord
 {
 	char target[128];
 	unsigned short port;
 };
-char ** getaddresses(char * hostname)
+char ** net_resolve(char * hostname)
 {
 	struct hostent * resolve_result;
 	resolve_result = gethostbyname2(hostname,AF_INET);
@@ -31,7 +33,7 @@ char ** getaddresses(char * hostname)
 	}
 	return (resolve_result->h_addr_list);
 }
-int getsrvrecord(char * query_name, struct srvrec * target)
+int net_srvresolve(char * query_name, struct stru_net_srvrecord * target)
 {
 	char query_name_full[256];
 	bzero(query_name_full,256);
@@ -98,7 +100,7 @@ int getsrvrecord(char * query_name, struct srvrec * target)
 	}
 	return max_record_maxweight;
 }
-struct sockaddr_in genSockConf(unsigned short family, unsigned long addr, unsigned short port)
+struct sockaddr_in net_mksockaddr_in(unsigned short family, unsigned long addr, unsigned short port)
 {
 	struct sockaddr_in result;
 	result.sin_family=family;
@@ -106,7 +108,14 @@ struct sockaddr_in genSockConf(unsigned short family, unsigned long addr, unsign
 	result.sin_port=htons(port);
 	return result;
 }
-int dstconnect(int dst_type, char * dst_addr, unsigned short dst_port, int * dst_socket)
+struct sockaddr_un net_mksockaddr_un(char * path)
+{
+	struct sockaddr_un result;
+	result.sun_family=AF_UNIX;
+	strcpy(result.sun_path,path);
+	return result;
+}
+int net_mkoutbound(int dst_type, char * dst_addr, unsigned short dst_port, int * dst_socket)
 {
 	char str[INET_ADDRSTRLEN];
 	if(dst_type==TYPE_INET)
@@ -114,14 +123,14 @@ int dstconnect(int dst_type, char * dst_addr, unsigned short dst_port, int * dst
 		*dst_socket=socket(AF_INET,SOCK_STREAM,0);
 		if(inet_addr(dst_addr)==-1)
 		{
-			char ** addresses=getaddresses(dst_addr);
+			char ** addresses=net_resolve(dst_addr);
 			if(addresses==NULL)
 			{
 				return 1;
 			}
 			else
 			{
-				struct sockaddr_in conninfo=genSockConf(AF_INET,htonl(inet_addr(inet_ntop(AF_INET,addresses[0],str,sizeof(str)))),dst_port);
+				struct sockaddr_in conninfo=net_mksockaddr_in(AF_INET,htonl(inet_addr(inet_ntop(AF_INET,addresses[0],str,sizeof(str)))),dst_port);
 				if(connect(*dst_socket,(struct sockaddr*)&conninfo,sizeof(struct sockaddr))==-1)
 				{
 					return 2;
@@ -134,7 +143,7 @@ int dstconnect(int dst_type, char * dst_addr, unsigned short dst_port, int * dst
 		}
 		else
 		{
-			struct sockaddr_in conninfo=genSockConf(AF_INET,htonl(inet_addr(dst_addr)),dst_port);
+			struct sockaddr_in conninfo=net_mksockaddr_in(AF_INET,htonl(inet_addr(dst_addr)),dst_port);
 			if(connect(*dst_socket,(struct sockaddr*)&conninfo,sizeof(struct sockaddr))==-1)
 			{
 				return 2;
@@ -158,5 +167,45 @@ int dstconnect(int dst_type, char * dst_addr, unsigned short dst_port, int * dst
 		{
 			return 0;
 		}
+	}
+}
+int net_relay(int * ptr_inboundsocket, int * ptr_outboundsocket)
+{
+	int packlen_inbound,packlen_outbound;
+	char inbound[BUFSIZ],outbound[BUFSIZ];
+	int socket_inbound_client=*ptr_inboundsocket;
+	int socket_outbound=*ptr_outboundsocket;
+	bzero(inbound,BUFSIZ);
+	bzero(outbound,BUFSIZ);
+	while(1)
+	{
+		packlen_inbound=recv(socket_inbound_client,inbound,BUFSIZ,MSG_DONTWAIT);
+		if(packlen_inbound>0)
+		{
+			send(socket_outbound,inbound,packlen_inbound,0);
+			bzero(inbound,BUFSIZ);
+		}
+		else if(packlen_inbound==0)
+		{
+			shutdown(socket_inbound_client,SHUT_RDWR);
+			shutdown(socket_outbound,SHUT_RDWR);
+			close(socket_inbound_client);
+			close(socket_outbound);
+			return 0;
+		}
+		packlen_outbound=recv(socket_outbound,outbound,BUFSIZ,MSG_DONTWAIT);
+		if(packlen_outbound>0)
+		{
+			send(socket_inbound_client,outbound,packlen_outbound,0);
+			bzero(outbound,BUFSIZ);
+		}
+		else if(packlen_outbound==0)
+		{
+			shutdown(socket_inbound_client,SHUT_RDWR);
+			shutdown(socket_outbound,SHUT_RDWR);
+			close(socket_inbound_client);
+			close(socket_outbound);
+			return 0;
+		} 
 	}
 }
