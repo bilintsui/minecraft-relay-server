@@ -10,6 +10,7 @@
 	It basically means you have free rights for uncommerical use and modify, also restricted you to comply the license, whether part of original release or modified part by you.
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -266,4 +267,72 @@ int strsplit_fieldcount(unsigned char * string, char delim)
 		ptr_string++;
 	}
 	return count;
+}
+int mksysmsg(char * logfile, unsigned short runmode, unsigned short maxlevel, unsigned short msglevel, char * format, ...)
+{
+	char level_str[8];
+	int status;
+	va_list varlist;
+	if(msglevel>maxlevel)
+	{
+		return 0;
+	}
+	bzero(level_str,8);
+	switch(msglevel)
+	{
+		case 0:
+			strcpy(level_str,"CRIT");
+			break;
+		case 1:
+			strcpy(level_str,"WARN");
+			break;
+		default:
+			strcpy(level_str,"INFO");
+			break;
+	}
+	va_start(varlist,format);
+	if(strcmp(logfile,"")!=0)
+	{
+		char time_str[32];
+		bzero(time_str,32);
+		gettime(time_str);
+		FILE * logfd=fopen(logfile,"a");
+		fprintf(logfd,"[%s] [%s] ",time_str,level_str);
+		char format_output[BUFSIZ];
+		bzero(format_output,BUFSIZ);
+		for(int recidx=0;recidx<strlen(format);recidx++)
+		{
+			format_output[recidx]=format[recidx];
+			if(format[recidx]=='\n')
+			{
+				break;
+			}
+		}
+		status=vfprintf(logfd,format_output,varlist);
+		fclose(logfd);
+	}
+	va_end(varlist);
+	va_start(varlist,format);
+	if(runmode!=2)
+	{
+		if(msglevel==0)
+		{
+			fprintf(stderr,"[%s] ",level_str);
+			status=vfprintf(stderr,format,varlist);
+		}
+		else
+		{
+			fprintf(stdout,"[%s] ",level_str);
+			status=vfprintf(stdout,format,varlist);
+		}
+	}
+	va_end(varlist);
+	if(status<0)
+	{
+		return 1;
+	}
+	else
+	{
+		return 0;
+	}
 }

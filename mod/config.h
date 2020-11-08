@@ -29,8 +29,9 @@ struct conf_map
 };
 struct conf
 {
-	int runmode;
+	unsigned short runmode;
 	char log[512];
+	unsigned short loglevel;
 	struct conf_bind bind;
 	int relay_count;
 	struct conf_map relay[128];
@@ -39,10 +40,10 @@ int config_load(char * filename, struct conf * result)
 {
 	char rec_char,buffer[128][BUFSIZ],tmp_buffer[BUFSIZ],key[512],value[512],key2[512],value2[512],key3[512],value3[512];
 	char * tmpptr;
+	int loglevel_found=0;
 	int line_reccount=0;
 	int line_count=0;
 	int rec_relay=0;
-	int sscanf_status;
 	bzero(buffer,sizeof(buffer));
 	FILE * conffd=fopen(filename,"r");
 	if(conffd==NULL)
@@ -97,6 +98,14 @@ int config_load(char * filename, struct conf * result)
 		else if(strcmp(key,"log")==0)
 		{
 			strcpy(result->log,value);
+		}
+		else if(strcmp(key,"loglevel")==0)
+		{
+			loglevel_found=1;
+			if(sscanf(value,"%hd",&result->loglevel)==0)
+			{
+				loglevel_found=0;
+			}
 		}
 		else if(strcmp(key,"bind")==0)
 		{
@@ -192,13 +201,17 @@ int config_load(char * filename, struct conf * result)
 	{
 		return 3;
 	}
-	if(!((strcmp(result->bind.unix_path,"")!=0)||((strcmp(result->bind.inet_addr,"")!=0)&&(result->bind.inet_port!=0))))
+	if(loglevel_found==0)
 	{
 		return 4;
 	}
-	if(result->relay_count==0)
+	if(!((strcmp(result->bind.unix_path,"")!=0)||((strcmp(result->bind.inet_addr,"")!=0)&&(result->bind.inet_port!=0))))
 	{
 		return 5;
+	}
+	if(result->relay_count==0)
+	{
+		return 6;
 	}
 	return 0;
 }

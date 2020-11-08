@@ -24,6 +24,7 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!<br/>
 * mcrelay.service.forking.example: service unit file of mcrelay for systemd(using runmode: forking).
 * mcrelay.service.simple.example: service unit file of mcrelay for systemd(using runmode: simple).
 * mod/*.h: header files of essential modules.
+* loglevel.info: definations for messages.
 
 ## Compile
 <pre>
@@ -44,6 +45,7 @@ mcrelay config_file
 <pre>
 runmode run_mode
 log logfile_path
+loglevel loglvl
 bind bind_object
 proxy_pass proxy_type
 	ident_name destination_object
@@ -55,6 +57,8 @@ proxy_pass proxy_type
 >* run_mode: type of program's runmode, "simple" for a normal, non-exit program, "forking" for a daemonized program. In forking, it will store the PID in /tmp/mcrelay.pid.
 * log: set log file.
 >* logfile_path: path of the file which logs saved to.
+* loglevel: set max message level in logging message.
+>* loglvl: a unsigned short integer, range 0-255. This program will not log message with level higher than this level. 0: Critical, 1: Warning, 2+: Information. For more information, watch loglevel.info.
 * bind: set bind information.
 >* bind_object: (format: "address:port" or "unix:path") default: "0.0.0.0:25565".
 >>* address: the address you wish to bind as an Internet Service. Only x.x.x.x allowed.

@@ -57,9 +57,12 @@ void deal_sigusr1()
 			fprintf(logfd,"[%s] [WARN] Error in configurations: Argument \"log\" is missing, will keep your old configurations.\n",time_str);
 			break;
 		case 4:
-			fprintf(logfd,"[%s] [WARN] Error in configurations: Argument \"bind\" is missing or invalid, will keep your old configurations.\n",time_str);
+			fprintf(logfd,"[%s] [WARN] Error in configurations: Argument \"loglevel\" is missing or not a valid short integer, will keep your old configurations.\n",time_str);
 			break;
 		case 5:
+			fprintf(logfd,"[%s] [WARN] Error in configurations: Argument \"bind\" is missing or invalid, will keep your old configurations.\n",time_str);
+			break;
+		case 6:
 			fprintf(logfd,"[%s] [WARN] Error in configurations: You don't have any valid record for relay, will keep your old configurations.\n",time_str);
 			break;
 	}
@@ -94,19 +97,19 @@ int main(int argc, char ** argv)
 		{
 			if(pidfd==NULL)
 			{
-				fprintf(stderr,"[CRIT] Error: Cannot read /tmp/mcrelay.pid.\n");
+				mksysmsg("",0,255,0,"Cannot read /tmp/mcrelay.pid.\n");
 				return 2;
 			}
 			fscanf(pidfd,"%d",&prevpid);
 			fclose(pidfd);
 			if(kill(prevpid,SIGUSR1)==0)
 			{
-				printf("[INFO] Successfully send reload signal to currently running process.\n");
+				mksysmsg("",0,255,2,"Successfully send reload signal to currently running process.\n");
 				return 0;
 			}
 			else
 			{
-				fprintf(stderr,"[CRIT] Failed on send reload signal to currently running process.\n");
+				mksysmsg("",0,255,0,"Failed on send reload signal to currently running process.\n");
 				return 3;
 			}
 		}
@@ -114,19 +117,19 @@ int main(int argc, char ** argv)
 		{
 			if(pidfd==NULL)
 			{
-				fprintf(stderr,"[CRIT] Error: Cannot read /tmp/mcrelay.pid.\n");
+				mksysmsg("",0,255,0,"Cannot read /tmp/mcrelay.pid.\n");
 				return 2;
 			}
 			fscanf(pidfd,"%d",&prevpid);
 			fclose(pidfd);
 			if(kill(prevpid,SIGTERM)==0)
 			{
-				fprintf(stdout,"[INFO] Successfully send terminate signal to currently running process.\n");
+				mksysmsg("",0,255,2,"Successfully send terminate signal to currently running process.\n");
 				return 0;
 			}
 			else
 			{
-				fprintf(stderr,"[CRIT] Failed on send terminate signal to currently running process.\n");
+				mksysmsg("",0,255,0,"Failed on send terminate signal to currently running process.\n");
 				return 3;
 			}
 		}
@@ -136,9 +139,10 @@ int main(int argc, char ** argv)
 		if(pidfd!=NULL)
 		{
 			fscanf(pidfd,"%d",&prevpid);
+			fclose(pidfd);
 			if(kill(prevpid,0)==0)
 			{
-				fprintf(stderr,"[CRIT] You cannot running multiple instances in one time. Previous running process PID: %d.\n",prevpid);
+				mksysmsg("",0,255,0,"You cannot running multiple instances in one time. Previous running process PID: %d.\n",prevpid);
 				return 1;
 			}
 		}
@@ -148,7 +152,7 @@ int main(int argc, char ** argv)
 	bindport=25565;
 	bzero(configfile,512);
 	strcpy(configfile,argv[1]);
-	fprintf(stdout,"[INFO] Loading configurations from file: %s\n\n",configfile);
+	mksysmsg("",0,255,2,"Loading configurations from file: %s\n\n",configfile);
 	switch(config_load(configfile,&config))
 	{
 		case 0:
@@ -162,26 +166,29 @@ int main(int argc, char ** argv)
 			}
 			break;
 		case 1:
-			fprintf(stderr,"[CRIT] Cannot read config file: %s\n",configfile);
+			mksysmsg("",0,255,0,"Cannot read config file: %s\n",configfile);
 			return 2;
 		case 2:
-			fprintf(stderr,"[CRIT] Error in configurations: Argument \"runmode\" is missing.\n");
+			mksysmsg("",0,255,0,"Error in configurations: Argument \"runmode\" is missing.\n");
 			return 22;
 		case 3:
-			fprintf(stderr,"[CRIT] Error in configurations: Argument \"log\" is missing.\n");
+			mksysmsg("",0,255,0,"Error in configurations: Argument \"log\" is missing.\n");
 			return 22;
 		case 4:
-			fprintf(stderr,"[CRIT] Error in configurations: Argument \"bind\" is missing or invalid.\n");
+			mksysmsg("",0,255,0,"Error in configurations: Argument \"loglevel\" is missing or not a valid short integer.\n");
 			return 22;
 		case 5:
-			fprintf(stderr,"[CRIT] Error in configurations: You don't have any valid record for relay.\n");
+			mksysmsg("",0,255,0,"Error in configurations: Argument \"bind\" is missing or invalid.\n");
+			return 22;
+		case 6:
+			mksysmsg("",0,255,0,"Error in configurations: You don't have any valid record for relay.\n");
 			return 22;
 	}
 	if(config.bind.type==TYPE_INET)
 	{
 		if(inet_addr(config.bind.inet_addr)==-1)
 		{
-			fprintf(stdout,"[WARN] Bad argument: bind_address. Use default address %s.\n",bindip);
+			mksysmsg(config_logfull,config.runmode,config.loglevel,1,"Bad argument: bind_address. Use default address %s.\n",bindip);
 		}
 		else
 		{
@@ -189,7 +196,7 @@ int main(int argc, char ** argv)
 		}
 		if((config.bind.inet_port<1)||(config.bind.inet_port>65535))
 		{
-			fprintf(stdout,"[WARN] Bad argument: bind_port. Use default port %d.\n",bindport);
+			mksysmsg(config_logfull,config.runmode,config.loglevel,1,"Bad argument: bind_port. Use default port %d.\n",bindport);
 		}
 		else
 		{
@@ -198,9 +205,13 @@ int main(int argc, char ** argv)
 		socket_inbound_server=socket(AF_INET,SOCK_STREAM,0);
 		addr_inbound_server=net_mksockaddr_in(AF_INET,htonl(inet_addr(bindip)),bindport);
 		strulen=sizeof(struct sockaddr_in);
-		fprintf(stdout,"[INFO] Binding on %s:%d...\n",inet_ntoa(addr_inbound_server.sin_addr),ntohs(addr_inbound_server.sin_port));
-		if(bind(socket_inbound_server,(struct sockaddr *)&addr_inbound_server,strulen)==-1){fprintf(stderr,"[CRIT] Bind Failed!\n");return 2;}
-		fprintf(stdout,"[INFO] Bind Successful.\n\n");
+		mksysmsg(config_logfull,config.runmode,config.loglevel,2,"Binding on %s:%d...\n","0.0.0.0",25565);
+		if(bind(socket_inbound_server,(struct sockaddr *)&addr_inbound_server,strulen)==-1)
+		{
+			mksysmsg(config_logfull,config.runmode,config.loglevel,0,"Bind Failed!\n");
+			return 2;
+		}
+		mksysmsg(config_logfull,config.runmode,config.loglevel,2,"Bind Successful.\n\n");
 	}
 	else if(config.bind.type==TYPE_UNIX)
 	{
@@ -208,12 +219,20 @@ int main(int argc, char ** argv)
 		socket_inbound_server=socket(AF_UNIX,SOCK_STREAM,0);
 		uddr_inbound_server=net_mksockaddr_un(config.bind.unix_path);
 		strulen=sizeof(uddr_inbound_server);
-		fprintf(stdout,"[INFO] Binding on %s...\n",uddr_inbound_server.sun_path);
-		if(bind(socket_inbound_server,(struct sockaddr *)&uddr_inbound_server,strulen)==-1){fprintf(stderr,"[CRIT] Bind Failed!\n");return 2;}
-		if(chmod(config.bind.unix_path,S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH)==-1){fprintf(stderr,"[CRIT] Set Permission Failed!\n");return 13;}
-		fprintf(stdout,"[INFO] Bind Successful.\n\n");
+		mksysmsg(config_logfull,config.runmode,config.loglevel,2,"Binding on %s...\n",uddr_inbound_server.sun_path);
+		if(bind(socket_inbound_server,(struct sockaddr *)&uddr_inbound_server,strulen)==-1)
+		{
+			mksysmsg(config_logfull,config.runmode,config.loglevel,0,"Bind Failed!\n");
+			return 2;
+		}
+		if(chmod(config.bind.unix_path,S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH)==-1)
+		{
+			mksysmsg(config_logfull,config.runmode,config.loglevel,0,"Set Permission Failed!\n");
+			return 13;
+		}
+		mksysmsg(config_logfull,config.runmode,config.loglevel,2,"Bind Successful.\n\n");
 	}
-	fprintf(stdout,"[INFO] For more information, watch log file: %s\n",config.log);
+	mksysmsg("",config.runmode,config.loglevel,2,"For more information, watch log file: %s\n\n",config.log);
 	int pid;
 	if(config.runmode==2)
 	{
@@ -223,7 +242,7 @@ int main(int argc, char ** argv)
 			FILE * pidfd=fopen("/tmp/mcrelay.pid","w");
 			fprintf(pidfd,"%d",pid);
 			fclose(pidfd);
-			fprintf(stdout,"[INFO] Server running on PID: %d\n",pid);
+			mksysmsg("",0,config.loglevel,2,"Server running on PID: %d\n",pid);
 			return 0;
 		}
 		else if(pid<0)
@@ -328,11 +347,11 @@ int main(int argc, char ** argv)
 						{
 							if(config.bind.type==TYPE_UNIX)
 							{
-								fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.address);
+								mksysmsg(config_logfull,config.runmode,config.loglevel,3,"status, host: %s\n",inbound_info.address);
 							}
 							else if(config.bind.type==TYPE_INET)
 							{
-								fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address);
+								mksysmsg(config_logfull,config.runmode,config.loglevel,3,"status from %s:%d, host: %s\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address);
 							}
 							if(proxyinfo->enable_rewrite==1)
 							{
@@ -412,11 +431,11 @@ int main(int argc, char ** argv)
 						{
 							if(config.bind.type==TYPE_UNIX)
 							{
-								fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.address,inbound_info.username);
+								mksysmsg(config_logfull,config.runmode,config.loglevel,2,"login, host: %s, username: %s\n",inbound_info.address,inbound_info.username);
 							}
 							else if(config.bind.type==TYPE_INET)
 							{
-								fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address,inbound_info.username);
+								mksysmsg(config_logfull,config.runmode,config.loglevel,2,"login from %s:%d, host: %s, username: %s\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address,inbound_info.username);
 							}
 							if(proxyinfo->enable_rewrite==1)
 							{
@@ -518,11 +537,11 @@ int main(int argc, char ** argv)
 						{
 							if(config.bind.type==TYPE_UNIX)
 							{
-								fprintf(logfd,"[%s] [INFO] status, host: %s\n",time_str,inbound_info.address);
+								mksysmsg(config_logfull,config.runmode,config.loglevel,3,"status, host: %s\n",inbound_info.address);
 							}
 							else if(config.bind.type==TYPE_INET)
 							{
-								fprintf(logfd,"[%s] [INFO] status from %s:%d, host: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address);
+								mksysmsg(config_logfull,config.runmode,config.loglevel,3,"status from %s:%d, host: %s\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address);
 							}
 							
 						}
@@ -530,11 +549,11 @@ int main(int argc, char ** argv)
 						{
 							if(config.bind.type==TYPE_UNIX)
 							{
-								fprintf(logfd,"[%s] [INFO] login, host: %s, username: %s\n",time_str,inbound_info.address,inbound_info.username);
+								mksysmsg(config_logfull,config.runmode,config.loglevel,2,"login, host: %s, username: %s\n",inbound_info.address,inbound_info.username);
 							}
 							else if(config.bind.type==TYPE_INET)
 							{
-								fprintf(logfd,"[%s] [INFO] login from %s:%d, host: %s, username: %s\n",time_str,inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address,inbound_info.username);
+								mksysmsg(config_logfull,config.runmode,config.loglevel,2,"login from %s:%d, host: %s, username: %s\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port),inbound_info.address,inbound_info.username);
 							}
 						}
 						if(proxyinfo->enable_rewrite==1)
