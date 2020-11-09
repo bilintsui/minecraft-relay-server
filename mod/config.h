@@ -189,6 +189,7 @@ int config_load(char * filename, struct conf * result)
 				rec_relay++;
 				line_reccount++;
 				strcpy(tmp_buffer,buffer[line_reccount+1]);
+				tmpptr=tmp_buffer;
 			}
 			result->relay_count=rec_relay;
 		}
