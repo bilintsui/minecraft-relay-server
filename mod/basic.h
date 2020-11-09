@@ -268,7 +268,7 @@ int strsplit_fieldcount(unsigned char * string, char delim)
 	}
 	return count;
 }
-int mksysmsg(char * logfile, unsigned short runmode, unsigned short maxlevel, unsigned short msglevel, char * format, ...)
+int mksysmsg(unsigned short noprefix, char * logfile, unsigned short runmode, unsigned short maxlevel, unsigned short msglevel, char * format, ...)
 {
 	char level_str[8];
 	int status;
@@ -297,7 +297,10 @@ int mksysmsg(char * logfile, unsigned short runmode, unsigned short maxlevel, un
 		bzero(time_str,32);
 		gettime(time_str);
 		FILE * logfd=fopen(logfile,"a");
-		fprintf(logfd,"[%s] [%s] ",time_str,level_str);
+		if(noprefix==0)
+		{
+			fprintf(logfd,"[%s] [%s] ",time_str,level_str);
+		}
 		char format_output[BUFSIZ];
 		bzero(format_output,BUFSIZ);
 		for(int recidx=0;recidx<strlen(format);recidx++)
@@ -317,12 +320,18 @@ int mksysmsg(char * logfile, unsigned short runmode, unsigned short maxlevel, un
 	{
 		if(msglevel==0)
 		{
-			fprintf(stderr,"[%s] ",level_str);
+			if(noprefix==0)
+			{
+				fprintf(stderr,"[%s] ",level_str);
+			}
 			status=vfprintf(stderr,format,varlist);
 		}
 		else
 		{
-			fprintf(stdout,"[%s] ",level_str);
+			if(noprefix==0)
+			{
+				fprintf(stderr,"[%s] ",level_str);
+			}
 			status=vfprintf(stdout,format,varlist);
 		}
 	}
