@@ -11,6 +11,7 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!<br/>
 
 ## Requirements
 * Linux
+* libresolv.so
 
 ## Compatibility
 **Due to Minecraft Handshake restrictions, this server supports:**<br/>
@@ -20,12 +21,14 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!<br/>
 ## Files
 * mcrelay.c: Source code of Main program.
 * mcrelay.conf.example: config file example of mcrelay.
-* mcrelay.service.example: service unit file of mcrelay for systemd.
+* mcrelay.service.forking.example: service unit file of mcrelay for systemd(using runmode: forking).
+* mcrelay.service.simple.example: service unit file of mcrelay for systemd(using runmode: simple).
 * mod/*.h: header files of essential modules.
+* loglevel.info: definations for messages.
 
 ## Compile
 <pre>
-gcc -o mcrelay mcrelay.c
+gcc -o mcrelay mcrelay.c -lresolv
 </pre>
 or
 <pre>
@@ -40,7 +43,9 @@ mcrelay config_file
 ## Config
 ### Format
 <pre>
+runmode run_mode
 log logfile_path
+loglevel loglvl
 bind bind_object
 proxy_pass proxy_type
 	ident_name destination_object
@@ -48,22 +53,30 @@ proxy_pass proxy_type
 	ident_name destination_object
 </pre>
 ### Explanation
+* runmode: set program's runmode.
+>* run_mode: type of program's runmode, "simple" for a normal, non-exit program, "forking" for a daemonized program. In forking, it will store the PID in /tmp/mcrelay.pid.
 * log: set log file.
 >* logfile_path: path of the file which logs saved to.
+* loglevel: set max message level in logging message.
+>* loglvl: a unsigned short integer, range 0-255. This program will not log message with level higher than this level. 0: Critical, 1: Warning, 2+: Information. For more information, watch loglevel.info.
 * bind: set bind information.
 >* bind_object: (format: "address:port" or "unix:path") default: "0.0.0.0:25565".
 >>* address: the address you wish to bind as an Internet Service. Only x.x.x.x allowed.
->>* port: the address you wish to bind as an Internet Service. Valid range: 1-65535.
+>>* port: the port you wish to bind as an Internet Service. Valid range: 1-65535.
 >>* path: the socket file you wish to bind as an UNIX Socket.
 * proxy_pass: list of relay/relay+rewrites.
 >* proxy_type: type of proxies, "relay" for raw relay, "rewrite" for relay with server address camouflage enabled.
 >* ident_name: name of destination identification. Usually a Fully Qualified Domain Name(FQDN) by CNAME to your server.
->* destination_object: (format: "address_d:port" or "unix:path")
->>* address_d: the address you wish to bind as an Internet Service. Both FQDN or x.x.x.x allowed.
->>* port: the address you wish to bind as an Internet Service. Valid range: 1-65535.
->>* path: the socket file you wish to bind as an UNIX Socket.
+>* destination_object: (format: "address_d[:port]" or "unix:path")
+>>* address_d: the address you wish to connect. Both FQDN or x.x.x.x allowed.
+>>* port: optional, the port you wish to connect. Valid range: 1-65535.<br/>
+If not set, the server will detect SRV record first(defined in address_d).<br/>
+If SRV record resolve failed, it will fallback to normal address resolve, also connect to this address with port 25565.<br/>
+**For rewrite enabled relay, it will use actual connect configuration to rewrite.**
+>>* path: the socket file you wish to connect.
 ### Example
 <pre>
+runmode forking
 log /var/log/mcrelay/mcrelay.log
 bind 0.0.0.0:25565
 proxy_pass rewrite
