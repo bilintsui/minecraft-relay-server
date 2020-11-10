@@ -3,7 +3,7 @@
 	A component of Minecraft Relay Server.
 	Requires: mod/basic.h, please manually include it in main source code.
 	
-	Minecraft Relay Server, version 1.1-beta3
+	Minecraft Relay Server, version 1.1-rc1
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -71,7 +71,7 @@ struct p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int
 		{
 			address_length=*ptr_source;
 			ptr_source++;
-			for(recidx=0;recidx<username_length;recidx++)
+			for(recidx=0;recidx<address_length;recidx++)
 			{
 				result.address[recidx]=*ptr_source;
 				ptr_source++;

@@ -3,7 +3,7 @@
 	A component of Minecraft Relay Server.
 	
 
-	Minecraft Relay Server, version 1.1-beta3
+	Minecraft Relay Server, version 1.1-rc1
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -16,7 +16,7 @@
 #include "mod/network.h"
 #include "mod/proto_legacy.h"
 #include "mod/proto_modern.h"
-const char version_str[]="1.1-beta3";
+const char version_str[]="1.1-rc1";
 struct conf config;
 char configfile[512],cwd[512],config_logfull[BUFSIZ];
 unsigned short config_runmode;
@@ -303,6 +303,24 @@ int main(int argc, char ** argv)
 				int motd_version=legacy_motd_protocol_identify(inbound);
 				if(motd_version==PVER_M_LEGACY3)
 				{
+					unsigned char tmp[BUFSIZ];
+					int packlen_tmp;
+					int packet_should_length=0x20;
+					int is_host_found=0;
+					while(packlen_inbound<packet_should_length)
+					{
+						bzero(tmp,BUFSIZ);
+						packlen_tmp=recv(socket_inbound_client,tmp,BUFSIZ,MSG_DONTWAIT);
+						if(packlen_tmp>0)
+						{
+							packlen_inbound=datcat(inbound,packlen_inbound,tmp,packlen_tmp);
+						}
+						if((inbound[0x1F]!=0)&&(is_host_found==0))
+						{
+							is_host_found=1;
+							packet_should_length=packet_should_length+inbound[0x1F]*2+4;
+						}
+					}
 					struct p_motd_legacy inbound_info=packet_read_legacy_motd(inbound,packlen_inbound);
 					struct conf_map * proxyinfo=getproxyinfo(&config,inbound_info.address);
 					if(proxyinfo==NULL)
@@ -580,12 +598,12 @@ int main(int argc, char ** argv)
 					{
 						mksysmsg(0,config_logfull,config_runmode,config.loglevel,1,"src: %s:%d, ",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
 					}
-					if(inbound_info.nextstate==1)
+					if(inbound[inbound[0]]==1)
 					{
 						mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: status, status: reject_motdrelayrestricted_13w41*\n");
 						packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Use 13w42a or later to play!",rewrited);
 					}
-					else if(inbound_info.nextstate==2)
+					else if(inbound[inbound[0]]==2)
 					{
 						mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: login, status: reject_gamerelayrestricted_13w41*\n");
 						packlen_rewrited=make_kickreason("Proxy: Unsupported client, use 13w42a or later!",rewrited);
