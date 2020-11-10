@@ -3,7 +3,7 @@
 	A component of Minecraft Relay Server.
 	
 	
-	Minecraft Relay Server, version 1.1-rc1
+	Minecraft Relay Server, version 1.1
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -330,7 +330,7 @@ int mksysmsg(unsigned short noprefix, char * logfile, unsigned short runmode, un
 		{
 			if(noprefix==0)
 			{
-				fprintf(stderr,"[%s] ",level_str);
+				fprintf(stdout,"[%s] ",level_str);
 			}
 			status=vfprintf(stdout,format,varlist);
 		}

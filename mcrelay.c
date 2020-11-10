@@ -3,7 +3,7 @@
 	A component of Minecraft Relay Server.
 	
 
-	Minecraft Relay Server, version 1.1-rc1
+	Minecraft Relay Server, version 1.1
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -16,7 +16,7 @@
 #include "mod/network.h"
 #include "mod/proto_legacy.h"
 #include "mod/proto_modern.h"
-const char version_str[]="1.1-rc1";
+const char version_str[]="1.1";
 struct conf config;
 char configfile[512],cwd[512],config_logfull[BUFSIZ];
 unsigned short config_runmode;
@@ -298,6 +298,12 @@ int main(int argc, char ** argv)
 			bzero(outbound,BUFSIZ);
 			bzero(rewrited,BUFSIZ);
 			packlen_inbound=recv(socket_inbound_client,inbound,BUFSIZ,0);
+			if(packlen_inbound==0)
+			{
+				shutdown(socket_inbound_client,SHUT_RDWR);
+				close(socket_inbound_client);
+				return 0;
+			}
 			if(inbound[0]==0xFE)
 			{
 				int motd_version=legacy_motd_protocol_identify(inbound);
@@ -333,7 +339,7 @@ int main(int argc, char ** argv)
 						{
 							mksysmsg(0,config_logfull,config_runmode,config.loglevel,1,"src: %s:%d, ",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
 						}
-						mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: status, vhost: %s, status: reject_vhostinvalid\n",inbound_info.address);
+						mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: motd, vhost: %s, status: reject_vhostinvalid\n",inbound_info.address);
 						packlen_rewrited=make_motd_legacy(inbound_info.version,"[Proxy] Use a legit address to play!",motd_version,rewrited);
 						send(socket_inbound_client,rewrited,packlen_rewrited,0);
 						shutdown(socket_inbound_client,SHUT_RDWR);
@@ -376,7 +382,7 @@ int main(int argc, char ** argv)
 						{
 							mksysmsg(0,config_logfull,config_runmode,config.loglevel,outmsg_level,"src: %s:%d, ",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
 						}
-						mksysmsg(1,config_logfull,config_runmode,config.loglevel,outmsg_level,"type: status, vhost: %s, ",inbound_info.address);
+						mksysmsg(1,config_logfull,config_runmode,config.loglevel,outmsg_level,"type: motd, vhost: %s, ",inbound_info.address);
 						if(proxyinfo->to_type==TYPE_UNIX)
 						{
 							mksysmsg(1,config_logfull,config_runmode,config.loglevel,outmsg_level,"dst: unix:%s, ",proxyinfo->to_unix_path);
@@ -429,7 +435,7 @@ int main(int argc, char ** argv)
 					{
 						mksysmsg(0,config_logfull,config_runmode,config.loglevel,1,"src: %s:%d, ",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
 					}
-					mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: status, status: reject_motdrelayrestricted_oldclient\n");
+					mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: motd, status: reject_motdrelay_oldclient\n");
 					packlen_rewrited=make_motd_legacy(0,"Proxy: Please use direct connect.",legacy_motd_protocol_identify(inbound),rewrited);
 					send(socket_inbound_client,rewrited,packlen_rewrited,0);
 					shutdown(socket_inbound_client,SHUT_RDWR);
@@ -450,7 +456,7 @@ int main(int argc, char ** argv)
 					{
 						mksysmsg(0,config_logfull,config_runmode,config.loglevel,1,"src: %s:%d, ",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
 					}
-					mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: login, status: reject_gamerelayrestricted_oldclient\n");
+					mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: game, status: reject_gamerelay_oldclient\n");
 					packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 12w04a or later!",rewrited);
 					send(socket_inbound_client,rewrited,packlen_rewrited,0);
 					shutdown(socket_inbound_client,SHUT_RDWR);
@@ -467,7 +473,7 @@ int main(int argc, char ** argv)
 					{
 						mksysmsg(0,config_logfull,config_runmode,config.loglevel,1,"src: %s:%d, ",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
 					}
-					mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: login, status: reject_gamerelayrestricted_12w17a\n");
+					mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: game, status: reject_gamerelay_12w17a\n");
 					packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 12w18a or later!",rewrited);
 					send(socket_inbound_client,rewrited,packlen_rewrited,0);
 					shutdown(socket_inbound_client,SHUT_RDWR);
@@ -488,7 +494,7 @@ int main(int argc, char ** argv)
 						{
 							mksysmsg(0,config_logfull,config_runmode,config.loglevel,1,"src: %s:%d, ",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
 						}
-						mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: login, vhost: %s, status: reject_vhostinvalid, username: %s\n",inbound_info.address,inbound_info.username);
+						mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: game, vhost: %s, status: reject_vhostinvalid, username: %s\n",inbound_info.address,inbound_info.username);
 						packlen_rewrited=make_kickreason_legacy("Proxy: Please use a legit name to connect!",rewrited);
 						send(socket_inbound_client,rewrited,packlen_rewrited,0);
 						shutdown(socket_inbound_client,SHUT_RDWR);
@@ -527,11 +533,11 @@ int main(int argc, char ** argv)
 						{
 							mksysmsg(0,config_logfull,config_runmode,config.loglevel,outmsg_level,"src: UNIX, ");
 						}
-						else
+						else if(config.bind.type==TYPE_INET)
 						{
 							mksysmsg(0,config_logfull,config_runmode,config.loglevel,outmsg_level,"src: %s:%d, ",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
 						}
-						mksysmsg(1,config_logfull,config_runmode,config.loglevel,outmsg_level,"type: login, vhost: %s, ",inbound_info.address);
+						mksysmsg(1,config_logfull,config_runmode,config.loglevel,outmsg_level,"type: game, vhost: %s, ",inbound_info.address);
 						if(proxyinfo->to_type==TYPE_UNIX)
 						{
 							mksysmsg(1,config_logfull,config_runmode,config.loglevel,outmsg_level,"dst: %s, ",proxyinfo->to_unix_path);
@@ -600,12 +606,12 @@ int main(int argc, char ** argv)
 					}
 					if(inbound[inbound[0]]==1)
 					{
-						mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: status, status: reject_motdrelayrestricted_13w41*\n");
+						mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: motd, status: reject_motdrelay_13w41*\n");
 						packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Use 13w42a or later to play!",rewrited);
 					}
 					else if(inbound[inbound[0]]==2)
 					{
-						mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: login, status: reject_gamerelayrestricted_13w41*\n");
+						mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: game, status: reject_gamerelay_13w41*\n");
 						packlen_rewrited=make_kickreason("Proxy: Unsupported client, use 13w42a or later!",rewrited);
 					}
 					send(socket_inbound_client,rewrited,packlen_rewrited,0);
@@ -626,12 +632,12 @@ int main(int argc, char ** argv)
 					}
 					if(inbound_info.nextstate==1)
 					{
-						mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: status, vhost: %s, status: reject_vhostinvalid\n",inbound_info.address);
+						mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: motd, vhost: %s, status: reject_vhostinvalid\n",inbound_info.address);
 						packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Use a legit address to play!",rewrited);
 					}
 					else if(inbound_info.nextstate==2)
 					{
-						mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: login, vhost: %s, status: reject_vhostinvalid, username: %s\n",inbound_info.address,inbound_info.username);
+						mksysmsg(1,config_logfull,config_runmode,config.loglevel,1,"type: game, vhost: %s, status: reject_vhostinvalid, username: %s\n",inbound_info.address,inbound_info.username);
 						packlen_rewrited=make_kickreason("Proxy: Please use a legit name to connect!",rewrited);
 					}
 					send(socket_inbound_client,rewrited,packlen_rewrited,0);
@@ -678,17 +684,17 @@ int main(int argc, char ** argv)
 					{
 						mksysmsg(0,config_logfull,config_runmode,config.loglevel,outmsg_level,"src: UNIX, ");
 					}
-					else
+					else if(config.bind.type==TYPE_INET)
 					{
 						mksysmsg(0,config_logfull,config_runmode,config.loglevel,outmsg_level,"src: %s:%d, ",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
 					}
 					if(inbound_info.nextstate==1)
 					{
-						mksysmsg(1,config_logfull,config_runmode,config.loglevel,outmsg_level,"type: status, vhost: %s, ",inbound_info.address);
+						mksysmsg(1,config_logfull,config_runmode,config.loglevel,outmsg_level,"type: motd, vhost: %s, ",inbound_info.address);
 					}
 					else if(inbound_info.nextstate==2)
 					{
-						mksysmsg(1,config_logfull,config_runmode,config.loglevel,outmsg_level,"type: login, vhost: %s, ",inbound_info.address);
+						mksysmsg(1,config_logfull,config_runmode,config.loglevel,outmsg_level,"type: game, vhost: %s, ",inbound_info.address);
 					}
 					if(proxyinfo->to_type==TYPE_UNIX)
 					{

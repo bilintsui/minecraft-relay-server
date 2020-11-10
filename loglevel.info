@@ -1,4 +1,4 @@
-# LOG LEVEL DEFINATION for v1.1, beta 3, patch 4.
+# LOG LEVEL DEFINATION for v1.1.
 # Log level mentioned here had already defined in the program, if new message type defined, this file will be changed
 Level	Type	Description
 0	Critical	When a non-ignorable error occurs, program will output this message to STDERR.
