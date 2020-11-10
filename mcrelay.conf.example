@@ -1,0 +1,8 @@
+runmode run_mode
+log logfile_path
+loglevel loglvl
+bind bind_object
+proxy_pass proxy_type
+	ident_name destination_object
+proxy_pass <proxy_type>
+	ident_name destination_object

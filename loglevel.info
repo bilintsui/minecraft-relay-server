@@ -1,0 +1,7 @@
+# LOG LEVEL DEFINATION for v1.1.
+# Log level mentioned here had already defined in the program, if new message type defined, this file will be changed
+Level	Type	Description
+0	Critical	When a non-ignorable error occurs, program will output this message to STDERR.
+1	Warning	When an ignorable error occurs, program will output this message to STDOUT.
+2	Information, rate 0	Normal information. eg: Incoming login request.
+3	Information, rate 1	Normal information, but annoying. eg: Incoming MOTD request.
