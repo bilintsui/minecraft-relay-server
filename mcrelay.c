@@ -3,7 +3,7 @@
 	A component of Minecraft Relay Server.
 	
 
-	Minecraft Relay Server, version 1.1
+	Minecraft Relay Server, version 1.1.1
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -16,7 +16,7 @@
 #include "mod/network.h"
 #include "mod/proto_legacy.h"
 #include "mod/proto_modern.h"
-const char version_str[]="1.1";
+const char version_str[]="1.1.1";
 struct conf config;
 char configfile[512],cwd[512],config_logfull[BUFSIZ];
 unsigned short config_runmode;
@@ -304,6 +304,13 @@ int main(int argc, char ** argv)
 				close(socket_inbound_client);
 				return 0;
 			}
+			if(ismcproto(inbound,packlen_inbound)==0)
+			{
+				mksysmsg(0,config_logfull,config_runmode,config.loglevel,1,"src: %s:%d, status: reject_unidentproto\n",inet_ntoa(addr_inbound_client.sin_addr),ntohs(addr_inbound_client.sin_port));
+				shutdown(socket_inbound_client,SHUT_RDWR);
+				close(socket_inbound_client);
+				return 0;
+			}
 			if(inbound[0]==0xFE)
 			{
 				int motd_version=legacy_motd_protocol_identify(inbound);
@@ -480,7 +487,7 @@ int main(int argc, char ** argv)
 					close(socket_inbound_client);
 					return 0;
 				}
-				else
+				else if((login_version==PVER_L_LEGACY2)||(login_version==PVER_L_LEGACY4))
 				{
 					struct p_login_legacy inbound_info=packet_read_legacy_login(inbound,packlen_inbound,login_version);
 					struct conf_map * proxyinfo=getproxyinfo(&config,inbound_info.address);

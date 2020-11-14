@@ -3,7 +3,7 @@
 	A component of Minecraft Relay Server.
 	Requires: mod/basic.h, please manually include it in main source code.
 	
-	Minecraft Relay Server, version 1.1
+	Minecraft Relay Server, version 1.1.1
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).

@@ -3,7 +3,7 @@
 	A component of Minecraft Relay Server.
 	Requires: mod/basic.h, please manually include it in main source code.
 	
-	Minecraft Relay Server, version 1.1
+	Minecraft Relay Server, version 1.1.1
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -129,26 +129,6 @@ int packet_write_legacy_login(struct p_login_legacy source, unsigned char * targ
 		}
 	}
 	return size;
-}
-int legacy_motd_protocol_identify(unsigned char * source)
-{
-	int proto_version=0;
-	if(source[1]==0)
-	{
-		proto_version=PVER_M_LEGACY1;
-	}
-	else if(source[1]==1)
-	{
-		if(source[2]==0)
-		{
-			proto_version=PVER_M_LEGACY2;
-		}
-		else if(source[2]==0xFA)
-		{
-			proto_version=PVER_M_LEGACY3;
-		}
-	}
-	return proto_version;
 }
 struct p_motd_legacy packet_read_legacy_motd(unsigned char * sourcepacket, int sourcepacket_length)
 {

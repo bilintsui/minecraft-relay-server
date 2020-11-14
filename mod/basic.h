@@ -3,7 +3,7 @@
 	A component of Minecraft Relay Server.
 	
 	
-	Minecraft Relay Server, version 1.1
+	Minecraft Relay Server, version 1.1.1
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -16,13 +16,14 @@
 #include <time.h>
 #define TYPE_UNIX 1
 #define TYPE_INET 2
-#define PVER_L_ORIGPRO 0
-#define PVER_L_LEGACY1 1
-#define PVER_L_LEGACY2 2
-#define PVER_L_LEGACY3 3
-#define PVER_L_LEGACY4 4
-#define PVER_L_MODERN1 5
-#define PVER_L_MODERN2 6
+#define PVER_L_UNIDENT 0
+#define PVER_L_ORIGPRO 1
+#define PVER_L_LEGACY1 2
+#define PVER_L_LEGACY2 3
+#define PVER_L_LEGACY3 4
+#define PVER_L_LEGACY4 5
+#define PVER_L_MODERN1 6
+#define PVER_L_MODERN2 7
 #define PVER_M_UNIDENT 0
 #define PVER_M_LEGACY1 1
 #define PVER_M_LEGACY2 2
@@ -184,14 +185,21 @@ int handshake_protocol_identify(unsigned char * source, unsigned int length)
 			}
 			break;
 		default:
-			switch(source[2])
+			if((source[source[0]]==1)||(source[source[0]]==2))
 			{
-				case 0:
-					protocol_version=PVER_L_MODERN1;
-					break;
-				default:
-					protocol_version=PVER_L_MODERN2;
-					break;
+				switch(source[2])
+				{
+					case 0:
+						protocol_version=PVER_L_MODERN1;
+						break;
+					default:
+						protocol_version=PVER_L_MODERN2;
+						break;
+				}
+			}
+			else
+			{
+				protocol_version=PVER_L_UNIDENT;
 			}
 			break;
 	}
@@ -344,4 +352,43 @@ int mksysmsg(unsigned short noprefix, char * logfile, unsigned short runmode, un
 	{
 		return 0;
 	}
+}
+int legacy_motd_protocol_identify(unsigned char * source)
+{
+	int proto_version=PVER_M_UNIDENT;
+	if(source[1]==0)
+	{
+		proto_version=PVER_M_LEGACY1;
+	}
+	else if(source[1]==1)
+	{
+		if(source[2]==0)
+		{
+			proto_version=PVER_M_LEGACY2;
+		}
+		else if(source[2]==0xFA)
+		{
+			proto_version=PVER_M_LEGACY3;
+		}
+	}
+	return proto_version;
+}
+int ismcproto(unsigned char * data_in, unsigned int data_length)
+{
+	int result=0;
+	if(data_in[0]==0xFE)
+	{
+		if(legacy_motd_protocol_identify(data_in)!=PVER_M_UNIDENT)
+		{
+			result=1;
+		}
+	}
+	else
+	{
+		if(handshake_protocol_identify(data_in,data_length)!=PVER_L_UNIDENT)
+		{
+			result=1;
+		}
+	}
+	return result;
 }
