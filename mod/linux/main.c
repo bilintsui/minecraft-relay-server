@@ -292,7 +292,10 @@ int main(int argc, char ** argv)
 			signal(SIGUSR1,SIG_DFL);
 			close(socket_inbound_server);
 			int socket_outbound;
-			backbone(socket_inbound_client,&socket_outbound,config_logfull,config_runmode,config,addr_inbound_client);
+			if(backbone(socket_inbound_client,&socket_outbound,config_logfull,config_runmode,config,addr_inbound_client))
+			{
+				return 0;
+			}
 			net_relay(socket_inbound_client,socket_outbound);
 			return 0;
 		}

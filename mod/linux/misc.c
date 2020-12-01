@@ -24,14 +24,14 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 	{
 		shutdown(socket_in,SHUT_RDWR);
 		close(socket_in);
-		return 0;
+		return 1;
 	}
 	if(ismcproto(inbound,packlen_inbound)==0)
 	{
 		mksysmsg(0,logfile,runmode,conf_in.loglevel,1,"src: %s:%d, status: reject_unidentproto\n",inet_ntoa(addrinfo_in.sin_addr),ntohs(addrinfo_in.sin_port));
 		shutdown(socket_in,SHUT_RDWR);
 		close(socket_in);
-		return 0;
+		return 2;
 	}
 	if(inbound[0]==0xFE)
 	{
@@ -73,7 +73,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 				send(socket_in,rewrited,packlen_rewrited,0);
 				shutdown(socket_in,SHUT_RDWR);
 				close(socket_in);
-				return 0;
+				return 3;
 			}
 			else
 			{
@@ -135,7 +135,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 						{
 							send(*socket_out,inbound,packlen_inbound,0);
 						}
-						break;
+						return 0;
 					case 1:
 					case 2:
 						if(mkoutbound_status==1)
@@ -150,7 +150,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 						send(socket_in,rewrited,packlen_rewrited,0);
 						shutdown(socket_in,SHUT_RDWR);
 						close(socket_in);
-						return 0;
+						return 4;
 				}
 			}
 		}
@@ -169,7 +169,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			send(socket_in,rewrited,packlen_rewrited,0);
 			shutdown(socket_in,SHUT_RDWR);
 			close(socket_in);
-			return 0;
+			return 5;
 		}
 	}
 	else if(inbound[0]==2)
@@ -190,7 +190,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			send(socket_in,rewrited,packlen_rewrited,0);
 			shutdown(socket_in,SHUT_RDWR);
 			close(socket_in);
-			return 0;
+			return 5;
 		}
 		else if(login_version==PVER_L_LEGACY3)
 		{
@@ -207,7 +207,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			send(socket_in,rewrited,packlen_rewrited,0);
 			shutdown(socket_in,SHUT_RDWR);
 			close(socket_in);
-			return 0;
+			return 5;
 		}
 		else if((login_version==PVER_L_LEGACY2)||(login_version==PVER_L_LEGACY4))
 		{
@@ -228,7 +228,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 				send(socket_in,rewrited,packlen_rewrited,0);
 				shutdown(socket_in,SHUT_RDWR);
 				close(socket_in);
-				return 0;
+				return 3;
 			}
 			else
 			{
@@ -290,7 +290,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 						{
 							send(*socket_out,inbound,packlen_inbound,0);
 						}
-						break;
+						return 0;
 					case 1:
 					case 2:
 						if(mkoutbound_status==1)
@@ -306,7 +306,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 						send(socket_in,rewrited,packlen_rewrited,0);
 						shutdown(socket_in,SHUT_RDWR);
 						close(socket_in);
-						return 0;
+						return 4;
 				}
 			}
 		}
@@ -346,7 +346,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			send(socket_in,rewrited,packlen_rewrited,0);
 			shutdown(socket_in,SHUT_RDWR);
 			close(socket_in);
-			return 0;
+			return 5;
 		}
 		struct conf_map * proxyinfo=getproxyinfo(&conf_in,inbound_info.address);
 		if(proxyinfo==NULL)
@@ -372,7 +372,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			send(socket_in,rewrited,packlen_rewrited,0);
 			shutdown(socket_in,SHUT_RDWR);
 			close(socket_in);
-			return 0;
+			return 3;
 		}
 		else
 		{
@@ -456,7 +456,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 					{
 						send(*socket_out,inbound,packlen_inbound,0);
 					}
-					break;
+					return 0;
 				case 1:
 				case 2:
 					if(mkoutbound_status==1)
@@ -487,7 +487,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 					send(socket_in,rewrited,packlen_rewrited,0);
 					shutdown(socket_in,SHUT_RDWR);
 					close(socket_in);
-					return 0;
+					return 4;
 			}
 		}
 	}

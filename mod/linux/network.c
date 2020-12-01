@@ -190,6 +190,6 @@ int net_relay(int socket_inbound_client, int socket_outbound)
 			close(socket_inbound_client);
 			close(socket_outbound);
 			return 0;
-		} 
+		}
 	}
 }
