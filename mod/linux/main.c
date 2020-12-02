@@ -10,6 +10,7 @@
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
 #include <arpa/inet.h>
+#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -311,19 +312,29 @@ int main(int argc, char ** argv)
 			{
 				int socket_source=events[rec_nfds].data.fd;
 				int socket_peer=socket_peers[socket_source];
-				int packlen=recv(socket_source,buffer,BUFSIZ,0);
-				if(packlen==0)
+				int packlen_recv;
+				while(1)
 				{
-					socket_peers[socket_source]=-1;
-					socket_peers[socket_peer]=-1;
-					epoll_ctl(epfd,EPOLL_CTL_DEL,socket_source,NULL);
-					epoll_ctl(epfd,EPOLL_CTL_DEL,socket_peer,NULL);
-					close(socket_source);
-					close(socket_peer);
-				}
-				else if(packlen>0)
-				{
-					send(socket_peer,buffer,packlen,0);
+					packlen_recv=recv(socket_source,buffer,BUFSIZ,MSG_DONTWAIT);
+					if((packlen_recv==-1)&&((errno==EAGAIN)||(errno==EWOULDBLOCK)))
+					{
+						break;
+					}
+					if(packlen_recv==0)
+					{
+						socket_peers[socket_source]=-1;
+						socket_peers[socket_peer]=-1;
+						epoll_ctl(epfd,EPOLL_CTL_DEL,socket_source,NULL);
+						epoll_ctl(epfd,EPOLL_CTL_DEL,socket_peer,NULL);
+						shutdown(socket_source,SHUT_RDWR);
+						shutdown(socket_peer,SHUT_RDWR);
+						break;
+					}
+					send(socket_peer,buffer,packlen_recv,MSG_DONTWAIT);
+					if(packlen_recv<BUFSIZ)
+					{
+						break;
+					}
 				}
 			}
 		}

@@ -141,6 +141,7 @@ int net_mkoutbound(int dst_type, char * dst_addr, unsigned short dst_port, int *
 	}
 	else if(dst_type==TYPE_UNIX)
 	{
+		*dst_socket=socket(AF_UNIX,SOCK_STREAM,0);
 		conninfo=malloc(sizeof(struct sockaddr_un));
 		*(struct sockaddr_un *)conninfo=net_mksockaddr_un(dst_addr);
 	}
