@@ -2,7 +2,7 @@
 	main.c: Main source code for Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.1.2
+	Minecraft Relay Server, version 1.2-beta1
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -14,10 +14,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
-const char version_str[]="1.1.2";
+#define MAXEVENTS 256
+#define LISTENQ 20
+#define MAXSOCKET 1024
+const char version_str[]="1.2-beta1";
 struct conf config;
 char configfile[512],cwd[512],config_logfull[BUFSIZ];
 unsigned short config_runmode;
@@ -266,38 +270,62 @@ int main(int argc, char ** argv)
 		fclose(pidfd);
 	}
 	signal(SIGUSR1,deal_sigusr1);
-	signal(SIGCHLD,SIG_IGN);
+	struct epoll_event ev,events[MAXEVENTS];
+	int epfd,nfds,rec_nfds;
+	epfd=epoll_create(MAXEVENTS);
+	ev.data.fd=socket_inbound_server;
+	ev.events=EPOLLIN;
+	epoll_ctl(epfd,EPOLL_CTL_ADD,socket_inbound_server,&ev);
+	listen(socket_inbound_server,LISTENQ);
+	int socket_peers[MAXSOCKET];
+	char buffer[BUFSIZ];
 	while(1)
 	{
-		while(listen(socket_inbound_server,1)==-1);
-		if(config.bind.type==TYPE_INET)
+		nfds=epoll_wait(epfd,events,MAXEVENTS,0);
+		for(rec_nfds=0;rec_nfds<nfds;rec_nfds++)
 		{
-			socket_inbound_client=accept(socket_inbound_server,(struct sockaddr *)&addr_inbound_client,&strulen);
-		}
-		else if(config.bind.type==TYPE_UNIX)
-		{
-			socket_inbound_client=accept(socket_inbound_server,(struct sockaddr *)&uddr_inbound_client,&strulen);
-		}
-		pid=fork();
-		if(pid>0)
-		{
-			close(socket_inbound_client);
-		}
-		else if(pid<0)
-		{
-			break;
-		}
-		else
-		{
-			signal(SIGUSR1,SIG_DFL);
-			close(socket_inbound_server);
-			int socket_outbound;
-			if(backbone(socket_inbound_client,&socket_outbound,config_logfull,config_runmode,config,addr_inbound_client))
+			if(events[rec_nfds].data.fd==socket_inbound_server)
 			{
-				return 0;
+				if(config.bind.type==TYPE_INET)
+				{
+					socket_inbound_client=accept(socket_inbound_server,(struct sockaddr *)&addr_inbound_client,&strulen);
+				}
+				else if(config.bind.type==TYPE_UNIX)
+				{
+					socket_inbound_client=accept(socket_inbound_server,(struct sockaddr *)&uddr_inbound_client,&strulen);
+				}
+				int socket_outbound;
+				if(backbone(socket_inbound_client,&socket_outbound,config_logfull,config_runmode,config,addr_inbound_client)==0)
+				{
+					ev.data.fd=socket_inbound_client;
+					ev.events=EPOLLIN;
+					epoll_ctl(epfd,EPOLL_CTL_ADD,socket_inbound_client,&ev);
+					ev.data.fd=socket_outbound;
+					ev.events=EPOLLIN;
+					epoll_ctl(epfd,EPOLL_CTL_ADD,socket_outbound,&ev);
+					socket_peers[socket_inbound_client]=socket_outbound;
+					socket_peers[socket_outbound]=socket_inbound_client;
+				}
 			}
-			net_relay(socket_inbound_client,socket_outbound);
-			return 0;
+			else if(events[rec_nfds].events&EPOLLIN)
+			{
+				int socket_source=events[rec_nfds].data.fd;
+				int socket_peer=socket_peers[socket_source];
+				int packlen=recv(socket_source,buffer,BUFSIZ,0);
+				if(packlen==0)
+				{
+					socket_peers[socket_source]=-1;
+					socket_peers[socket_peer]=-1;
+					epoll_ctl(epfd,EPOLL_CTL_DEL,socket_source,NULL);
+					epoll_ctl(epfd,EPOLL_CTL_DEL,socket_peer,NULL);
+					close(socket_source);
+					close(socket_peer);
+				}
+				else if(packlen>0)
+				{
+					send(socket_peer,buffer,packlen,0);
+				}
+			}
 		}
 	}
 }
