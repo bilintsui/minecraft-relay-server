@@ -9,6 +9,7 @@
 	It basically means you have free rights for uncommerical use and modify, also restricted you to comply the license, whether part of original release or modified part by you.
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
+#include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -120,7 +121,7 @@ int config_load(char * filename, struct conf * result)
 			{
 				result->bind.type=TYPE_INET;
 				strcpy(result->bind.inet_addr,key2);
-				result->bind.inet_port=atoi(value2);
+				result->bind.inet_port=basic_atosu(value2);
 			}
 		}
 		else if(strcmp(key,"proxy_pass")==0)
@@ -174,7 +175,8 @@ int config_load(char * filename, struct conf * result)
 				{
 					result->relay[rec_relay].to_type=TYPE_INET;
 					strcpy(result->relay[rec_relay].to_inet_addr,key3);
-					if((atoi(value3)<1)||(atoi(value3)>65535))
+					int port=basic_atosu(value3);
+					if(port==0)
 					{
 						line_reccount++;
 						strcpy(tmp_buffer,buffer[line_reccount+1]);
@@ -182,7 +184,7 @@ int config_load(char * filename, struct conf * result)
 					}
 					else
 					{
-						result->relay[rec_relay].to_inet_port=atoi(value3);
+						result->relay[rec_relay].to_inet_port=port;
 					}
 				}
 				rec_relay++;
@@ -205,7 +207,7 @@ int config_load(char * filename, struct conf * result)
 	{
 		return 4;
 	}
-	if(!((strcmp(result->bind.unix_path,"")!=0)||((strcmp(result->bind.inet_addr,"")!=0)&&(result->bind.inet_port!=0))))
+	if(!((strcmp(result->bind.unix_path,"")!=0)||((strcmp(result->bind.inet_addr,"")!=0)&&(inet_addr(result->bind.inet_addr)!=-1)&&(result->bind.inet_port!=0))))
 	{
 		return 5;
 	}

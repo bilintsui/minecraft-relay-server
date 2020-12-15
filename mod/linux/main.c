@@ -72,15 +72,11 @@ void deal_sigusr1()
 }
 int main(int argc, char ** argv)
 {
-	char *bindip,*connip;
-	char **addresses;
-	int socket_inbound_server,strulen,socket_inbound_client,connip_resolved;
+	int socket_inbound_server,strulen,socket_inbound_client;
 	struct sockaddr_in addr_inbound_server,addr_inbound_client;
 	struct sockaddr_un uddr_inbound_server,uddr_inbound_client;
-	unsigned short bindport,connport;
 	signal(SIGTERM,deal_sigterm);
 	signal(SIGINT,deal_sigterm);
-	connip_resolved=0;
 	bzero(cwd,512);
 	getcwd(cwd,512);
 	if(argc!=2)
@@ -149,8 +145,6 @@ int main(int argc, char ** argv)
 		}
 	}
 	mksysmsg(1,"",0,255,2,"Minecraft Relay Server [Version:%s]\n(C) 2020 Bilin Tsui. All rights reserved.\n\n",version_str);
-	bindip="0.0.0.0";
-	bindport=25565;
 	bzero(configfile,512);
 	strcpy(configfile,argv[1]);
 	mksysmsg(0,"",0,255,2,"Loading configurations from file: %s\n\n",configfile);
@@ -186,28 +180,22 @@ int main(int argc, char ** argv)
 			mksysmsg(0,"",0,255,0,"Error in configurations: You don't have any valid record for relay.\n");
 			return 22;
 	}
+	FILE * tmpfd=fopen(config_logfull,"a");
+	if(tmpfd==NULL)
+	{
+		mksysmsg(0,"",0,255,0,"Error: Cannot write log to \"%s\".\n",config.log);
+		return 13;
+	}
+	else
+	{
+		fclose(tmpfd);
+	}
 	if(config.bind.type==TYPE_INET)
 	{
-		if(inet_addr(config.bind.inet_addr)==-1)
-		{
-			mksysmsg(0,config_logfull,config_runmode,config.loglevel,1,"Bad argument: bind_address. Use default address %s.\n",bindip);
-		}
-		else
-		{
-			bindip=config.bind.inet_addr;
-		}
-		if((config.bind.inet_port<1)||(config.bind.inet_port>65535))
-		{
-			mksysmsg(0,config_logfull,config_runmode,config.loglevel,1,"Bad argument: bind_port. Use default port %d.\n",bindport);
-		}
-		else
-		{
-			bindport=config.bind.inet_port;
-		}
 		socket_inbound_server=socket(AF_INET,SOCK_STREAM,0);
-		addr_inbound_server=net_mksockaddr_in(AF_INET,htonl(inet_addr(bindip)),bindport);
+		addr_inbound_server=net_mksockaddr_in(AF_INET,htonl(inet_addr(config.bind.inet_addr)),config.bind.inet_port);
 		strulen=sizeof(struct sockaddr_in);
-		mksysmsg(0,config_logfull,config_runmode,config.loglevel,2,"Binding on %s:%d...\n","0.0.0.0",25565);
+		mksysmsg(0,config_logfull,config_runmode,config.loglevel,2,"Binding on %s:%d...\n",config.bind.inet_addr,config.bind.inet_port);
 		if(bind(socket_inbound_server,(struct sockaddr *)&addr_inbound_server,strulen)==-1)
 		{
 			mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Bind Failed!\n");

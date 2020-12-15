@@ -141,6 +141,7 @@ int net_mkoutbound(int dst_type, char * dst_addr, unsigned short dst_port, int *
 	}
 	else if(dst_type==TYPE_UNIX)
 	{
+		*dst_socket=socket(AF_UNIX,SOCK_STREAM,0);
 		conninfo=malloc(sizeof(struct sockaddr_un));
 		*(struct sockaddr_un *)conninfo=net_mksockaddr_un(dst_addr);
 	}
@@ -155,41 +156,31 @@ int net_mkoutbound(int dst_type, char * dst_addr, unsigned short dst_port, int *
 		return 0;
 	}
 }
-int net_relay(int socket_inbound_client, int socket_outbound)
+void net_relay(int socket_in, int socket_out)
 {
-	int packlen_inbound,packlen_outbound;
-	char inbound[BUFSIZ],outbound[BUFSIZ];
-	bzero(inbound,BUFSIZ);
-	bzero(outbound,BUFSIZ);
+	int packlen;
+	char buffer[BUFSIZ];
 	while(1)
 	{
-		packlen_inbound=recv(socket_inbound_client,inbound,BUFSIZ,MSG_DONTWAIT);
-		if(packlen_inbound>0)
+		packlen=recv(socket_in,buffer,BUFSIZ,MSG_DONTWAIT);
+		if(packlen>0)
 		{
-			send(socket_outbound,inbound,packlen_inbound,0);
-			bzero(inbound,BUFSIZ);
+			send(socket_out,buffer,packlen,0);
 		}
-		else if(packlen_inbound==0)
+		else if(packlen==0)
 		{
-			shutdown(socket_inbound_client,SHUT_RDWR);
-			shutdown(socket_outbound,SHUT_RDWR);
-			close(socket_inbound_client);
-			close(socket_outbound);
-			return 0;
+			close(socket_out);
+			break;
 		}
-		packlen_outbound=recv(socket_outbound,outbound,BUFSIZ,MSG_DONTWAIT);
-		if(packlen_outbound>0)
+		packlen=recv(socket_out,buffer,BUFSIZ,MSG_DONTWAIT);
+		if(packlen>0)
 		{
-			send(socket_inbound_client,outbound,packlen_outbound,0);
-			bzero(outbound,BUFSIZ);
+			send(socket_in,buffer,packlen,0);
 		}
-		else if(packlen_outbound==0)
+		else if(packlen==0)
 		{
-			shutdown(socket_inbound_client,SHUT_RDWR);
-			shutdown(socket_outbound,SHUT_RDWR);
-			close(socket_inbound_client);
-			close(socket_outbound);
-			return 0;
+			close(socket_in);
+			break;
 		}
 	}
 }
