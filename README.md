@@ -23,7 +23,7 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!<br/>
 * mcrelay.conf.example: config file example of mcrelay.
 * mcrelay.service.forking.example: service unit file of mcrelay for systemd(using runmode: forking).
 * mcrelay.service.simple.example: service unit file of mcrelay for systemd(using runmode: simple).
-* mod/*.h: header files of essential modules.
+* mod: directory of essential modules.
 * loglevel.info: definations for messages.
 
 ## Compile
@@ -51,6 +51,7 @@ proxy_pass proxy_type
 	ident_name destination_object
 proxy_pass proxy_type
 	ident_name destination_object
+default destination_object
 </pre>
 ### Explanation
 * runmode: set program's runmode.
@@ -74,6 +75,7 @@ If not set, the server will detect SRV record first(defined in address_d).<br/>
 If SRV record resolve failed, it will fallback to normal address resolve, also connect to this address with port 25565.<br/>
 **For rewrite enabled relay, it will use actual connect configuration to rewrite.**
 >>* path: the socket file you wish to connect.
+* default: optional, set a default server to connect when client don't match any valid virtual host. (Intentionally not support rewrite here.) (Security suggestion: Don't use this feature unless you know what you are doing.)
 ### Example
 <pre>
 runmode forking
@@ -85,4 +87,5 @@ proxy_pass rewrite
 proxy_pass relay
 	mc1.example.com 127.0.0.1:25566
 	mc2.example.com 192.168.1.254:25565
+default 192.168.1.254:25565
 </pre>
