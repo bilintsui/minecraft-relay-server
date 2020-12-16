@@ -28,6 +28,7 @@
 #define PVER_M_LEGACY3 3
 void gettime(unsigned char * target);
 long math_pow(int x,int y);
+unsigned short basic_atosu(unsigned char * source);
 unsigned char * varint2int(unsigned char * source, unsigned long * output);
 unsigned char * int2varint(unsigned long data, unsigned char * output);
 int datcat(char * dst, int dst_size, char * src, int src_size);

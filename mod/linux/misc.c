@@ -22,14 +22,12 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 	packlen_inbound=recv(socket_in,inbound,BUFSIZ,0);
 	if(packlen_inbound==0)
 	{
-		shutdown(socket_in,SHUT_RDWR);
 		close(socket_in);
 		return 1;
 	}
 	if(ismcproto(inbound,packlen_inbound)==0)
 	{
 		mksysmsg(0,logfile,runmode,conf_in.loglevel,1,"src: %s:%d, status: reject_unidentproto\n",inet_ntoa(addrinfo_in.sin_addr),ntohs(addrinfo_in.sin_port));
-		shutdown(socket_in,SHUT_RDWR);
 		close(socket_in);
 		return 2;
 	}
@@ -71,7 +69,6 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 				mksysmsg(1,logfile,runmode,conf_in.loglevel,1,"type: motd, vhost: %s, status: reject_vhostinvalid\n",inbound_info.address);
 				packlen_rewrited=make_motd_legacy(inbound_info.version,"[Proxy] Use a legit address to play!",motd_version,rewrited);
 				send(socket_in,rewrited,packlen_rewrited,0);
-				shutdown(socket_in,SHUT_RDWR);
 				close(socket_in);
 				return 3;
 			}
@@ -148,7 +145,6 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 						}
 						packlen_rewrited=make_motd_legacy(inbound_info.version,"[Proxy] Server Temporary Unavailable.",motd_version,rewrited);
 						send(socket_in,rewrited,packlen_rewrited,0);
-						shutdown(socket_in,SHUT_RDWR);
 						close(socket_in);
 						return 4;
 				}
@@ -167,7 +163,6 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			mksysmsg(1,logfile,runmode,conf_in.loglevel,1,"type: motd, status: reject_motdrelay_oldclient\n");
 			packlen_rewrited=make_motd_legacy(0,"Proxy: Please use direct connect.",legacy_motd_protocol_identify(inbound),rewrited);
 			send(socket_in,rewrited,packlen_rewrited,0);
-			shutdown(socket_in,SHUT_RDWR);
 			close(socket_in);
 			return 5;
 		}
@@ -188,7 +183,6 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			mksysmsg(1,logfile,runmode,conf_in.loglevel,1,"type: game, status: reject_gamerelay_oldclient\n");
 			packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 12w04a or later!",rewrited);
 			send(socket_in,rewrited,packlen_rewrited,0);
-			shutdown(socket_in,SHUT_RDWR);
 			close(socket_in);
 			return 5;
 		}
@@ -205,7 +199,6 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			mksysmsg(1,logfile,runmode,conf_in.loglevel,1,"type: game, status: reject_gamerelay_12w17a\n");
 			packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 12w18a or later!",rewrited);
 			send(socket_in,rewrited,packlen_rewrited,0);
-			shutdown(socket_in,SHUT_RDWR);
 			close(socket_in);
 			return 5;
 		}
@@ -226,7 +219,6 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 				mksysmsg(1,logfile,runmode,conf_in.loglevel,1,"type: game, vhost: %s, status: reject_vhostinvalid, username: %s\n",inbound_info.address,inbound_info.username);
 				packlen_rewrited=make_kickreason_legacy("Proxy: Please use a legit name to connect!",rewrited);
 				send(socket_in,rewrited,packlen_rewrited,0);
-				shutdown(socket_in,SHUT_RDWR);
 				close(socket_in);
 				return 3;
 			}
@@ -304,7 +296,6 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 							packlen_rewrited=make_kickreason_legacy("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
 						}
 						send(socket_in,rewrited,packlen_rewrited,0);
-						shutdown(socket_in,SHUT_RDWR);
 						close(socket_in);
 						return 4;
 				}
@@ -344,7 +335,6 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 				packlen_rewrited=make_kickreason("Proxy: Unsupported client, use 13w42a or later!",rewrited);
 			}
 			send(socket_in,rewrited,packlen_rewrited,0);
-			shutdown(socket_in,SHUT_RDWR);
 			close(socket_in);
 			return 5;
 		}
@@ -370,7 +360,6 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 				packlen_rewrited=make_kickreason("Proxy: Please use a legit name to connect!",rewrited);
 			}
 			send(socket_in,rewrited,packlen_rewrited,0);
-			shutdown(socket_in,SHUT_RDWR);
 			close(socket_in);
 			return 3;
 		}
@@ -485,7 +474,6 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 						mksysmsg(1,logfile,runmode,conf_in.loglevel,outmsg_level,", username: %s\n",inbound_info.username);
 					}
 					send(socket_in,rewrited,packlen_rewrited,0);
-					shutdown(socket_in,SHUT_RDWR);
 					close(socket_in);
 					return 4;
 			}

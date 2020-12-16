@@ -62,6 +62,32 @@ long math_pow(int x,int y)
 	}
 	return result;
 }
+unsigned short basic_atosu(unsigned char * source)
+{
+	unsigned int result_pre=0;
+	unsigned short result=0;
+	unsigned char * ptr_source=source;
+	unsigned char charnow;
+	while(*ptr_source!=0)
+	{
+		if((*ptr_source<0x30)||(*ptr_source>0x39))
+		{
+			return 0;
+		}
+		charnow=(*ptr_source)-0x30;
+		result_pre=result_pre*10+charnow;
+		ptr_source++;
+	}
+	result=result_pre;
+	if(result!=result_pre)
+	{
+		return 0;
+	}
+	else
+	{
+		return result;
+	}
+}
 unsigned char * varint2int(unsigned char * source, unsigned long * output)
 {
 	unsigned char * recent_ptr=source;
