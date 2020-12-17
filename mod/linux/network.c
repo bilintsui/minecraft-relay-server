@@ -98,11 +98,16 @@ int net_srvresolve(char * query_name, struct stru_net_srvrecord * target)
 	}
 	return max_record_maxweight;
 }
-struct sockaddr_in net_mksockaddr_in(unsigned short family, unsigned long addr, unsigned short port)
+struct sockaddr_in net_mksockaddr_in(unsigned short family, void * addr, unsigned short port)
 {
+	int strusize=0;
+	if(family==AF_INET)
+	{
+		strusize=sizeof(in_addr_t);
+	}
 	struct sockaddr_in result;
 	result.sin_family=family;
-	memcpy(&(result.sin_addr.s_addr),&addr,sizeof(result.sin_addr.s_addr));
+	memcpy(&(result.sin_addr.s_addr),addr,strusize);
 	result.sin_port=htons(port);
 	return result;
 }
@@ -119,7 +124,8 @@ int net_mkoutbound(int dst_type, char * dst_addr, unsigned short dst_port, int *
 	if(dst_type==TYPE_INET)
 	{
 		*dst_socket=socket(AF_INET,SOCK_STREAM,0);
-		if(inet_addr(dst_addr)==-1)
+		in_addr_t connaddr=0;
+		if(!inet_pton(AF_INET,dst_addr,&connaddr))
 		{
 			char ** addresses=net_resolve(dst_addr);
 			if(addresses==NULL)
@@ -129,13 +135,13 @@ int net_mkoutbound(int dst_type, char * dst_addr, unsigned short dst_port, int *
 			else
 			{
 				conninfo=malloc(sizeof(struct sockaddr_in));
-				*(struct sockaddr_in *)conninfo=net_mksockaddr_in(AF_INET,*((unsigned long *)addresses[0]),dst_port);
+				*(struct sockaddr_in *)conninfo=net_mksockaddr_in(AF_INET,addresses[0],dst_port);
 			}
 		}
 		else
 		{
 			conninfo=malloc(sizeof(struct sockaddr_in));
-			*(struct sockaddr_in *)conninfo=net_mksockaddr_in(AF_INET,inet_addr(dst_addr),dst_port);
+			*(struct sockaddr_in *)conninfo=net_mksockaddr_in(AF_INET,&connaddr,dst_port);
 		}
 	}
 	else if(dst_type==TYPE_UNIX)

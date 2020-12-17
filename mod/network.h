@@ -16,7 +16,7 @@
 struct stru_net_srvrecord;
 char ** net_resolve(char * hostname);
 int net_srvresolve(char * query_name, struct stru_net_srvrecord * target);
-struct sockaddr_in net_mksockaddr_in(unsigned short family, unsigned long addr, unsigned short port);
+struct sockaddr_in net_mksockaddr_in(unsigned short family, void * addr, unsigned short port);
 struct sockaddr_un net_mksockaddr_un(char * path);
 int net_mkoutbound(int dst_type, char * dst_addr, unsigned short dst_port, int * dst_socket);
 void net_relay(int socket_in, int socket_out);

@@ -206,7 +206,21 @@ int main(int argc, char ** argv)
 	if(config.bind.type==TYPE_INET)
 	{
 		socket_inbound_server=socket(AF_INET,SOCK_STREAM,0);
-		addr_inbound_server=net_mksockaddr_in(AF_INET,inet_addr(config.bind.inet_addr),config.bind.inet_port);
+		in_addr_t bindaddr=0;
+		if(inet_pton(AF_INET,config.bind.inet_addr,&bindaddr))
+		{
+			addr_inbound_server=net_mksockaddr_in(AF_INET,&bindaddr,config.bind.inet_port);
+		}
+		else
+		{
+			mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Error: Invalid bind address!\n");
+			return 14;
+		}
+		if(config.bind.inet_port==0)
+		{
+			mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Error: Invalid bind port!\n");
+			return 14;
+		}
 		strulen=sizeof(struct sockaddr_in);
 		mksysmsg(0,config_logfull,config_runmode,config.loglevel,2,"Binding on %s:%d...\n",config.bind.inet_addr,config.bind.inet_port);
 		if(bind(socket_inbound_server,(struct sockaddr *)&addr_inbound_server,strulen)==-1)
