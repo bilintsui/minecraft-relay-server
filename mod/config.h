@@ -13,11 +13,20 @@
 #define _MOD_CONFIG_H_
 #include "basic.h"
 #ifdef linux
+#define CONF_EOPENFILE 1
+#define CONF_EBADRUNMODE 2
+#define CONF_ENOLOGFILE 3
+#define CONF_ENOLOGLEVEL 4
+#define CONF_EINVALIDBIND 5
+#define CONF_EPROXYNOFIND 6
+#define CONF_EPROXYDUP 7
+#define CONF_EDEFPROXYDUP 8
 struct conf_bind;
 struct conf_map;
 struct conf;
-int config_load(char * filename, struct conf * result);
 struct conf_map * getproxyinfo(struct conf * source, unsigned char * proxyname);
+void config_dump(struct conf * source);
+int config_load(char * filename, struct conf * result);
 #include "linux/config.c"
 #endif
 #endif

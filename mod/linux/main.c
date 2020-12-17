@@ -55,23 +55,29 @@ void deal_sigusr1()
 			}
 			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,2,"Configuration reloaded.\n\n");
 			break;
-		case 1:
+		case CONF_EOPENFILE:
 			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Cannot read config file: %s, will keep your old configurations.\n\n",configfile);
 			break;
-		case 2:
+		case CONF_EBADRUNMODE:
 			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Argument \"runmode\" is missing, will keep your old configurations.\n\n");
 			break;
-		case 3:
+		case CONF_ENOLOGFILE:
 			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Argument \"log\" is missing, will keep your old configurations.\n\n");
 			break;
-		case 4:
+		case CONF_ENOLOGLEVEL:
 			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Argument \"loglevel\" is missing or not a valid short integer, will keep your old configurations.\n\n");
 			break;
-		case 5:
+		case CONF_EINVALIDBIND:
 			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Argument \"bind\" is missing or invalid, will keep your old configurations.\n\n");
 			break;
-		case 6:
+		case CONF_EPROXYNOFIND:
 			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: You don't have any valid record for relay, will keep your old configurations.\n\n");
+			break;
+		case CONF_EPROXYDUP:
+			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Duplicate proxy record in config line %d, will keep your old configurations.\n\n",errno);
+			break;
+		case CONF_EDEFPROXYDUP:
+			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Duplicate default proxy record in config line %d, will keep your old configurations.\n\n",errno);
 			break;
 	}
 }
@@ -166,23 +172,29 @@ int main(int argc, char ** argv)
 				sprintf(config_logfull,"%s",config.log);
 			}
 			break;
-		case 1:
+		case CONF_EOPENFILE:
 			mksysmsg(0,"",0,255,0,"Cannot read config file: %s\n",configfile);
 			return 2;
-		case 2:
+		case CONF_EBADRUNMODE:
 			mksysmsg(0,"",0,255,0,"Error in configurations: Argument \"runmode\" is missing.\n");
 			return 22;
-		case 3:
+		case CONF_ENOLOGFILE:
 			mksysmsg(0,"",0,255,0,"Error in configurations: Argument \"log\" is missing.\n");
 			return 22;
-		case 4:
+		case CONF_ENOLOGLEVEL:
 			mksysmsg(0,"",0,255,0,"Error in configurations: Argument \"loglevel\" is missing or not a valid short integer.\n");
 			return 22;
-		case 5:
+		case CONF_EINVALIDBIND:
 			mksysmsg(0,"",0,255,0,"Error in configurations: Argument \"bind\" is missing or invalid.\n");
 			return 22;
-		case 6:
+		case CONF_EPROXYNOFIND:
 			mksysmsg(0,"",0,255,0,"Error in configurations: You don't have any valid record for relay.\n");
+			return 22;
+		case CONF_EPROXYDUP:
+			mksysmsg(0,"",0,255,0,"Error in configurations: Duplicate proxy record in config line %d.\n",errno);
+			return 22;
+		case CONF_EDEFPROXYDUP:
+			mksysmsg(0,"",0,255,0,"Error in configurations: Duplicate default proxy record in config line %d.\n",errno);
 			return 22;
 	}
 	FILE * tmpfd=fopen(config_logfull,"a");
@@ -198,7 +210,21 @@ int main(int argc, char ** argv)
 	if(config.bind.type==TYPE_INET)
 	{
 		socket_inbound_server=socket(AF_INET,SOCK_STREAM,0);
-		addr_inbound_server=net_mksockaddr_in(AF_INET,htonl(inet_addr(config.bind.inet_addr)),config.bind.inet_port);
+		in_addr_t bindaddr=0;
+		if(inet_pton(AF_INET,config.bind.inet_addr,&bindaddr))
+		{
+			addr_inbound_server=net_mksockaddr_in(AF_INET,&bindaddr,config.bind.inet_port);
+		}
+		else
+		{
+			mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Error: Invalid bind address!\n");
+			return 14;
+		}
+		if(config.bind.inet_port==0)
+		{
+			mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Error: Invalid bind port!\n");
+			return 14;
+		}
 		strulen=sizeof(struct sockaddr_in);
 		mksysmsg(0,config_logfull,config_runmode,config.loglevel,2,"Binding on %s:%d...\n",config.bind.inet_addr,config.bind.inet_port);
 		if(bind(socket_inbound_server,(struct sockaddr *)&addr_inbound_server,strulen)==-1)
