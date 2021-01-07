@@ -2,7 +2,7 @@
 	config.c: Functions for Config reading on Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.1.2
+	Minecraft Relay Server, version 1.1.3
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -54,95 +54,101 @@ struct conf_map * getproxyinfo(struct conf * source, unsigned char * proxyname)
 void config_dump(struct conf * source)
 {
 	printf("Config Detail:\n");
+	printf("\n[COMMON]\n");
 	switch(source->runmode)
 	{
 		case 1:
-			printf("Runmode\t\t\tSimple\n");
+			printf("Runmode\t\tSimple\n");
 			break;
 		case 2:
-			printf("Runmode\t\t\tForking\n");
+			printf("Runmode\t\tForking\n");
 	}
-	printf("Log file\t\t%s\n",source->log);
-	printf("Log level\t\t%d\n",source->loglevel);
+	printf("Log file\t%s\n",source->log);
+	printf("Log level\t%d\n",source->loglevel);
+	printf("Relay Count\t%d\n",source->relay_count);
+	switch(source->enable_default)
+	{
+		case 0:
+			printf("Default Server\tDisabled\n");
+			break;
+		case 1:
+			printf("Default Server\tEnabled\n");
+			break;
+	}
+	printf("\n[BIND]\n");
 	switch(source->bind.type)
 	{
 		case TYPE_UNIX:
-			printf("Bind - Type\t\tUNIX Socket\n");
-			printf("Bind - Path\t\t%s\n",source->bind.unix_path);
+			printf("Type\t\tUNIX Socket\n");
+			printf("Path\t\t%s\n",source->bind.unix_path);
 			break;
 		case TYPE_INET:
-			printf("Bind - Type\t\tInternet Socket\n");
-			printf("Bind - Address\t\t%s\n",source->bind.inet_addr);
-			printf("Bind - Port\t\t%d\n",source->bind.inet_port);
+			printf("Type\t\tInternet Socket\n");
+			printf("Address\t\t%s\n",source->bind.inet_addr);
+			printf("Port\t\t%d\n",source->bind.inet_port);
 			break;
 	}
-	printf("Relay Count\t\t%d\n",source->relay_count);
 	for(int i=0;i<source->relay_count;i++)
 	{
-		unsigned char header[512];
-		sprintf(header,"Relay #%d - ",i+1);
+		printf("\n[RELAY #%d]\n",i+1);
 		switch(source->relay[i].enable_rewrite)
 		{
 			case 0:
-				printf("%sRewrite\tDisabled\n",header);
+				printf("Rewrite\t\tDisabled\n");
 				break;
 			case 1:
-				printf("%sRewrite\tEnabled\n",header);
+				printf("Rewrite\t\tEnabled\n");
 				break;
 		}
-		printf("%svhost\t%s\n",header,source->relay[i].from);
+		printf("vhost\t\t%s\n",source->relay[i].from);
 		switch(source->relay[i].to_type)
 		{
 			case TYPE_UNIX:
-				printf("%sType\t\tUNIX Socket\n",header);
-				printf("%sPath\t%s\n",header,source->relay[i].to_unix_path);
+				printf("Type\t\tUNIX Socket\n");
+				printf("Path\t\t%s\n",source->relay[i].to_unix_path);
 				break;
 			case TYPE_INET:
-				printf("%sType\t\tInternet Socket\n",header);
-				printf("%sAddress\t%s\n",header,source->relay[i].to_inet_addr);
+				printf("Type\t\tInternet Socket\n");
+				printf("Address\t\t%s\n",source->relay[i].to_inet_addr);
 				switch(source->relay[i].to_inet_hybridmode)
 				{
 					case 0:
-						printf("%sPort\t\t%d\n",header,source->relay[i].to_inet_port);
-						printf("%sSRV Resolve\tDisabled\n",header);
+						printf("Port\t\t%d\n",source->relay[i].to_inet_port);
+						printf("SRV Resolve\tDisabled\n");
 						break;
 					case 1:
-						printf("%sSRV Resolve\tEnabled\n",header);
+						printf("SRV Resolve\tEnabled\n");
 						break;
 				}
 				break;
 		}
 	}
-	switch(source->enable_default)
+	if(source->enable_default==1)
 	{
-		case 0:
-			printf("Default Server\t\tDisabled\n");
-			break;
-		case 1:
-			printf("Default Server\t\tEnabled\n");
-			switch(source->relay_default.to_type)
-			{
-				case TYPE_UNIX:
-					printf("Relay (D) - Type\t\tUNIX Socket\n");
-					printf("Relay (D) - Path\t%s\n",source->relay_default.to_unix_path);
-					break;
-				case TYPE_INET:
-					printf("Relay (D) - Type\tInternet Socket\n");
-					printf("Relay (D) - Address\t%s\n",source->relay_default.to_inet_addr);
-					switch(source->relay_default.to_inet_hybridmode)
-					{
-						case 0:
-							printf("Relay (D) - Port\t%d\n",source->relay_default.to_inet_port);
-							printf("Relay (D) - SRV Resolve\tDisabled\n");
-							break;
-						case 1:
-							printf("Relay (D) - SRV Resolve\tEnabled\n");
-							break;
-					}
-					break;
-			}
-			break;
+		printf("\n[DEFAULT RELAY]\n");
+		switch(source->relay_default.to_type)
+		{
+			case TYPE_UNIX:
+				printf("Type\t\tUNIX Socket\n");
+				printf("Path\t%s\n",source->relay_default.to_unix_path);
+				break;
+			case TYPE_INET:
+				printf("Type\t\tInternet Socket\n");
+				printf("Address\t\t%s\n",source->relay_default.to_inet_addr);
+				switch(source->relay_default.to_inet_hybridmode)
+				{
+					case 0:
+						printf("Port\t\t%d\n",source->relay_default.to_inet_port);
+						printf("SRV Resolve\tDisabled\n");
+						break;
+					case 1:
+						printf("SRV Resolve\tEnabled\n");
+						break;
+				}
+				break;
+		}
 	}
+	printf("\n");
 }
 int config_load(char * filename, struct conf * result)
 {
@@ -276,9 +282,12 @@ int config_load(char * filename, struct conf * result)
 					rec_relay++;
 					line_reccount++;
 					strcpy(tmp_buffer,buffer[line_reccount+1]);
+					tmpptr=tmp_buffer;
 					continue;
 				}
 				result->relay[rec_relay].to_inet_hybridmode=0;
+				bzero(key2,sizeof(key2));
+				bzero(value2,sizeof(value2));
 				tmpptr=strsplit(tmpptr,':',key2);
 				tmpptr=strsplit(tmpptr,':',value2);
 				if(strcmp(key2,"unix")==0)

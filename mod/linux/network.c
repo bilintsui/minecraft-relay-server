@@ -2,7 +2,7 @@
 	network.c: Network Functions for Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.1.2
+	Minecraft Relay Server, version 1.1.3
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -14,6 +14,7 @@
 #include <resolv.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/un.h>
 #include <unistd.h>
 struct stru_net_srvrecord
@@ -161,31 +162,48 @@ int net_mkoutbound(int dst_type, char * dst_addr, unsigned short dst_port, int *
 		return 0;
 	}
 }
-void net_relay(int socket_in, int socket_out)
+int net_relay(int socket_in, int socket_out)
 {
-	int packlen;
 	char buffer[BUFSIZ];
+	struct epoll_event ev,events[2];
+	int epfd,nfds,i,read_bytes,socket_peer;
+	epfd=epoll_create(2);
+	ev.data.fd=socket_in;
+	ev.events=EPOLLIN;
+	epoll_ctl(epfd,EPOLL_CTL_ADD,socket_in,&ev);
+	ev.data.fd=socket_out;
+	ev.events=EPOLLIN;
+	epoll_ctl(epfd,EPOLL_CTL_ADD,socket_out,&ev);
 	while(1)
 	{
-		packlen=recv(socket_in,buffer,BUFSIZ,MSG_DONTWAIT);
-		if(packlen>0)
+		nfds=epoll_wait(epfd,events,2,-1);
+		for(i=0;i<nfds;i++)
 		{
-			send(socket_out,buffer,packlen,0);
-		}
-		else if(packlen==0)
-		{
-			close(socket_out);
-			break;
-		}
-		packlen=recv(socket_out,buffer,BUFSIZ,MSG_DONTWAIT);
-		if(packlen>0)
-		{
-			send(socket_in,buffer,packlen,0);
-		}
-		else if(packlen==0)
-		{
-			close(socket_in);
-			break;
+			if(events[i].events&EPOLLIN)
+			{
+				if(events[i].data.fd==socket_in)
+				{
+					socket_peer=socket_out;
+				}
+				else if(events[i].data.fd==socket_out)
+				{
+					socket_peer=socket_in;
+				}
+				read_bytes=BUFSIZ;
+				while(read_bytes==BUFSIZ)
+				{
+					read_bytes=recv(events[i].data.fd,buffer,BUFSIZ,0);
+					if(read_bytes==0)
+					{
+						close(socket_peer);
+						return 0;
+					}
+					if(read_bytes>0)
+					{
+						send(socket_peer,buffer,read_bytes,0);
+					}
+				}
+			}
 		}
 	}
 }

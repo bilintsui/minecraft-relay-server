@@ -2,7 +2,7 @@
 	network.h: Header file of network.c
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.1.2
+	Minecraft Relay Server, version 1.1.3
 	Copyright (c) 2020 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -19,7 +19,7 @@ int net_srvresolve(char * query_name, struct stru_net_srvrecord * target);
 struct sockaddr_in net_mksockaddr_in(unsigned short family, void * addr, unsigned short port);
 struct sockaddr_un net_mksockaddr_un(char * path);
 int net_mkoutbound(int dst_type, char * dst_addr, unsigned short dst_port, int * dst_socket);
-void net_relay(int socket_in, int socket_out);
+int net_relay(int socket_in, int socket_out);
 #include "linux/network.c"
 #endif
 #endif
