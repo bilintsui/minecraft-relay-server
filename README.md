@@ -24,6 +24,7 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!<br/>
 * mcrelay.service.forking.example: service unit file of mcrelay for systemd(using runmode: forking).
 * mcrelay.service.simple.example: service unit file of mcrelay for systemd(using runmode: simple).
 * mod: directory of essential modules.
+* version.json: version manifest
 * loglevel.info: definations for messages.
 
 ## Compile
@@ -37,7 +38,7 @@ make
 
 ## Usage
 <pre>
-mcrelay config_file
+mcrelay < arguments | config_file >
 </pre>
 
 ## Config

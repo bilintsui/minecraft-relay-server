@@ -3,7 +3,7 @@
 	A component of Minecraft Relay Server.
 
 	Minecraft Relay Server, version 1.1.3
-	Copyright (c) 2020 Bilin Tsui. All right reserved.
+	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	It basically means you have free rights for uncommerical use and modify, also restricted you to comply the license, whether part of original release or modified part by you.
@@ -18,7 +18,9 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
-const char version_str[]="1.1.3";
+const char * version_str="1.1.3";
+const char * year_str="2020-2021";
+const short version_internal=36;
 struct conf config;
 char configfile[512],cwd[512],config_logfull[BUFSIZ];
 unsigned short config_runmode;
@@ -88,7 +90,7 @@ int main(int argc, char ** argv)
 	getcwd(cwd,512);
 	if(argc!=2)
 	{
-		mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version:%s]\n(C) 2020 Bilin Tsui. All rights reserved.\n\nUsage: %s <arguments|config_file>\n\nArguments\n\t-r:\tReload config on the running instance.\n\t-t:\tTerminate the running instance\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",version_str,argv[0]);
+		mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\nUsage: %s <arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",version_str,year_str,argv[0]);
 		return 22;
 	}
 	FILE * pidfd=fopen("/tmp/mcrelay.pid","r");
@@ -97,10 +99,11 @@ int main(int argc, char ** argv)
 	if(*ptr_argv1=='-')
 	{
 		ptr_argv1++;
-		if(strcmp(ptr_argv1,"r")==0)
+		if((strcmp(ptr_argv1,"r")==0)||(strcmp(ptr_argv1,"-reload")==0))
 		{
 			if(pidfd==NULL)
 			{
+				mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
 				mksysmsg(0,"",0,255,0,"Cannot read /tmp/mcrelay.pid.\n");
 				return 2;
 			}
@@ -108,19 +111,22 @@ int main(int argc, char ** argv)
 			fclose(pidfd);
 			if(kill(prevpid,SIGUSR1)==0)
 			{
+				mksysmsg(1,"",0,255,2,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
 				mksysmsg(0,"",0,255,2,"Successfully send reload signal to currently running process.\n");
 				return 0;
 			}
 			else
 			{
+				mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
 				mksysmsg(0,"",0,255,0,"Failed on send reload signal to currently running process.\n");
 				return 3;
 			}
 		}
-		else if(strcmp(ptr_argv1,"t")==0)
+		else if((strcmp(ptr_argv1,"t")==0)||(strcmp(ptr_argv1,"-stop")==0))
 		{
 			if(pidfd==NULL)
 			{
+				mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
 				mksysmsg(0,"",0,255,0,"Cannot read /tmp/mcrelay.pid.\n");
 				return 2;
 			}
@@ -128,14 +134,26 @@ int main(int argc, char ** argv)
 			fclose(pidfd);
 			if(kill(prevpid,SIGTERM)==0)
 			{
+				mksysmsg(1,"",0,255,2,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
 				mksysmsg(0,"",0,255,2,"Successfully send terminate signal to currently running process.\n");
 				return 0;
 			}
 			else
 			{
+				mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
 				mksysmsg(0,"",0,255,0,"Failed on send terminate signal to currently running process.\n");
 				return 3;
 			}
+		}
+		else if((strcmp(ptr_argv1,"v")==0)||(strcmp(ptr_argv1,"-version")==0))
+		{
+			mksysmsg(1,"",0,255,2,"v%s(%d)\n",version_str,version_internal);
+			return 0;
+		}
+		else
+		{
+			mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\nError: Invalid option \"-%s\"\n\nUsage: %s <arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",version_str,year_str,ptr_argv1,argv[0]);
+			return 22;
 		}
 	}
 	else
@@ -146,12 +164,13 @@ int main(int argc, char ** argv)
 			fclose(pidfd);
 			if(kill(prevpid,0)==0)
 			{
+				mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
 				mksysmsg(0,"",0,255,0,"You cannot running multiple instances in one time. Previous running process PID: %d.\n",prevpid);
 				return 1;
 			}
 		}
 	}
-	mksysmsg(1,"",0,255,2,"Minecraft Relay Server [Version:%s]\n(C) 2020 Bilin Tsui. All rights reserved.\n\n",version_str);
+	mksysmsg(1,"",0,255,2,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
 	bzero(configfile,512);
 	strcpy(configfile,argv[1]);
 	mksysmsg(0,"",0,255,2,"Loading configurations from file: %s\n\n",configfile);
