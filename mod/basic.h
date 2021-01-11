@@ -36,6 +36,7 @@ int handshake_protocol_identify(unsigned char * source, unsigned int length);
 int packetshrink(unsigned char * source, int source_length, unsigned char * target);
 int packetexpand(unsigned char * source, int source_length, unsigned char * target);
 unsigned char * strsplit(unsigned char * string, char delim, unsigned char * firstfield);
+unsigned char * strsplit_reverse(unsigned char * string, char delim);
 int strsplit_fieldcount(unsigned char * string, char delim);
 int mksysmsg(unsigned short noprefix, char * logfile, unsigned short runmode, unsigned short maxlevel, unsigned short msglevel, char * format, ...);
 int legacy_motd_protocol_identify(unsigned char * source);

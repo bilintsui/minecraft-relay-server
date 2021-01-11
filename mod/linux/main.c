@@ -20,7 +20,7 @@
 #include <unistd.h>
 const char * version_str="1.1.3";
 const char * year_str="2020-2021";
-const short version_internal=36;
+const short version_internal=37;
 struct conf config;
 char configfile[512],cwd[512],config_logfull[BUFSIZ];
 unsigned short config_runmode;
@@ -90,7 +90,7 @@ int main(int argc, char ** argv)
 	getcwd(cwd,512);
 	if(argc!=2)
 	{
-		mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\nUsage: %s <arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",version_str,year_str,argv[0]);
+		mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\nUsage: %s <arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",version_str,year_str,strsplit_reverse(argv[0],'/'));
 		return 22;
 	}
 	FILE * pidfd=fopen("/tmp/mcrelay.pid","r");
@@ -152,7 +152,7 @@ int main(int argc, char ** argv)
 		}
 		else
 		{
-			mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\nError: Invalid option \"-%s\"\n\nUsage: %s <arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",version_str,year_str,ptr_argv1,argv[0]);
+			mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\nError: Invalid option \"-%s\"\n\nUsage: %s <arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",version_str,year_str,ptr_argv1,strsplit_reverse(argv[0],'/'));
 			return 22;
 		}
 	}

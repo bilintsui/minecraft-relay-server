@@ -272,6 +272,19 @@ unsigned char * strsplit(unsigned char * string, char delim, unsigned char * fir
 	}
 	return ptr_string;
 }
+unsigned char * strsplit_reverse(unsigned char * string, char delim)
+{
+	int recidx;
+	unsigned char * ptr_string=string+strlen(string)-1;
+	for(;ptr_string>=string;ptr_string--)
+	{
+		if(*ptr_string==delim)
+		{
+			return (ptr_string+1);
+		}
+	}
+	return string;
+}
 int strsplit_fieldcount(unsigned char * string, char delim)
 {
 	int recidx,count;
