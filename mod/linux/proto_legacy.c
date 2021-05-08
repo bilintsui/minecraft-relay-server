@@ -2,7 +2,7 @@
 	proto_legacy.c: Functions for Legacy Protocol (13w39b and before) on Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.1.3
+	Minecraft Relay Server, version 1.1.4
 	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 

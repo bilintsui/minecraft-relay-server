@@ -2,7 +2,7 @@
 	config.c: Functions for Config reading on Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.1.3
+	Minecraft Relay Server, version 1.1.4
 	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 
@@ -41,11 +41,26 @@ struct conf
 };
 struct conf_map * getproxyinfo(struct conf * source, unsigned char * proxyname)
 {
+	int proxyname_length=strlen(proxyname);
+	int detected_length = proxyname_length;
+	while(proxyname[detected_length-1]=='.')
+	{
+		detected_length--;
+		if(detected_length==0)
+		{
+			break;
+		}
+	}
+	unsigned char * real_proxyname=(unsigned char *)malloc(detected_length+1);
+	memset(real_proxyname,0,detected_length+1);
+	memcpy(real_proxyname,proxyname,detected_length);
 	int recidx;
 	for(recidx=0;recidx<source->relay_count;recidx++)
 	{
-		if(strcmp(source->relay[recidx].from,proxyname)==0)
+		if(strcmp(source->relay[recidx].from,real_proxyname)==0)
 		{
+			free(real_proxyname);
+			real_proxyname=NULL;
 			return &(source->relay[recidx]);
 		}
 	}
