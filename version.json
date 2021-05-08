@@ -143,4 +143,8 @@
 		"version": 38,
 		"names": ["1.1.4-patch1"]
 	}
+	{
+		"version": 39,
+		"names": ["1.1.4-patch2"]
+	}
 ]

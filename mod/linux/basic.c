@@ -329,22 +329,25 @@ int mksysmsg(unsigned short noprefix, char * logfile, unsigned short runmode, un
 		bzero(time_str,32);
 		gettime(time_str);
 		FILE * logfd=fopen(logfile,"a");
-		if(noprefix==0)
+		if(logfd!=NULL)
 		{
-			fprintf(logfd,"[%s] [%s] ",time_str,level_str);
-		}
-		char format_output[BUFSIZ];
-		bzero(format_output,BUFSIZ);
-		for(int recidx=0;recidx<strlen(format);recidx++)
-		{
-			format_output[recidx]=format[recidx];
-			if(format[recidx]=='\n')
+			if(noprefix==0)
 			{
-				break;
+				fprintf(logfd,"[%s] [%s] ",time_str,level_str);
 			}
+			char format_output[BUFSIZ];
+			bzero(format_output,BUFSIZ);
+			for(int recidx=0;recidx<strlen(format);recidx++)
+			{
+				format_output[recidx]=format[recidx];
+				if(format[recidx]=='\n')
+				{
+					break;
+				}
+			}
+			status=vfprintf(logfd,format_output,varlist);
+			fclose(logfd);
 		}
-		status=vfprintf(logfd,format_output,varlist);
-		fclose(logfd);
 	}
 	va_end(varlist);
 	va_start(varlist,format);
