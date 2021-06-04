@@ -2,7 +2,7 @@
 	network.h: Header file of network.c
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.1.4
+	Minecraft Relay Server, version 1.1.5
 	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 
