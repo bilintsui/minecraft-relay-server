@@ -2,7 +2,7 @@
 	network.c: Network Functions for Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.1.5
+	Minecraft Relay Server, version 1.2-beta1
 	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 

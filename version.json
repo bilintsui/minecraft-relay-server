@@ -150,5 +150,9 @@
 	{
 		"version": 40,
 		"names": ["1.1.5"]
+	,
+	{
+		"version": 41,
+		"names": ["1.2-beta1-patch5"]
 	}
 ]

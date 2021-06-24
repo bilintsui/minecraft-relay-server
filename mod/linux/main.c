@@ -2,7 +2,7 @@
 	main.c: Main source code for Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.1.5
+	Minecraft Relay Server, version 1.2-beta1
 	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 
@@ -18,9 +18,9 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
-const char * version_str="1.1.5";
+const char * version_str="1.2-beta1";
 const char * year_str="2020-2021";
-const short version_internal=40;
+const short version_internal=41;
 struct conf config;
 char configfile[512],cwd[512],config_logfull[BUFSIZ];
 unsigned short config_runmode;

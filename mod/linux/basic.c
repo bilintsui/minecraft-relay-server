@@ -2,15 +2,17 @@
 	basic.c: Basic Functions for Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.1.5
+	Minecraft Relay Server, version 1.2-beta1
 	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 void gettime(unsigned char * target)
@@ -151,6 +153,119 @@ int datcat(char * dst, int dst_size, char * src, int src_size)
 	}
 	total_size=dst_size+src_size;
 	return total_size;
+}
+size_t freadall(unsigned char * filename, unsigned char ** dest)
+{
+	size_t once_size=8192;
+	size_t max_size=5242880;
+	unsigned char * result=NULL;
+	if(filename==NULL)
+	{
+		errno=FREADALL_ENONAME;
+		return 0;
+	}
+	FILE * srcfd=NULL;
+	if(strcmp(filename,"-")==0)
+	{
+		srcfd=stdin;
+	}
+	else
+	{
+		srcfd=fopen(filename,"rb");
+	}
+	if(srcfd==NULL)
+	{
+		errno=FREADALL_ENOREAD;
+		return 0;
+	}
+	size_t total_size=0;
+	unsigned char * buffer=(unsigned char *)calloc(1,once_size);
+	while(1)
+	{
+		size_t read_size=fread(buffer,1,once_size,srcfd);
+		if(total_size==0)
+		{
+			result=(unsigned char *)calloc(1,read_size+1);
+			if(result==NULL)
+			{
+				free(buffer);
+				errno=FREADALL_ECALLOC;
+				return 0;
+			}
+			result[read_size]=0;
+		}
+		if((total_size+read_size)>max_size)
+		{
+			free(buffer);
+			free(result);
+			errno=FREADALL_ELARGE;
+			return 0;
+		}
+		unsigned char * result_pre=realloc(result,total_size+read_size+1);
+		if(result_pre==NULL)
+		{
+			free(buffer);
+			errno=FREADALL_EREALLOC;
+			return 0;
+		}
+		result=result_pre;
+		result[total_size+read_size]=0;
+		datcat(result,total_size,buffer,read_size);
+		total_size=total_size+read_size;
+		if(read_size<once_size)
+		{
+			break;
+		}
+	}
+	free(buffer);
+	*dest=result;
+	return total_size;
+}
+unsigned char * base64_encode(unsigned char * source, size_t source_size)
+{
+	unsigned char charset[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	size_t new_source_size,endfix,target_size;
+	if(source_size%3==0)
+	{
+		new_source_size=source_size;
+	}
+	else
+	{
+		new_source_size=(source_size/3+1)*3;
+	}
+	endfix=new_source_size-source_size;
+	target_size=new_source_size/3*4;
+	unsigned char * new_source=(unsigned char *)malloc(new_source_size+1);
+	if(new_source==NULL)
+	{
+		return NULL;
+	}
+	memset(new_source,0,new_source_size+1);
+	memcpy(new_source,source,source_size);
+	unsigned char * target=(unsigned char *)malloc(target_size+1);
+	if(target==NULL)
+	{
+		free(new_source);
+		return NULL;
+	}
+	memset(target,0,target_size+1);
+	char chargroup_raw[3],chargroup_new[4];
+	int offset_new_source=0;
+	int offset_target=0;
+	for(;offset_new_source<new_source_size;offset_new_source=offset_new_source+3)
+	{
+		target[offset_target]=charset[((new_source[offset_new_source]&0xfc)>>2)];
+		target[offset_target+1]=charset[((new_source[offset_new_source]&0x03)<<4)+((new_source[offset_new_source+1]&0xf0)>>4)];
+		target[offset_target+2]=charset[((new_source[offset_new_source+1]&0x0f)<<2)+((new_source[offset_new_source+2]&0xc0)>>6)];
+		target[offset_target+3]=charset[(new_source[offset_new_source+2]&0x3f)];
+		offset_target=offset_target+4;
+	}
+	free(new_source);
+	if(endfix!=0)
+	{
+		memset(&(target[target_size-endfix]),'=',endfix);
+	}
+	return target;
 }
 int handshake_protocol_identify(unsigned char * source, unsigned int length)
 {

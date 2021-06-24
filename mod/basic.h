@@ -2,7 +2,7 @@
 	basic.h: Header file of basic.c
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.1.5
+	Minecraft Relay Server, version 1.2-beta1
 	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 
@@ -26,12 +26,21 @@
 #define PVER_M_LEGACY1 1
 #define PVER_M_LEGACY2 2
 #define PVER_M_LEGACY3 3
+#define FREADALL_NORMAL 0
+#define FREADALL_ENONAME 1
+#define FREADALL_ENOREAD 2
+#define FREADALL_ECALLOC 3
+#define FREADALL_ELARGE 4
+#define FREADALL_EREALLOC 5
+#include <stddef.h>
 void gettime(unsigned char * target);
 long math_pow(int x,int y);
 unsigned short basic_atosu(unsigned char * source);
 unsigned char * varint2int(unsigned char * source, unsigned long * output);
 unsigned char * int2varint(unsigned long data, unsigned char * output);
 int datcat(char * dst, int dst_size, char * src, int src_size);
+size_t freadall(unsigned char * filename, unsigned char ** dest);
+unsigned char * base64_encode(unsigned char * source, size_t source_size);
 int handshake_protocol_identify(unsigned char * source, unsigned int length);
 int packetshrink(unsigned char * source, int source_length, unsigned char * target);
 int packetexpand(unsigned char * source, int source_length, unsigned char * target);
