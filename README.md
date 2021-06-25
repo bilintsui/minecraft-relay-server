@@ -100,4 +100,6 @@ _minecraft._tcp.srvrecord.example.com. => PRIVORITY WEIGHT PORT host.example.com
 </pre>
 If you provide "srvrecord.example.com" to your user, you should set your vhostname in the configuration file as follow:
 * For most Minecraft versions, use "host.example.com".
-* For Minecraft version from 21w20a to 1.17, use "srvrecord.example.com"
+* For Minecraft version from 21w20a to 1.17, use "srvrecord.example.com".
+
+For compatibility, it's recommended to add both of them to your configuration.
