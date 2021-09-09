@@ -90,3 +90,16 @@ proxy_pass relay
 	mc2.example.com 192.168.1.254:25565
 default 192.168.1.254:25565
 </pre>
+
+## Instruction of using a DNS-based redirection(SRV)
+If you are using a SRV record to provide your service, you should follow the instructions below.<br/>
+Otherwise, your user will see the message of using a wrong address to connect.<br/>
+For example, your SRV record should be like this:
+<pre>
+_minecraft._tcp.srvrecord.example.com. => PRIVORITY WEIGHT PORT host.example.com
+</pre>
+If you provide "srvrecord.example.com" to your user, you should set your vhostname in the configuration file as follow:
+* For most Minecraft versions, use "host.example.com".
+* For Minecraft version from 21w20a to 1.17, use "srvrecord.example.com".
+
+For compatibility, it's recommended to add both of them to your configuration.
