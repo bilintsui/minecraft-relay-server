@@ -20,7 +20,7 @@
 #include <unistd.h>
 const char * version_str="1.2-beta1";
 const char * year_str="2020-2021";
-const short version_internal=41;
+const short version_internal=42;
 struct conf config;
 char configfile[512],cwd[512],config_logfull[BUFSIZ];
 unsigned short config_runmode;
@@ -225,6 +225,8 @@ int main(int argc, char ** argv)
 	if(config.bind.type==TYPE_INET)
 	{
 		socket_inbound_server=socket(AF_INET,SOCK_STREAM,0);
+		int socket_inbound_server_opt=1;
+		setsockopt(socket_inbound_server,SOL_SOCKET,SO_REUSEADDR,&socket_inbound_server_opt,sizeof(socket_inbound_server_opt));
 		in_addr_t bindaddr=0;
 		if(inet_pton(AF_INET,config.bind.inet_addr,&bindaddr))
 		{
