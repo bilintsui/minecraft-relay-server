@@ -14,6 +14,7 @@
 #include "basic.h"
 #include "config.h"
 #include "network.h"
+#include "network2.h"
 #include "proto_legacy.h"
 #include "proto_modern.h"
 #include "misc.h"
