@@ -1,8 +1,11 @@
 # mcrelay
-Minecraft Relay Server<br/>
-A minecraft reverse proxy server with server address rewrite.<br/>
-Supports Minecraft Servers and Clients with version 12w04a or later. (Basically means release 1.2.1 and later.)<br/>
-Minecraft Versions before 12w04a are **NOT SUPPORTED**!<br/>
+Minecraft Relay Server
+
+A minecraft reverse proxy server with server address rewrite.
+
+Supports Minecraft Servers and Clients with version 12w04a or later. (Basically means release 1.2.1 and later.)
+
+Minecraft Versions before 12w04a are **NOT SUPPORTED**!
 
 ## Features
 * Support reverse proxy for Minecraft servers by server address in the handshake packet which client send to.
@@ -13,7 +16,8 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!<br/>
 * libresolv.so
 
 ## Compatibility
-**Due to Minecraft Handshake restrictions, this server supports:**<br/>
+**Due to Minecraft Handshake restrictions, this server supports:**
+
 * Game relay on server & client with version 12w04a and later, except version 12w17a, 13w41a and 13w41b.
 * MOTD relay / MOTD status notice on server & client with version 1.6.1 and later, except version 13w41a and 13w41b.
 
@@ -40,10 +44,13 @@ make
 mcrelay < arguments | config_file >
 </pre>
 
+The program will run as a non-exit-style program by default.
+
+When using "-f" or "--forking" option, the program will become daemonized, and store its main process' PID into /tmp/mcrelay.pid.
+
 ## Config
 ### Format
 <pre>
-runmode run_mode
 log logfile_path
 loglevel loglvl
 bind bind_object
@@ -54,8 +61,6 @@ proxy_pass proxy_type
 default destination_object
 </pre>
 ### Explanation
-* runmode: set program's runmode.
->* run_mode: type of program's runmode, "simple" for a normal, non-exit program, "forking" for a daemonized program. In forking, it will store the PID in /tmp/mcrelay.pid.
 * log: set log file.
 >* logfile_path: path of the file which logs saved to.
 * loglevel: set max message level in logging message.
@@ -69,15 +74,17 @@ default destination_object
 >* ident_name: name of destination identification. Usually a Fully Qualified Domain Name(FQDN) by CNAME to your server.
 >* destination_object: (format: "address_d[:port]")
 >>* address_d: the address you wish to connect. Both FQDN or x.x.x.x allowed.
->>* port: optional, the port you wish to connect. Valid range: 1-65535.<br/>
-If not set, the server will detect SRV record first(defined in address_d).<br/>
-If SRV record resolve failed, it will fallback to normal address resolve, also connect to this address with port 25565.<br/>
+>>* port: optional, the port you wish to connect. Valid range: 1-65535.
+
+If not set, the server will detect SRV record first(defined in address_d).
+
+If SRV record resolve failed, it will fallback to normal address resolve, also connect to this address with port 25565.
+
 **For rewrite enabled relay, it will use actual connect configuration to rewrite.**
 >>* path: the socket file you wish to connect.
 * default: optional, set a default server to connect when client don't match any valid virtual host. (Intentionally not support rewrite here.) (Security suggestion: Don't use this feature unless you know what you are doing.)
 ### Example
 <pre>
-runmode forking
 log /var/log/mcrelay/mcrelay.log
 bind 0.0.0.0:25565
 proxy_pass rewrite
@@ -90,8 +97,10 @@ default 192.168.1.254:25565
 </pre>
 
 ## Instruction of using a DNS-based redirection(SRV)
-If you are using a SRV record to provide your service, you should follow the instructions below.<br/>
-Otherwise, your user will see the message of using a wrong address to connect.<br/>
+If you are using a SRV record to provide your service, you should follow the instructions below.
+
+Otherwise, your user will see the message of using a wrong address to connect.
+
 For example, your SRV record should be like this:
 <pre>
 _minecraft._tcp.srvrecord.example.com. => PRIVORITY WEIGHT PORT host.example.com

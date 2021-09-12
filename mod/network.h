@@ -11,13 +11,49 @@
 */
 #ifndef _MOD_NETWORK_H_
 #define _MOD_NETWORK_H_
-#include "basic.h"
 #ifdef linux
-struct stru_net_srvrecord;
-char ** net_resolve(char * hostname);
-int net_srvresolve(char * query_name, struct stru_net_srvrecord * target);
-struct sockaddr_in net_mksockaddr_in(unsigned short family, void * addr, unsigned short port);
-int net_mkoutbound(char * dst_addr, unsigned short dst_port, int * dst_socket);
+#define NETSOCK_BIND 0
+#define NETSOCK_CONN 1
+#define NET_EARGFAMILY 1
+#define NET_EMALLOC 2
+#define NET_ENORECORD 3
+#define NET_EARGACTION 4
+#define NET_EARGADDR 5
+#define NET_ESOCKET 6
+#define NET_EREUSEADDR 7
+#define NET_EBIND 8
+#define NET_ELISTEN 9
+#define NET_ECONNECT 10
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netdb.h>
+#include <resolv.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/epoll.h>
+#include <unistd.h>
+typedef struct
+{
+	sa_family_t family;
+	int err;
+	union
+	{
+		uint32_t v4;
+		unsigned char v6[16];
+	} addr;
+} net_addr;
+typedef struct
+{
+	char target[128];
+	unsigned short port;
+} net_srvrecord;
+size_t net_getaddrsize(sa_family_t family);
+sa_family_t net_getaltfamily(sa_family_t family);
+void * net_resolve(char * hostname, sa_family_t family);
+net_addr net_resolve_dual(char * hostname, sa_family_t primary_family, short dual);
+int net_srvresolve(char * query_name, net_srvrecord * target);
+int net_socket(short action, sa_family_t family, void * address, u_int16_t port, short reuseaddr);
 int net_relay(int socket_in, int socket_out);
 #include "linux/network.c"
 #endif

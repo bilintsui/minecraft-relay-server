@@ -14,32 +14,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-struct conf_bind
+conf_map * getproxyinfo(conf * source, unsigned char * proxyname)
 {
-	char inet_addr[BUFSIZ];
-	unsigned short inet_port;
-};
-struct conf_map
-{
-	unsigned short enable_rewrite;
-	char from[512],to_inet_addr[512];
-	unsigned short to_inet_port;
-	unsigned short to_inet_hybridmode;
-};
-struct conf
-{
-	unsigned short runmode;
-	char log[512];
-	unsigned short loglevel;
-	struct conf_bind bind;
-	int relay_count;
-	struct conf_map relay[128];
-	int enable_default;
-	struct conf_map relay_default;
-};
-struct conf_map * getproxyinfo(struct conf * source, unsigned char * proxyname)
-{
-	struct conf_map * result=NULL;
+	conf_map * result=NULL;
 	int proxyname_length=strlen(proxyname);
 	int detected_length=proxyname_length;
 	while(proxyname[detected_length-1]=='.')
@@ -66,18 +43,10 @@ struct conf_map * getproxyinfo(struct conf * source, unsigned char * proxyname)
 	real_proxyname=NULL;
 	return result;
 }
-void config_dump(struct conf * source)
+void config_dump(conf * source)
 {
 	printf("Config Detail:\n");
 	printf("\n[COMMON]\n");
-	switch(source->runmode)
-	{
-		case 1:
-			printf("Runmode\t\tSimple\n");
-			break;
-		case 2:
-			printf("Runmode\t\tForking\n");
-	}
 	printf("Log file\t%s\n",source->log);
 	printf("Log level\t%d\n",source->loglevel);
 	printf("Relay Count\t%d\n",source->relay_count);
@@ -135,7 +104,7 @@ void config_dump(struct conf * source)
 	}
 	printf("\n");
 }
-int config_load(char * filename, struct conf * result)
+int config_load(char * filename, conf * result)
 {
 	char rec_char,buffer[128][BUFSIZ],tmp_buffer[BUFSIZ],key[512],value[512],key2[512],value2[512];
 	char * tmpptr;
@@ -185,18 +154,7 @@ int config_load(char * filename, struct conf * result)
 		}
 		tmpptr=strsplit(tmpptr,' ',key);
 		tmpptr=strsplit(tmpptr,' ',value);
-		if(strcmp(key,"runmode")==0)
-		{
-			if(strcmp(value,"simple")==0)
-			{
-				result->runmode=1;
-			}
-			else if(strcmp(value,"forking")==0)
-			{
-				result->runmode=2;
-			}
-		}
-		else if(strcmp(key,"log")==0)
+		if(strcmp(key,"log")==0)
 		{
 			strcpy(result->log,value);
 		}
@@ -286,7 +244,7 @@ int config_load(char * filename, struct conf * result)
 		}
 		else if(strcmp(key,"default")==0)
 		{
-			struct conf_map relay_default;
+			conf_map relay_default;
 			bzero(&relay_default,sizeof(relay_default));
 			tmpptr=value;
 			if(result->enable_default==1)
@@ -325,10 +283,6 @@ int config_load(char * filename, struct conf * result)
 			memcpy(&(result->relay_default),&relay_default,sizeof(relay_default));
 			result->enable_default=1;
 		}
-	}
-	if((result->runmode!=1)&&(result->runmode!=2))
-	{
-		return CONF_EBADRUNMODE;
 	}
 	if(strcmp(result->log,"")==0)
 	{

@@ -14,19 +14,37 @@
 #include "basic.h"
 #ifdef linux
 #define CONF_EOPENFILE 1
-#define CONF_EBADRUNMODE 2
-#define CONF_ENOLOGFILE 3
-#define CONF_ENOLOGLEVEL 4
-#define CONF_EINVALIDBIND 5
-#define CONF_EPROXYNOFIND 6
-#define CONF_EPROXYDUP 7
-#define CONF_EDEFPROXYDUP 8
-struct conf_bind;
-struct conf_map;
-struct conf;
-struct conf_map * getproxyinfo(struct conf * source, unsigned char * proxyname);
-void config_dump(struct conf * source);
-int config_load(char * filename, struct conf * result);
+#define CONF_ENOLOGFILE 2
+#define CONF_ENOLOGLEVEL 3
+#define CONF_EINVALIDBIND 4
+#define CONF_EPROXYNOFIND 5
+#define CONF_EPROXYDUP 6
+#define CONF_EDEFPROXYDUP 7
+typedef struct
+{
+	char inet_addr[BUFSIZ];
+	unsigned short inet_port;
+} conf_bind;
+typedef struct
+{
+	unsigned short enable_rewrite;
+	char from[512],to_inet_addr[512];
+	unsigned short to_inet_port;
+	unsigned short to_inet_hybridmode;
+} conf_map;
+typedef struct
+{
+	char log[512];
+	unsigned short loglevel;
+	conf_bind bind;
+	int relay_count;
+	conf_map relay[128];
+	int enable_default;
+	conf_map relay_default;
+} conf;
+conf_map * getproxyinfo(conf * source, unsigned char * proxyname);
+void config_dump(conf * source);
+int config_load(char * filename, conf * result);
 #include "linux/config.c"
 #endif
 #endif

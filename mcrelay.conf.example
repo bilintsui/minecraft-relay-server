@@ -1,4 +1,3 @@
-runmode run_mode
 log logfile_path
 loglevel loglvl
 bind bind_object

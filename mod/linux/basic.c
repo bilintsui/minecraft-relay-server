@@ -189,6 +189,7 @@ size_t freadall(unsigned char * filename, unsigned char ** dest)
 			if(result==NULL)
 			{
 				free(buffer);
+				buffer=NULL;
 				errno=FREADALL_ECALLOC;
 				return 0;
 			}
@@ -197,7 +198,9 @@ size_t freadall(unsigned char * filename, unsigned char ** dest)
 		if((total_size+read_size)>max_size)
 		{
 			free(buffer);
+			buffer=NULL;
 			free(result);
+			result=NULL;
 			errno=FREADALL_ELARGE;
 			return 0;
 		}
@@ -205,6 +208,7 @@ size_t freadall(unsigned char * filename, unsigned char ** dest)
 		if(result_pre==NULL)
 		{
 			free(buffer);
+			buffer=NULL;
 			errno=FREADALL_EREALLOC;
 			return 0;
 		}
@@ -218,6 +222,7 @@ size_t freadall(unsigned char * filename, unsigned char ** dest)
 		}
 	}
 	free(buffer);
+	buffer=NULL;
 	*dest=result;
 	return total_size;
 }
@@ -246,6 +251,7 @@ unsigned char * base64_encode(unsigned char * source, size_t source_size)
 	if(target==NULL)
 	{
 		free(new_source);
+		new_source=NULL;
 		return NULL;
 	}
 	memset(target,0,target_size+1);
@@ -261,6 +267,7 @@ unsigned char * base64_encode(unsigned char * source, size_t source_size)
 		offset_target=offset_target+4;
 	}
 	free(new_source);
+	new_source=NULL;
 	if(endfix!=0)
 	{
 		memset(&(target[target_size-endfix]),'=',endfix);

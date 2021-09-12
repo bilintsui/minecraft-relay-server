@@ -11,15 +11,9 @@
 */
 #include <stdio.h>
 #include <string.h>
-struct p_handshake
+p_handshake packet_read(unsigned char * sourcepacket)
 {
-	unsigned long id_part1,version,nextstate,id_part2;
-	unsigned char address[128],username[128];
-	unsigned short version_fml,port;
-};
-struct p_handshake packet_read(unsigned char * sourcepacket)
-{
-	struct p_handshake result;
+	p_handshake result;
 	unsigned long size_part1,address_length,address_length_pure,size_part2,username_length;
 	unsigned char * address_extra_start;
 	bzero(result.address,128);
@@ -56,7 +50,7 @@ struct p_handshake packet_read(unsigned char * sourcepacket)
 	datcat(result.username,0,sourcepacket,username_length);
 	return result;
 }
-int packet_write(struct p_handshake source, unsigned char * target)
+int packet_write(p_handshake source, unsigned char * target)
 {
 	int size;
 	unsigned long address_length,size_part1,username_length,size_part2;

@@ -20,10 +20,11 @@
 #include <unistd.h>
 const char * version_str="1.2-beta1";
 const char * year_str="2020-2021";
-const short version_internal=44;
-struct conf config;
+const short version_internal=45;
+conf config;
 char configfile[512],cwd[512],config_logfull[BUFSIZ];
-unsigned short config_runmode;
+unsigned short config_runmode=1;
+char * argoffset_configfile=NULL;
 void deal_sigterm()
 {
 	unlink("/tmp/mcrelay.pid");
@@ -31,7 +32,7 @@ void deal_sigterm()
 }
 void deal_sigusr1()
 {
-	struct conf config_new;
+	conf config_new;
 	char config_logfull_old[BUFSIZ],configfile_full[BUFSIZ];
 	unsigned short config_maxlevel=config.loglevel;
 	bzero(config_logfull_old,BUFSIZ);
@@ -56,9 +57,6 @@ void deal_sigusr1()
 		case CONF_EOPENFILE:
 			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Cannot read config file: %s, will keep your old configurations.\n\n",configfile);
 			break;
-		case CONF_EBADRUNMODE:
-			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Argument \"runmode\" is missing, will keep your old configurations.\n\n");
-			break;
 		case CONF_ENOLOGFILE:
 			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Argument \"log\" is missing, will keep your old configurations.\n\n");
 			break;
@@ -81,17 +79,20 @@ void deal_sigusr1()
 }
 int main(int argc, char ** argv)
 {
-	int socket_inbound_server,strulen,socket_inbound_client;
+	char helpmsg[]="<arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-f / --forking:\tMade the process become daemonize.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server";
+	int strulen=sizeof(struct sockaddr);
+	int socket_inbound_server,socket_inbound_client;
 	struct sockaddr_in addr_inbound_server,addr_inbound_client;
 	signal(SIGTERM,deal_sigterm);
 	signal(SIGINT,deal_sigterm);
 	bzero(cwd,512);
 	getcwd(cwd,512);
-	if(argc!=2)
+	if(argc<2)
 	{
-		mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\nUsage: %s <arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",version_str,year_str,strsplit_reverse(argv[0],'/'));
+		mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\nUsage: %s %s\n",version_str,year_str,strsplit_reverse(argv[0],'/'),helpmsg);
 		return 22;
 	}
+	argoffset_configfile=argv[1];
 	FILE * pidfd=fopen("/tmp/mcrelay.pid","r");
 	int prevpid;
 	char * ptr_argv1=argv[1];
@@ -144,6 +145,11 @@ int main(int argc, char ** argv)
 				return 3;
 			}
 		}
+		else if((strcmp(ptr_argv1,"f")==0)||(strcmp(ptr_argv1,"-forking")==0))
+		{
+			config_runmode=2;
+			argoffset_configfile=argv[2];
+		}
 		else if((strcmp(ptr_argv1,"v")==0)||(strcmp(ptr_argv1,"-version")==0))
 		{
 			mksysmsg(1,"",0,255,2,"v%s(%d)\n",version_str,version_internal);
@@ -151,7 +157,7 @@ int main(int argc, char ** argv)
 		}
 		else
 		{
-			mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\nError: Invalid option \"-%s\"\n\nUsage: %s <arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server\n",version_str,year_str,ptr_argv1,strsplit_reverse(argv[0],'/'));
+			mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\nError: Invalid option \"-%s\"\n\nUsage: %s %s\n",version_str,year_str,ptr_argv1,strsplit_reverse(argv[0],'/'),helpmsg);
 			return 22;
 		}
 	}
@@ -171,12 +177,16 @@ int main(int argc, char ** argv)
 	}
 	mksysmsg(1,"",0,255,2,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
 	bzero(configfile,512);
-	strcpy(configfile,argv[1]);
+	if(argoffset_configfile==NULL)
+	{
+		mksysmsg(0,"",0,255,0,"Config filename can not be empty!\n",configfile);
+		return 22;
+	}
+	strcpy(configfile,argoffset_configfile);
 	mksysmsg(0,"",0,255,2,"Loading configurations from file: %s\n\n",configfile);
 	switch(config_load(configfile,&config))
 	{
 		case 0:
-			config_runmode=config.runmode;
 			if(config.log[0]!='/')
 			{
 				sprintf(config_logfull,"%s/%s",cwd,config.log);
@@ -189,9 +199,6 @@ int main(int argc, char ** argv)
 		case CONF_EOPENFILE:
 			mksysmsg(0,"",0,255,0,"Cannot read config file: %s\n",configfile);
 			return 2;
-		case CONF_EBADRUNMODE:
-			mksysmsg(0,"",0,255,0,"Error in configurations: Argument \"runmode\" is missing.\n");
-			return 22;
 		case CONF_ENOLOGFILE:
 			mksysmsg(0,"",0,255,0,"Error in configurations: Argument \"log\" is missing.\n");
 			return 22;
@@ -221,15 +228,8 @@ int main(int argc, char ** argv)
 	{
 		fclose(tmpfd);
 	}
-	socket_inbound_server=socket(AF_INET,SOCK_STREAM,0);
-	int socket_inbound_server_opt=1;
-	setsockopt(socket_inbound_server,SOL_SOCKET,SO_REUSEADDR,&socket_inbound_server_opt,sizeof(socket_inbound_server_opt));
-	in_addr_t bindaddr=0;
-	if(inet_pton(AF_INET,config.bind.inet_addr,&bindaddr))
-	{
-		addr_inbound_server=net_mksockaddr_in(AF_INET,&bindaddr,config.bind.inet_port);
-	}
-	else
+	void * bindaddr=net_resolve(config.bind.inet_addr,AF_INET);
+	if(bindaddr==NULL)
 	{
 		mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Error: Invalid bind address!\n");
 		return 14;
@@ -239,9 +239,11 @@ int main(int argc, char ** argv)
 		mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Error: Invalid bind port!\n");
 		return 14;
 	}
-	strulen=sizeof(struct sockaddr_in);
 	mksysmsg(0,config_logfull,config_runmode,config.loglevel,2,"Binding on %s:%d...\n",config.bind.inet_addr,config.bind.inet_port);
-	if(bind(socket_inbound_server,(struct sockaddr *)&addr_inbound_server,strulen)==-1)
+	socket_inbound_server=net_socket(NETSOCK_BIND,AF_INET,bindaddr,config.bind.inet_port,1);
+	free(bindaddr);
+	bindaddr=NULL;
+	if(socket_inbound_server==-1)
 	{
 		mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Bind Failed!\n");
 		return 2;

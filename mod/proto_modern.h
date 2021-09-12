@@ -13,9 +13,14 @@
 #define _MOD_PROTO_MODERN_H_
 #include "basic.h"
 #ifdef linux
-struct p_handshake;
-struct p_handshake packet_read(unsigned char * sourcepacket);
-int packet_write(struct p_handshake source, unsigned char * target);
+typedef struct
+{
+	unsigned long id_part1,version,nextstate,id_part2;
+	unsigned char address[128],username[128];
+	unsigned short version_fml,port;
+} p_handshake;
+p_handshake packet_read(unsigned char * sourcepacket);
+int packet_write(p_handshake source, unsigned char * target);
 int make_message(unsigned char * source, unsigned char * target);
 int make_kickreason(unsigned char * source, unsigned char * target);
 int make_motd(unsigned long version, unsigned char * description, unsigned char * target);

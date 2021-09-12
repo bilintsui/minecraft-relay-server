@@ -9,30 +9,96 @@
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <resolv.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/epoll.h>
-#include <sys/un.h>
-#include <unistd.h>
-struct stru_net_srvrecord
+size_t net_getaddrsize(sa_family_t family)
 {
-	char target[128];
-	unsigned short port;
-};
-char ** net_resolve(char * hostname)
-{
-	struct hostent * resolve_result;
-	resolve_result = gethostbyname2(hostname,AF_INET);
-	if(resolve_result == NULL)
+	switch(family)
 	{
+		case AF_INET:
+			return sizeof(uint32_t);
+		case AF_INET6:
+			return sizeof(char)*16;
+		default:
+			return 0;
+	}
+}
+sa_family_t net_getaltfamily(sa_family_t family)
+{
+	switch(family)
+	{
+		case AF_INET:
+			return AF_INET6;
+		case AF_INET6:
+			return AF_INET;
+		default:
+			return 0;
+	}
+}
+void * net_resolve(char * hostname, sa_family_t family)
+{
+	if((family!=AF_INET)&&(family!=AF_INET6))
+	{
+		errno=NET_EARGFAMILY;
 		return NULL;
 	}
-	return (resolve_result->h_addr_list);
+	void * result=malloc(net_getaddrsize(family));
+	if(result==NULL)
+	{
+		errno=NET_EMALLOC;
+		return NULL;
+	}
+	if(inet_pton(family,hostname,result)==1)
+	{
+		return result;
+	}
+	struct hostent * response=gethostbyname2(hostname,family);
+	if(response==NULL)
+	{
+		errno=NET_ENORECORD;
+		free(result);
+		result=NULL;
+		return NULL;
+	}
+	memcpy(result,response->h_addr_list[0],net_getaddrsize(family));
+	return result;
 }
-int net_srvresolve(char * query_name, struct stru_net_srvrecord * target)
+net_addr net_resolve_dual(char * hostname, sa_family_t primary_family, short dual)
+{
+	net_addr result;
+	result.family=0;
+	result.err=0;
+	memset(&(result.addr),0,sizeof(result.addr));
+	if((primary_family!=AF_INET)&&(primary_family!=AF_INET6))
+	{
+		result.err=NET_EARGFAMILY;
+		return result;
+	}
+	void * resolved=net_resolve(hostname,primary_family);
+	if(resolved!=NULL)
+	{
+		result.family=primary_family;
+		memcpy(&(result.addr),resolved,net_getaddrsize(result.family));
+		free(resolved);
+		resolved=NULL;
+		return result;
+	}
+	if(!dual)
+	{
+		result.err=errno;
+		return result;
+	}
+	resolved=net_resolve(hostname,net_getaltfamily(primary_family));
+	if(resolved!=NULL)
+	{
+		result.family=net_getaltfamily(primary_family);
+		memcpy(&(result.addr),resolved,net_getaddrsize(result.family));
+		free(resolved);
+		resolved=NULL;
+		return result;
+	}
+	result.err=errno;
+	return result;
+}
+int net_srvresolve(char * query_name, net_srvrecord * target)
 {
 	char query_name_full[256];
 	bzero(query_name_full,256);
@@ -99,52 +165,106 @@ int net_srvresolve(char * query_name, struct stru_net_srvrecord * target)
 	}
 	return max_record_maxweight;
 }
-struct sockaddr_in net_mksockaddr_in(unsigned short family, void * addr, unsigned short port)
+int net_socket(short action, sa_family_t family, void * address, u_int16_t port, short reuseaddr)
 {
-	int strusize=0;
+	if((action!=NETSOCK_BIND)&&(action!=NETSOCK_CONN))
+	{
+		errno=NET_EARGACTION;
+		return -1;
+	}
+	if((family!=AF_INET)&&(family!=AF_INET6))
+	{
+		errno=NET_EARGFAMILY;
+		return -1;
+	}
+	if(address==NULL)
+	{
+		errno=NET_EARGADDR;
+		return -1;
+	}
+	void * serv_addr;
+	int stru_size;
 	if(family==AF_INET)
 	{
-		strusize=sizeof(in_addr_t);
-	}
-	struct sockaddr_in result;
-	result.sin_family=family;
-	memcpy(&(result.sin_addr.s_addr),addr,strusize);
-	result.sin_port=htons(port);
-	return result;
-}
-int net_mkoutbound(char * dst_addr, unsigned short dst_port, int * dst_socket)
-{
-	void * conninfo=NULL;
-	*dst_socket=socket(AF_INET,SOCK_STREAM,0);
-	in_addr_t connaddr=0;
-	if(!inet_pton(AF_INET,dst_addr,&connaddr))
-	{
-		char ** addresses=net_resolve(dst_addr);
-		if(addresses==NULL)
+		stru_size=sizeof(struct sockaddr_in);
+		serv_addr=malloc(stru_size);
+		if(serv_addr==NULL)
 		{
-			return 1;
+			errno=NET_EMALLOC;
+			return -1;
+		}
+		memset(serv_addr,0,stru_size);
+		struct sockaddr_in * addr=serv_addr;
+		addr->sin_family=AF_INET;
+		addr->sin_port=htons(port);
+		memcpy(&(addr->sin_addr.s_addr),address,sizeof(u_int32_t));
+	}
+	else if(family==AF_INET6)
+	{
+		stru_size=sizeof(struct sockaddr_in6);
+		serv_addr=malloc(stru_size);
+		if(serv_addr==NULL)
+		{
+			errno=NET_EMALLOC;
+			return -1;
+		}
+		memset(serv_addr,0,stru_size);
+		struct sockaddr_in6 * addr=serv_addr;
+		addr->sin6_family=AF_INET6;
+		addr->sin6_port=htons(port);
+		memcpy(&(addr->sin6_addr),address,sizeof(char)*16);
+	}
+	int result=socket(family,SOCK_STREAM,0);
+	if(result==-1)
+	{
+		errno=NET_ESOCKET;
+		return -1;
+	}
+	if(reuseaddr)
+	{
+		int socket_opt=1;
+		if(setsockopt(result,SOL_SOCKET,SO_REUSEADDR,&socket_opt,sizeof(socket_opt))==-1)
+		{
+			errno=NET_EREUSEADDR;
+			return -1;
+		}
+	}
+	if(action==NETSOCK_BIND)
+	{
+		if(bind(result,serv_addr,stru_size)==-1)
+		{
+			free(serv_addr);
+			serv_addr=NULL;
+			close(result);
+			errno=NET_EBIND;
+			return -1;
 		}
 		else
 		{
-			conninfo=malloc(sizeof(struct sockaddr_in));
-			*(struct sockaddr_in *)conninfo=net_mksockaddr_in(AF_INET,addresses[0],dst_port);
+			if(listen(result,5)==-1)
+			{
+				free(serv_addr);
+				serv_addr=NULL;
+				close(result);
+				errno=NET_ELISTEN;
+				return -1;
+			}
 		}
 	}
-	else
+	else if(action==NETSOCK_CONN)
 	{
-		conninfo=malloc(sizeof(struct sockaddr_in));
-		*(struct sockaddr_in *)conninfo=net_mksockaddr_in(AF_INET,&connaddr,dst_port);
+		if(connect(result,serv_addr,stru_size)==-1)
+		{
+			free(serv_addr);
+			serv_addr=NULL;
+			close(result);
+			errno=NET_ECONNECT;
+			return -1;
+		}
 	}
-	int status=connect(*dst_socket,(struct sockaddr *)conninfo,sizeof(struct sockaddr));
-	free(conninfo);
-	if(status==-1)
-	{
-		return 2;
-	}
-	else
-	{
-		return 0;
-	}
+	free(serv_addr);
+	serv_addr=NULL;
+	return result;
 }
 int net_relay(int socket_in, int socket_out)
 {

@@ -12,20 +12,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-struct p_login_legacy
+p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int sourcepacket_length, int login_version)
 {
-	int proto_ver;
-	unsigned char username[128],address[128];
-	unsigned short port,version;
-};
-struct p_motd_legacy
-{
-	unsigned char address[128];
-	unsigned short port,version;
-};
-struct p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int sourcepacket_length, int login_version)
-{
-	struct p_login_legacy result;
+	p_login_legacy result;
 	unsigned char source[BUFSIZ];
 	unsigned char * ptr_source=source;
 	int recidx,source_length;
@@ -80,7 +69,7 @@ struct p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int
 	}
 	return result;
 }
-int packet_write_legacy_login(struct p_login_legacy source, unsigned char * target)
+int packet_write_legacy_login(p_login_legacy source, unsigned char * target)
 {
 	unsigned char tmp[BUFSIZ];
 	unsigned int tmp_length,size;
@@ -129,9 +118,9 @@ int packet_write_legacy_login(struct p_login_legacy source, unsigned char * targ
 	}
 	return size;
 }
-struct p_motd_legacy packet_read_legacy_motd(unsigned char * sourcepacket, int sourcepacket_length)
+p_motd_legacy packet_read_legacy_motd(unsigned char * sourcepacket, int sourcepacket_length)
 {
-	struct p_motd_legacy result;
+	p_motd_legacy result;
 	unsigned char tmp[BUFSIZ],source[BUFSIZ];
 	unsigned char * ptr_source=source;
 	int recidx,tmp_length,source_length,address_length;
@@ -156,7 +145,7 @@ struct p_motd_legacy packet_read_legacy_motd(unsigned char * sourcepacket, int s
 	result.port=ptr_source[0]*256+ptr_source[1];
 	return result;
 }
-int packet_write_legacy_motd(struct p_motd_legacy source, unsigned char * target)
+int packet_write_legacy_motd(p_motd_legacy source, unsigned char * target)
 {
 	unsigned int size,tmp_length,conststr_full_length;
 	unsigned char tmp[BUFSIZ],conststr_full[128];
