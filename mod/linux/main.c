@@ -20,7 +20,7 @@
 #include <unistd.h>
 const char * version_str="1.2-beta1";
 const char * year_str="2020-2021";
-const short version_internal=43;
+const short version_internal=44;
 struct conf config;
 char configfile[512],cwd[512],config_logfull[BUFSIZ];
 unsigned short config_runmode;
@@ -83,7 +83,6 @@ int main(int argc, char ** argv)
 {
 	int socket_inbound_server,strulen,socket_inbound_client;
 	struct sockaddr_in addr_inbound_server,addr_inbound_client;
-	struct sockaddr_un uddr_inbound_server,uddr_inbound_client;
 	signal(SIGTERM,deal_sigterm);
 	signal(SIGINT,deal_sigterm);
 	bzero(cwd,512);
@@ -222,54 +221,32 @@ int main(int argc, char ** argv)
 	{
 		fclose(tmpfd);
 	}
-	if(config.bind.type==TYPE_INET)
+	socket_inbound_server=socket(AF_INET,SOCK_STREAM,0);
+	int socket_inbound_server_opt=1;
+	setsockopt(socket_inbound_server,SOL_SOCKET,SO_REUSEADDR,&socket_inbound_server_opt,sizeof(socket_inbound_server_opt));
+	in_addr_t bindaddr=0;
+	if(inet_pton(AF_INET,config.bind.inet_addr,&bindaddr))
 	{
-		socket_inbound_server=socket(AF_INET,SOCK_STREAM,0);
-		int socket_inbound_server_opt=1;
-		setsockopt(socket_inbound_server,SOL_SOCKET,SO_REUSEADDR,&socket_inbound_server_opt,sizeof(socket_inbound_server_opt));
-		in_addr_t bindaddr=0;
-		if(inet_pton(AF_INET,config.bind.inet_addr,&bindaddr))
-		{
-			addr_inbound_server=net_mksockaddr_in(AF_INET,&bindaddr,config.bind.inet_port);
-		}
-		else
-		{
-			mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Error: Invalid bind address!\n");
-			return 14;
-		}
-		if(config.bind.inet_port==0)
-		{
-			mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Error: Invalid bind port!\n");
-			return 14;
-		}
-		strulen=sizeof(struct sockaddr_in);
-		mksysmsg(0,config_logfull,config_runmode,config.loglevel,2,"Binding on %s:%d...\n",config.bind.inet_addr,config.bind.inet_port);
-		if(bind(socket_inbound_server,(struct sockaddr *)&addr_inbound_server,strulen)==-1)
-		{
-			mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Bind Failed!\n");
-			return 2;
-		}
-		mksysmsg(0,config_logfull,config_runmode,config.loglevel,2,"Bind Successful.\n\n");
+		addr_inbound_server=net_mksockaddr_in(AF_INET,&bindaddr,config.bind.inet_port);
 	}
-	else if(config.bind.type==TYPE_UNIX)
+	else
 	{
-		unlink(config.bind.unix_path);
-		socket_inbound_server=socket(AF_UNIX,SOCK_STREAM,0);
-		uddr_inbound_server=net_mksockaddr_un(config.bind.unix_path);
-		strulen=sizeof(uddr_inbound_server);
-		mksysmsg(0,config_logfull,config_runmode,config.loglevel,2,"Binding on %s...\n",uddr_inbound_server.sun_path);
-		if(bind(socket_inbound_server,(struct sockaddr *)&uddr_inbound_server,strulen)==-1)
-		{
-			mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Bind Failed!\n");
-			return 2;
-		}
-		if(chmod(config.bind.unix_path,S_IRUSR|S_IWUSR|S_IXUSR|S_IRGRP|S_IWGRP|S_IXGRP|S_IROTH|S_IWOTH|S_IXOTH)==-1)
-		{
-			mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Set Permission Failed!\n");
-			return 13;
-		}
-		mksysmsg(0,config_logfull,config_runmode,config.loglevel,2,"Bind Successful.\n\n");
+		mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Error: Invalid bind address!\n");
+		return 14;
 	}
+	if(config.bind.inet_port==0)
+	{
+		mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Error: Invalid bind port!\n");
+		return 14;
+	}
+	strulen=sizeof(struct sockaddr_in);
+	mksysmsg(0,config_logfull,config_runmode,config.loglevel,2,"Binding on %s:%d...\n",config.bind.inet_addr,config.bind.inet_port);
+	if(bind(socket_inbound_server,(struct sockaddr *)&addr_inbound_server,strulen)==-1)
+	{
+		mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Bind Failed!\n");
+		return 2;
+	}
+	mksysmsg(0,config_logfull,config_runmode,config.loglevel,2,"Bind Successful.\n\n");
 	mksysmsg(0,"",config_runmode,config.loglevel,2,"For more information, watch log file: %s\n\n",config.log);
 	int pid;
 	if(config_runmode==2)
@@ -306,14 +283,7 @@ int main(int argc, char ** argv)
 	while(1)
 	{
 		while(listen(socket_inbound_server,1)==-1);
-		if(config.bind.type==TYPE_INET)
-		{
-			socket_inbound_client=accept(socket_inbound_server,(struct sockaddr *)&addr_inbound_client,&strulen);
-		}
-		else if(config.bind.type==TYPE_UNIX)
-		{
-			socket_inbound_client=accept(socket_inbound_server,(struct sockaddr *)&uddr_inbound_client,&strulen);
-		}
+		socket_inbound_client=accept(socket_inbound_server,(struct sockaddr *)&addr_inbound_client,&strulen);
 		pid=fork();
 		if(pid>0)
 		{

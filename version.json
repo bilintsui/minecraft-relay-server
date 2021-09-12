@@ -162,5 +162,9 @@
 	{
 		"version": 43,
 		"names": ["1.2-beta1-patch7"]
+	},
+	{
+		"version": 44,
+		"names": ["1.2-beta1-patch8"]
 	}
 ]

@@ -112,44 +112,28 @@ struct sockaddr_in net_mksockaddr_in(unsigned short family, void * addr, unsigne
 	result.sin_port=htons(port);
 	return result;
 }
-struct sockaddr_un net_mksockaddr_un(char * path)
-{
-	struct sockaddr_un result;
-	result.sun_family=AF_UNIX;
-	strcpy(result.sun_path,path);
-	return result;
-}
-int net_mkoutbound(int dst_type, char * dst_addr, unsigned short dst_port, int * dst_socket)
+int net_mkoutbound(char * dst_addr, unsigned short dst_port, int * dst_socket)
 {
 	void * conninfo=NULL;
-	if(dst_type==TYPE_INET)
+	*dst_socket=socket(AF_INET,SOCK_STREAM,0);
+	in_addr_t connaddr=0;
+	if(!inet_pton(AF_INET,dst_addr,&connaddr))
 	{
-		*dst_socket=socket(AF_INET,SOCK_STREAM,0);
-		in_addr_t connaddr=0;
-		if(!inet_pton(AF_INET,dst_addr,&connaddr))
+		char ** addresses=net_resolve(dst_addr);
+		if(addresses==NULL)
 		{
-			char ** addresses=net_resolve(dst_addr);
-			if(addresses==NULL)
-			{
-				return 1;
-			}
-			else
-			{
-				conninfo=malloc(sizeof(struct sockaddr_in));
-				*(struct sockaddr_in *)conninfo=net_mksockaddr_in(AF_INET,addresses[0],dst_port);
-			}
+			return 1;
 		}
 		else
 		{
 			conninfo=malloc(sizeof(struct sockaddr_in));
-			*(struct sockaddr_in *)conninfo=net_mksockaddr_in(AF_INET,&connaddr,dst_port);
+			*(struct sockaddr_in *)conninfo=net_mksockaddr_in(AF_INET,addresses[0],dst_port);
 		}
 	}
-	else if(dst_type==TYPE_UNIX)
+	else
 	{
-		*dst_socket=socket(AF_UNIX,SOCK_STREAM,0);
-		conninfo=malloc(sizeof(struct sockaddr_un));
-		*(struct sockaddr_un *)conninfo=net_mksockaddr_un(dst_addr);
+		conninfo=malloc(sizeof(struct sockaddr_in));
+		*(struct sockaddr_in *)conninfo=net_mksockaddr_in(AF_INET,&connaddr,dst_port);
 	}
 	int status=connect(*dst_socket,(struct sockaddr *)conninfo,sizeof(struct sockaddr));
 	free(conninfo);

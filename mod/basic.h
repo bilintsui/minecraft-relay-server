@@ -12,8 +12,6 @@
 #ifndef _MOD_BASIC_H_
 #define _MOD_BASIC_H_
 #ifdef linux
-#define TYPE_UNIX 1
-#define TYPE_INET 2
 #define PVER_L_UNIDENT 0
 #define PVER_L_ORIGPRO 1
 #define PVER_L_LEGACY1 2

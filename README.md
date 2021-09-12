@@ -7,7 +7,6 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!<br/>
 ## Features
 * Support reverse proxy for Minecraft servers by server address in the handshake packet which client send to.
 * Support rewrite server address and server port to camouflage connection which using official server address. (eg: pretend to be a normal connection to Hypixel, avoiding their server address check.)
-* Support listening on an UNIX socket or relay to an UNIX socket. (eg: using nginx as your front-end server, connnect to this UNIX socket.)
 
 ## Requirements
 * Linux
@@ -62,14 +61,13 @@ default destination_object
 * loglevel: set max message level in logging message.
 >* loglvl: a unsigned short integer, range 0-255. This program will not log message with level higher than this level. 0: Critical, 1: Warning, 2+: Information. For more information, watch loglevel.info.
 * bind: set bind information.
->* bind_object: (format: "address:port" or "unix:path") default: "0.0.0.0:25565".
+>* bind_object: (format: "address:port") default: "0.0.0.0:25565".
 >>* address: the address you wish to bind as an Internet Service. Only x.x.x.x allowed.
 >>* port: the port you wish to bind as an Internet Service. Valid range: 1-65535.
->>* path: the socket file you wish to bind as an UNIX Socket.
 * proxy_pass: list of relay/relay+rewrites.
 >* proxy_type: type of proxies, "relay" for raw relay, "rewrite" for relay with server address camouflage enabled.
 >* ident_name: name of destination identification. Usually a Fully Qualified Domain Name(FQDN) by CNAME to your server.
->* destination_object: (format: "address_d[:port]" or "unix:path")
+>* destination_object: (format: "address_d[:port]")
 >>* address_d: the address you wish to connect. Both FQDN or x.x.x.x allowed.
 >>* port: optional, the port you wish to connect. Valid range: 1-65535.<br/>
 If not set, the server will detect SRV record first(defined in address_d).<br/>

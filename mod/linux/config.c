@@ -16,15 +16,13 @@
 #include <string.h>
 struct conf_bind
 {
-	unsigned short type;
-	char unix_path[BUFSIZ],inet_addr[BUFSIZ];
+	char inet_addr[BUFSIZ];
 	unsigned short inet_port;
 };
 struct conf_map
 {
 	unsigned short enable_rewrite;
-	char from[512],to_unix_path[512],to_inet_addr[512];
-	unsigned short to_type;
+	char from[512],to_inet_addr[512];
 	unsigned short to_inet_port;
 	unsigned short to_inet_hybridmode;
 };
@@ -93,18 +91,8 @@ void config_dump(struct conf * source)
 			break;
 	}
 	printf("\n[BIND]\n");
-	switch(source->bind.type)
-	{
-		case TYPE_UNIX:
-			printf("Type\t\tUNIX Socket\n");
-			printf("Path\t\t%s\n",source->bind.unix_path);
-			break;
-		case TYPE_INET:
-			printf("Type\t\tInternet Socket\n");
-			printf("Address\t\t%s\n",source->bind.inet_addr);
-			printf("Port\t\t%d\n",source->bind.inet_port);
-			break;
-	}
+	printf("Address\t\t%s\n",source->bind.inet_addr);
+	printf("Port\t\t%d\n",source->bind.inet_port);
 	for(int i=0;i<source->relay_count;i++)
 	{
 		printf("\n[RELAY #%d]\n",i+1);
@@ -118,50 +106,30 @@ void config_dump(struct conf * source)
 				break;
 		}
 		printf("vhost\t\t%s\n",source->relay[i].from);
-		switch(source->relay[i].to_type)
+		printf("Address\t\t%s\n",source->relay[i].to_inet_addr);
+		switch(source->relay[i].to_inet_hybridmode)
 		{
-			case TYPE_UNIX:
-				printf("Type\t\tUNIX Socket\n");
-				printf("Path\t\t%s\n",source->relay[i].to_unix_path);
+			case 0:
+				printf("Port\t\t%d\n",source->relay[i].to_inet_port);
+				printf("SRV Resolve\tDisabled\n");
 				break;
-			case TYPE_INET:
-				printf("Type\t\tInternet Socket\n");
-				printf("Address\t\t%s\n",source->relay[i].to_inet_addr);
-				switch(source->relay[i].to_inet_hybridmode)
-				{
-					case 0:
-						printf("Port\t\t%d\n",source->relay[i].to_inet_port);
-						printf("SRV Resolve\tDisabled\n");
-						break;
-					case 1:
-						printf("SRV Resolve\tEnabled\n");
-						break;
-				}
+			case 1:
+				printf("SRV Resolve\tEnabled\n");
 				break;
 		}
 	}
 	if(source->enable_default==1)
 	{
 		printf("\n[DEFAULT RELAY]\n");
-		switch(source->relay_default.to_type)
+		printf("Address\t\t%s\n",source->relay_default.to_inet_addr);
+		switch(source->relay_default.to_inet_hybridmode)
 		{
-			case TYPE_UNIX:
-				printf("Type\t\tUNIX Socket\n");
-				printf("Path\t%s\n",source->relay_default.to_unix_path);
+			case 0:
+				printf("Port\t\t%d\n",source->relay_default.to_inet_port);
+				printf("SRV Resolve\tDisabled\n");
 				break;
-			case TYPE_INET:
-				printf("Type\t\tInternet Socket\n");
-				printf("Address\t\t%s\n",source->relay_default.to_inet_addr);
-				switch(source->relay_default.to_inet_hybridmode)
-				{
-					case 0:
-						printf("Port\t\t%d\n",source->relay_default.to_inet_port);
-						printf("SRV Resolve\tDisabled\n");
-						break;
-					case 1:
-						printf("SRV Resolve\tEnabled\n");
-						break;
-				}
+			case 1:
+				printf("SRV Resolve\tEnabled\n");
 				break;
 		}
 	}
@@ -245,17 +213,8 @@ int config_load(char * filename, struct conf * result)
 			tmpptr=value;
 			tmpptr=strsplit(tmpptr,':',key2);
 			tmpptr=strsplit(tmpptr,':',value2);
-			if(strcmp(key2,"unix")==0)
-			{
-				result->bind.type=TYPE_UNIX;
-				strcpy(result->bind.unix_path,value2);
-			}
-			else
-			{
-				result->bind.type=TYPE_INET;
-				strcpy(result->bind.inet_addr,key2);
-				result->bind.inet_port=basic_atosu(value2);
-			}
+			strcpy(result->bind.inet_addr,key2);
+			result->bind.inet_port=basic_atosu(value2);
 		}
 		else if(strcmp(key,"proxy_pass")==0)
 		{
@@ -292,7 +251,6 @@ int config_load(char * filename, struct conf * result)
 				}
 				if(strsplit_fieldcount(tmpptr,':')==1)
 				{
-					result->relay[rec_relay].to_type=TYPE_INET;
 					result->relay[rec_relay].to_inet_hybridmode=1;
 					tmpptr=strsplit(tmpptr,':',result->relay[rec_relay].to_inet_addr);
 					result->relay[rec_relay].to_inet_port=25565;
@@ -307,26 +265,17 @@ int config_load(char * filename, struct conf * result)
 				bzero(value2,sizeof(value2));
 				tmpptr=strsplit(tmpptr,':',key2);
 				tmpptr=strsplit(tmpptr,':',value2);
-				if(strcmp(key2,"unix")==0)
+				strcpy(result->relay[rec_relay].to_inet_addr,key2);
+				int port=basic_atosu(value2);
+				if(port==0)
 				{
-					result->relay[rec_relay].to_type=TYPE_UNIX;
-					strcpy(result->relay[rec_relay].to_unix_path,value2);
+					line_reccount++;
+					strcpy(tmp_buffer,buffer[line_reccount+1]);
+					continue;
 				}
 				else
 				{
-					result->relay[rec_relay].to_type=TYPE_INET;
-					strcpy(result->relay[rec_relay].to_inet_addr,key2);
-					int port=basic_atosu(value2);
-					if(port==0)
-					{
-						line_reccount++;
-						strcpy(tmp_buffer,buffer[line_reccount+1]);
-						continue;
-					}
-					else
-					{
-						result->relay[rec_relay].to_inet_port=port;
-					}
+					result->relay[rec_relay].to_inet_port=port;
 				}
 				rec_relay++;
 				line_reccount++;
@@ -350,7 +299,6 @@ int config_load(char * filename, struct conf * result)
 			if(strsplit_fieldcount(tmpptr,':')==1)
 			{
 				relay_default.to_inet_hybridmode=1;
-				relay_default.to_type=TYPE_INET;
 				tmpptr=strsplit(tmpptr,':',relay_default.to_inet_addr);
 				relay_default.to_inet_port=25565;
 			}
@@ -359,24 +307,15 @@ int config_load(char * filename, struct conf * result)
 				relay_default.to_inet_hybridmode=0;
 				tmpptr=strsplit(tmpptr,':',key2);
 				tmpptr=strsplit(tmpptr,':',value2);
-				if(strcmp(key2,"unix")==0)
+				strcpy(relay_default.to_inet_addr,key2);
+				int port=basic_atosu(value2);
+				if(port==0)
 				{
-					relay_default.to_type=TYPE_UNIX;
-					strcpy(relay_default.to_unix_path,value2);
+					continue;
 				}
 				else
 				{
-					relay_default.to_type=TYPE_INET;
-					strcpy(relay_default.to_inet_addr,key2);
-					int port=basic_atosu(value2);
-					if(port==0)
-					{
-						continue;
-					}
-					else
-					{
-						relay_default.to_inet_port=port;
-					}
+					relay_default.to_inet_port=port;
 				}
 			}
 			else
@@ -399,7 +338,7 @@ int config_load(char * filename, struct conf * result)
 	{
 		return CONF_ENOLOGLEVEL;
 	}
-	if(!((strcmp(result->bind.unix_path,"")!=0)||((strcmp(result->bind.inet_addr,"")!=0)&&(inet_addr(result->bind.inet_addr)!=-1)&&(result->bind.inet_port!=0))))
+	if(!(((strcmp(result->bind.inet_addr,"")!=0)&&(inet_addr(result->bind.inet_addr)!=-1)&&(result->bind.inet_port!=0))))
 	{
 		return CONF_EINVALIDBIND;
 	}
