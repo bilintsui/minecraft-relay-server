@@ -20,7 +20,7 @@
 #include <unistd.h>
 const char * version_str="1.2-beta1";
 const char * year_str="2020-2021";
-const short version_internal=45;
+const short version_internal=46;
 conf config;
 char configfile[512],cwd[512],config_logfull[BUFSIZ];
 unsigned short config_runmode=1;

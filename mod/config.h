@@ -27,7 +27,7 @@ typedef struct
 } conf_bind;
 typedef struct
 {
-	unsigned short enable_rewrite;
+	unsigned short enable_rewrite,enable_pheader;
 	char from[512],to_inet_addr[512];
 	unsigned short to_inet_port;
 	unsigned short to_inet_hybridmode;

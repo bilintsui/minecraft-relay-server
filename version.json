@@ -170,5 +170,9 @@
 	{
 		"version": 45,
 		"names": ["1.2-beta1-patch9"]
+	{
+		"version": 46,
+		"names": ["1.2-beta1-patch10"]
+	}
 	}
 ]

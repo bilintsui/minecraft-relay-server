@@ -13,12 +13,13 @@
 #include <string.h>
 int backbone(int socket_in, int * socket_out, char * logfile, unsigned short runmode, conf conf_in, struct sockaddr_in addrinfo_in)
 {
-	unsigned char inbound[BUFSIZ],outbound[BUFSIZ],rewrited[BUFSIZ];
-	int packlen_inbound,packlen_outbound,packlen_rewrited;
+	unsigned char inbound[BUFSIZ],outbound[BUFSIZ],rewrited[BUFSIZ],pheader[105];
+	int packlen_inbound,packlen_outbound,packlen_rewrited,packlen_pheader;
 	struct sockaddr_in addr_outbound;
-	bzero(inbound,BUFSIZ);
-	bzero(outbound,BUFSIZ);
-	bzero(rewrited,BUFSIZ);
+	memset(inbound,0,BUFSIZ);
+	memset(outbound,0,BUFSIZ);
+	memset(rewrited,0,BUFSIZ);
+	memset(pheader,0,105);
 	packlen_inbound=recv(socket_in,inbound,BUFSIZ,0);
 	if(packlen_inbound==0)
 	{
@@ -89,12 +90,16 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 				mkoutbound_status=NET_ENORECORD;
 			}
 			*socket_out=net_socket(NETSOCK_CONN,AF_INET,connaddr,proxyinfo->to_inet_port,0);
-			free(connaddr);
-			connaddr=NULL;
 			if(*socket_out==-1)
 			{
 				mkoutbound_status=NET_ECONNECT;
 			}
+			char * connaddr_strp=inet_ntoa(*((struct in_addr *)connaddr));
+			free(connaddr);
+			connaddr=NULL;
+			char * connaddr_str=(char *)malloc(strlen(connaddr_strp)+1);
+			strcpy(connaddr_str,connaddr_strp);
+			connaddr_strp=NULL;
 			if(mkoutbound_status!=0)
 			{
 				outmsg_level=1;
@@ -107,6 +112,11 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			{
 				case 0:
 					mksysmsg(0,logfile,runmode,conf_in.loglevel,outmsg_level,"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: accept\n",inet_ntoa(addrinfo_in.sin_addr),ntohs(addrinfo_in.sin_port),proxyinfo->from,proxyinfo->to_inet_addr,proxyinfo->to_inet_port);
+					if(proxyinfo->enable_pheader==1)
+					{
+						packlen_pheader=sprintf(pheader,"PROXY TCP4 %s %s %d %d\r\n",inet_ntoa(addrinfo_in.sin_addr),connaddr_str,ntohs(addrinfo_in.sin_port),proxyinfo->to_inet_port);
+						send(*socket_out,pheader,packlen_pheader,0);
+					}
 					if(proxyinfo->enable_rewrite==1)
 					{
 						strcpy(inbound_info.address,proxyinfo->to_inet_addr);
@@ -200,12 +210,16 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 				mkoutbound_status=NET_ENORECORD;
 			}
 			*socket_out=net_socket(NETSOCK_CONN,AF_INET,connaddr,proxyinfo->to_inet_port,0);
-			free(connaddr);
-			connaddr=NULL;
 			if(*socket_out==-1)
 			{
 				mkoutbound_status=NET_ECONNECT;
 			}
+			char * connaddr_strp=inet_ntoa(*((struct in_addr *)connaddr));
+			free(connaddr);
+			connaddr=NULL;
+			char * connaddr_str=(char *)malloc(strlen(connaddr_strp)+1);
+			strcpy(connaddr_str,connaddr_strp);
+			connaddr_strp=NULL;
 			if(mkoutbound_status!=0)
 			{
 				outmsg_level=1;
@@ -218,6 +232,11 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			{
 				case 0:
 					mksysmsg(0,logfile,runmode,conf_in.loglevel,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: accept, username: %s\n",inet_ntoa(addrinfo_in.sin_addr),ntohs(addrinfo_in.sin_port),proxyinfo->from,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,inbound_info.username);
+					if(proxyinfo->enable_pheader==1)
+					{
+						packlen_pheader=sprintf(pheader,"PROXY TCP4 %s %s %d %d\r\n",inet_ntoa(addrinfo_in.sin_addr),connaddr_str,ntohs(addrinfo_in.sin_port),proxyinfo->to_inet_port);
+						send(*socket_out,pheader,packlen_pheader,0);
+					}
 					if(proxyinfo->enable_rewrite==1)
 					{
 						strcpy(inbound_info.address,proxyinfo->to_inet_addr);
@@ -318,12 +337,16 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			mkoutbound_status=NET_ENORECORD;
 		}
 		*socket_out=net_socket(NETSOCK_CONN,AF_INET,connaddr,proxyinfo->to_inet_port,0);
-		free(connaddr);
-		connaddr=NULL;
 		if(*socket_out==-1)
 		{
 			mkoutbound_status=NET_ECONNECT;
 		}
+		char * connaddr_strp=inet_ntoa(*((struct in_addr *)connaddr));
+		free(connaddr);
+		connaddr=NULL;
+		char * connaddr_str=(char *)malloc(strlen(connaddr_strp)+1);
+		strcpy(connaddr_str,connaddr_strp);
+		connaddr_strp=NULL;
 		if(mkoutbound_status!=0)
 		{
 			outmsg_level=1;
@@ -349,6 +372,11 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 				else if(inbound_info.nextstate==2)
 				{
 					mksysmsg(0,logfile,runmode,conf_in.loglevel,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: accept, username: %s\n",inet_ntoa(addrinfo_in.sin_addr),ntohs(addrinfo_in.sin_port),proxyinfo->from,proxyinfo->to_inet_addr,proxyinfo->to_inet_port,inbound_info.username);
+				}
+				if(proxyinfo->enable_pheader==1)
+				{
+					packlen_pheader=sprintf(pheader,"PROXY TCP4 %s %s %d %d\r\n",inet_ntoa(addrinfo_in.sin_addr),connaddr_str,ntohs(addrinfo_in.sin_port),proxyinfo->to_inet_port);
+					send(*socket_out,pheader,packlen_pheader,0);
 				}
 				if(proxyinfo->enable_rewrite==1)
 				{

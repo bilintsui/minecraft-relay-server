@@ -10,6 +10,7 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!
 ## Features
 * Support reverse proxy for Minecraft servers by server address in the handshake packet which client send to.
 * Support rewrite server address and server port to camouflage connection which using official server address. (eg: pretend to be a normal connection to Hypixel, avoiding their server address check.)
+* Support IP forwarding using HAProxy's Proxy Protocol. (But refuses any incoming connection using this protocol.)
 
 ## Requirements
 * Linux
@@ -24,10 +25,10 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!
 ## Files
 * mcrelay.c: Source code of Main program.
 * mcrelay.conf.example: config file example of mcrelay.
-* mcrelay.service.forking.example: service unit file of mcrelay for systemd(using runmode: forking).
-* mcrelay.service.simple.example: service unit file of mcrelay for systemd(using runmode: simple).
+* mcrelay.service.forking.example: service unit file of mcrelay for systemd. (using runmode: forking)
+* mcrelay.service.simple.example: service unit file of mcrelay for systemd. (using runmode: simple)
 * mod: directory of essential modules.
-* version.json: version manifest
+* version.json: version manifest.
 * loglevel.info: definations for messages.
 
 ## Compile
@@ -60,6 +61,7 @@ proxy_pass proxy_type
 	ident_name destination_object
 default destination_object
 </pre>
+
 ### Explanation
 * log: set log file.
 >* logfile_path: path of the file which logs saved to.
@@ -71,18 +73,19 @@ default destination_object
 >>* port: the port you wish to bind as an Internet Service. Valid range: 1-65535.
 * proxy_pass: list of relay/relay+rewrites.
 >* proxy_type: type of proxies, "relay" for raw relay, "rewrite" for relay with server address camouflage enabled.
->* ident_name: name of destination identification. Usually a Fully Qualified Domain Name(FQDN) by CNAME to your server.
+>>* You can add "p" suffix (i.e. "relayp" or "rewritep") to enable IP forwarding. (Need downstream supports HAProxy's Proxy Protocol, otherwise your connection will be aborted.)
+>* ident_name: name of destination identification. Usually a Fully Qualified Domain Name (FQDN) by CNAME to your server.
 >* destination_object: (format: "address_d[:port]")
 >>* address_d: the address you wish to connect. Both FQDN or x.x.x.x allowed.
 >>* port: optional, the port you wish to connect. Valid range: 1-65535.
 
-If not set, the server will detect SRV record first(defined in address_d).
+If not set, the server will detect SRV record first. (defined in address_d)
 
 If SRV record resolve failed, it will fallback to normal address resolve, also connect to this address with port 25565.
 
 **For rewrite enabled relay, it will use actual connect configuration to rewrite.**
->>* path: the socket file you wish to connect.
 * default: optional, set a default server to connect when client don't match any valid virtual host. (Intentionally not support rewrite here.) (Security suggestion: Don't use this feature unless you know what you are doing.)
+
 ### Example
 <pre>
 log /var/log/mcrelay/mcrelay.log
@@ -96,7 +99,7 @@ proxy_pass relay
 default 192.168.1.254:25565
 </pre>
 
-## Instruction of using a DNS-based redirection(SRV)
+## Instruction of using a DNS-based redirection (SRV)
 If you are using a SRV record to provide your service, you should follow the instructions below.
 
 Otherwise, your user will see the message of using a wrong address to connect.
@@ -110,3 +113,11 @@ If you provide "srvrecord.example.com" to your user, you should set your vhostna
 * For Minecraft version from 21w20a to 1.17, use "srvrecord.example.com".
 
 For compatibility, it's recommended to add both of them to your configuration.
+
+## IP Forwarding
+You can provide the real client address and port through HAProxy's Proxy Protocol by this feature.
+
+It's compatible with any server which support this protocol. (e.g. Bungeecord)
+
+### Bungeecord
+To use this feature correctly, turn on the "proxy_protocol" in the "config.yml". ("false" to "true")

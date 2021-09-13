@@ -74,6 +74,15 @@ void config_dump(conf * source)
 				printf("Rewrite\t\tEnabled\n");
 				break;
 		}
+		switch(source->relay[i].enable_pheader)
+		{
+			case 0:
+				printf("PHeader\t\tDisabled\n");
+				break;
+			case 1:
+				printf("PHeader\t\tEnabled\n");
+				break;
+		}
 		printf("vhost\t\t%s\n",source->relay[i].from);
 		printf("Address\t\t%s\n",source->relay[i].to_inet_addr);
 		switch(source->relay[i].to_inet_hybridmode)
@@ -176,14 +185,26 @@ int config_load(char * filename, conf * result)
 		}
 		else if(strcmp(key,"proxy_pass")==0)
 		{
-			int enable_rewrite;
+			int enable_rewrite,enable_pheader;
 			if(strcmp(value,"rewrite")==0)
 			{
 				enable_rewrite=1;
+				enable_pheader=0;
 			}
 			else if(strcmp(value,"relay")==0)
 			{
 				enable_rewrite=0;
+				enable_pheader=0;
+			}
+			else if(strcmp(value,"rewritep")==0)
+			{
+				enable_rewrite=1;
+				enable_pheader=1;
+			}
+			else if(strcmp(value,"relayp")==0)
+			{
+				enable_rewrite=0;
+				enable_pheader=1;
 			}
 			else
 			{
@@ -195,6 +216,7 @@ int config_load(char * filename, conf * result)
 			{
 				tmpptr++;
 				result->relay[rec_relay].enable_rewrite=enable_rewrite;
+				result->relay[rec_relay].enable_pheader=enable_pheader;
 				if(strsplit_fieldcount(tmpptr,' ')!=2)
 				{
 					line_reccount++;
@@ -253,6 +275,7 @@ int config_load(char * filename, conf * result)
 				return CONF_EDEFPROXYDUP;
 			}
 			relay_default.enable_rewrite=0;
+			relay_default.enable_pheader=0;
 			strcpy(relay_default.from,"*");
 			if(strsplit_fieldcount(tmpptr,':')==1)
 			{
