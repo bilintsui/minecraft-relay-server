@@ -15,6 +15,7 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!
 ## Requirements
 * Linux
 * libresolv.so
+* libcjson.so
 
 ## Compatibility
 **Due to Minecraft Handshake restrictions, this server supports:**
@@ -24,7 +25,7 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!
 
 ## Files
 * mcrelay.c: Source code of Main program.
-* mcrelay.conf.example: config file example of mcrelay.
+* config.json.example: config file example.
 * mcrelay.service.forking.example: service unit file of mcrelay for systemd. (using runmode: forking)
 * mcrelay.service.simple.example: service unit file of mcrelay for systemd. (using runmode: simple)
 * mod: directory of essential modules.
@@ -33,7 +34,7 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!
 
 ## Compile
 <pre>
-gcc -o mcrelay mcrelay.c -lresolv
+gcc -o mcrelay mcrelay.c -lresolv -lcjson
 </pre>
 or
 <pre>
@@ -50,54 +51,7 @@ The program will run as a non-exit-style program by default.
 When using "-f" or "--forking" option, the program will become daemonized, and store its main process' PID into /tmp/mcrelay.pid.
 
 ## Config
-### Format
-<pre>
-log logfile_path
-loglevel loglvl
-bind bind_object
-proxy_pass proxy_type
-	ident_name destination_object
-proxy_pass proxy_type
-	ident_name destination_object
-default destination_object
-</pre>
-
-### Explanation
-* log: set log file.
->* logfile_path: path of the file which logs saved to.
-* loglevel: set max message level in logging message.
->* loglvl: a unsigned short integer, range 0-255. This program will not log message with level higher than this level. 0: Critical, 1: Warning, 2+: Information. For more information, watch loglevel.info.
-* bind: set bind information.
->* bind_object: (format: "address:port") default: "0.0.0.0:25565".
->>* address: the address you wish to bind as an Internet Service. Only x.x.x.x allowed.
->>* port: the port you wish to bind as an Internet Service. Valid range: 1-65535.
-* proxy_pass: list of relay/relay+rewrites.
->* proxy_type: type of proxies, "relay" for raw relay, "rewrite" for relay with server address camouflage enabled.
->>* You can add "p" suffix (i.e. "relayp" or "rewritep") to enable IP forwarding. (Need downstream supports HAProxy's Proxy Protocol, otherwise your connection will be aborted.)
->* ident_name: name of destination identification. Usually a Fully Qualified Domain Name (FQDN) by CNAME to your server.
->* destination_object: (format: "address_d[:port]")
->>* address_d: the address you wish to connect. Both FQDN or x.x.x.x allowed.
->>* port: optional, the port you wish to connect. Valid range: 1-65535.
-
-If not set, the server will detect SRV record first. (defined in address_d)
-
-If SRV record resolve failed, it will fallback to normal address resolve, also connect to this address with port 25565.
-
-**For rewrite enabled relay, it will use actual connect configuration to rewrite.**
-* default: optional, set a default server to connect when client don't match any valid virtual host. (Intentionally not support rewrite here.) (Security suggestion: Don't use this feature unless you know what you are doing.)
-
-### Example
-<pre>
-log /var/log/mcrelay/mcrelay.log
-bind 0.0.0.0:25565
-proxy_pass rewrite
-	hypixel.example.com mc.hypixel.net:25565
-	hivemc.example.com play.hivemc.com:25565
-proxy_pass relay
-	mc1.example.com 127.0.0.1:25566
-	mc2.example.com 192.168.1.254:25565
-default 192.168.1.254:25565
-</pre>
+See "config.json.example" for instructions.
 
 ## Instruction of using a DNS-based redirection (SRV)
 If you are using a SRV record to provide your service, you should follow the instructions below.

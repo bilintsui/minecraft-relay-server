@@ -2,7 +2,7 @@
 	main.h: Header file of main.c
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.2-beta1
+	Minecraft Relay Server, version 1.2-beta2
 	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 
@@ -13,6 +13,7 @@
 #define _MOD_MAIN_H_
 #include "basic.h"
 #include "config.h"
+#include "config2.h"
 #include "network.h"
 #include "proto_legacy.h"
 #include "proto_modern.h"

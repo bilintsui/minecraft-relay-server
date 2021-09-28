@@ -2,7 +2,7 @@
 	basic.c: Basic Functions for Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.2-beta1
+	Minecraft Relay Server, version 1.2-beta2
 	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 
@@ -209,6 +209,8 @@ size_t freadall(unsigned char * filename, unsigned char ** dest)
 		{
 			free(buffer);
 			buffer=NULL;
+			free(result);
+			result=NULL;
 			errno=FREADALL_EREALLOC;
 			return 0;
 		}

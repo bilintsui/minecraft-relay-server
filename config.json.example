@@ -1,0 +1,37 @@
+{
+	"netpriority": { // Optional, Global setting of how an IP address or a hostname resolving.
+		"enabled": true, // Optional, Boolean or Integer (default: "true"). When set to true, means the program will try to resolve to a legal IP address as much as possible. When set to false, if the program can not resolve to the protocol defined below, the program will fail.
+		"protocol": "IPv6" // Optional, "IPv4" or "IPv6" (case sensitive) (default: "IPv6"). The protocol of address which you more prefer, when netpriority disabled, the program will only try once, not twice.
+	},
+	"log": { // Optional, Log settings.
+		"filename": "/var/log/mcrelay/access.log", // Optional, String (default: "/var/log/mcrelay/access.log"). The filename which logs saved.
+		"level": 2, // Optional, Short Integer (default: 2). The max level of log you want to logged.
+		"binary": false // Optional, Boolean or Integer (default: "true"). When set to true, will using the binary format instead of plain text.
+	},
+	"listen": { // Optional, Bind settings.
+		"address": "::", // Optional, String (default: "::"). The address which the server will listening on.
+		"port": 25565 // Optional, Short Integer (default: 25565). The port which the server will listening on.
+	},
+	"proxy": [ // Mandatory, Proxy list.
+		{
+			"vhost": "mc.example.com", // Mandatory, String or String Array. Virtual hostname, used for choosing target server.
+			"address": "localhost", // Mandatory, String. Address or hostname of target server.
+			"port": 25565, // Optional, Short Integer. Port of the target server. When not set, this server will resolve the address as a SRV record.
+			"rewrite": false, // Optional, Boolean or Integer (default: false). When set to true, means this server will rewrite address and port field in outgoing handshake packet.
+			"pheader": false // Optional, Boolean or Integer (default:false). When set to true, means this server will use HAProxy's Proxy Procotol. Note: enable this, you need to make sure your target server support this protocol, or your connection will be closed.
+		},
+		{
+			"vhost": ["mc1.example.com","mc2.example.com"],
+			"address": "mc.example2.com",
+			"rewrite": false,
+			"pheader": false
+		},
+		{
+			"vhost": "hypixel.example.com",
+			"address": "mc.hypixel.net",
+			"port": 25565,
+			"rewrite": true,
+			"pheader": false
+		}
+	]
+}
