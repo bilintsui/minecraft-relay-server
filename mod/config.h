@@ -11,40 +11,53 @@
 */
 #ifndef _MOD_CONFIG_H_
 #define _MOD_CONFIG_H_
-#include "basic.h"
 #ifdef linux
-#define CONF_EOPENFILE 1
-#define CONF_ENOLOGFILE 2
-#define CONF_ENOLOGLEVEL 3
-#define CONF_EINVALIDBIND 4
-#define CONF_EPROXYNOFIND 5
-#define CONF_EPROXYDUP 6
-#define CONF_EDEFPROXYDUP 7
+#define CONF_EARGNULL 1
+#define CONF_EROPENFAIL 2
+#define CONF_EROPENLARGE 3
+#define CONF_ERMEMORY 4
+#define CONF_ERPARSE 5
+#define CONF_ECMEMORY 6
+#define CONF_ECNETPRIORITYPROTOCOL 7
+#define CONF_ECLISTENPORT 8
+#define CONF_ECPROXY 9
+#define CONF_ECPROXYDUP 10
+#include <cjson/cJSON.h>
+#include <string.h>
+#include <sys/socket.h>
+#include "basic.h"
 typedef struct
 {
-	char inet_addr[BUFSIZ];
-	unsigned short inet_port;
-} conf_bind;
+	char * address;
+	u_int16_t port;
+	short valid,srvenabled,rewrite,pheader;
+} conf_proxy;
 typedef struct
 {
-	unsigned short enable_rewrite,enable_pheader;
-	char from[512],to_inet_addr[512];
-	unsigned short to_inet_port;
-	unsigned short to_inet_hybridmode;
-} conf_map;
-typedef struct
-{
-	char log[512];
-	unsigned short loglevel;
-	conf_bind bind;
-	int relay_count;
-	conf_map relay[128];
-	int enable_default;
-	conf_map relay_default;
+	struct
+	{
+		short enabled;
+		sa_family_t protocol;
+	} netpriority;
+	struct
+	{
+		char * filename;
+		short level,binary;
+	} log;
+	struct
+	{
+		char * address;
+		u_int16_t port;
+	} listen;
+	cJSON * proxy;
 } conf;
-conf_map * getproxyinfo(conf * source, unsigned char * proxyname);
-void config_dump(conf * source);
-int config_load(char * filename, conf * result);
+short config_jsonbool(cJSON * src, short defaultvalue);
+void config_destroy(conf * target);
+cJSON * config_proxy_parse(cJSON * src);
+conf * config_read(char * filename);
+void config_dumper(conf * src);
+conf_proxy config_proxy_search(conf * src, const char * targetvhost);
+void config_proxy_search_destroy(conf_proxy * target);
 #include "linux/config.c"
 #endif
 #endif

@@ -20,11 +20,15 @@
 #include <unistd.h>
 const char * version_str="1.2-beta2";
 const char * year_str="2020-2021";
-const short version_internal=47;
-conf config;
-char configfile[512],cwd[512],config_logfull[BUFSIZ];
-unsigned short config_runmode=1;
+const short version_internal=48;
+char global_buffer[BUFSIZ];
+char * cwd=NULL;
 char * argoffset_configfile=NULL;
+char * configfile=NULL;
+char * configfile_full=NULL;
+char * config_logfull=NULL;
+conf * config=NULL;
+unsigned short config_runmode=1;
 void deal_sigterm()
 {
 	unlink("/tmp/mcrelay.pid");
@@ -32,64 +36,95 @@ void deal_sigterm()
 }
 void deal_sigusr1()
 {
-	conf config_new;
-	char config_logfull_old[BUFSIZ],configfile_full[BUFSIZ];
-	unsigned short config_maxlevel=config.loglevel;
-	bzero(config_logfull_old,BUFSIZ);
+	conf * config_new;
+	char * config_logfull_old=NULL;
+	unsigned short config_maxlevel=config->log.level;
+	config_logfull_old=(char *)calloc(1,strlen(config_logfull)+1);
 	strcpy(config_logfull_old,config_logfull);
+	if(strcmp(configfile_full,"-")==0)
+	{
+		mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Can not reload configuration, because STDIN is used in server initialization.\n\n");
+		return;
+	}
 	mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,2,"Reloading config from file: %s\n",configfile);
-	bzero(configfile_full,BUFSIZ);
-	sprintf(configfile_full,"%s/%s",cwd,configfile);
-	switch(config_load(configfile_full,&config_new))
+	config_new=config_read(configfile_full);
+	switch(errno)
 	{
 		case 0:
+			config_destroy(config);
 			config=config_new;
-			if(config.log[0]!='/')
+			if(config->log.filename[0]!='/')
 			{
-				sprintf(config_logfull,"%s/%s",cwd,config.log);
+				sprintf(global_buffer,"%s/%s",cwd,config->log.filename);
+				config_logfull=(char *)realloc(config_logfull,strlen(global_buffer)+1);
+				strcpy(config_logfull,global_buffer);
+				memset(global_buffer,0,strlen(global_buffer)+1);
 			}
 			else
 			{
-				sprintf(config_logfull,"%s",config.log);
+				config_logfull=(char *)realloc(config_logfull,strlen(config->log.filename)+1);
+				strcpy(config_logfull,config->log.filename);
 			}
 			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,2,"Configuration reloaded.\n\n");
 			break;
-		case CONF_EOPENFILE:
-			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Cannot read config file: %s, will keep your old configurations.\n\n",configfile);
+		case CONF_EROPENFAIL:
+			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Cannot read config file: %s\n",configfile);
 			break;
-		case CONF_ENOLOGFILE:
-			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Argument \"log\" is missing, will keep your old configurations.\n\n");
+		case CONF_EROPENLARGE:
+			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: File too large (5MB), will keep your old configurations.\n");
 			break;
-		case CONF_ENOLOGLEVEL:
-			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Argument \"loglevel\" is missing or not a valid short integer, will keep your old configurations.\n\n");
+		case CONF_ERMEMORY:
+			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Failed to allocate memory when reading file, will keep your old configurations.\n");
 			break;
-		case CONF_EINVALIDBIND:
-			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Argument \"bind\" is missing or invalid, will keep your old configurations.\n\n");
+		case CONF_ERPARSE:
+			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Not a valid JSON format, will keep your old configurations.\n");
 			break;
-		case CONF_EPROXYNOFIND:
-			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: You don't have any valid record for relay, will keep your old configurations.\n\n");
+		case CONF_ECMEMORY:
+			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in processing configurations: Failed to allocate memory while internal processing, will keep your old configurations.\n");
 			break;
-		case CONF_EPROXYDUP:
-			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Duplicate proxy record in config line %d, will keep your old configurations.\n\n",errno);
+		case CONF_ECNETPRIORITYPROTOCOL:
+			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Entry \"netpriority.protocol\" must be IPv4 or IPv6 (case sensitive), will keep your old configurations.\n");
 			break;
-		case CONF_EDEFPROXYDUP:
-			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Duplicate default proxy record in config line %d, will keep your old configurations.\n\n",errno);
+		case CONF_ECLISTENPORT:
+			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Entry \"listen.port\" must be an unsigned short integer (0-65535), will keep your old configurations.\n");
+			break;
+		case CONF_ECPROXY:
+			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Entry \"proxy\" is missing, will keep your old configurations.\n");
+			break;
+		case CONF_ECPROXYDUP:
+			if(config==NULL)
+			{
+				mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Duplication found in proxy virtual hostnames, will keep your old configurations.\n");
+			}
+			else
+			{
+				mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Duplication found in proxy virtual hostnames. Affected: \"%s\", will keep your old configurations.\n",config);
+				free(config);
+			}
+			break;
+		default:
+			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in processing configurations: Unknown error occured, code: %d, will keep your old configurations\n",errno);
 			break;
 	}
 }
 int main(int argc, char ** argv)
 {
 	char helpmsg[]="<arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-f / --forking:\tMade the process become daemonize.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server";
+	char headmsg[]="Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n";
 	int strulen=sizeof(struct sockaddr);
 	int socket_inbound_server,socket_inbound_client;
 	struct sockaddr_in addr_inbound_server,addr_inbound_client;
 	signal(SIGTERM,deal_sigterm);
 	signal(SIGINT,deal_sigterm);
-	bzero(cwd,512);
-	getcwd(cwd,512);
+	memset(global_buffer,0,BUFSIZ);
+	getcwd(global_buffer,BUFSIZ);
+	cwd=(char *)calloc(1,strlen(global_buffer)+1);
+	strcpy(cwd,global_buffer);
+	memset(global_buffer,0,strlen(global_buffer)+1);
 	if(argc<2)
 	{
-		mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\nUsage: %s %s\n",version_str,year_str,strsplit_reverse(argv[0],'/'),helpmsg);
+		mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
+		mksysmsg(1,"",0,255,0,"Usage: %s %s\n",strsplit_reverse(argv[0],'/'),helpmsg);
 		return 22;
 	}
 	argoffset_configfile=argv[1];
@@ -103,7 +138,7 @@ int main(int argc, char ** argv)
 		{
 			if(pidfd==NULL)
 			{
-				mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
+				mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
 				mksysmsg(0,"",0,255,0,"Cannot read /tmp/mcrelay.pid.\n");
 				return 2;
 			}
@@ -111,13 +146,13 @@ int main(int argc, char ** argv)
 			fclose(pidfd);
 			if(kill(prevpid,SIGUSR1)==0)
 			{
-				mksysmsg(1,"",0,255,2,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
+				mksysmsg(1,"",0,255,2,headmsg,version_str,year_str);
 				mksysmsg(0,"",0,255,2,"Successfully send reload signal to currently running process.\n");
 				return 0;
 			}
 			else
 			{
-				mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
+				mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
 				mksysmsg(0,"",0,255,0,"Failed on send reload signal to currently running process.\n");
 				return 3;
 			}
@@ -126,7 +161,7 @@ int main(int argc, char ** argv)
 		{
 			if(pidfd==NULL)
 			{
-				mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
+				mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
 				mksysmsg(0,"",0,255,0,"Cannot read /tmp/mcrelay.pid.\n");
 				return 2;
 			}
@@ -134,13 +169,13 @@ int main(int argc, char ** argv)
 			fclose(pidfd);
 			if(kill(prevpid,SIGTERM)==0)
 			{
-				mksysmsg(1,"",0,255,2,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
+				mksysmsg(1,"",0,255,2,headmsg,version_str,year_str);
 				mksysmsg(0,"",0,255,2,"Successfully send terminate signal to currently running process.\n");
 				return 0;
 			}
 			else
 			{
-				mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
+				mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
 				mksysmsg(0,"",0,255,0,"Failed on send terminate signal to currently running process.\n");
 				return 3;
 			}
@@ -155,9 +190,11 @@ int main(int argc, char ** argv)
 			mksysmsg(1,"",0,255,2,"v%s(%d)\n",version_str,version_internal);
 			return 0;
 		}
+		else if(*ptr_argv1==0);
 		else
 		{
-			mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\nError: Invalid option \"-%s\"\n\nUsage: %s %s\n",version_str,year_str,ptr_argv1,strsplit_reverse(argv[0],'/'),helpmsg);
+			mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
+			mksysmsg(1,"",0,255,0,"Error: Invalid option \"-%s\"\n\nUsage: %s %s\n",ptr_argv1,strsplit_reverse(argv[0],'/'),helpmsg);
 			return 22;
 		}
 	}
@@ -169,87 +206,125 @@ int main(int argc, char ** argv)
 			fclose(pidfd);
 			if(kill(prevpid,0)==0)
 			{
-				mksysmsg(1,"",0,255,0,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
+				mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
 				mksysmsg(0,"",0,255,0,"You cannot running multiple instances in one time. Previous running process PID: %d.\n",prevpid);
 				return 1;
 			}
 		}
 	}
-	mksysmsg(1,"",0,255,2,"Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,year_str);
-	bzero(configfile,512);
+	mksysmsg(1,"",0,255,2,headmsg,version_str,year_str);
 	if(argoffset_configfile==NULL)
 	{
 		mksysmsg(0,"",0,255,0,"Config filename can not be empty!\n",configfile);
 		return 22;
 	}
+	configfile=(char *)calloc(1,strlen(argoffset_configfile)+1);
 	strcpy(configfile,argoffset_configfile);
-	mksysmsg(0,"",0,255,2,"Loading configurations from file: %s\n\n",configfile);
-	switch(config_load(configfile,&config))
+	if((configfile[0]!='/')&&(strcmp(configfile,"-")!=0))
+	{
+		sprintf(global_buffer,"%s/%s",cwd,configfile);
+		configfile_full=(char *)calloc(1,strlen(global_buffer)+1);
+		strcpy(configfile_full,global_buffer);
+		memset(global_buffer,0,strlen(global_buffer)+1);
+	}
+	else
+	{
+		configfile_full=(char *)calloc(1,strlen(configfile)+1);
+		strcpy(configfile_full,configfile);
+	}
+	if(strcmp(configfile_full,"-")==0)
+	{
+		mksysmsg(0,"",0,255,2,"Loading configurations from STDIN:\n\n");
+	}
+	else
+	{
+		mksysmsg(0,"",0,255,2,"Loading configurations from file: %s\n\n",configfile);
+	}
+	config=config_read(configfile_full);
+	switch(errno)
 	{
 		case 0:
-			if(config.log[0]!='/')
+			if(config->log.filename[0]!='/')
 			{
-				sprintf(config_logfull,"%s/%s",cwd,config.log);
+				sprintf(global_buffer,"%s/%s",cwd,config->log.filename);
+				config_logfull=(char *)calloc(1,strlen(global_buffer)+1);
+				strcpy(config_logfull,global_buffer);
+				memset(global_buffer,0,strlen(global_buffer)+1);
 			}
 			else
 			{
-				sprintf(config_logfull,"%s",config.log);
+				config_logfull=(char *)calloc(1,strlen(config->log.filename)+1);
+				strcpy(config_logfull,config->log.filename);
 			}
 			break;
-		case CONF_EOPENFILE:
+		case CONF_EROPENFAIL:
 			mksysmsg(0,"",0,255,0,"Cannot read config file: %s\n",configfile);
 			return 2;
-		case CONF_ENOLOGFILE:
-			mksysmsg(0,"",0,255,0,"Error in configurations: Argument \"log\" is missing.\n");
+		case CONF_EROPENLARGE:
+			mksysmsg(0,"",0,255,0,"Error in configurations: File too large (5MB).\n");
+			return 27;
+		case CONF_ERMEMORY:
+			mksysmsg(0,"",0,255,0,"Error in configurations: Failed to allocate memory when reading file.\n");
+			return 12;
+		case CONF_ERPARSE:
+			mksysmsg(0,"",0,255,0,"Error in configurations: Not a valid JSON format.\n");
+			return 38;
+		case CONF_ECMEMORY:
+			mksysmsg(0,"",0,255,0,"Error in processing configurations: Failed to allocate memory while internal processing.\n");
+			return 12;
+		case CONF_ECNETPRIORITYPROTOCOL:
+			mksysmsg(0,"",0,255,0,"Error in configurations: Entry \"netpriority.protocol\" must be IPv4 or IPv6 (case sensitive).\n");
 			return 22;
-		case CONF_ENOLOGLEVEL:
-			mksysmsg(0,"",0,255,0,"Error in configurations: Argument \"loglevel\" is missing or not a valid short integer.\n");
+		case CONF_ECLISTENPORT:
+			mksysmsg(0,"",0,255,0,"Error in configurations: Entry \"listen.port\" must be an unsigned short integer (0-65535).\n");
 			return 22;
-		case CONF_EINVALIDBIND:
-			mksysmsg(0,"",0,255,0,"Error in configurations: Argument \"bind\" is missing or invalid.\n");
+		case CONF_ECPROXY:
+			mksysmsg(0,"",0,255,0,"Error in configurations: Entry \"proxy\" is missing!\n");
 			return 22;
-		case CONF_EPROXYNOFIND:
-			mksysmsg(0,"",0,255,0,"Error in configurations: You don't have any valid record for relay.\n");
+		case CONF_ECPROXYDUP:
+			if(config==NULL)
+			{
+				mksysmsg(0,"",0,255,0,"Error in configurations: Duplication found in proxy virtual hostnames.\n");
+			}
+			else
+			{
+				mksysmsg(0,"",0,255,0,"Error in configurations: Duplication found in proxy virtual hostnames. Affected: \"%s\".\n",config);
+				free(config);
+			}
 			return 22;
-		case CONF_EPROXYDUP:
-			mksysmsg(0,"",0,255,0,"Error in configurations: Duplicate proxy record in config line %d.\n",errno);
-			return 22;
-		case CONF_EDEFPROXYDUP:
-			mksysmsg(0,"",0,255,0,"Error in configurations: Duplicate default proxy record in config line %d.\n",errno);
-			return 22;
+		default:
+			mksysmsg(0,"",0,255,0,"Error in processing configurations: Unknown error occured, code: %d\n",errno);
+			return 255;
 	}
 	FILE * tmpfd=fopen(config_logfull,"a");
 	if(tmpfd==NULL)
 	{
-		mksysmsg(0,"",0,255,0,"Error: Cannot write log to \"%s\".\n",config.log);
+		mksysmsg(0,"",0,255,0,"Error: Cannot write log to \"%s\".\n",config->log.filename);
 		return 13;
 	}
 	else
 	{
 		fclose(tmpfd);
 	}
-	void * bindaddr=net_resolve(config.bind.inet_addr,AF_INET);
-	if(bindaddr==NULL)
+	net_addr bindaddr=net_resolve_dual(config->listen.address,config->netpriority.protocol,config->netpriority.enabled);
+	if(bindaddr.family==0)
 	{
-		mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Error: Invalid bind address!\n");
+		mksysmsg(0,config_logfull,config_runmode,config->log.level,0,"Error: Invalid bind address!\n");
+	}
+	if(config->listen.port==0)
+	{
+		mksysmsg(0,config_logfull,config_runmode,config->log.level,0,"Error: Invalid bind port!\n");
 		return 14;
 	}
-	if(config.bind.inet_port==0)
-	{
-		mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Error: Invalid bind port!\n");
-		return 14;
-	}
-	mksysmsg(0,config_logfull,config_runmode,config.loglevel,2,"Binding on %s:%d...\n",config.bind.inet_addr,config.bind.inet_port);
-	socket_inbound_server=net_socket(NETSOCK_BIND,AF_INET,bindaddr,config.bind.inet_port,1);
-	free(bindaddr);
-	bindaddr=NULL;
+	mksysmsg(0,config_logfull,config_runmode,config->log.level,2,"Binding on %s:%d...\n",config->listen.address,config->listen.port);
+	socket_inbound_server=net_socket(NETSOCK_BIND,bindaddr.family,&(bindaddr.addr),config->listen.port,1);
 	if(socket_inbound_server==-1)
 	{
-		mksysmsg(0,config_logfull,config_runmode,config.loglevel,0,"Bind Failed!\n");
+		mksysmsg(0,config_logfull,config_runmode,config->log.level,0,"Bind Failed!\n");
 		return 2;
 	}
-	mksysmsg(0,config_logfull,config_runmode,config.loglevel,2,"Bind Successful.\n\n");
-	mksysmsg(0,"",config_runmode,config.loglevel,2,"For more information, watch log file: %s\n\n",config.log);
+	mksysmsg(0,config_logfull,config_runmode,config->log.level,2,"Bind Successful.\n\n");
+	mksysmsg(0,"",config_runmode,config->log.level,2,"For more information, watch log file: %s\n\n",config->log.filename);
 	int pid;
 	if(config_runmode==2)
 	{
@@ -259,7 +334,7 @@ int main(int argc, char ** argv)
 			FILE * pidfd=fopen("/tmp/mcrelay.pid","w");
 			fprintf(pidfd,"%d",pid);
 			fclose(pidfd);
-			mksysmsg(0,"",0,config.loglevel,2,"Server running on PID: %d\n",pid);
+			mksysmsg(0,"",0,config->log.level,2,"Server running on PID: %d\n",pid);
 			return 0;
 		}
 		else if(pid<0)

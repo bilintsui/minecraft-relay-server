@@ -178,5 +178,9 @@
 	{
 		"version": 47,
 		"names": ["1.2-beta2-patch1"]
+	},
+	{
+		"version": 48,
+		"names": ["1.2-beta2-patch2"]
 	}
 ]

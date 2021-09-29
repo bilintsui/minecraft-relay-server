@@ -13,7 +13,6 @@
 #define _MOD_MAIN_H_
 #include "basic.h"
 #include "config.h"
-#include "config2.h"
 #include "network.h"
 #include "proto_legacy.h"
 #include "proto_modern.h"
