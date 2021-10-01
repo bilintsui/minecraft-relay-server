@@ -182,5 +182,9 @@
 	{
 		"version": 48,
 		"names": ["1.2-beta2-patch2"]
+	},
+	{
+		"version": 49,
+		"names": ["1.2-beta2-patch3"]
 	}
 ]

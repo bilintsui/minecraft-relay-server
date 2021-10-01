@@ -33,7 +33,6 @@
 #include <stddef.h>
 void gettime(unsigned char * target);
 long math_pow(int x,int y);
-unsigned short basic_atosu(unsigned char * source);
 unsigned char * varint2int(unsigned char * source, unsigned long * output);
 unsigned char * int2varint(unsigned long data, unsigned char * output);
 int datcat(char * dst, int dst_size, char * src, int src_size);
@@ -44,7 +43,6 @@ int packetshrink(unsigned char * source, int source_length, unsigned char * targ
 int packetexpand(unsigned char * source, int source_length, unsigned char * target);
 unsigned char * strsplit(unsigned char * string, char delim, unsigned char * firstfield);
 unsigned char * strsplit_reverse(unsigned char * string, char delim);
-int strsplit_fieldcount(unsigned char * string, char delim);
 int mksysmsg(unsigned short noprefix, char * logfile, unsigned short runmode, unsigned short maxlevel, unsigned short msglevel, char * format, ...);
 int legacy_motd_protocol_identify(unsigned char * source);
 int ismcproto(unsigned char * data_in, unsigned int data_length);

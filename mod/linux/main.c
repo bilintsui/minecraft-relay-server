@@ -20,7 +20,7 @@
 #include <unistd.h>
 const char * version_str="1.2-beta2";
 const char * year_str="2020-2021";
-const short version_internal=48;
+const short version_internal=49;
 char global_buffer[BUFSIZ];
 char * cwd=NULL;
 char * argoffset_configfile=NULL;
@@ -111,9 +111,12 @@ int main(int argc, char ** argv)
 {
 	char helpmsg[]="<arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-f / --forking:\tMade the process become daemonize.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server";
 	char headmsg[]="Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n";
-	int strulen=sizeof(struct sockaddr);
 	int socket_inbound_server,socket_inbound_client;
-	struct sockaddr_in addr_inbound_server,addr_inbound_client;
+	union {
+		struct sockaddr_in v4;
+		struct sockaddr_in6 v6;
+	} addr_inbound_client;
+	int strulen=sizeof(addr_inbound_client);
 	signal(SIGTERM,deal_sigterm);
 	signal(SIGINT,deal_sigterm);
 	memset(global_buffer,0,BUFSIZ);
@@ -316,7 +319,8 @@ int main(int argc, char ** argv)
 		mksysmsg(0,config_logfull,config_runmode,config->log.level,0,"Error: Invalid bind port!\n");
 		return 14;
 	}
-	mksysmsg(0,config_logfull,config_runmode,config->log.level,2,"Binding on %s:%d...\n",config->listen.address,config->listen.port);
+	net_addrp bindaddrp=net_ntop(bindaddr.family,&(bindaddr.addr),1);
+	mksysmsg(0,config_logfull,config_runmode,config->log.level,2,"Binding on %s:%d...\n",(char *)&bindaddrp,config->listen.port);
 	socket_inbound_server=net_socket(NETSOCK_BIND,bindaddr.family,&(bindaddr.addr),config->listen.port,1);
 	if(socket_inbound_server==-1)
 	{
@@ -372,10 +376,25 @@ int main(int argc, char ** argv)
 		}
 		else
 		{
+			net_addrbundle addrbundle_inbound_client;
+			addrbundle_inbound_client.family=*((sa_family_t *)&addr_inbound_client);
+			switch(addrbundle_inbound_client.family)
+			{
+				case AF_INET:
+					addrbundle_inbound_client.address=net_ntop(AF_INET,&(((struct sockaddr_in *)&addr_inbound_client)->sin_addr),1);
+					addrbundle_inbound_client.address_clean=net_ntop(AF_INET,&(((struct sockaddr_in *)&addr_inbound_client)->sin_addr),0);
+					addrbundle_inbound_client.port=ntohs(((struct sockaddr_in *)&addr_inbound_client)->sin_port);
+					break;
+				case AF_INET6:
+					addrbundle_inbound_client.address=net_ntop(AF_INET6,&(((struct sockaddr_in6 *)&addr_inbound_client)->sin6_addr),1);
+					addrbundle_inbound_client.address_clean=net_ntop(AF_INET6,&(((struct sockaddr_in6 *)&addr_inbound_client)->sin6_addr),0);
+					addrbundle_inbound_client.port=ntohs(((struct sockaddr_in6 *)&addr_inbound_client)->sin6_port);
+					break;
+			}
 			signal(SIGUSR1,SIG_DFL);
 			close(socket_inbound_server);
 			int socket_outbound;
-			if(backbone(socket_inbound_client,&socket_outbound,config_logfull,config_runmode,config,addr_inbound_client))
+			if(backbone(socket_inbound_client,&socket_outbound,config_logfull,config_runmode,config,addrbundle_inbound_client))
 			{
 				return 0;
 			}

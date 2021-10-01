@@ -17,7 +17,7 @@
 #include "proto_legacy.h"
 #include "proto_modern.h"
 #ifdef linux
-int backbone(int socket_in, int * socket_out, char * logfile, unsigned short runmode, conf * conf_in, struct sockaddr_in addrinfo_in);
+int backbone(int socket_in, int * socket_out, char * logfile, unsigned short runmode, conf * conf_in, net_addrbundle addrinfo_in);
 #include "linux/misc.c"
 #endif
 #endif

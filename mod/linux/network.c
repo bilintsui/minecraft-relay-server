@@ -98,6 +98,23 @@ net_addr net_resolve_dual(char * hostname, sa_family_t primary_family, short dua
 	result.err=errno;
 	return result;
 }
+net_addrp net_ntop(sa_family_t family, void * src, short v6addition)
+{
+	net_addrp pre_result;
+	memset(&pre_result,0,sizeof(pre_result));
+	if(((family!=AF_INET)&&(family!=AF_INET6))||(src==NULL)||(inet_ntop(family,src,(char *)&pre_result,sizeof(pre_result))==NULL))
+	{
+		return pre_result;
+	}
+	if((v6addition)&&(family==AF_INET6))
+	{
+		net_addrp result;
+		memset(&result,0,sizeof(result));
+		sprintf((char *)&result,"[%s]",(char *)&pre_result);
+		return result;
+	}
+	return pre_result;
+}
 int net_srvresolve(char * query_name, net_srvrecord * target)
 {
 	char query_name_full[256];
