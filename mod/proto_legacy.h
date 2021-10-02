@@ -11,8 +11,11 @@
 */
 #ifndef _MOD_PROTO_LEGACY_H_
 #define _MOD_PROTO_LEGACY_H_
-#include "basic.h"
 #ifdef linux
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "basic.h"
 typedef struct
 {
 	int proto_ver;

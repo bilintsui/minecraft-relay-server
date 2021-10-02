@@ -30,7 +30,12 @@
 #define FREADALL_ECALLOC 3
 #define FREADALL_ELARGE 4
 #define FREADALL_EREALLOC 5
-#include <stddef.h>
+#include <errno.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 void gettime(unsigned char * target);
 long math_pow(int x,int y);
 unsigned char * varint2int(unsigned char * source, unsigned long * output);

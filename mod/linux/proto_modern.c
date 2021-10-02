@@ -9,8 +9,6 @@
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
-#include <stdio.h>
-#include <string.h>
 p_handshake packet_read(unsigned char * sourcepacket)
 {
 	p_handshake result;

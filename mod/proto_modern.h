@@ -11,8 +11,10 @@
 */
 #ifndef _MOD_PROTO_MODERN_H_
 #define _MOD_PROTO_MODERN_H_
-#include "basic.h"
 #ifdef linux
+#include <stdio.h>
+#include <string.h>
+#include "basic.h"
 typedef struct
 {
 	unsigned long id_part1,version,nextstate,id_part2;

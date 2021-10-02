@@ -9,9 +9,6 @@
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int sourcepacket_length, int login_version)
 {
 	p_login_legacy result;

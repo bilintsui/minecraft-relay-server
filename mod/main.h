@@ -11,13 +11,21 @@
 */
 #ifndef _MOD_MAIN_H_
 #define _MOD_MAIN_H_
+#ifdef linux
+#include <arpa/inet.h>
+#include <errno.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <unistd.h>
 #include "basic.h"
 #include "config.h"
 #include "network.h"
 #include "proto_legacy.h"
 #include "proto_modern.h"
 #include "misc.h"
-#ifdef linux
 void deal_sigterm();
 void deal_sigusr1();
 int main(int argc, char ** argv);

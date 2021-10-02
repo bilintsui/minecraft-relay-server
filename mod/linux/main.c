@@ -9,15 +9,6 @@
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
-#include <arpa/inet.h>
-#include <errno.h>
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <sys/un.h>
-#include <unistd.h>
 const char * version_str="1.2-beta2";
 const char * year_str="2020-2021";
 const short version_internal=49;
