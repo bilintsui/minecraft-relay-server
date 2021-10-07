@@ -47,80 +47,52 @@ void gettime(unsigned char * target)
 		sprintf(target,"%04d-%02d-%02d %02d:%02d:%02d UTC+%02d:%02d",times_local->tm_year+1900,times_local->tm_mon+1,times_local->tm_mday,times_local->tm_hour,times_local->tm_min,times_local->tm_sec,hourdiff,mindiff);
 	}
 }
-long math_pow(int x,int y)
+void * varint2int(void * src, unsigned long * dst)
 {
-	int i;
-	long result;
-	result=1;
-	for(i=1;i<=y;i++)
+	if((src==NULL)||(dst==NULL))
 	{
-		result=result*x;
+		return src;
 	}
-	return result;
-}
-unsigned char * varint2int(unsigned char * source, unsigned long * output)
-{
-	unsigned char * recent_ptr=source;
-	unsigned char recent_char;
-	unsigned long data=0;
-	int char_num=0;
-	while(1)
+	unsigned char * base=src;
+	unsigned long dst_single=0;
+	size_t index_lastunit=sizeof(*dst)*8/7;
+	if(base[index_lastunit]&0x80)
 	{
-		recent_char=*recent_ptr;
-		if(recent_char>=128)
-		{
-			data=data+((recent_char-128)*math_pow(128,char_num));
-		}
-		else
-		{
-			data=data+(recent_char*math_pow(128,char_num));
-			recent_ptr++;
-			break;
-		}
-		recent_ptr++;
-		char_num++;
+		return src;
 	}
-	*output=data;
-	return recent_ptr;
-}
-unsigned char * int2varint(unsigned long data, unsigned char * output)
-{
-	unsigned char * ptr_output=output;
-	unsigned char current_byte;
-	unsigned long data_old,data_new;
-	data_old=data;
-	int length=0;
-	while(1)
+	*dst=0;
+	for(int i=0;i<=index_lastunit;i++)
 	{
-		if(data_old>=128)
+		dst_single=base[i]&0x7F;
+		*dst=*dst|(dst_single<<(i*7));
+		if(!(base[i]&0x80))
 		{
-			data_new=data_old/128;
-			current_byte=data_old-data_new*128+128;
-			*ptr_output=current_byte;
-			data_old=data_new;
-			ptr_output++;
-			length++;
-		}
-		else
-		{
-			current_byte=data_old;
-			*ptr_output=current_byte;
-			ptr_output++;
-			length++;
+			return src+i+1;
 			break;
 		}
 	}
-	return ptr_output;
 }
-int datcat(char * dst, int dst_size, char * src, int src_size)
+void * int2varint(unsigned long src, void * dst)
 {
-	int recidx,total_size;
-	for(recidx=0;recidx<src_size;recidx++)
+	if(dst==NULL)
 	{
-		dst[dst_size+recidx]=src[recidx];
+		return NULL;
 	}
-	total_size=dst_size+src_size;
-	return total_size;
+	unsigned char * base=dst;
+	int i=0;
+	do
+	{
+		base[i]=(src&0x7F)|0x80;
+		src=src>>7;
+		i++;
+	} while(src>0);
+	base[i-1]=base[i-1]&0x7F;
+	return dst+i;
+}
+size_t memcat(void * dst, size_t dst_size, void * src, size_t src_size)
+{
+	memcpy(dst+dst_size,src,src_size);
+	return dst_size+src_size;
 }
 size_t freadall(unsigned char * filename, unsigned char ** dest)
 {
@@ -184,7 +156,7 @@ size_t freadall(unsigned char * filename, unsigned char ** dest)
 		}
 		result=result_pre;
 		result[total_size+read_size]=0;
-		datcat(result,total_size,buffer,read_size);
+		memcat(result,total_size,buffer,read_size);
 		total_size=total_size+read_size;
 		if(read_size<once_size)
 		{
@@ -230,10 +202,10 @@ unsigned char * base64_encode(unsigned char * source, size_t source_size)
 	int offset_target=0;
 	for(;offset_new_source<new_source_size;offset_new_source=offset_new_source+3)
 	{
-		target[offset_target]=charset[((new_source[offset_new_source]&0xfc)>>2)];
-		target[offset_target+1]=charset[((new_source[offset_new_source]&0x03)<<4)+((new_source[offset_new_source+1]&0xf0)>>4)];
-		target[offset_target+2]=charset[((new_source[offset_new_source+1]&0x0f)<<2)+((new_source[offset_new_source+2]&0xc0)>>6)];
-		target[offset_target+3]=charset[(new_source[offset_new_source+2]&0x3f)];
+		target[offset_target]=charset[((new_source[offset_new_source]&0xFC)>>2)];
+		target[offset_target+1]=charset[((new_source[offset_new_source]&0x03)<<4)+((new_source[offset_new_source+1]&0xF0)>>4)];
+		target[offset_target+2]=charset[((new_source[offset_new_source+1]&0x0F)<<2)+((new_source[offset_new_source+2]&0xC0)>>6)];
+		target[offset_target+3]=charset[(new_source[offset_new_source+2]&0x3F)];
 		offset_target=offset_target+4;
 	}
 	free(new_source);
@@ -279,7 +251,7 @@ int handshake_protocol_identify(unsigned char * source, unsigned int length)
 						protocol_version=PVER_L_LEGACY1;
 					}
 					break;
-				case 0x1f:
+				case 0x1F:
 					protocol_version=PVER_L_LEGACY3;
 					break;
 				default:

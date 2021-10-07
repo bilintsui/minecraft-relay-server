@@ -20,7 +20,7 @@ p_handshake packet_read(unsigned char * sourcepacket)
 	sourcepacket=varint2int(sourcepacket,&result.id_part1);
 	sourcepacket=varint2int(sourcepacket,&result.version);
 	sourcepacket=varint2int(sourcepacket,&address_length);
-	datcat(result.address,0,sourcepacket,address_length);
+	memcat(result.address,0,sourcepacket,address_length);
 	address_length_pure=strlen(result.address);
 	if(address_length!=address_length_pure)
 	{
@@ -45,7 +45,7 @@ p_handshake packet_read(unsigned char * sourcepacket)
 	sourcepacket=varint2int(sourcepacket,&size_part2);
 	sourcepacket=varint2int(sourcepacket,&result.id_part2);
 	sourcepacket=varint2int(sourcepacket,&username_length);
-	datcat(result.username,0,sourcepacket,username_length);
+	memcat(result.username,0,sourcepacket,username_length);
 	return result;
 }
 int packet_write(p_handshake source, unsigned char * target)
@@ -61,17 +61,17 @@ int packet_write(p_handshake source, unsigned char * target)
 	bzero(address,128);
 	ptr_part1=int2varint(source.id_part1,ptr_part1);
 	ptr_part1=int2varint(source.version,ptr_part1);
-	address_length=datcat(address,0,source.address,strlen(source.address));
+	address_length=memcat(address,0,source.address,strlen(source.address));
 	if(source.version_fml==1)
 	{
-		address_length=datcat(address,address_length,"\0FML\0",5);
+		address_length=memcat(address,address_length,"\0FML\0",5);
 	}
 	else if(source.version_fml==2)
 	{
-		address_length=datcat(address,address_length,"\0FML2\0",6);
+		address_length=memcat(address,address_length,"\0FML2\0",6);
 	}
 	ptr_part1=int2varint(address_length,ptr_part1);
-	datcat(ptr_part1,0,address,address_length);
+	memcat(ptr_part1,0,address,address_length);
 	ptr_part1=ptr_part1+address_length;
 	ptr_part1[0]=source.port/256;
 	ptr_part1[1]=source.port-ptr_part1[0]*256;
@@ -83,15 +83,15 @@ int packet_write(p_handshake source, unsigned char * target)
 	{
 		username_length=strlen(source.username);
 		ptr_part2=int2varint(username_length,ptr_part2);
-		datcat(ptr_part2,0,source.username,username_length);
+		memcat(ptr_part2,0,source.username,username_length);
 		ptr_part2=ptr_part2+username_length;
 	}
 	size_part2=ptr_part2-part2;
 	ptr_target=int2varint(size_part1,ptr_target);
-	datcat(ptr_target,0,part1,size_part1);
+	memcat(ptr_target,0,part1,size_part1);
 	ptr_target=ptr_target+size_part1;
 	ptr_target=int2varint(size_part2,ptr_target);
-	datcat(ptr_target,0,part2,size_part2);
+	memcat(ptr_target,0,part2,size_part2);
 	ptr_target=ptr_target+size_part2;
 	size=ptr_target-target;
 	return size;

@@ -45,7 +45,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 				packlen_tmp=recv(socket_in,tmp,BUFSIZ,MSG_DONTWAIT);
 				if(packlen_tmp>0)
 				{
-					packlen_inbound=datcat(inbound,packlen_inbound,tmp,packlen_tmp);
+					packlen_inbound=memcat(inbound,packlen_inbound,tmp,packlen_tmp);
 				}
 				if((inbound[0x1F]!=0)&&(is_host_found==0))
 				{
@@ -278,7 +278,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			bzero(inbound_part2,BUFSIZ);
 			packlen_inbound_part1=packlen_inbound;
 			packlen_inbound_part2=recv(socket_in,inbound_part2,BUFSIZ,0);
-			packlen_inbound=datcat(inbound,packlen_inbound_part1,inbound_part2,packlen_inbound_part2);
+			packlen_inbound=memcat(inbound,packlen_inbound_part1,inbound_part2,packlen_inbound_part2);
 		}
 		p_handshake inbound_info=packet_read(inbound);
 		if(inbound_info.version==0)

@@ -186,5 +186,9 @@
 	{
 		"version": 49,
 		"names": ["1.2-beta2-patch3","1.2-beta2-patch4"]
+	},
+	{
+		"version": 50,
+		"names": ["1.2-beta2-patch5"]
 	}
 ]

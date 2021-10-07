@@ -81,9 +81,9 @@ int packet_write_legacy_login(p_login_legacy source, unsigned char * target)
 		sprintf(login_field,"%s;%s:%d",source.username,source.address,source.port);
 		unsigned int login_field_length=strlen(login_field);
 		login_field_full[0]=login_field_length;
-		unsigned int login_field_full_length=datcat(login_field_full,1,login_field,login_field_length);
+		unsigned int login_field_full_length=memcat(login_field_full,1,login_field,login_field_length);
 		tmp_length=packetexpand(login_field_full,login_field_full_length,tmp);
-		size=datcat(target,size,tmp,tmp_length);
+		size=memcat(target,size,tmp,tmp_length);
 	}
 	else
 	{
@@ -95,17 +95,17 @@ int packet_write_legacy_login(p_login_legacy source, unsigned char * target)
 		unsigned char username[128];
 		unsigned int username_length=strlen(source.username);
 		username[0]=username_length;
-		username_length=datcat(username,1,source.username,username_length);
+		username_length=memcat(username,1,source.username,username_length);
 		tmp_length=packetexpand(username,username_length,tmp);
-		size=datcat(target,size,tmp,tmp_length);
+		size=memcat(target,size,tmp,tmp_length);
 		if(source.proto_ver==PVER_L_LEGACY4)
 		{
 			unsigned char address[128];
 			unsigned int address_length=strlen(source.address);
 			address[0]=address_length;
-			address_length=datcat(address,1,source.address,address_length);
+			address_length=memcat(address,1,source.address,address_length);
 			tmp_length=packetexpand(address,address_length,tmp);
-			size=datcat(target,size,tmp,tmp_length);
+			size=memcat(target,size,tmp,tmp_length);
 			target[size]=0;
 			target[size+1]=0;
 			target[size+2]=source.port/256;
@@ -154,9 +154,9 @@ int packet_write_legacy_motd(p_motd_legacy source, unsigned char * target)
 	target[2]=0xFA;
 	size=3;
 	conststr_full[0]=strlen(conststr);
-	conststr_full_length=datcat(conststr_full,1,conststr,strlen(conststr));
+	conststr_full_length=memcat(conststr_full,1,conststr,strlen(conststr));
 	tmp_length=packetexpand(conststr_full,conststr_full_length,tmp);
-	size=datcat(target,size,tmp,tmp_length);
+	size=memcat(target,size,tmp,tmp_length);
 	unsigned char pingfield[128],pingfield_full[128];
 	unsigned int pingfield_length,pingfield_full_length;
 	bzero(pingfield,128);
@@ -166,7 +166,7 @@ int packet_write_legacy_motd(p_motd_legacy source, unsigned char * target)
 	pingfield_full[1]=0;
 	pingfield_full[2]=strlen(source.address);
 	pingfield_full_length=3;
-	pingfield_full_length=datcat(pingfield_full,pingfield_full_length,pingfield,pingfield_length);
+	pingfield_full_length=memcat(pingfield_full,pingfield_full_length,pingfield,pingfield_length);
 	pingfield_full[pingfield_full_length]=0;
 	pingfield_full[pingfield_full_length+1]=0;
 	pingfield_full[pingfield_full_length+2]=source.port/256;
@@ -175,7 +175,7 @@ int packet_write_legacy_motd(p_motd_legacy source, unsigned char * target)
 	target[size]=0;
 	target[size+1]=pingfield_full_length;
 	size=size+2;
-	size=datcat(target,size,pingfield_full,pingfield_full_length);
+	size=memcat(target,size,pingfield_full,pingfield_full_length);
 	return size;
 }
 int make_message_legacy(unsigned char * source, unsigned int source_length, unsigned char * target)
@@ -225,21 +225,21 @@ int make_motd_legacy(unsigned int version, unsigned char * description, int motd
 	{
 		case PVER_M_LEGACY1:
 			strcpy(input,description);
-			input_length=datcat(input,strlen(input),"\xa7",1);
-			input_length=datcat(input,input_length,"0",1);
-			input_length=datcat(input,input_length,"\xa7",1);
-			input_length=datcat(input,input_length,"0",1);
+			input_length=memcat(input,strlen(input),"\xa7",1);
+			input_length=memcat(input,input_length,"0",1);
+			input_length=memcat(input,input_length,"\xa7",1);
+			input_length=memcat(input,input_length,"0",1);
 			break;
 		case PVER_M_LEGACY2:
 		case PVER_M_LEGACY3:
 			sprintf(version_str,"%d",version);
 			input[0]=0xA7;
-			input_length=datcat(input,1,"1\0",2);
-			input_length=datcat(input,input_length,version_str,strlen(version_str)+1);
-			input_length=datcat(input,input_length,"",1);
-			input_length=datcat(input,input_length,description,strlen(description)+1);
-			input_length=datcat(input,input_length,"0\0",2);
-			input_length=datcat(input,input_length,"0",1);
+			input_length=memcat(input,1,"1\0",2);
+			input_length=memcat(input,input_length,version_str,strlen(version_str)+1);
+			input_length=memcat(input,input_length,"",1);
+			input_length=memcat(input,input_length,description,strlen(description)+1);
+			input_length=memcat(input,input_length,"0\0",2);
+			input_length=memcat(input,input_length,"0",1);
 			break;
 		default:
 			break;
