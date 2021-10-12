@@ -190,5 +190,9 @@
 	{
 		"version": 50,
 		"names": ["1.2-beta2-patch5"]
+	},
+	{
+		"version": 51,
+		"names": ["1.2-beta2-patch6"]
 	}
 ]

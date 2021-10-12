@@ -9,25 +9,6 @@
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
-short config_jsonbool(cJSON * src, short defaultvalue)
-{
-	if(src==NULL)
-	{
-		return defaultvalue;
-	}
-	if(cJSON_IsBool(src))
-	{
-		return cJSON_IsTrue(src);
-	}
-	else if(cJSON_IsNumber(src))
-	{
-		return (src->valueint!=0);
-	}
-	else
-	{
-		return defaultvalue;
-	}
-}
 void config_destroy(conf * target)
 {
 	if(target!=NULL)
@@ -48,6 +29,105 @@ void config_destroy(conf * target)
 			cJSON_Delete(target->proxy);
 			target->proxy=NULL;
 		}
+	}
+}
+short config_jsonbool(cJSON * src, short defaultvalue)
+{
+	if(src==NULL)
+	{
+		return defaultvalue;
+	}
+	if(cJSON_IsBool(src))
+	{
+		return cJSON_IsTrue(src);
+	}
+	else if(cJSON_IsNumber(src))
+	{
+		return (src->valueint!=0);
+	}
+	else
+	{
+		return defaultvalue;
+	}
+}
+void config_dumper(conf * src)
+{
+	printf("Config Detail:\n");
+	printf("\n[NETPRIORITY]\n");
+	if(src->netpriority.enabled)
+	{
+		printf("Enabled\t\ttrue\n");
+	}
+	else
+	{
+		printf("Enabled\t\tfalse\n");
+	}
+	if(src->netpriority.protocol==AF_INET)
+	{
+		printf("Protocol\tIPv4\n");
+	}
+	else if(src->netpriority.protocol==AF_INET6)
+	{
+		printf("Protocol\tIPv6\n");
+	}
+	printf("\n[LOG]\n");
+	printf("Filename\t%s\n",src->log.filename);
+	printf("Level\t\t%d\n",src->log.level);
+	if(src->log.binary)
+	{
+		printf("Binary\t\ttrue\n");
+	}
+	else
+	{
+		printf("Binary\t\tfalse\n");
+	}
+	printf("\n[LISTEN]\n");
+	printf("Address\t\t%s\n",src->listen.address);
+	printf("Port\t\t%d\n",src->listen.port);
+	cJSON * proxy=src->proxy;
+	cJSON * single=NULL;
+	int proxy_count=1;
+	cJSON_ArrayForEach(single,proxy)
+	{
+		printf("\n[PROXY #%d]\n",proxy_count);
+		cJSON * single_vhost=cJSON_GetObjectItemCaseSensitive(single,"vhost");
+		cJSON * recvhost=NULL;
+		int vhost_count=1;
+		cJSON_ArrayForEach(recvhost,single_vhost)
+		{
+			if(cJSON_IsString(recvhost))
+			{
+				printf("vHost #%d\t%s\n",vhost_count,recvhost->valuestring);
+				vhost_count++;
+			}
+		}
+		printf("Address\t\t%s\n",cJSON_GetObjectItemCaseSensitive(single,"address")->valuestring);
+		cJSON * single_port=cJSON_GetObjectItemCaseSensitive(single,"port");
+		if(single_port==NULL)
+		{
+			printf("Port\t\t<SRV>\n");
+		}
+		else
+		{
+			printf("Port\t\t%d\n",single_port->valueint);
+		}
+		if(config_jsonbool(cJSON_GetObjectItemCaseSensitive(single,"rewrite"),0))
+		{
+			printf("Rewrite\t\ttrue\n");
+		}
+		else
+		{
+			printf("Rewrite\t\tfalse\n");
+		}
+		if(config_jsonbool(cJSON_GetObjectItemCaseSensitive(single,"pheader"),0))
+		{
+			printf("PHeader\t\ttrue\n");
+		}
+		else
+		{
+			printf("PHeader\t\tfalse\n");
+		}
+		proxy_count++;
 	}
 }
 cJSON * config_proxy_parse(cJSON * src)
@@ -209,6 +289,68 @@ cJSON * config_proxy_parse(cJSON * src)
 	}
 	errno=0;
 	return result;
+}
+conf_proxy config_proxy_search(conf * src, const char * targetvhost)
+{
+	conf_proxy result;
+	memset(&result,0,sizeof(result));
+	if((src==NULL)||(targetvhost==NULL))
+	{
+		return result;
+	}
+	cJSON * proxylist=src->proxy;
+	if(proxylist==NULL)
+	{
+		return result;
+	}
+	cJSON * rec_proxylist=NULL;
+	cJSON_ArrayForEach(rec_proxylist,proxylist)
+	{
+		cJSON * vhostnames=cJSON_GetObjectItemCaseSensitive(rec_proxylist,"vhost");
+		if(vhostnames==NULL)
+		{
+			return result;
+		}
+		cJSON * rec_vhostname=NULL;
+		cJSON_ArrayForEach(rec_vhostname,vhostnames)
+		{
+			if(cJSON_IsString(rec_vhostname))
+			{
+				if(strcmp_notail(rec_vhostname->valuestring,targetvhost,'.')==0)
+				{
+					result.address=(char *)calloc(1,strlen(cJSON_GetObjectItemCaseSensitive(rec_proxylist,"address")->valuestring)+1);
+					if(result.address==NULL)
+					{
+						return result;
+					}
+					result.valid=1;
+					strcpy(result.address,cJSON_GetObjectItemCaseSensitive(rec_proxylist,"address")->valuestring);
+					cJSON * target_port=cJSON_GetObjectItemCaseSensitive(rec_proxylist,"port");
+					if(target_port==NULL)
+					{
+						result.srvenabled=1;
+					}
+					else
+					{
+						result.port=target_port->valueint;
+					}
+					result.rewrite=config_jsonbool(cJSON_GetObjectItemCaseSensitive(rec_proxylist,"rewrite"),0);
+					result.pheader=config_jsonbool(cJSON_GetObjectItemCaseSensitive(rec_proxylist,"pheader"),0);
+					return result;
+				}
+			}
+		}
+	}
+	return result;
+}
+void config_proxy_search_destroy(conf_proxy * target)
+{
+	if(target->address!=NULL)
+	{
+		free(target->address);
+		target->address=NULL;
+	}
+	memset(target,0,sizeof(conf_proxy));
 }
 conf * config_read(char * filename)
 {
@@ -414,146 +556,4 @@ conf * config_read(char * filename)
 	result->proxy=config_json_proxy;
 	errno=0;
 	return result;
-}
-void config_dumper(conf * src)
-{
-	printf("Config Detail:\n");
-	printf("\n[NETPRIORITY]\n");
-	if(src->netpriority.enabled)
-	{
-		printf("Enabled\t\ttrue\n");
-	}
-	else
-	{
-		printf("Enabled\t\tfalse\n");
-	}
-	if(src->netpriority.protocol==AF_INET)
-	{
-		printf("Protocol\tIPv4\n");
-	}
-	else if(src->netpriority.protocol==AF_INET6)
-	{
-		printf("Protocol\tIPv6\n");
-	}
-	printf("\n[LOG]\n");
-	printf("Filename\t%s\n",src->log.filename);
-	printf("Level\t\t%d\n",src->log.level);
-	if(src->log.binary)
-	{
-		printf("Binary\t\ttrue\n");
-	}
-	else
-	{
-		printf("Binary\t\tfalse\n");
-	}
-	printf("\n[LISTEN]\n");
-	printf("Address\t\t%s\n",src->listen.address);
-	printf("Port\t\t%d\n",src->listen.port);
-	cJSON * proxy=src->proxy;
-	cJSON * single=NULL;
-	int proxy_count=1;
-	cJSON_ArrayForEach(single,proxy)
-	{
-		printf("\n[PROXY #%d]\n",proxy_count);
-		cJSON * single_vhost=cJSON_GetObjectItemCaseSensitive(single,"vhost");
-		cJSON * recvhost=NULL;
-		int vhost_count=1;
-		cJSON_ArrayForEach(recvhost,single_vhost)
-		{
-			if(cJSON_IsString(recvhost))
-			{
-				printf("vHost #%d\t%s\n",vhost_count,recvhost->valuestring);
-				vhost_count++;
-			}
-		}
-		printf("Address\t\t%s\n",cJSON_GetObjectItemCaseSensitive(single,"address")->valuestring);
-		cJSON * single_port=cJSON_GetObjectItemCaseSensitive(single,"port");
-		if(single_port==NULL)
-		{
-			printf("Port\t\t<SRV>\n");
-		}
-		else
-		{
-			printf("Port\t\t%d\n",single_port->valueint);
-		}
-		if(config_jsonbool(cJSON_GetObjectItemCaseSensitive(single,"rewrite"),0))
-		{
-			printf("Rewrite\t\ttrue\n");
-		}
-		else
-		{
-			printf("Rewrite\t\tfalse\n");
-		}
-		if(config_jsonbool(cJSON_GetObjectItemCaseSensitive(single,"pheader"),0))
-		{
-			printf("PHeader\t\ttrue\n");
-		}
-		else
-		{
-			printf("PHeader\t\tfalse\n");
-		}
-		proxy_count++;
-	}
-}
-conf_proxy config_proxy_search(conf * src, const char * targetvhost)
-{
-	conf_proxy result;
-	memset(&result,0,sizeof(result));
-	if((src==NULL)||(targetvhost==NULL))
-	{
-		return result;
-	}
-	cJSON * proxylist=src->proxy;
-	if(proxylist==NULL)
-	{
-		return result;
-	}
-	cJSON * rec_proxylist=NULL;
-	cJSON_ArrayForEach(rec_proxylist,proxylist)
-	{
-		cJSON * vhostnames=cJSON_GetObjectItemCaseSensitive(rec_proxylist,"vhost");
-		if(vhostnames==NULL)
-		{
-			return result;
-		}
-		cJSON * rec_vhostname=NULL;
-		cJSON_ArrayForEach(rec_vhostname,vhostnames)
-		{
-			if(cJSON_IsString(rec_vhostname))
-			{
-				if(strcmp(rec_vhostname->valuestring,targetvhost)==0)
-				{
-					result.address=(char *)calloc(1,strlen(cJSON_GetObjectItemCaseSensitive(rec_proxylist,"address")->valuestring)+1);
-					if(result.address==NULL)
-					{
-						return result;
-					}
-					result.valid=1;
-					strcpy(result.address,cJSON_GetObjectItemCaseSensitive(rec_proxylist,"address")->valuestring);
-					cJSON * target_port=cJSON_GetObjectItemCaseSensitive(rec_proxylist,"port");
-					if(target_port==NULL)
-					{
-						result.srvenabled=1;
-					}
-					else
-					{
-						result.port=target_port->valueint;
-					}
-					result.rewrite=config_jsonbool(cJSON_GetObjectItemCaseSensitive(rec_proxylist,"rewrite"),0);
-					result.pheader=config_jsonbool(cJSON_GetObjectItemCaseSensitive(rec_proxylist,"pheader"),0);
-					return result;
-				}
-			}
-		}
-	}
-	return result;
-}
-void config_proxy_search_destroy(conf_proxy * target)
-{
-	if(target->address!=NULL)
-	{
-		free(target->address);
-		target->address=NULL;
-	}
-	memset(target,0,sizeof(conf_proxy));
 }

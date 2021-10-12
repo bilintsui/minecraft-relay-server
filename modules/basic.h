@@ -36,20 +36,22 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-void gettime(unsigned char * target);
-void * varint2int(void * src, unsigned long * dst);
-void * int2varint(unsigned long src, void * dst);
-size_t memcat(void * dst, size_t dst_size, void * src, size_t src_size);
-size_t freadall(unsigned char * filename, unsigned char ** dest);
 unsigned char * base64_encode(unsigned char * source, size_t source_size);
+void gettime(unsigned char * target);
 int handshake_protocol_identify(unsigned char * source, unsigned int length);
-int packetshrink(unsigned char * source, int source_length, unsigned char * target);
-int packetexpand(unsigned char * source, int source_length, unsigned char * target);
-unsigned char * strsplit(unsigned char * string, char delim, unsigned char * firstfield);
-unsigned char * strsplit_reverse(unsigned char * string, char delim);
-int mksysmsg(unsigned short noprefix, char * logfile, unsigned short runmode, unsigned short maxlevel, unsigned short msglevel, char * format, ...);
+void * int2varint(unsigned long src, void * dst);
 int legacy_motd_protocol_identify(unsigned char * source);
 int ismcproto(unsigned char * data_in, unsigned int data_length);
+size_t memcat(void * dst, size_t dst_size, void * src, size_t src_size);
+int mksysmsg(unsigned short noprefix, char * logfile, unsigned short runmode, unsigned short maxlevel, unsigned short msglevel, char * format, ...);
+size_t freadall(unsigned char * filename, unsigned char ** dest);
+int packetexpand(unsigned char * source, int source_length, unsigned char * target);
+int packetshrink(unsigned char * source, int source_length, unsigned char * target);
+size_t strlen_notail(const char * src, char tailchar);
+size_t strcmp_notail(const char * str1, const char * str2, char tailchar);
+unsigned char * strsplit(unsigned char * string, char delim, unsigned char * firstfield);
+unsigned char * strsplit_reverse(unsigned char * string, char delim);
+void * varint2int(void * src, unsigned long * dst);
 #include "linux/basic.c"
 #endif
 #endif

@@ -9,6 +9,51 @@
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
+int make_message(unsigned char * source, unsigned char * target)
+{
+	int size,recidx,string_length,payload_size;
+	unsigned char tmp[BUFSIZ];
+	unsigned char * ptr_tmp=tmp;
+	unsigned char * ptr_source=source;
+	unsigned char * ptr_target=target;
+	*ptr_tmp=0;
+	ptr_tmp++;
+	string_length=strlen(source);
+	ptr_tmp=int2varint(string_length,ptr_tmp);
+	for(recidx=0;recidx<string_length;recidx++)
+	{
+		*ptr_tmp=*ptr_source;
+		ptr_tmp++;
+		ptr_source++;
+	}
+	payload_size=ptr_tmp-tmp;
+	ptr_tmp=tmp;
+	ptr_target=int2varint(payload_size,ptr_target);
+	for(recidx=0;recidx<payload_size;recidx++)
+	{
+		*ptr_target=*ptr_tmp;
+		ptr_target++;
+		ptr_tmp++;
+	}
+	size=ptr_target-target;
+	return size;
+}
+int make_kickreason(unsigned char * source, unsigned char * target)
+{
+	int size;
+	unsigned char input[BUFSIZ];
+	sprintf(input,"{\"extra\":[{\"text\":\"%s\"}],\"text\":\"\"}",source);
+	size=make_message(input,target);
+	return size;
+}
+int make_motd(unsigned long version, unsigned char * description, unsigned char * target)
+{
+	int size;
+	unsigned char input[BUFSIZ];
+	sprintf(input,"{\"version\":{\"name\":\"\",\"protocol\":%ld},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},\"description\":{\"text\":\"%s\"}}",version,description);
+	size=make_message(input,target);
+	return size;
+}
 p_handshake packet_read(unsigned char * sourcepacket)
 {
 	p_handshake result;
@@ -94,50 +139,5 @@ int packet_write(p_handshake source, unsigned char * target)
 	memcat(ptr_target,0,part2,size_part2);
 	ptr_target=ptr_target+size_part2;
 	size=ptr_target-target;
-	return size;
-}
-int make_message(unsigned char * source, unsigned char * target)
-{
-	int size,recidx,string_length,payload_size;
-	unsigned char tmp[BUFSIZ];
-	unsigned char * ptr_tmp=tmp;
-	unsigned char * ptr_source=source;
-	unsigned char * ptr_target=target;
-	*ptr_tmp=0;
-	ptr_tmp++;
-	string_length=strlen(source);
-	ptr_tmp=int2varint(string_length,ptr_tmp);
-	for(recidx=0;recidx<string_length;recidx++)
-	{
-		*ptr_tmp=*ptr_source;
-		ptr_tmp++;
-		ptr_source++;
-	}
-	payload_size=ptr_tmp-tmp;
-	ptr_tmp=tmp;
-	ptr_target=int2varint(payload_size,ptr_target);
-	for(recidx=0;recidx<payload_size;recidx++)
-	{
-		*ptr_target=*ptr_tmp;
-		ptr_target++;
-		ptr_tmp++;
-	}
-	size=ptr_target-target;
-	return size;
-}
-int make_kickreason(unsigned char * source, unsigned char * target)
-{
-	int size;
-	unsigned char input[BUFSIZ];
-	sprintf(input,"{\"extra\":[{\"text\":\"%s\"}],\"text\":\"\"}",source);
-	size=make_message(input,target);
-	return size;
-}
-int make_motd(unsigned long version, unsigned char * description, unsigned char * target)
-{
-	int size;
-	unsigned char input[BUFSIZ];
-	sprintf(input,"{\"version\":{\"name\":\"\",\"protocol\":%ld},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},\"description\":{\"text\":\"%s\"}}",version,description);
-	size=make_message(input,target);
 	return size;
 }

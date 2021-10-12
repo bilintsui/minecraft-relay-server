@@ -28,12 +28,6 @@
 #include "basic.h"
 typedef struct
 {
-	char * address;
-	u_int16_t port;
-	short valid,srvenabled,rewrite,pheader;
-} conf_proxy;
-typedef struct
-{
 	struct
 	{
 		short enabled;
@@ -51,13 +45,19 @@ typedef struct
 	} listen;
 	cJSON * proxy;
 } conf;
-short config_jsonbool(cJSON * src, short defaultvalue);
+typedef struct
+{
+	char * address;
+	u_int16_t port;
+	short valid,srvenabled,rewrite,pheader;
+} conf_proxy;
 void config_destroy(conf * target);
-cJSON * config_proxy_parse(cJSON * src);
-conf * config_read(char * filename);
+short config_jsonbool(cJSON * src, short defaultvalue);
 void config_dumper(conf * src);
+cJSON * config_proxy_parse(cJSON * src);
 conf_proxy config_proxy_search(conf * src, const char * targetvhost);
 void config_proxy_search_destroy(conf_proxy * target);
+conf * config_read(char * filename);
 #include "linux/config.c"
 #endif
 #endif

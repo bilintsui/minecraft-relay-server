@@ -21,11 +21,11 @@ typedef struct
 	unsigned char address[128],username[128];
 	unsigned short version_fml,port;
 } p_handshake;
-p_handshake packet_read(unsigned char * sourcepacket);
-int packet_write(p_handshake source, unsigned char * target);
 int make_message(unsigned char * source, unsigned char * target);
 int make_kickreason(unsigned char * source, unsigned char * target);
 int make_motd(unsigned long version, unsigned char * description, unsigned char * target);
+p_handshake packet_read(unsigned char * sourcepacket);
+int packet_write(p_handshake source, unsigned char * target);
 #include "linux/proto_modern.c"
 #endif
 #endif

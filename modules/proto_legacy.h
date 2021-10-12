@@ -27,13 +27,13 @@ typedef struct
 	unsigned char address[128];
 	unsigned short port,version;
 } p_motd_legacy;
-p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int sourcepacket_length, int login_version);
-int packet_write_legacy_login(p_login_legacy source, unsigned char * target);
-p_motd_legacy packet_read_legacy_motd(unsigned char * sourcepacket, int sourcepacket_length);
-int packet_write_legacy_motd(p_motd_legacy source, unsigned char * target);
 int make_message_legacy(unsigned char * source, unsigned int source_length, unsigned char * target);
 int make_kickreason_legacy(unsigned char * source, unsigned char * target);
 int make_motd_legacy(unsigned int version, unsigned char * description, int motd_version, unsigned char * target);
+p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int sourcepacket_length, int login_version);
+p_motd_legacy packet_read_legacy_motd(unsigned char * sourcepacket, int sourcepacket_length);
+int packet_write_legacy_login(p_login_legacy source, unsigned char * target);
+int packet_write_legacy_motd(p_motd_legacy source, unsigned char * target);
 #include "linux/proto_legacy.c"
 #endif
 #endif
