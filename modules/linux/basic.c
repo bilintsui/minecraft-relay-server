@@ -59,41 +59,13 @@ unsigned char * base64_encode(unsigned char * source, size_t source_size)
 }
 void gettime(unsigned char * target)
 {
-	time_t timestamp;
-	time(&timestamp);
-	struct tm * times_gmt=gmtime(&timestamp);
-	int mdgmt=times_gmt->tm_mday;
-	int mingmt=(times_gmt->tm_hour)*60+(times_gmt->tm_min);
-	struct tm * times_local=localtime(&timestamp);
-	int mdlocal=times_local->tm_mday;
-	int minlocal;
-	if(mdgmt!=mdlocal)
-	{
-		minlocal=((times_local->tm_hour)+24)*60+(times_local->tm_min);
-	}
-	else
-	{
-		minlocal=(times_local->tm_hour)*60+(times_local->tm_min);
-	}
-	int mindiff=minlocal-mingmt;
-	int hourdiff=mindiff/60;
-	mindiff=mindiff-hourdiff*60;
-	if(mindiff<0)
-	{
-		mindiff=-mindiff;
-	}
-	if(times_local->tm_isdst==1)
-	{
-		hourdiff=hourdiff-1;
-	}
-	if(hourdiff<0)
-	{
-		sprintf(target,"%04d-%02d-%02d %02d:%02d:%02d UTC-%02d:%02d",times_local->tm_year+1900,times_local->tm_mon+1,times_local->tm_mday,times_local->tm_hour,times_local->tm_min,times_local->tm_sec,-hourdiff,mindiff);
-	}
-	else
-	{
-		sprintf(target,"%04d-%02d-%02d %02d:%02d:%02d UTC+%02d:%02d",times_local->tm_year+1900,times_local->tm_mon+1,times_local->tm_mday,times_local->tm_hour,times_local->tm_min,times_local->tm_sec,hourdiff,mindiff);
-	}
+	time_t timestamp=time(NULL);
+	struct tm tm_local;
+	localtime_r(&timestamp,&tm_local);
+	int tzdiff=-timezone+tm_local.tm_isdst*3600;
+	short tzdiff_hour=tzdiff/3600;
+	short tzdiff_min=tzdiff/60-tzdiff_hour*60;
+	sprintf(target,"%04d-%02d-%02d %02d:%02d:%02d UTC%+03d:%02d",tm_local.tm_year+1900,tm_local.tm_mon+1,tm_local.tm_mday,tm_local.tm_hour,tm_local.tm_min,tm_local.tm_sec,tzdiff_hour,tzdiff_min);
 }
 int handshake_protocol_identify(unsigned char * source, unsigned int length)
 {
