@@ -59,8 +59,8 @@ p_handshake packet_read(unsigned char * sourcepacket)
 	p_handshake result;
 	unsigned long size_part1,address_length,address_length_pure,size_part2,username_length;
 	unsigned char * address_extra_start;
-	bzero(result.address,128);
-	bzero(result.username,128);
+	memset(result.address,0,128);
+	memset(result.username,0,128);
 	sourcepacket=varint2int(sourcepacket,&size_part1);
 	sourcepacket=varint2int(sourcepacket,&result.id_part1);
 	sourcepacket=varint2int(sourcepacket,&result.version);
@@ -101,9 +101,9 @@ int packet_write(p_handshake source, unsigned char * target)
 	unsigned char * ptr_target=target;
 	unsigned char * ptr_part1=part1;
 	unsigned char * ptr_part2=part2;
-	bzero(part1,512);
-	bzero(part2,512);
-	bzero(address,128);
+	memset(part1,0,512);
+	memset(part2,0,512);
+	memset(address,0,128);
 	ptr_part1=int2varint(source.id_part1,ptr_part1);
 	ptr_part1=int2varint(source.version,ptr_part1);
 	address_length=memcat(address,0,source.address,strlen(source.address));

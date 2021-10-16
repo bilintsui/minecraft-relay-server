@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include "basic.h"
 #include "config.h"
+#include "log.h"
 #include "network.h"
 #include "proto_legacy.h"
 #include "proto_modern.h"

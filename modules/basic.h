@@ -31,19 +31,15 @@
 #define FREADALL_ELARGE 4
 #define FREADALL_EREALLOC 5
 #include <errno.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 unsigned char * base64_encode(unsigned char * source, size_t source_size);
-void gettime(unsigned char * target);
 int handshake_protocol_identify(unsigned char * source, unsigned int length);
 void * int2varint(unsigned long src, void * dst);
 int legacy_motd_protocol_identify(unsigned char * source);
 int ismcproto(unsigned char * data_in, unsigned int data_length);
 size_t memcat(void * dst, size_t dst_size, void * src, size_t src_size);
-int mksysmsg(unsigned short noprefix, char * logfile, unsigned short runmode, unsigned short maxlevel, unsigned short msglevel, char * format, ...);
 size_t freadall(unsigned char * filename, unsigned char ** dest);
 int packetexpand(unsigned char * source, int source_length, unsigned char * target);
 int packetshrink(unsigned char * source, int source_length, unsigned char * target);

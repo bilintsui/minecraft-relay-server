@@ -117,7 +117,6 @@ void * net_resolve(char * hostname, sa_family_t family)
 	{
 		errno=NET_ENORECORD;
 		free(result);
-		result=NULL;
 		return NULL;
 	}
 	memcpy(result,response->h_addr_list[0],net_getaddrsize(family));
@@ -140,7 +139,6 @@ net_addr net_resolve_dual(char * hostname, sa_family_t primary_family, short dua
 		result.family=primary_family;
 		memcpy(&(result.addr),resolved,net_getaddrsize(result.family));
 		free(resolved);
-		resolved=NULL;
 		return result;
 	}
 	if(!dual)
@@ -154,7 +152,6 @@ net_addr net_resolve_dual(char * hostname, sa_family_t primary_family, short dua
 		result.family=net_getaltfamily(primary_family);
 		memcpy(&(result.addr),resolved,net_getaddrsize(result.family));
 		free(resolved);
-		resolved=NULL;
 		return result;
 	}
 	result.err=errno;
@@ -177,8 +174,8 @@ int net_socket(short action, sa_family_t family, void * address, u_int16_t port,
 		errno=NET_EARGADDR;
 		return -1;
 	}
-	void * serv_addr;
-	int stru_size;
+	void * serv_addr=NULL;
+	int stru_size=0;
 	if(family==AF_INET)
 	{
 		stru_size=sizeof(struct sockaddr_in);
@@ -212,6 +209,7 @@ int net_socket(short action, sa_family_t family, void * address, u_int16_t port,
 	int result=socket(family,SOCK_STREAM,0);
 	if(result==-1)
 	{
+		free(serv_addr);
 		errno=NET_ESOCKET;
 		return -1;
 	}
@@ -220,6 +218,8 @@ int net_socket(short action, sa_family_t family, void * address, u_int16_t port,
 		int socket_opt=1;
 		if(setsockopt(result,SOL_SOCKET,SO_REUSEADDR,&socket_opt,sizeof(socket_opt))==-1)
 		{
+			free(serv_addr);
+			close(result);
 			errno=NET_EREUSEADDR;
 			return -1;
 		}
@@ -229,7 +229,6 @@ int net_socket(short action, sa_family_t family, void * address, u_int16_t port,
 		if(bind(result,serv_addr,stru_size)==-1)
 		{
 			free(serv_addr);
-			serv_addr=NULL;
 			close(result);
 			errno=NET_EBIND;
 			return -1;
@@ -239,7 +238,6 @@ int net_socket(short action, sa_family_t family, void * address, u_int16_t port,
 			if(listen(result,5)==-1)
 			{
 				free(serv_addr);
-				serv_addr=NULL;
 				close(result);
 				errno=NET_ELISTEN;
 				return -1;
@@ -251,27 +249,25 @@ int net_socket(short action, sa_family_t family, void * address, u_int16_t port,
 		if(connect(result,serv_addr,stru_size)==-1)
 		{
 			free(serv_addr);
-			serv_addr=NULL;
 			close(result);
 			errno=NET_ECONNECT;
 			return -1;
 		}
 	}
 	free(serv_addr);
-	serv_addr=NULL;
 	return result;
 }
 int net_srvresolve(char * query_name, net_srvrecord * target)
 {
 	char query_name_full[256];
-	bzero(query_name_full,256);
+	memset(query_name_full,0,256);
 	sprintf(query_name_full,"_minecraft._tcp.%s",query_name);
 	struct
 	{
 		unsigned short priority,weight,port;
 		char target[128];
 	} records[128],records_minpriority[128],records_maxweight[128];
-	bzero(records,sizeof(records));
+	memset(records,0,sizeof(records));
 	res_init();
 	unsigned char query_buffer[1024];
 	int response=res_query(query_name_full,C_IN,ns_t_srv,query_buffer,sizeof(query_buffer));

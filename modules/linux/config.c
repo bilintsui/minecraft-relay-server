@@ -13,22 +13,13 @@ void config_destroy(conf * target)
 {
 	if(target!=NULL)
 	{
-		if(target->log.filename!=NULL)
-		{
-			free(target->log.filename);
-			target->log.filename=NULL;
-		}
-		if(target->listen.address!=NULL)
-		{
-			free(target->listen.address);
-			target->listen.address=NULL;
-		}
-		free(target);
+		free(target->log.filename);
+		free(target->listen.address);
 		if(target->proxy!=NULL)
 		{
 			cJSON_Delete(target->proxy);
-			target->proxy=NULL;
 		}
+		free(target);
 	}
 }
 short config_jsonbool(cJSON * src, short defaultvalue)
@@ -200,7 +191,6 @@ cJSON * config_proxy_parse(cJSON * src)
 				if(vhost_namelist==NULL)
 				{
 					cJSON_Delete(result);
-					result=NULL;
 					errno=CONF_ECMEMORY;
 					return NULL;
 				}
@@ -208,9 +198,7 @@ cJSON * config_proxy_parse(cJSON * src)
 				if(vhost_namelist[dupdet_count]==NULL)
 				{
 					free(vhost_namelist);
-					vhost_namelist==NULL;
 					cJSON_Delete(result);
-					result=NULL;
 					errno=CONF_ECMEMORY;
 					return NULL;
 				}
@@ -259,7 +247,6 @@ cJSON * config_proxy_parse(cJSON * src)
 						free(vhost_namelist);
 						vhost_namelist=NULL;
 						cJSON_Delete(result);
-						result=NULL;
 						errno=CONF_ECMEMORY;
 						return NULL;
 					}
@@ -276,7 +263,6 @@ cJSON * config_proxy_parse(cJSON * src)
 						free(vhost_namelist);
 						vhost_namelist=NULL;
 						cJSON_Delete(result);
-						result=NULL;
 						errno=CONF_ECMEMORY;
 						return NULL;
 					}
@@ -389,7 +375,6 @@ conf * config_read(char * filename)
 	if(result==NULL)
 	{
 		cJSON_Delete(config_json);
-		config_json=NULL;
 		errno=CONF_ECMEMORY;
 		return NULL;
 	}
@@ -413,7 +398,6 @@ conf * config_read(char * filename)
 			else
 			{
 				cJSON_Delete(config_json);
-				config_json=NULL;
 				config_destroy(result);
 				errno=CONF_ECNETPRIORITYPROTOCOL;
 				return NULL;
@@ -425,7 +409,6 @@ conf * config_read(char * filename)
 	if(result->log.filename==NULL)
 	{
 		cJSON_Delete(config_json);
-		config_json=NULL;
 		config_destroy(result);
 		errno=CONF_ECMEMORY;
 		return NULL;
@@ -447,7 +430,6 @@ conf * config_read(char * filename)
 					if(result_log_filename_new==NULL)
 					{
 						cJSON_Delete(config_json);
-						config_json=NULL;
 						config_destroy(result);
 						errno=CONF_ECMEMORY;
 						return NULL;
@@ -472,7 +454,6 @@ conf * config_read(char * filename)
 	if(result->listen.address==NULL)
 	{
 		cJSON_Delete(config_json);
-		config_json=NULL;
 		config_destroy(result);
 		errno=CONF_ECMEMORY;
 		return NULL;
@@ -493,7 +474,6 @@ conf * config_read(char * filename)
 					if(result_listen_address_new==NULL)
 					{
 						cJSON_Delete(config_json);
-						config_json=NULL;
 						config_destroy(result);
 						errno=CONF_ECMEMORY;
 						return NULL;
@@ -512,7 +492,6 @@ conf * config_read(char * filename)
 				if((port<0)||(port>65535))
 				{
 					cJSON_Delete(config_json);
-					config_json=NULL;
 					config_destroy(result);
 					errno=CONF_ECLISTENPORT;
 					return NULL;
@@ -525,7 +504,6 @@ conf * config_read(char * filename)
 	if(config_json_proxy==NULL)
 	{
 		cJSON_Delete(config_json);
-		config_json=NULL;
 		config_destroy(result);
 		errno=CONF_ECPROXY;
 		return NULL;
@@ -534,7 +512,6 @@ conf * config_read(char * filename)
 	if(!cJSON_IsArray(config_json_proxy))
 	{
 		cJSON_Delete(config_json_proxy);
-		config_json_proxy=NULL;
 		config_destroy(result);
 		errno=CONF_ECPROXY;
 		return NULL;
@@ -542,7 +519,6 @@ conf * config_read(char * filename)
 	if(!cJSON_GetArraySize(config_json_proxy))
 	{
 		cJSON_Delete(config_json_proxy);
-		config_json_proxy=NULL;
 		config_destroy(result);
 		errno=CONF_ECPROXY;
 		return NULL;

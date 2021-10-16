@@ -11,7 +11,7 @@
 */
 const char * version_str="1.2-beta2";
 const char * year_str="2020-2021";
-const short version_internal=50;
+const short version_internal=51;
 char global_buffer[BUFSIZ];
 char * cwd=NULL;
 char * argoffset_configfile=NULL;
@@ -27,18 +27,20 @@ void deal_sigterm()
 }
 void deal_sigusr1()
 {
-	conf * config_new;
-	char * config_logfull_old=NULL;
-	unsigned short config_maxlevel=config->log.level;
-	config_logfull_old=(char *)calloc(1,strlen(config_logfull)+1);
-	strcpy(config_logfull_old,config_logfull);
 	if(strcmp(configfile_full,"-")==0)
 	{
-		mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Can not reload configuration, because STDIN is used in server initialization.\n\n");
+		mksysmsg(0,config_logfull,config_runmode,config->log.level,1,"Can not reload configuration, because STDIN is used in server initialization.\n\n");
 		return;
 	}
+	unsigned short config_maxlevel=config->log.level;
+	char * config_logfull_old=(char *)calloc(1,strlen(config_logfull)+1);
+	if(config_logfull_old==NULL)
+	{
+		return;
+	}
+	strcpy(config_logfull_old,config_logfull);
 	mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,2,"Reloading config from file: %s\n",configfile);
-	config_new=config_read(configfile_full);
+	conf * config_new=config_read(configfile_full);
 	switch(errno)
 	{
 		case 0:
@@ -83,20 +85,22 @@ void deal_sigusr1()
 			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Entry \"proxy\" is missing, will keep your old configurations.\n");
 			break;
 		case CONF_ECPROXYDUP:
-			if(config==NULL)
+			if(config_new==NULL)
 			{
 				mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Duplication found in proxy virtual hostnames, will keep your old configurations.\n");
 			}
 			else
 			{
-				mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Duplication found in proxy virtual hostnames. Affected: \"%s\", will keep your old configurations.\n",config);
-				free(config);
+				mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Duplication found in proxy virtual hostnames. Affected: \"%s\", will keep your old configurations.\n",config_new);
+				free(config_new);
 			}
 			break;
 		default:
 			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in processing configurations: Unknown error occured, code: %d, will keep your old configurations\n",errno);
 			break;
 	}
+	free(config_logfull_old);
+	return;
 }
 int main(int argc, char ** argv)
 {

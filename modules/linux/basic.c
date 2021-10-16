@@ -57,16 +57,6 @@ unsigned char * base64_encode(unsigned char * source, size_t source_size)
 	}
 	return target;
 }
-void gettime(unsigned char * target)
-{
-	time_t timestamp=time(NULL);
-	struct tm tm_local;
-	localtime_r(&timestamp,&tm_local);
-	int tzdiff=-timezone+tm_local.tm_isdst*3600;
-	short tzdiff_hour=tzdiff/3600;
-	short tzdiff_min=tzdiff/60-tzdiff_hour*60;
-	sprintf(target,"%04d-%02d-%02d %02d:%02d:%02d UTC%+03d:%02d",tm_local.tm_year+1900,tm_local.tm_mon+1,tm_local.tm_mday,tm_local.tm_hour,tm_local.tm_min,tm_local.tm_sec,tzdiff_hour,tzdiff_min);
-}
 int handshake_protocol_identify(unsigned char * source, unsigned int length)
 {
 	int protocol_version=0;
@@ -192,86 +182,6 @@ size_t memcat(void * dst, size_t dst_size, void * src, size_t src_size)
 	memcpy(dst+dst_size,src,src_size);
 	return dst_size+src_size;
 }
-int mksysmsg(unsigned short noprefix, char * logfile, unsigned short runmode, unsigned short maxlevel, unsigned short msglevel, char * format, ...)
-{
-	char level_str[8];
-	int status;
-	va_list varlist;
-	if(msglevel>maxlevel)
-	{
-		return 0;
-	}
-	bzero(level_str,8);
-	switch(msglevel)
-	{
-		case 0:
-			strcpy(level_str,"CRIT");
-			break;
-		case 1:
-			strcpy(level_str,"WARN");
-			break;
-		default:
-			strcpy(level_str,"INFO");
-			break;
-	}
-	va_start(varlist,format);
-	if(strcmp(logfile,"")!=0)
-	{
-		char time_str[32];
-		bzero(time_str,32);
-		gettime(time_str);
-		FILE * logfd=fopen(logfile,"a");
-		if(logfd!=NULL)
-		{
-			if(noprefix==0)
-			{
-				fprintf(logfd,"[%s] [%s] ",time_str,level_str);
-			}
-			char format_output[BUFSIZ];
-			bzero(format_output,BUFSIZ);
-			for(int recidx=0;recidx<strlen(format);recidx++)
-			{
-				format_output[recidx]=format[recidx];
-				if(format[recidx]=='\n')
-				{
-					break;
-				}
-			}
-			status=vfprintf(logfd,format_output,varlist);
-			fclose(logfd);
-		}
-	}
-	va_end(varlist);
-	va_start(varlist,format);
-	if(runmode!=2)
-	{
-		if(msglevel==0)
-		{
-			if(noprefix==0)
-			{
-				fprintf(stderr,"[%s] ",level_str);
-			}
-			status=vfprintf(stderr,format,varlist);
-		}
-		else
-		{
-			if(noprefix==0)
-			{
-				fprintf(stdout,"[%s] ",level_str);
-			}
-			status=vfprintf(stdout,format,varlist);
-		}
-	}
-	va_end(varlist);
-	if(status<0)
-	{
-		return 1;
-	}
-	else
-	{
-		return 0;
-	}
-}
 size_t freadall(unsigned char * filename, unsigned char ** dest)
 {
 	size_t once_size=8192;
@@ -296,39 +206,40 @@ size_t freadall(unsigned char * filename, unsigned char ** dest)
 		errno=FREADALL_ENOREAD;
 		return 0;
 	}
-	size_t total_size=0;
 	unsigned char * buffer=(unsigned char *)calloc(1,once_size);
+	if(buffer==NULL)
+	{
+		errno=FREADALL_ECALLOC;
+		return 0;
+	}
+	size_t total_size=0;
+	size_t read_size=0;
+	unsigned char * result_pre=NULL;
 	while(1)
 	{
-		size_t read_size=fread(buffer,1,once_size,srcfd);
+		read_size=fread(buffer,1,once_size,srcfd);
 		if(total_size==0)
 		{
 			result=(unsigned char *)calloc(1,read_size+1);
 			if(result==NULL)
 			{
 				free(buffer);
-				buffer=NULL;
 				errno=FREADALL_ECALLOC;
 				return 0;
 			}
-			result[read_size]=0;
 		}
 		if((total_size+read_size)>max_size)
 		{
 			free(buffer);
-			buffer=NULL;
 			free(result);
-			result=NULL;
 			errno=FREADALL_ELARGE;
 			return 0;
 		}
-		unsigned char * result_pre=realloc(result,total_size+read_size+1);
+		result_pre=realloc(result,total_size+read_size+1);
 		if(result_pre==NULL)
 		{
 			free(buffer);
-			buffer=NULL;
 			free(result);
-			result=NULL;
 			errno=FREADALL_EREALLOC;
 			return 0;
 		}
@@ -342,7 +253,6 @@ size_t freadall(unsigned char * filename, unsigned char ** dest)
 		}
 	}
 	free(buffer);
-	buffer=NULL;
 	*dest=result;
 	return total_size;
 }

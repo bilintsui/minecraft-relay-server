@@ -50,8 +50,8 @@ int make_motd_legacy(unsigned int version, unsigned char * description, int motd
 	int size,input_length;
 	unsigned char input[BUFSIZ];
 	unsigned char version_str[8];
-	bzero(input,BUFSIZ);
-	bzero(version_str,8);
+	memset(input,0,BUFSIZ);
+	memset(version_str,0,8);
 	switch(motd_version)
 	{
 		case PVER_M_LEGACY1:
@@ -85,15 +85,15 @@ p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int source
 	unsigned char * ptr_source=source;
 	int recidx,source_length;
 	result.proto_ver=login_version;
-	bzero(source,BUFSIZ);
-	bzero(result.username,128);
-	bzero(result.address,128);
+	memset(source,0,BUFSIZ);
+	memset(result.username,0,128);
+	memset(result.address,0,128);
 	source_length=packetshrink(sourcepacket,sourcepacket_length,source);
 	if(login_version==PVER_L_LEGACY2)
 	{
 		unsigned char login_field[512];
 		unsigned char * ptr_login_field=login_field;
-		bzero(login_field,512);
+		memset(login_field,0,512);
 		for(recidx=0;recidx<source[1];recidx++)
 		{
 			login_field[recidx]=source[2+recidx];
@@ -141,9 +141,9 @@ p_motd_legacy packet_read_legacy_motd(unsigned char * sourcepacket, int sourcepa
 	unsigned char tmp[BUFSIZ],source[BUFSIZ];
 	unsigned char * ptr_source=source;
 	int recidx,tmp_length,source_length,address_length;
-	bzero(result.address,128);
-	bzero(tmp,BUFSIZ);
-	bzero(source,BUFSIZ);
+	memset(result.address,0,128);
+	memset(tmp,0,BUFSIZ);
+	memset(source,0,BUFSIZ);
 	tmp_length=sourcepacket[0x1C];
 	for(recidx=0;recidx<tmp_length;recidx++)
 	{
@@ -166,14 +166,14 @@ int packet_write_legacy_login(p_login_legacy source, unsigned char * target)
 {
 	unsigned char tmp[BUFSIZ];
 	unsigned int tmp_length,size;
-	bzero(tmp,BUFSIZ);
+	memset(tmp,0,BUFSIZ);
 	target[0]=2;
 	size=1;
 	if(source.proto_ver==PVER_L_LEGACY2)
 	{
 		unsigned char login_field[512],login_field_full[512];
-		bzero(login_field,512);
-		bzero(login_field_full,512);
+		memset(login_field,0,512);
+		memset(login_field_full,0,512);
 		sprintf(login_field,"%s;%s:%d",source.username,source.address,source.port);
 		unsigned int login_field_length=strlen(login_field);
 		login_field_full[0]=login_field_length;
@@ -216,8 +216,8 @@ int packet_write_legacy_motd(p_motd_legacy source, unsigned char * target)
 	unsigned int size,tmp_length,conststr_full_length;
 	unsigned char tmp[BUFSIZ],conststr_full[128];
 	unsigned char conststr[]="MC|PingHost";
-	bzero(tmp,BUFSIZ);
-	bzero(conststr_full,128);
+	memset(tmp,0,BUFSIZ);
+	memset(conststr_full,0,128);
 	target[0]=0xFE;
 	target[1]=1;
 	target[2]=0xFA;
@@ -228,8 +228,8 @@ int packet_write_legacy_motd(p_motd_legacy source, unsigned char * target)
 	size=memcat(target,size,tmp,tmp_length);
 	unsigned char pingfield[128],pingfield_full[128];
 	unsigned int pingfield_length,pingfield_full_length;
-	bzero(pingfield,128);
-	bzero(pingfield_full,128);
+	memset(pingfield,0,128);
+	memset(pingfield_full,0,128);
 	pingfield_length=packetexpand(source.address,strlen(source.address),pingfield);
 	pingfield_full[0]=source.version;
 	pingfield_full[1]=0;

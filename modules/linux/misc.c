@@ -41,7 +41,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			int is_host_found=0;
 			while(packlen_inbound<packet_should_length)
 			{
-				bzero(tmp,BUFSIZ);
+				memset(tmp,0,BUFSIZ);
 				packlen_tmp=recv(socket_in,tmp,BUFSIZ,MSG_DONTWAIT);
 				if(packlen_tmp>0)
 				{
@@ -275,7 +275,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 		{
 			int packlen_inbound_part1,packlen_inbound_part2;
 			unsigned char inbound_part2[BUFSIZ];
-			bzero(inbound_part2,BUFSIZ);
+			memset(inbound_part2,0,BUFSIZ);
 			packlen_inbound_part1=packlen_inbound;
 			packlen_inbound_part2=recv(socket_in,inbound_part2,BUFSIZ,0);
 			packlen_inbound=memcat(inbound,packlen_inbound_part1,inbound_part2,packlen_inbound_part2);
