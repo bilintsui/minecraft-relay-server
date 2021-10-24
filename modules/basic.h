@@ -24,12 +24,11 @@
 #define PVER_M_LEGACY1 1
 #define PVER_M_LEGACY2 2
 #define PVER_M_LEGACY3 3
-#define FREADALL_NORMAL 0
-#define FREADALL_ENONAME 1
-#define FREADALL_ENOREAD 2
-#define FREADALL_ECALLOC 3
-#define FREADALL_ELARGE 4
-#define FREADALL_EREALLOC 5
+#define FREADALL_SLIMIT 5242880
+#define FREADALL_EINVAL 1
+#define FREADALL_ERFAIL 2
+#define FREADALL_ELARGE 3
+#define FREADALL_ENOMEM 4
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,13 +39,14 @@ void * int2varint(unsigned long src, void * dst);
 int legacy_motd_protocol_identify(unsigned char * source);
 int ismcproto(unsigned char * data_in, unsigned int data_length);
 size_t memcat(void * dst, size_t dst_size, void * src, size_t src_size);
-size_t freadall(unsigned char * filename, unsigned char ** dest);
+size_t freadall(const char * filename, char ** dst);
 int packetexpand(unsigned char * source, int source_length, unsigned char * target);
 int packetshrink(unsigned char * source, int source_length, unsigned char * target);
+size_t strlen_head(const char * src, char tailchar);
 size_t strlen_notail(const char * src, char tailchar);
 size_t strcmp_notail(const char * str1, const char * str2, char tailchar);
-unsigned char * strsplit(unsigned char * string, char delim, unsigned char * firstfield);
-unsigned char * strsplit_reverse(unsigned char * string, char delim);
+char * strtok_head(char * src, char delim, char * dst);
+char * strtok_tail(char * src, char delim);
 void * varint2int(void * src, unsigned long * dst);
 #include "linux/basic.c"
 #endif

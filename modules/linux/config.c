@@ -345,19 +345,18 @@ conf * config_read(char * filename)
 		errno=CONF_EARGNULL;
 		return NULL;
 	}
-	unsigned char * config_raw=NULL;
+	char * config_raw=NULL;
 	if(freadall(filename,&config_raw)==0)
 	{
 		switch(errno)
 		{
-			case FREADALL_ENOREAD:
+			case FREADALL_ERFAIL:
 				errno=CONF_EROPENFAIL;
 				break;
 			case FREADALL_ELARGE:
 				errno=CONF_EROPENLARGE;
 				break;
-			case FREADALL_ECALLOC:
-			case FREADALL_EREALLOC:
+			case FREADALL_ENOMEM:
 				errno=CONF_ERMEMORY;
 				break;
 		}

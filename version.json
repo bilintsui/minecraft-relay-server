@@ -189,14 +189,14 @@
 	},
 	{
 		"version": 50,
-		"names": ["1.2-beta2-patch5"]
+		"names": ["1.2-beta2-patch5","1.2-beta2-patch6","1.2-beta2-patch7"]
 	},
 	{
 		"version": 51,
-		"names": ["1.2-beta2-patch6","1.2-beta2-patch7"]
+		"names": ["1.2-beta2-patch8"]
 	},
 	{
 		"version": 52,
-		"names": ["1.2-beta2-patch8"]
+		"names": ["1.2-beta2-patch9"]
 	}
 ]

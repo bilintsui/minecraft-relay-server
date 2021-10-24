@@ -98,8 +98,8 @@ p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int source
 		{
 			login_field[recidx]=source[2+recidx];
 		}
-		ptr_login_field=strsplit(ptr_login_field,';',result.username);
-		ptr_login_field=strsplit(ptr_login_field,':',result.address);
+		ptr_login_field=strtok_head(ptr_login_field,';',result.username);
+		ptr_login_field=strtok_head(ptr_login_field,':',result.address);
 		result.port=atoi(ptr_login_field);
 	}
 	else

@@ -182,79 +182,39 @@ size_t memcat(void * dst, size_t dst_size, void * src, size_t src_size)
 	memcpy(dst+dst_size,src,src_size);
 	return dst_size+src_size;
 }
-size_t freadall(unsigned char * filename, unsigned char ** dest)
+size_t freadall(const char * filename, char ** dst)
 {
-	size_t once_size=8192;
-	size_t max_size=5242880;
-	unsigned char * result=NULL;
-	if(filename==NULL)
+	if((filename==NULL)||(dst==NULL))
 	{
-		errno=FREADALL_ENONAME;
+		errno=FREADALL_EINVAL;
 		return 0;
 	}
-	FILE * srcfd=NULL;
-	if(strcmp(filename,"-")==0)
-	{
-		srcfd=stdin;
-	}
-	else
-	{
-		srcfd=fopen(filename,"rb");
-	}
+	FILE * srcfd=fopen(filename,"rb");
 	if(srcfd==NULL)
 	{
-		errno=FREADALL_ENOREAD;
+		errno=FREADALL_ERFAIL;
 		return 0;
 	}
-	unsigned char * buffer=(unsigned char *)calloc(1,once_size);
-	if(buffer==NULL)
+	fseek(srcfd,0,SEEK_END);
+	size_t filesize=ftell(srcfd);
+	fseek(srcfd,0,SEEK_SET);
+	if(filesize>FREADALL_SLIMIT)
 	{
-		errno=FREADALL_ECALLOC;
+		fclose(srcfd);
+		errno=FREADALL_ELARGE;
 		return 0;
 	}
-	size_t total_size=0;
-	size_t read_size=0;
-	unsigned char * result_pre=NULL;
-	while(1)
+	char * result=(char *)calloc(1,filesize+1);
+	if(result==NULL)
 	{
-		read_size=fread(buffer,1,once_size,srcfd);
-		if(total_size==0)
-		{
-			result=(unsigned char *)calloc(1,read_size+1);
-			if(result==NULL)
-			{
-				free(buffer);
-				errno=FREADALL_ECALLOC;
-				return 0;
-			}
-		}
-		if((total_size+read_size)>max_size)
-		{
-			free(buffer);
-			free(result);
-			errno=FREADALL_ELARGE;
-			return 0;
-		}
-		result_pre=realloc(result,total_size+read_size+1);
-		if(result_pre==NULL)
-		{
-			free(buffer);
-			free(result);
-			errno=FREADALL_EREALLOC;
-			return 0;
-		}
-		result=result_pre;
-		result[total_size+read_size]=0;
-		memcat(result,total_size,buffer,read_size);
-		total_size=total_size+read_size;
-		if(read_size<once_size)
-		{
-			break;
-		}
+		fclose(srcfd);
+		errno=FREADALL_ENOMEM;
+		return 0;
 	}
-	free(buffer);
-	*dest=result;
-	return total_size;
+	fread(result,filesize,1,srcfd);
+	fclose(srcfd);
+	*dst=result;
+	return filesize;
 }
 int packetexpand(unsigned char * source, int source_length, unsigned char * target)
 {
@@ -285,6 +245,22 @@ int packetshrink(unsigned char * source, int source_length, unsigned char * targ
 	size=ptr_target-target;
 	return size;
 }
+size_t strlen_head(const char * src, char tailchar)
+{
+	if(src==NULL)
+	{
+		return 0;
+	}
+	size_t result=0;
+	for(;result<strlen(src);result++)
+	{
+		if(src[result]==tailchar)
+		{
+			break;
+		}
+	}
+	return result;
+}
 size_t strlen_notail(const char * src, char tailchar)
 {
 	if(src==NULL)
@@ -294,17 +270,21 @@ size_t strlen_notail(const char * src, char tailchar)
 	size_t result=strlen(src);
 	for(int i=result-1;i>=0;i--)
 	{
-		if(src[i]!=tailchar)
+		result--;
+		if(src[i]==tailchar)
 		{
 			break;
 		}
-		result--;
+	}
+	if(result==0)
+	{
+		return strlen(src);
 	}
 	return result;
 }
 size_t strcmp_notail(const char * str1, const char * str2, char tailchar)
 {
-	size_t str1_length=strlen_notail(str1,tailchar);
+	size_t str1_length=strlen(str1);
 	size_t str2_length=strlen_notail(str2,tailchar);
 	if(str1_length<str2_length)
 	{
@@ -316,48 +296,26 @@ size_t strcmp_notail(const char * str1, const char * str2, char tailchar)
 	}
 	else
 	{
-		return strncmp(str1,str2,str1_length);
+		return strncmp(str1,str2,str2_length);
 	}
 }
-unsigned char * strsplit(unsigned char * string, char delim, unsigned char * firstfield)
+char * strtok_head(char * src, char delim, char * dst)
 {
-	int recidx,pos_delim,delim_found;
-	unsigned char * ptr_string=string;
-	delim_found=0;
-	for(recidx=0;recidx<strlen(string);recidx++)
+	size_t length_head=strlen_head(src,delim);
+	if(length_head)
 	{
-		if(*ptr_string==delim)
-		{
-			pos_delim=recidx;
-			delim_found=1;
-			ptr_string++;
-			break;
-		}
-		ptr_string++;
+		strncpy(dst,src,length_head);
 	}
-	if(delim_found==0)
+	dst[length_head]='\0';
+	if(src[length_head]=='\0')
 	{
-		strcpy(firstfield,string);
-		return ptr_string;
+		return NULL;
 	}
-	for(recidx=0;recidx<pos_delim;recidx++)
-	{
-		firstfield[recidx]=string[recidx];
-	}
-	return ptr_string;
+	return src+length_head+1;
 }
-unsigned char * strsplit_reverse(unsigned char * string, char delim)
+char * strtok_tail(char * src, char delim)
 {
-	int recidx;
-	unsigned char * ptr_string=string+strlen(string)-1;
-	for(;ptr_string>=string;ptr_string--)
-	{
-		if(*ptr_string==delim)
-		{
-			return (ptr_string+1);
-		}
-	}
-	return string;
+	return src+strlen_notail(src,delim)+1;
 }
 void * varint2int(void * src, unsigned long * dst)
 {

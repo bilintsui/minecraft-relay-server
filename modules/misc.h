@@ -18,7 +18,7 @@
 #include "network.h"
 #include "proto_legacy.h"
 #include "proto_modern.h"
-int backbone(int socket_in, int * socket_out, char * logfile, unsigned short runmode, conf * conf_in, net_addrbundle addrinfo_in);
+int backbone(int socket_in, int * socket_out, char * logfile, unsigned short runmode, conf * conf_in, net_addrbundle addrinfo_in, short netpriority_enabled);
 #include "linux/misc.c"
 #endif
 #endif

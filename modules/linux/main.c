@@ -11,7 +11,7 @@
 */
 const char * version_str="1.2-beta2";
 const char * year_str="2020-2021";
-const short version_internal=51;
+const short version_internal=52;
 char global_buffer[BUFSIZ];
 char * cwd=NULL;
 char * argoffset_configfile=NULL;
@@ -19,6 +19,8 @@ char * configfile=NULL;
 char * configfile_full=NULL;
 char * config_logfull=NULL;
 conf * config=NULL;
+short config_netpriority_enabled=1;
+sa_family_t config_netpriority_protocol=AF_INET6;
 unsigned short config_runmode=1;
 void deal_sigterm()
 {
@@ -27,11 +29,6 @@ void deal_sigterm()
 }
 void deal_sigusr1()
 {
-	if(strcmp(configfile_full,"-")==0)
-	{
-		mksysmsg(0,config_logfull,config_runmode,config->log.level,1,"Can not reload configuration, because STDIN is used in server initialization.\n\n");
-		return;
-	}
 	unsigned short config_maxlevel=config->log.level;
 	char * config_logfull_old=(char *)calloc(1,strlen(config_logfull)+1);
 	if(config_logfull_old==NULL)
@@ -58,7 +55,7 @@ void deal_sigusr1()
 				config_logfull=(char *)realloc(config_logfull,strlen(config->log.filename)+1);
 				strcpy(config_logfull,config->log.filename);
 			}
-			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,2,"Configuration reloaded.\n\n");
+			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,2,"Configuration reloaded.\n");
 			break;
 		case CONF_EROPENFAIL:
 			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Cannot read config file: %s\n",configfile);
@@ -122,7 +119,7 @@ int main(int argc, char ** argv)
 	if(argc<2)
 	{
 		mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
-		mksysmsg(1,"",0,255,0,"Usage: %s %s\n",strsplit_reverse(argv[0],'/'),helpmsg);
+		mksysmsg(1,"",0,255,0,"Usage: %s %s\n",strtok_tail(argv[0],'/'),helpmsg);
 		return 22;
 	}
 	argoffset_configfile=argv[1];
@@ -192,7 +189,7 @@ int main(int argc, char ** argv)
 		else
 		{
 			mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
-			mksysmsg(1,"",0,255,0,"Error: Invalid option \"-%s\"\n\nUsage: %s %s\n",ptr_argv1,strsplit_reverse(argv[0],'/'),helpmsg);
+			mksysmsg(1,"",0,255,0,"Error: Invalid option \"-%s\"\n\nUsage: %s %s\n",ptr_argv1,strtok_tail(argv[0],'/'),helpmsg);
 			return 22;
 		}
 	}
@@ -230,14 +227,7 @@ int main(int argc, char ** argv)
 		configfile_full=(char *)calloc(1,strlen(configfile)+1);
 		strcpy(configfile_full,configfile);
 	}
-	if(strcmp(configfile_full,"-")==0)
-	{
-		mksysmsg(0,"",0,255,2,"Loading configurations from STDIN:\n\n");
-	}
-	else
-	{
-		mksysmsg(0,"",0,255,2,"Loading configurations from file: %s\n\n",configfile);
-	}
+	mksysmsg(0,"",0,255,2,"Loading configurations from file: %s\n\n",configfile);
 	config=config_read(configfile_full);
 	switch(errno)
 	{
@@ -254,6 +244,8 @@ int main(int argc, char ** argv)
 				config_logfull=(char *)calloc(1,strlen(config->log.filename)+1);
 				strcpy(config_logfull,config->log.filename);
 			}
+			config_netpriority_enabled=config->netpriority.enabled;
+			config_netpriority_protocol=config->netpriority.protocol;
 			break;
 		case CONF_EROPENFAIL:
 			mksysmsg(0,"",0,255,0,"Cannot read config file: %s\n",configfile);
@@ -304,7 +296,7 @@ int main(int argc, char ** argv)
 	{
 		fclose(tmpfd);
 	}
-	net_addr bindaddr=net_resolve_dual(config->listen.address,config->netpriority.protocol,config->netpriority.enabled);
+	net_addr bindaddr=net_resolve_dual(config->listen.address,config_netpriority_protocol,config_netpriority_enabled);
 	if(bindaddr.family==0)
 	{
 		mksysmsg(0,config_logfull,config_runmode,config->log.level,0,"Error: Invalid bind address!\n");
@@ -373,6 +365,7 @@ int main(int argc, char ** argv)
 		{
 			net_addrbundle addrbundle_inbound_client;
 			addrbundle_inbound_client.family=*((sa_family_t *)&addr_inbound_client);
+			void * addr_inbound_client_addroffset=NULL;
 			switch(addrbundle_inbound_client.family)
 			{
 				case AF_INET:
@@ -381,15 +374,21 @@ int main(int argc, char ** argv)
 					addrbundle_inbound_client.port=ntohs(((struct sockaddr_in *)&addr_inbound_client)->sin_port);
 					break;
 				case AF_INET6:
-					addrbundle_inbound_client.address=net_ntop(AF_INET6,&(((struct sockaddr_in6 *)&addr_inbound_client)->sin6_addr),1);
-					addrbundle_inbound_client.address_clean=net_ntop(AF_INET6,&(((struct sockaddr_in6 *)&addr_inbound_client)->sin6_addr),0);
+					addr_inbound_client_addroffset=(unsigned char *)&(((struct sockaddr_in6 *)&addr_inbound_client)->sin6_addr);
+					if(memcmp(addr_inbound_client_addroffset,"\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\xFF\xFF",12)==0)
+					{
+						addrbundle_inbound_client.family=AF_INET;
+						addr_inbound_client_addroffset=addr_inbound_client_addroffset+12;
+					}
+					addrbundle_inbound_client.address=net_ntop(addrbundle_inbound_client.family,addr_inbound_client_addroffset,1);
+					addrbundle_inbound_client.address_clean=net_ntop(addrbundle_inbound_client.family,addr_inbound_client_addroffset,0);
 					addrbundle_inbound_client.port=ntohs(((struct sockaddr_in6 *)&addr_inbound_client)->sin6_port);
 					break;
 			}
 			signal(SIGUSR1,SIG_DFL);
 			close(socket_inbound_server);
 			int socket_outbound;
-			if(backbone(socket_inbound_client,&socket_outbound,config_logfull,config_runmode,config,addrbundle_inbound_client))
+			if(backbone(socket_inbound_client,&socket_outbound,config_logfull,config_runmode,config,addrbundle_inbound_client,config_netpriority_enabled))
 			{
 				return 0;
 			}
