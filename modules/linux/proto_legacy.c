@@ -98,8 +98,11 @@ p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int source
 		{
 			login_field[recidx]=source[2+recidx];
 		}
-		ptr_login_field=strtok_head(ptr_login_field,';',result.username);
-		ptr_login_field=strtok_head(ptr_login_field,':',result.address);
+		ptr_login_field=strtok_head(result.username,ptr_login_field,';');
+		size_t fieldsize_address=strtok_tail(NULL,ptr_login_field,':',strlen(ptr_login_field));
+		strncpy(result.address,ptr_login_field,fieldsize_address);
+		result.address[fieldsize_address]='\0';
+		ptr_login_field=ptr_login_field+fieldsize_address+1;
 		result.port=atoi(ptr_login_field);
 	}
 	else

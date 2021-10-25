@@ -245,47 +245,27 @@ int packetshrink(unsigned char * source, int source_length, unsigned char * targ
 	size=ptr_target-target;
 	return size;
 }
-size_t strlen_head(const char * src, char tailchar)
-{
-	if(src==NULL)
-	{
-		return 0;
-	}
-	size_t result=0;
-	for(;result<strlen(src);result++)
-	{
-		if(src[result]==tailchar)
-		{
-			break;
-		}
-	}
-	return result;
-}
-size_t strlen_notail(const char * src, char tailchar)
+size_t strlen_notail(const char * src, char exemptchr)
 {
 	if(src==NULL)
 	{
 		return 0;
 	}
 	size_t result=strlen(src);
-	for(int i=result-1;i>=0;i--)
+	while(result>0)
 	{
-		result--;
-		if(src[i]==tailchar)
+		if(src[result-1]!=exemptchr)
 		{
 			break;
 		}
-	}
-	if(result==0)
-	{
-		return strlen(src);
+		result--;
 	}
 	return result;
 }
-size_t strcmp_notail(const char * str1, const char * str2, char tailchar)
+size_t strcmp_notail(const char * str1, const char * str2, char exemptchr)
 {
 	size_t str1_length=strlen(str1);
-	size_t str2_length=strlen_notail(str2,tailchar);
+	size_t str2_length=strlen_notail(str2,exemptchr);
 	if(str1_length<str2_length)
 	{
 		return -1;
@@ -299,23 +279,73 @@ size_t strcmp_notail(const char * str1, const char * str2, char tailchar)
 		return strncmp(str1,str2,str2_length);
 	}
 }
-char * strtok_head(char * src, char delim, char * dst)
+char * strtok_head(char * dst, char * src, char delim)
 {
-	size_t length_head=strlen_head(src,delim);
-	if(length_head)
-	{
-		strncpy(dst,src,length_head);
-	}
-	dst[length_head]='\0';
-	if(src[length_head]=='\0')
+	if(src==NULL)
 	{
 		return NULL;
 	}
-	return src+length_head+1;
+	if(*src=='\0')
+	{
+		if(dst!=NULL)
+		{
+			*dst='\0';
+		}
+		return NULL;
+	}
+	char * ptr_delim=strchr(src,delim);
+	if(ptr_delim==NULL)
+	{
+		if(dst!=NULL)
+		{
+			strcpy(dst,src);
+		}
+		return NULL;
+	}
+	size_t length=ptr_delim-src;
+	if(dst!=NULL)
+	{
+		strncpy(dst,src,length);
+		dst[length]='\0';
+	}
+	return ptr_delim+1;
 }
-char * strtok_tail(char * src, char delim)
+size_t strtok_tail(char * dst, char * src, char delim, size_t length)
 {
-	return src+strlen_notail(src,delim)+1;
+	if(src==NULL)
+	{
+		return 0;
+	}
+	if(length==0)
+	{
+		if(dst!=NULL)
+		{
+			*dst='\0';
+		}
+		return 0;
+	}
+	char * buffer=(char *)calloc(1,length+1);
+	if(buffer==NULL)
+	{
+		return length;
+	}
+	strncpy(buffer,src,length);
+	char * ptr_delim=strrchr(buffer,delim);
+	if(ptr_delim==NULL)
+	{
+		if(dst!=NULL)
+		{
+			strcpy(dst,buffer);
+		}
+		free(buffer);
+		return 0;
+	}
+	if(dst!=NULL)
+	{
+		strcpy(dst,ptr_delim+1);
+	}
+	free(buffer);
+	return ptr_delim-buffer;
 }
 void * varint2int(void * src, unsigned long * dst)
 {

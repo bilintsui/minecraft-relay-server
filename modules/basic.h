@@ -42,11 +42,10 @@ size_t memcat(void * dst, size_t dst_size, void * src, size_t src_size);
 size_t freadall(const char * filename, char ** dst);
 int packetexpand(unsigned char * source, int source_length, unsigned char * target);
 int packetshrink(unsigned char * source, int source_length, unsigned char * target);
-size_t strlen_head(const char * src, char tailchar);
-size_t strlen_notail(const char * src, char tailchar);
-size_t strcmp_notail(const char * str1, const char * str2, char tailchar);
-char * strtok_head(char * src, char delim, char * dst);
-char * strtok_tail(char * src, char delim);
+size_t strlen_notail(const char * src, char exemptchr);
+size_t strcmp_notail(const char * str1, const char * str2, char exemptchr);
+char * strtok_head(char * dst, char * src, char delim);
+size_t strtok_tail(char * dst, char * src, char delim, size_t length);
 void * varint2int(void * src, unsigned long * dst);
 #include "linux/basic.c"
 #endif
