@@ -202,5 +202,9 @@
 	{
 		"version": 53,
 		"names": ["1.2-beta2-patch10"]
+	},
+	{
+		"version": 54,
+		"names": ["1.2-beta2-patch11"]
 	}
 ]

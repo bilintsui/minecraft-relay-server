@@ -34,12 +34,12 @@
 #include <stdlib.h>
 #include <string.h>
 unsigned char * base64_encode(unsigned char * source, size_t source_size);
+size_t freadall(const char * filename, char ** dst);
 int handshake_protocol_identify(unsigned char * source, unsigned int length);
 void * int2varint(unsigned long src, void * dst);
 int legacy_motd_protocol_identify(unsigned char * source);
 int ismcproto(unsigned char * data_in, unsigned int data_length);
 size_t memcat(void * dst, size_t dst_size, void * src, size_t src_size);
-size_t freadall(const char * filename, char ** dst);
 int packetexpand(unsigned char * source, int source_length, unsigned char * target);
 int packetshrink(unsigned char * source, int source_length, unsigned char * target);
 size_t strlen_notail(const char * src, char exemptchr);

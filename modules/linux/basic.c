@@ -57,6 +57,40 @@ unsigned char * base64_encode(unsigned char * source, size_t source_size)
 	}
 	return target;
 }
+size_t freadall(const char * filename, char ** dst)
+{
+	if((filename==NULL)||(dst==NULL))
+	{
+		errno=FREADALL_EINVAL;
+		return 0;
+	}
+	FILE * srcfd=fopen(filename,"rb");
+	if(srcfd==NULL)
+	{
+		errno=FREADALL_ERFAIL;
+		return 0;
+	}
+	fseek(srcfd,0,SEEK_END);
+	size_t filesize=ftell(srcfd);
+	fseek(srcfd,0,SEEK_SET);
+	if(filesize>FREADALL_SLIMIT)
+	{
+		fclose(srcfd);
+		errno=FREADALL_ELARGE;
+		return 0;
+	}
+	char * result=(char *)calloc(1,filesize+1);
+	if(result==NULL)
+	{
+		fclose(srcfd);
+		errno=FREADALL_ENOMEM;
+		return 0;
+	}
+	fread(result,filesize,1,srcfd);
+	fclose(srcfd);
+	*dst=result;
+	return filesize;
+}
 int handshake_protocol_identify(unsigned char * source, unsigned int length)
 {
 	int protocol_version=0;
@@ -181,40 +215,6 @@ size_t memcat(void * dst, size_t dst_size, void * src, size_t src_size)
 {
 	memcpy(dst+dst_size,src,src_size);
 	return dst_size+src_size;
-}
-size_t freadall(const char * filename, char ** dst)
-{
-	if((filename==NULL)||(dst==NULL))
-	{
-		errno=FREADALL_EINVAL;
-		return 0;
-	}
-	FILE * srcfd=fopen(filename,"rb");
-	if(srcfd==NULL)
-	{
-		errno=FREADALL_ERFAIL;
-		return 0;
-	}
-	fseek(srcfd,0,SEEK_END);
-	size_t filesize=ftell(srcfd);
-	fseek(srcfd,0,SEEK_SET);
-	if(filesize>FREADALL_SLIMIT)
-	{
-		fclose(srcfd);
-		errno=FREADALL_ELARGE;
-		return 0;
-	}
-	char * result=(char *)calloc(1,filesize+1);
-	if(result==NULL)
-	{
-		fclose(srcfd);
-		errno=FREADALL_ENOMEM;
-		return 0;
-	}
-	fread(result,filesize,1,srcfd);
-	fclose(srcfd);
-	*dst=result;
-	return filesize;
 }
 int packetexpand(unsigned char * source, int source_length, unsigned char * target)
 {
@@ -349,26 +349,30 @@ size_t strtok_tail(char * dst, char * src, char delim, size_t length)
 }
 void * varint2int(void * src, unsigned long * dst)
 {
-	if((src==NULL)||(dst==NULL))
+	if(src==NULL)
 	{
-		return src;
+		return NULL;
 	}
 	unsigned char * base=src;
-	unsigned long dst_single=0;
+	unsigned long result=0;
+	unsigned long result_single=0;
 	size_t index_lastunit=sizeof(*dst)*8/7;
-	if(base[index_lastunit]&0x80)
+	for(size_t i=0;i<=index_lastunit;i++)
 	{
-		return src;
-	}
-	*dst=0;
-	for(int i=0;i<=index_lastunit;i++)
-	{
-		dst_single=base[i]&0x7F;
-		*dst=*dst|(dst_single<<(i*7));
+		result_single=base[i]&0x7F;
+		result=result|(result_single<<(i*7));
 		if(!(base[i]&0x80))
 		{
+			if(dst!=NULL)
+			{
+				*dst=result;
+			}
 			return src+i+1;
 			break;
+		}
+		if(i==index_lastunit)
+		{
+			return src;
 		}
 	}
 }
