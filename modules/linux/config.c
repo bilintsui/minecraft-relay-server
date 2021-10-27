@@ -139,7 +139,12 @@ cJSON * config_proxy_parse(cJSON * src)
 				cJSON_DetachItemViaPointer(src,single);
 				continue;
 			}
-			char * vhost=(char *)calloc(1,strlen(single_vhost->valuestring)+1);
+			char * vhost=(char *)malloc(strlen(single_vhost->valuestring)+1);
+			if(vhost==NULL)
+			{
+				errno=CONF_ECMEMORY;
+				return NULL;
+			}
 			strcpy(vhost,single_vhost->valuestring);
 			cJSON_DeleteItemFromObjectCaseSensitive(single,"vhost");
 			single_vhost=cJSON_AddArrayToObject(single,"vhost");
@@ -218,61 +223,51 @@ cJSON * config_proxy_parse(cJSON * src)
 					for(int j=0;j<dupdet_count;j++)
 					{
 						free(vhost_namelist[j]);
-						vhost_namelist[j]=NULL;
 					}
 					free(vhost_namelist);
-					vhost_namelist=NULL;
 					cJSON_Delete(result);
-					result=NULL;
 					errno=CONF_ECPROXYDUP;
-					if(output_str==NULL)
-					{
-						return NULL;
-					}
-					else
-					{
-						return output_str;
-					}
+					return output_str;
 				}
-				else
+				char ** vhost_namelist_new=(char **)realloc(vhost_namelist,(dupdet_count+1)*sizeof(char **));
+				if(vhost_namelist_new==NULL)
 				{
-					char ** vhost_namelist_new=(char **)realloc(vhost_namelist,(dupdet_count+1)*sizeof(char **));
-					if(vhost_namelist_new==NULL)
+					for(int j=0;j<dupdet_count;j++)
 					{
-						for(int j=0;j<dupdet_count;j++)
-						{
-							free(vhost_namelist[j]);
-							vhost_namelist[j]=NULL;
-						}
-						free(vhost_namelist);
-						vhost_namelist=NULL;
-						cJSON_Delete(result);
-						errno=CONF_ECMEMORY;
-						return NULL;
+						free(vhost_namelist[j]);
 					}
-					vhost_namelist=vhost_namelist_new;
-					vhost_namelist_new=NULL;
-					vhost_namelist[dupdet_count]=(char *)calloc(1,strlen(rec_result_vhostname->valuestring)+1);
-					if(vhost_namelist[dupdet_count]==NULL)
+					free(vhost_namelist);
+					cJSON_Delete(result);
+					errno=CONF_ECMEMORY;
+					return NULL;
+				}
+				vhost_namelist=vhost_namelist_new;
+				vhost_namelist[dupdet_count]=(char *)calloc(1,strlen(rec_result_vhostname->valuestring)+1);
+				if(vhost_namelist[dupdet_count]==NULL)
+				{
+					for(int j=0;j<dupdet_count;j++)
 					{
-						for(int j=0;j<dupdet_count;j++)
-						{
-							free(vhost_namelist[j]);
-							vhost_namelist[j]=NULL;
-						}
-						free(vhost_namelist);
-						vhost_namelist=NULL;
-						cJSON_Delete(result);
-						errno=CONF_ECMEMORY;
-						return NULL;
+						free(vhost_namelist[j]);
 					}
-					strcpy(vhost_namelist[dupdet_count],rec_result_vhostname->valuestring);
-					dupdet_count++;
+					free(vhost_namelist);
+					cJSON_Delete(result);
+					errno=CONF_ECMEMORY;
+					return NULL;
+				}
+				strcpy(vhost_namelist[dupdet_count],rec_result_vhostname->valuestring);
+				dupdet_count++;
+				if(i==(dupdet_count-2))
+				{
 					break;
 				}
 			}
 		}
 	}
+	for(int i=0;i<dupdet_count;i++)
+	{
+		free(vhost_namelist[i]);
+	}
+	free(vhost_namelist);
 	errno=0;
 	return result;
 }
@@ -364,7 +359,6 @@ conf * config_read(char * filename)
 	}
 	cJSON * config_json=cJSON_Parse(config_raw);
 	free(config_raw);
-	config_raw=NULL;
 	if(config_json==NULL)
 	{
 		errno=CONF_ERPARSE;
@@ -523,7 +517,7 @@ conf * config_read(char * filename)
 		return NULL;
 	}
 	config_json_proxy=config_proxy_parse(config_json_proxy);
-	if(errno!=0)
+	if(errno)
 	{
 		config_destroy(result);
 		return (void *)config_json_proxy;

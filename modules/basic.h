@@ -33,7 +33,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-unsigned char * base64_encode(unsigned char * source, size_t source_size);
 size_t freadall(const char * filename, char ** dst);
 int handshake_protocol_identify(unsigned char * source, unsigned int length);
 void * int2varint(unsigned long src, void * dst);

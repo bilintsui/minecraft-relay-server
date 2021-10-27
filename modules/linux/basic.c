@@ -9,54 +9,6 @@
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
-unsigned char * base64_encode(unsigned char * source, size_t source_size)
-{
-	unsigned char charset[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-	size_t new_source_size,endfix,target_size;
-	if(source_size%3==0)
-	{
-		new_source_size=source_size;
-	}
-	else
-	{
-		new_source_size=(source_size/3+1)*3;
-	}
-	endfix=new_source_size-source_size;
-	target_size=new_source_size/3*4;
-	unsigned char * new_source=(unsigned char *)malloc(new_source_size+1);
-	if(new_source==NULL)
-	{
-		return NULL;
-	}
-	memset(new_source,0,new_source_size+1);
-	memcpy(new_source,source,source_size);
-	unsigned char * target=(unsigned char *)malloc(target_size+1);
-	if(target==NULL)
-	{
-		free(new_source);
-		new_source=NULL;
-		return NULL;
-	}
-	memset(target,0,target_size+1);
-	char chargroup_raw[3],chargroup_new[4];
-	int offset_new_source=0;
-	int offset_target=0;
-	for(;offset_new_source<new_source_size;offset_new_source=offset_new_source+3)
-	{
-		target[offset_target]=charset[((new_source[offset_new_source]&0xFC)>>2)];
-		target[offset_target+1]=charset[((new_source[offset_new_source]&0x03)<<4)+((new_source[offset_new_source+1]&0xF0)>>4)];
-		target[offset_target+2]=charset[((new_source[offset_new_source+1]&0x0F)<<2)+((new_source[offset_new_source+2]&0xC0)>>6)];
-		target[offset_target+3]=charset[(new_source[offset_new_source+2]&0x3F)];
-		offset_target=offset_target+4;
-	}
-	free(new_source);
-	new_source=NULL;
-	if(endfix!=0)
-	{
-		memset(&(target[target_size-endfix]),'=',endfix);
-	}
-	return target;
-}
 size_t freadall(const char * filename, char ** dst)
 {
 	if((filename==NULL)||(dst==NULL))

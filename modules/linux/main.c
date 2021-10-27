@@ -11,7 +11,7 @@
 */
 const char * version_str="1.2-beta2";
 const char * year_str="2020-2021";
-const short version_internal=53;
+const short version_internal=54;
 char global_buffer[BUFSIZ];
 char * cwd=NULL;
 char * execname=NULL;
@@ -31,7 +31,7 @@ void deal_sigterm()
 void deal_sigusr1()
 {
 	unsigned short config_maxlevel=config->log.level;
-	char * config_logfull_old=(char *)calloc(1,strlen(config_logfull)+1);
+	char * config_logfull_old=(char *)malloc(strlen(config_logfull)+1);
 	if(config_logfull_old==NULL)
 	{
 		return;
@@ -114,11 +114,11 @@ int main(int argc, char ** argv)
 	signal(SIGINT,deal_sigterm);
 	memset(global_buffer,0,BUFSIZ);
 	getcwd(global_buffer,BUFSIZ);
-	cwd=(char *)calloc(1,strlen(global_buffer)+1);
+	cwd=(char *)malloc(strlen(global_buffer)+1);
 	strcpy(cwd,global_buffer);
 	memset(global_buffer,0,strlen(global_buffer)+1);
 	strtok_tail(global_buffer,argv[0],'/',strlen(argv[0]));
-	execname=(char *)calloc(1,strlen(global_buffer)+1);
+	execname=(char *)malloc(strlen(global_buffer)+1);
 	strcpy(execname,global_buffer);
 	memset(global_buffer,0,strlen(global_buffer)+1);
 	if(argc<2)
@@ -128,14 +128,15 @@ int main(int argc, char ** argv)
 		return 22;
 	}
 	argoffset_configfile=argv[1];
-	FILE * pidfd=fopen("/tmp/mcrelay.pid","r");
-	int prevpid;
+	FILE * pidfd=NULL;
+	int prevpid=0;
 	char * ptr_argv1=argv[1];
 	if(*ptr_argv1=='-')
 	{
 		ptr_argv1++;
 		if((strcmp(ptr_argv1,"r")==0)||(strcmp(ptr_argv1,"-reload")==0))
 		{
+			pidfd=fopen("/tmp/mcrelay.pid","r");
 			if(pidfd==NULL)
 			{
 				mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
@@ -159,6 +160,7 @@ int main(int argc, char ** argv)
 		}
 		else if((strcmp(ptr_argv1,"t")==0)||(strcmp(ptr_argv1,"-stop")==0))
 		{
+			pidfd=fopen("/tmp/mcrelay.pid","r");
 			if(pidfd==NULL)
 			{
 				mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
@@ -190,7 +192,6 @@ int main(int argc, char ** argv)
 			mksysmsg(1,"",0,255,2,"v%s(%d)\n",version_str,version_internal);
 			return 0;
 		}
-		else if(*ptr_argv1==0);
 		else
 		{
 			mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
@@ -200,6 +201,7 @@ int main(int argc, char ** argv)
 	}
 	else
 	{
+		pidfd=fopen("/tmp/mcrelay.pid","r");
 		if(pidfd!=NULL)
 		{
 			fscanf(pidfd,"%d",&prevpid);
@@ -218,18 +220,18 @@ int main(int argc, char ** argv)
 		mksysmsg(0,"",0,255,0,"Config filename can not be empty!\n",configfile);
 		return 22;
 	}
-	configfile=(char *)calloc(1,strlen(argoffset_configfile)+1);
+	configfile=(char *)malloc(strlen(argoffset_configfile)+1);
 	strcpy(configfile,argoffset_configfile);
 	if((configfile[0]!='/')&&(strcmp(configfile,"-")!=0))
 	{
 		sprintf(global_buffer,"%s/%s",cwd,configfile);
-		configfile_full=(char *)calloc(1,strlen(global_buffer)+1);
+		configfile_full=(char *)malloc(strlen(global_buffer)+1);
 		strcpy(configfile_full,global_buffer);
 		memset(global_buffer,0,strlen(global_buffer)+1);
 	}
 	else
 	{
-		configfile_full=(char *)calloc(1,strlen(configfile)+1);
+		configfile_full=(char *)malloc(strlen(configfile)+1);
 		strcpy(configfile_full,configfile);
 	}
 	mksysmsg(0,"",0,255,2,"Loading configurations from file: %s\n\n",configfile);
@@ -240,13 +242,13 @@ int main(int argc, char ** argv)
 			if(config->log.filename[0]!='/')
 			{
 				sprintf(global_buffer,"%s/%s",cwd,config->log.filename);
-				config_logfull=(char *)calloc(1,strlen(global_buffer)+1);
+				config_logfull=(char *)malloc(strlen(global_buffer)+1);
 				strcpy(config_logfull,global_buffer);
 				memset(global_buffer,0,strlen(global_buffer)+1);
 			}
 			else
 			{
-				config_logfull=(char *)calloc(1,strlen(config->log.filename)+1);
+				config_logfull=(char *)malloc(strlen(config->log.filename)+1);
 				strcpy(config_logfull,config->log.filename);
 			}
 			config_netpriority_enabled=config->netpriority.enabled;
@@ -355,7 +357,6 @@ int main(int argc, char ** argv)
 	signal(SIGCHLD,SIG_IGN);
 	while(1)
 	{
-		while(listen(socket_inbound_server,1)==-1);
 		socket_inbound_client=accept(socket_inbound_server,(struct sockaddr *)&addr_inbound_client,&strulen);
 		pid=fork();
 		if(pid>0)
