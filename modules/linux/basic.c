@@ -31,7 +31,7 @@ size_t freadall(const char * filename, char ** dst)
 		errno=FREADALL_ELARGE;
 		return 0;
 	}
-	char * result=(char *)calloc(1,filesize+1);
+	char * result=(char *)malloc(filesize+1);
 	if(result==NULL)
 	{
 		fclose(srcfd);
@@ -39,6 +39,7 @@ size_t freadall(const char * filename, char ** dst)
 		return 0;
 	}
 	fread(result,filesize,1,srcfd);
+	result[filesize]='\0';
 	fclose(srcfd);
 	*dst=result;
 	return filesize;
@@ -214,7 +215,7 @@ size_t strlen_notail(const char * src, char exemptchr)
 	}
 	return result;
 }
-size_t strcmp_notail(const char * str1, const char * str2, char exemptchr)
+size_t strcmp_notail(const char * str1, const char * str2, char exemptchr, short case_insensitive)
 {
 	size_t str1_length=strlen(str1);
 	size_t str2_length=strlen_notail(str2,exemptchr);
@@ -228,7 +229,14 @@ size_t strcmp_notail(const char * str1, const char * str2, char exemptchr)
 	}
 	else
 	{
-		return strncmp(str1,str2,str2_length);
+		if(case_insensitive)
+		{
+			return strncasecmp(str1,str2,str2_length);
+		}
+		else
+		{
+			return strncmp(str1,str2,str2_length);
+		}
 	}
 }
 char * strtok_head(char * dst, char * src, char delim)
@@ -276,12 +284,13 @@ size_t strtok_tail(char * dst, char * src, char delim, size_t length)
 		}
 		return 0;
 	}
-	char * buffer=(char *)calloc(1,length+1);
+	char * buffer=(char *)malloc(length+1);
 	if(buffer==NULL)
 	{
 		return length;
 	}
 	strncpy(buffer,src,length);
+	buffer[length]='\0';
 	char * ptr_delim=strrchr(buffer,delim);
 	if(ptr_delim==NULL)
 	{

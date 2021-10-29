@@ -199,7 +199,7 @@ cJSON * config_proxy_parse(cJSON * src)
 					errno=CONF_ECMEMORY;
 					return NULL;
 				}
-				vhost_namelist[dupdet_count]=(char *)calloc(1,strlen(rec_result_vhostname->valuestring)+1);
+				vhost_namelist[dupdet_count]=(char *)malloc(strlen(rec_result_vhostname->valuestring)+1);
 				if(vhost_namelist[dupdet_count]==NULL)
 				{
 					free(vhost_namelist);
@@ -213,9 +213,9 @@ cJSON * config_proxy_parse(cJSON * src)
 			}
 			for(int i=0;i<dupdet_count;i++)
 			{
-				if(strcmp(vhost_namelist[i],rec_result_vhostname->valuestring)==0)
+				if(strcasecmp(vhost_namelist[i],rec_result_vhostname->valuestring)==0)
 				{
-					void * output_str=calloc(1,strlen(rec_result_vhostname->valuestring)+1);
+					void * output_str=malloc(strlen(rec_result_vhostname->valuestring)+1);
 					if(output_str!=NULL)
 					{
 						strcpy(output_str,rec_result_vhostname->valuestring);
@@ -242,7 +242,7 @@ cJSON * config_proxy_parse(cJSON * src)
 					return NULL;
 				}
 				vhost_namelist=vhost_namelist_new;
-				vhost_namelist[dupdet_count]=(char *)calloc(1,strlen(rec_result_vhostname->valuestring)+1);
+				vhost_namelist[dupdet_count]=(char *)malloc(strlen(rec_result_vhostname->valuestring)+1);
 				if(vhost_namelist[dupdet_count]==NULL)
 				{
 					for(int j=0;j<dupdet_count;j++)
@@ -297,9 +297,9 @@ conf_proxy config_proxy_search(conf * src, const char * targetvhost)
 		{
 			if(cJSON_IsString(rec_vhostname))
 			{
-				if(strcmp_notail(rec_vhostname->valuestring,targetvhost,'.')==0)
+				if(strcmp_notail(rec_vhostname->valuestring,targetvhost,'.',1)==0)
 				{
-					result.address=(char *)calloc(1,strlen(cJSON_GetObjectItemCaseSensitive(rec_proxylist,"address")->valuestring)+1);
+					result.address=(char *)malloc(strlen(cJSON_GetObjectItemCaseSensitive(rec_proxylist,"address")->valuestring)+1);
 					if(result.address==NULL)
 					{
 						return result;
@@ -398,7 +398,7 @@ conf * config_read(char * filename)
 		}
 	}
 	char * config_default_log_filename="/var/log/mcrelay/access.log";
-	result->log.filename=(char *)calloc(1,strlen(config_default_log_filename)+1);
+	result->log.filename=(char *)malloc(strlen(config_default_log_filename)+1);
 	if(result->log.filename==NULL)
 	{
 		cJSON_Delete(config_json);
@@ -443,7 +443,7 @@ conf * config_read(char * filename)
 		result->log.binary=config_jsonbool(cJSON_GetObjectItemCaseSensitive(config_json_log,"binary"),0);
 	}
 	char * config_default_listen_address="::";
-	result->listen.address=(char *)calloc(1,strlen(config_default_listen_address)+1);
+	result->listen.address=(char *)malloc(strlen(config_default_listen_address)+1);
 	if(result->listen.address==NULL)
 	{
 		cJSON_Delete(config_json);

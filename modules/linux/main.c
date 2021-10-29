@@ -11,7 +11,7 @@
 */
 const char * version_str="1.2-beta2";
 const char * year_str="2020-2021";
-const short version_internal=54;
+const short version_internal=55;
 char global_buffer[BUFSIZ];
 char * cwd=NULL;
 char * execname=NULL;
@@ -222,7 +222,7 @@ int main(int argc, char ** argv)
 	}
 	configfile=(char *)malloc(strlen(argoffset_configfile)+1);
 	strcpy(configfile,argoffset_configfile);
-	if((configfile[0]!='/')&&(strcmp(configfile,"-")!=0))
+	if(configfile[0]!='/')
 	{
 		sprintf(global_buffer,"%s/%s",cwd,configfile);
 		configfile_full=(char *)malloc(strlen(global_buffer)+1);

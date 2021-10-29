@@ -201,14 +201,14 @@
 	},
 	{
 		"version": 53,
-		"names": ["1.2-beta2-patch10"]
+		"names": ["1.2-beta2-patch10","1.2-beta2-patch11"]
 	},
 	{
 		"version": 54,
-		"names": ["1.2-beta2-patch11"]
+		"names": ["1.2-beta2-patch12"]
 	},
 	{
 		"version": 55,
-		"names": ["1.2-beta2-patch12"]
+		"names": ["1.2-beta2-patch13"]
 	}
 ]
