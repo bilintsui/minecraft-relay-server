@@ -2,7 +2,7 @@
 	network.c: Network Functions for Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.2-beta1
+	Minecraft Relay Server, version 1.2-beta2
 	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 
@@ -33,6 +33,68 @@ sa_family_t net_getaltfamily(sa_family_t family)
 			return 0;
 	}
 }
+net_addrp net_ntop(sa_family_t family, void * src, short v6addition)
+{
+	net_addrp pre_result;
+	memset(&pre_result,0,sizeof(pre_result));
+	if(((family!=AF_INET)&&(family!=AF_INET6))||(src==NULL)||(inet_ntop(family,src,(char *)&pre_result,sizeof(pre_result))==NULL))
+	{
+		return pre_result;
+	}
+	if((v6addition)&&(family==AF_INET6))
+	{
+		net_addrp result;
+		memset(&result,0,sizeof(result));
+		sprintf((char *)&result,"[%s]",(char *)&pre_result);
+		return result;
+	}
+	return pre_result;
+}
+int net_relay(int socket_in, int socket_out)
+{
+	char buffer[BUFSIZ];
+	struct epoll_event ev,events[2];
+	int epfd,nfds,i,read_bytes,socket_peer;
+	epfd=epoll_create(2);
+	ev.data.fd=socket_in;
+	ev.events=EPOLLIN;
+	epoll_ctl(epfd,EPOLL_CTL_ADD,socket_in,&ev);
+	ev.data.fd=socket_out;
+	ev.events=EPOLLIN;
+	epoll_ctl(epfd,EPOLL_CTL_ADD,socket_out,&ev);
+	while(1)
+	{
+		nfds=epoll_wait(epfd,events,2,-1);
+		for(i=0;i<nfds;i++)
+		{
+			if(events[i].events&EPOLLIN)
+			{
+				if(events[i].data.fd==socket_in)
+				{
+					socket_peer=socket_out;
+				}
+				else if(events[i].data.fd==socket_out)
+				{
+					socket_peer=socket_in;
+				}
+				read_bytes=BUFSIZ;
+				while(read_bytes==BUFSIZ)
+				{
+					read_bytes=recv(events[i].data.fd,buffer,BUFSIZ,0);
+					if(read_bytes==0)
+					{
+						close(socket_peer);
+						return 0;
+					}
+					if(read_bytes>0)
+					{
+						send(socket_peer,buffer,read_bytes,0);
+					}
+				}
+			}
+		}
+	}
+}
 void * net_resolve(char * hostname, sa_family_t family)
 {
 	if((family!=AF_INET)&&(family!=AF_INET6))
@@ -55,7 +117,6 @@ void * net_resolve(char * hostname, sa_family_t family)
 	{
 		errno=NET_ENORECORD;
 		free(result);
-		result=NULL;
 		return NULL;
 	}
 	memcpy(result,response->h_addr_list[0],net_getaddrsize(family));
@@ -78,7 +139,6 @@ net_addr net_resolve_dual(char * hostname, sa_family_t primary_family, short dua
 		result.family=primary_family;
 		memcpy(&(result.addr),resolved,net_getaddrsize(result.family));
 		free(resolved);
-		resolved=NULL;
 		return result;
 	}
 	if(!dual)
@@ -92,23 +152,122 @@ net_addr net_resolve_dual(char * hostname, sa_family_t primary_family, short dua
 		result.family=net_getaltfamily(primary_family);
 		memcpy(&(result.addr),resolved,net_getaddrsize(result.family));
 		free(resolved);
-		resolved=NULL;
 		return result;
 	}
 	result.err=errno;
 	return result;
 }
+int net_socket(short action, sa_family_t family, void * address, u_int16_t port, short reuseaddr)
+{
+	if((action!=NETSOCK_BIND)&&(action!=NETSOCK_CONN))
+	{
+		errno=NET_EARGACTION;
+		return -1;
+	}
+	if((family!=AF_INET)&&(family!=AF_INET6))
+	{
+		errno=NET_EARGFAMILY;
+		return -1;
+	}
+	if(address==NULL)
+	{
+		errno=NET_EARGADDR;
+		return -1;
+	}
+	void * serv_addr=NULL;
+	int stru_size=0;
+	if(family==AF_INET)
+	{
+		stru_size=sizeof(struct sockaddr_in);
+		serv_addr=malloc(stru_size);
+		if(serv_addr==NULL)
+		{
+			errno=NET_EMALLOC;
+			return -1;
+		}
+		memset(serv_addr,0,stru_size);
+		struct sockaddr_in * addr=serv_addr;
+		addr->sin_family=AF_INET;
+		addr->sin_port=htons(port);
+		memcpy(&(addr->sin_addr.s_addr),address,sizeof(u_int32_t));
+	}
+	else if(family==AF_INET6)
+	{
+		stru_size=sizeof(struct sockaddr_in6);
+		serv_addr=malloc(stru_size);
+		if(serv_addr==NULL)
+		{
+			errno=NET_EMALLOC;
+			return -1;
+		}
+		memset(serv_addr,0,stru_size);
+		struct sockaddr_in6 * addr=serv_addr;
+		addr->sin6_family=AF_INET6;
+		addr->sin6_port=htons(port);
+		memcpy(&(addr->sin6_addr),address,sizeof(char)*16);
+	}
+	int result=socket(family,SOCK_STREAM,0);
+	if(result==-1)
+	{
+		free(serv_addr);
+		errno=NET_ESOCKET;
+		return -1;
+	}
+	if(reuseaddr)
+	{
+		int socket_opt=1;
+		if(setsockopt(result,SOL_SOCKET,SO_REUSEADDR,&socket_opt,sizeof(socket_opt))==-1)
+		{
+			free(serv_addr);
+			close(result);
+			errno=NET_EREUSEADDR;
+			return -1;
+		}
+	}
+	if(action==NETSOCK_BIND)
+	{
+		if(bind(result,serv_addr,stru_size)==-1)
+		{
+			free(serv_addr);
+			close(result);
+			errno=NET_EBIND;
+			return -1;
+		}
+		else
+		{
+			if(listen(result,5)==-1)
+			{
+				free(serv_addr);
+				close(result);
+				errno=NET_ELISTEN;
+				return -1;
+			}
+		}
+	}
+	else if(action==NETSOCK_CONN)
+	{
+		if(connect(result,serv_addr,stru_size)==-1)
+		{
+			free(serv_addr);
+			close(result);
+			errno=NET_ECONNECT;
+			return -1;
+		}
+	}
+	free(serv_addr);
+	return result;
+}
 int net_srvresolve(char * query_name, net_srvrecord * target)
 {
 	char query_name_full[256];
-	bzero(query_name_full,256);
+	memset(query_name_full,0,256);
 	sprintf(query_name_full,"_minecraft._tcp.%s",query_name);
 	struct
 	{
 		unsigned short priority,weight,port;
 		char target[128];
 	} records[128],records_minpriority[128],records_maxweight[128];
-	bzero(records,sizeof(records));
+	memset(records,0,sizeof(records));
 	res_init();
 	unsigned char query_buffer[1024];
 	int response=res_query(query_name_full,C_IN,ns_t_srv,query_buffer,sizeof(query_buffer));
@@ -164,150 +323,4 @@ int net_srvresolve(char * query_name, net_srvrecord * target)
 		}
 	}
 	return max_record_maxweight;
-}
-int net_socket(short action, sa_family_t family, void * address, u_int16_t port, short reuseaddr)
-{
-	if((action!=NETSOCK_BIND)&&(action!=NETSOCK_CONN))
-	{
-		errno=NET_EARGACTION;
-		return -1;
-	}
-	if((family!=AF_INET)&&(family!=AF_INET6))
-	{
-		errno=NET_EARGFAMILY;
-		return -1;
-	}
-	if(address==NULL)
-	{
-		errno=NET_EARGADDR;
-		return -1;
-	}
-	void * serv_addr;
-	int stru_size;
-	if(family==AF_INET)
-	{
-		stru_size=sizeof(struct sockaddr_in);
-		serv_addr=malloc(stru_size);
-		if(serv_addr==NULL)
-		{
-			errno=NET_EMALLOC;
-			return -1;
-		}
-		memset(serv_addr,0,stru_size);
-		struct sockaddr_in * addr=serv_addr;
-		addr->sin_family=AF_INET;
-		addr->sin_port=htons(port);
-		memcpy(&(addr->sin_addr.s_addr),address,sizeof(u_int32_t));
-	}
-	else if(family==AF_INET6)
-	{
-		stru_size=sizeof(struct sockaddr_in6);
-		serv_addr=malloc(stru_size);
-		if(serv_addr==NULL)
-		{
-			errno=NET_EMALLOC;
-			return -1;
-		}
-		memset(serv_addr,0,stru_size);
-		struct sockaddr_in6 * addr=serv_addr;
-		addr->sin6_family=AF_INET6;
-		addr->sin6_port=htons(port);
-		memcpy(&(addr->sin6_addr),address,sizeof(char)*16);
-	}
-	int result=socket(family,SOCK_STREAM,0);
-	if(result==-1)
-	{
-		errno=NET_ESOCKET;
-		return -1;
-	}
-	if(reuseaddr)
-	{
-		int socket_opt=1;
-		if(setsockopt(result,SOL_SOCKET,SO_REUSEADDR,&socket_opt,sizeof(socket_opt))==-1)
-		{
-			errno=NET_EREUSEADDR;
-			return -1;
-		}
-	}
-	if(action==NETSOCK_BIND)
-	{
-		if(bind(result,serv_addr,stru_size)==-1)
-		{
-			free(serv_addr);
-			serv_addr=NULL;
-			close(result);
-			errno=NET_EBIND;
-			return -1;
-		}
-		else
-		{
-			if(listen(result,5)==-1)
-			{
-				free(serv_addr);
-				serv_addr=NULL;
-				close(result);
-				errno=NET_ELISTEN;
-				return -1;
-			}
-		}
-	}
-	else if(action==NETSOCK_CONN)
-	{
-		if(connect(result,serv_addr,stru_size)==-1)
-		{
-			free(serv_addr);
-			serv_addr=NULL;
-			close(result);
-			errno=NET_ECONNECT;
-			return -1;
-		}
-	}
-	free(serv_addr);
-	serv_addr=NULL;
-	return result;
-}
-int net_relay(int socket_in, int socket_out)
-{
-	char buffer[BUFSIZ];
-	struct epoll_event ev,events[2];
-	int epfd,nfds,i,read_bytes,socket_peer;
-	epfd=epoll_create(2);
-	ev.data.fd=socket_in;
-	ev.events=EPOLLIN;
-	epoll_ctl(epfd,EPOLL_CTL_ADD,socket_in,&ev);
-	ev.data.fd=socket_out;
-	ev.events=EPOLLIN;
-	epoll_ctl(epfd,EPOLL_CTL_ADD,socket_out,&ev);
-	while(1)
-	{
-		nfds=epoll_wait(epfd,events,2,-1);
-		for(i=0;i<nfds;i++)
-		{
-			if(events[i].events&EPOLLIN)
-			{
-				if(events[i].data.fd==socket_in)
-				{
-					socket_peer=socket_out;
-				}
-				else if(events[i].data.fd==socket_out)
-				{
-					socket_peer=socket_in;
-				}
-				read_bytes=BUFSIZ;
-				while(read_bytes==BUFSIZ)
-				{
-					read_bytes=recv(events[i].data.fd,buffer,BUFSIZ,0);
-					if(read_bytes==0)
-					{
-						close(socket_peer);
-						return 0;
-					}
-					if(read_bytes>0)
-					{
-						send(socket_peer,buffer,read_bytes,0);
-					}
-				}
-			}
-		}
-	}
 }

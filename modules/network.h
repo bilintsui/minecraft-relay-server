@@ -2,7 +2,7 @@
 	network.h: Header file of network.c
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.2-beta1
+	Minecraft Relay Server, version 1.2-beta2
 	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 
@@ -28,7 +28,6 @@
 #include <errno.h>
 #include <netdb.h>
 #include <resolv.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
@@ -43,6 +42,16 @@ typedef struct
 		unsigned char v6[16];
 	} addr;
 } net_addr;
+typedef union {
+	char v4[INET_ADDRSTRLEN];
+	char v6[INET6_ADDRSTRLEN+2];
+} net_addrp;
+typedef struct
+{
+	sa_family_t family;
+	net_addrp address,address_clean;
+	in_port_t port;
+} net_addrbundle;
 typedef struct
 {
 	char target[128];
@@ -50,11 +59,12 @@ typedef struct
 } net_srvrecord;
 size_t net_getaddrsize(sa_family_t family);
 sa_family_t net_getaltfamily(sa_family_t family);
+net_addrp net_ntop(sa_family_t family, void * src, short v6addition);
+int net_relay(int socket_in, int socket_out);
 void * net_resolve(char * hostname, sa_family_t family);
 net_addr net_resolve_dual(char * hostname, sa_family_t primary_family, short dual);
-int net_srvresolve(char * query_name, net_srvrecord * target);
 int net_socket(short action, sa_family_t family, void * address, u_int16_t port, short reuseaddr);
-int net_relay(int socket_in, int socket_out);
+int net_srvresolve(char * query_name, net_srvrecord * target);
 #include "linux/network.c"
 #endif
 #endif

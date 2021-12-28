@@ -1,2 +1,2 @@
 mcrelay:
-	gcc -o mcrelay mcrelay.c -lresolv
+	gcc -o mcrelay mcrelay.c -lresolv -lcjson
