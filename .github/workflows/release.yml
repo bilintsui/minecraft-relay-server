@@ -1,0 +1,29 @@
+name: release-build
+
+on:
+  release:
+    types:
+      - published
+
+jobs:
+  build_mcrelay:
+    name: Build Minecraft Relay Server
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+      - name: Upgrade environment
+        run: |
+          sudo apt update
+          sudo apt upgrade -y
+      - name: Install toolchain
+        run: sudo apt install -y gcc libcjson-dev
+      - name: Build artifacts
+        run: |
+          mkdir build
+          gcc -o build/mcrelay mcrelay.c -lresolv -lcjson
+      - name: Upload artifacts
+        uses: AButler/upload-release-assets@v2.0
+        with:
+          files: 'build/mcrelay'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
