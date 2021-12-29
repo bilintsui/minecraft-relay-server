@@ -17,13 +17,25 @@ jobs:
           sudo apt update
           sudo apt upgrade -y
       - name: Install toolchain
-        run: sudo apt install -y gcc libcjson-dev
+        run: |
+          sudo apt install -y gcc gcc-arm-linux-gnueabihf gcc-aarch64-linux-gnu
+          sudo mv /etc/apt/sources.list /etc/apt/sources.list.d/main-amd64.list
+          sudo touch /etc/apt/sources.list
+          sudo sed -i '/^$/d;/^#/d;s/deb/deb [arch=amd64]/g' /etc/apt/sources.list.d/main-amd64.list
+          sudo cp /etc/apt/sources.list.d/main-amd64.list /etc/apt/sources.list.d/main-arm.list
+          sudo sed -i 's/arch=amd64/arch=armhf,arm64/g;s/archive/ports/g;s/security\./security.ports./g;s/\/ubuntu/\/ubuntu-ports/g' /etc/apt/sources.list.d/main-arm.list
+          sudo dpkg --add-architecture armhf
+          sudo dpkg --add-architecture arm64
+          sudo apt update
+          sudo apt install -y libcjson-dev:amd64 libcjson-dev:armhf libcjson-dev:arm64
       - name: Build artifacts
         run: |
           mkdir build
-          gcc -o build/mcrelay mcrelay.c -lresolv -lcjson
+          gcc -o build/mcrelay-amd64 mcrelay.c -lresolv -lcjson
+          arm-linux-gnueabihf-gcc -o build/mcrelay-armhf mcrelay.c -lresolv -lcjson
+          aarch64-linux-gnu-gcc -o build/mcrelay-arm64 mcrelay.c -lresolv -lcjson
       - name: Upload artifacts
         uses: AButler/upload-release-assets@v2.0
         with:
-          files: 'build/mcrelay'
+          files: 'build/mcrelay-*'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
