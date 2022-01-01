@@ -74,6 +74,7 @@ jobs:
           make
           cd ..
       - name: Post build
+        run: |
           mkdir build
           cd build
           cp ../build-amd64/mcrelay-amd64 .
