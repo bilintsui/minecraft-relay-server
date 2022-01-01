@@ -2,13 +2,25 @@
 	network.c: Network Functions for Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.2-beta2
-	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
+	Minecraft Relay Server, version 1.2-beta3
+	Copyright (c) 2020-2022 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
+
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netdb.h>
+#include <resolv.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/epoll.h>
+#include <unistd.h>
+
+#include "network.h"
+
 size_t net_getaddrsize(sa_family_t family)
 {
 	switch(family)

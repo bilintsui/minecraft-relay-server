@@ -2,16 +2,20 @@
 	basic.h: Header file of basic.c
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.2-beta2
-	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
+	Minecraft Relay Server, version 1.2-beta3
+	Copyright (c) 2020-2022 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
-#ifndef _MOD_BASIC_H_
-#define _MOD_BASIC_H_
-#ifdef linux
+
+#ifndef _MRS_MODULES_BASIC_H_INCLUDED_
+
+#define _MRS_MODULES_BASIC_H_INCLUDED_
+
+#include <stddef.h>
+
 #define PVER_L_UNIDENT 0
 #define PVER_L_ORIGPRO 1
 #define PVER_L_LEGACY1 2
@@ -29,10 +33,7 @@
 #define FREADALL_ERFAIL 2
 #define FREADALL_ELARGE 3
 #define FREADALL_ENOMEM 4
-#include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+
 size_t freadall(const char * filename, char ** dst);
 int handshake_protocol_identify(unsigned char * source, unsigned int length);
 void * int2varint(unsigned long src, void * dst);
@@ -46,6 +47,5 @@ size_t strcmp_notail(const char * str1, const char * str2, char exemptchr, short
 char * strtok_head(char * dst, char * src, char delim);
 size_t strtok_tail(char * dst, char * src, char delim, size_t length);
 void * varint2int(void * src, unsigned long * dst);
-#include "linux/basic.c"
-#endif
+
 #endif
