@@ -214,5 +214,9 @@
 	{
 		"version": 56,
 		"names": ["1.2-beta3-patch1"]
+	},
+	{
+		"version": 57,
+		"names": ["1.2-beta3-patch2"]
 	}
 ]

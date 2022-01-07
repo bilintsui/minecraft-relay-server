@@ -16,50 +16,35 @@
 
 #include "proto_modern.h"
 
-int make_message(unsigned char * source, unsigned char * target)
+size_t make_message(char * dst, const char * src)
 {
-	int size,recidx,string_length,payload_size;
-	unsigned char tmp[BUFSIZ];
-	unsigned char * ptr_tmp=tmp;
-	unsigned char * ptr_source=source;
-	unsigned char * ptr_target=target;
+	size_t size,string_length,payload_size;
+	char tmp[BUFSIZ];
+	char * ptr_tmp=tmp;
+	char * ptr_dst=dst;
 	*ptr_tmp=0;
 	ptr_tmp++;
-	string_length=strlen(source);
+	string_length=strlen(src);
 	ptr_tmp=int2varint(string_length,ptr_tmp);
-	for(recidx=0;recidx<string_length;recidx++)
-	{
-		*ptr_tmp=*ptr_source;
-		ptr_tmp++;
-		ptr_source++;
-	}
-	payload_size=ptr_tmp-tmp;
+	payload_size=ptr_tmp-tmp+string_length;
+	memcpy(ptr_tmp,src,string_length);
 	ptr_tmp=tmp;
-	ptr_target=int2varint(payload_size,ptr_target);
-	for(recidx=0;recidx<payload_size;recidx++)
-	{
-		*ptr_target=*ptr_tmp;
-		ptr_target++;
-		ptr_tmp++;
-	}
-	size=ptr_target-target;
+	ptr_dst=int2varint(payload_size,ptr_dst);
+	size=ptr_dst-dst+payload_size;
+	memcpy(ptr_dst,ptr_tmp,payload_size);
 	return size;
 }
-int make_kickreason(unsigned char * source, unsigned char * target)
+size_t make_kickreason(char * dst, const char * src)
 {
-	int size;
-	unsigned char input[BUFSIZ];
-	sprintf(input,"{\"extra\":[{\"text\":\"%s\"}],\"text\":\"\"}",source);
-	size=make_message(input,target);
-	return size;
+	char input[BUFSIZ];
+	sprintf(input,"{\"extra\":[{\"text\":\"%s\"}],\"text\":\"\"}",src);
+	return make_message(dst,input);
 }
-int make_motd(unsigned long version, unsigned char * description, unsigned char * target)
+size_t make_motd(char * dst, const char * src, mcver ver)
 {
-	int size;
-	unsigned char input[BUFSIZ];
-	sprintf(input,"{\"version\":{\"name\":\"\",\"protocol\":%ld},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},\"description\":{\"text\":\"%s\"}}",version,description);
-	size=make_message(input,target);
-	return size;
+	char input[BUFSIZ];
+	sprintf(input,"{\"version\":{\"name\":\"\",\"protocol\":%lu},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},\"description\":{\"text\":\"%s\"}}",ver,src);
+	return make_message(dst,input);
 }
 p_handshake packet_read(unsigned char * sourcepacket)
 {

@@ -36,7 +36,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 		close(socket_in);
 		return 1;
 	}
-	if(ismcproto(inbound,packlen_inbound)==0)
+	if(ismcproto(inbound)==0)
 	{
 		mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, status: reject_unidentproto\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
 		close(socket_in);
@@ -168,7 +168,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 	}
 	else if(inbound[0]==2)
 	{
-		int login_version=handshake_protocol_identify(inbound,packlen_inbound);
+		int login_version=handshake_protocol_identify(inbound);
 		if(login_version==PVER_L_LEGACY1)
 		{
 			mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, status: reject_gamerelay_oldclient\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
@@ -298,12 +298,12 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			if(inbound[inbound[0]]==1)
 			{
 				mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: motd, status: reject_motdrelay_13w41*\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
-				packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Use 13w42a or later to play!",rewrited);
+				packlen_rewrited=make_motd(rewrited,"[Proxy] Use 13w42a or later to play!",inbound_info.version);
 			}
 			else if(inbound[inbound[0]]==2)
 			{
 				mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, status: reject_gamerelay_13w41*\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
-				packlen_rewrited=make_kickreason("Proxy: Unsupported client, use 13w42a or later!",rewrited);
+				packlen_rewrited=make_kickreason(rewrited,"Proxy: Unsupported client, use 13w42a or later!");
 			}
 			send(socket_in,rewrited,packlen_rewrited,0);
 			close(socket_in);
@@ -315,12 +315,12 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			if(inbound_info.nextstate==1)
 			{
 				mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address);
-				packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Use a legit address to play!",rewrited);
+				packlen_rewrited=make_motd(rewrited,"[Proxy] Use a legit address to play!",inbound_info.version);
 			}
 			else if(inbound_info.nextstate==2)
 			{
 				mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, vhost: %s, status: reject_vhostinvalid, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,inbound_info.username);
-				packlen_rewrited=make_kickreason("Proxy: Please use a legit name to connect!",rewrited);
+				packlen_rewrited=make_kickreason(rewrited,"Proxy: Please use a legit name to connect!");
 			}
 			send(socket_in,rewrited,packlen_rewrited,0);
 			close(socket_in);
@@ -409,7 +409,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			case NET_ECONNECT:
 				if(inbound_info.nextstate==1)
 				{
-					packlen_rewrited=make_motd(inbound_info.version,"[Proxy] Server Temporary Unavailable.",rewrited);
+					packlen_rewrited=make_motd(rewrited,"[Proxy] Server Temporary Unavailable.",inbound_info.version);
 					if(mkoutbound_status==NET_ENORECORD)
 					{
 						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoresolve\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port);
@@ -424,12 +424,12 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 					if(mkoutbound_status==NET_ENORECORD)
 					{
 						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port,inbound_info.username);
-						packlen_rewrited=make_kickreason("Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.",rewrited);
+						packlen_rewrited=make_kickreason(rewrited,"Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.");
 					}
 					else if(mkoutbound_status==NET_ECONNECT)
 					{
 						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port,inbound_info.username);
-						packlen_rewrited=make_kickreason("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
+						packlen_rewrited=make_kickreason(rewrited,"Proxy(Internal): Failed on connecting to the target server, please try again later.");
 					}
 				}
 				send(socket_in,rewrited,packlen_rewrited,0);

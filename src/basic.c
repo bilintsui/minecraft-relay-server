@@ -52,69 +52,51 @@ size_t freadall(const char * filename, char ** dst)
 	*dst=result;
 	return filesize;
 }
-int handshake_protocol_identify(unsigned char * source, unsigned int length)
+int handshake_protocol_identify(const void * src)
 {
-	int protocol_version=0;
-	int semicolon_found=0;
-	int colon_found=0;
-	int i;
+	if(src==NULL)
+	{
+		return PVER_UNIDENT;
+	}
+	const unsigned char * source=(unsigned char *)src;
 	switch(source[0])
 	{
-		case 1:
-			protocol_version=PVER_L_ORIGPRO;
-			break;
-		case 2:
+		case 0x01:
+			return PVER_L_ORIGPRO;
+		case 0x02:
 			switch(source[1])
 			{
-				case 0:
-					for(i=0;i<length;i++)
+				case 0x00:
+					if(memchr(source+3,';',source[2]*2)&&memchr(source+3,':',source[2]*2))
 					{
-						if(source[i]==';')
-						{
-							semicolon_found=1;
-						}
-						if(source[i]==':')
-						{
-							colon_found=1;
-						}
-					}
-					if((semicolon_found==1)&&(colon_found==1))
-					{
-						protocol_version=PVER_L_LEGACY2;
+						return PVER_L_LEGACY2;
 					}
 					else
 					{
-						protocol_version=PVER_L_LEGACY1;
+						return PVER_L_LEGACY1;
 					}
-					break;
 				case 0x1F:
-					protocol_version=PVER_L_LEGACY3;
-					break;
+					return PVER_L_LEGACY3;
 				default:
-					protocol_version=PVER_L_LEGACY4;
-					break;
+					return PVER_L_LEGACY4;
 			}
-			break;
 		default:
 			if((source[source[0]]==1)||(source[source[0]]==2))
 			{
-				switch(source[2])
+				if(source[2])
 				{
-					case 0:
-						protocol_version=PVER_L_MODERN1;
-						break;
-					default:
-						protocol_version=PVER_L_MODERN2;
-						break;
+					return PVER_L_MODERN2;
+				}
+				else
+				{
+					return PVER_L_MODERN1;
 				}
 			}
 			else
 			{
-				protocol_version=PVER_L_UNIDENT;
+				return PVER_UNIDENT;
 			}
-			break;
 	}
-	return protocol_version;
 }
 void * int2varint(unsigned long src, void * dst)
 {
@@ -133,39 +115,49 @@ void * int2varint(unsigned long src, void * dst)
 	base[i-1]=base[i-1]&0x7F;
 	return dst+i;
 }
-int legacy_motd_protocol_identify(unsigned char * source)
+int legacy_motd_protocol_identify(const void * src)
 {
-	int proto_version=PVER_M_UNIDENT;
-	if(source[1]==0)
+	if(src==NULL)
 	{
-		proto_version=PVER_M_LEGACY1;
+		return PVER_UNIDENT;
 	}
-	else if(source[1]==1)
+	const unsigned char * source=(unsigned char *)src;
+	switch(source[1])
 	{
-		if(source[2]==0)
-		{
-			proto_version=PVER_M_LEGACY2;
-		}
-		else if(source[2]==0xFA)
-		{
-			proto_version=PVER_M_LEGACY3;
-		}
+		case 0x00:
+			return PVER_M_LEGACY1;
+		case 0x01:
+			switch(source[2])
+			{
+				case 0x00:
+					return PVER_M_LEGACY2;
+				case 0xFA:
+					return PVER_M_LEGACY3;
+				default:
+					return PVER_UNIDENT;
+			}
+		default:
+			return PVER_UNIDENT;
 	}
-	return proto_version;
 }
-int ismcproto(unsigned char * data_in, unsigned int data_length)
+int ismcproto(const char * src)
 {
-	int result=0;
-	if(data_in[0]==0xFE)
+	if(src==NULL)
 	{
-		if(legacy_motd_protocol_identify(data_in)!=PVER_M_UNIDENT)
+		return 0;
+	}
+	const unsigned char * source=(unsigned char *)src;
+	int result=0;
+	if(source[0]==0xFE)
+	{
+		if(legacy_motd_protocol_identify(src)!=PVER_UNIDENT)
 		{
 			result=1;
 		}
 	}
 	else
 	{
-		if(handshake_protocol_identify(data_in,data_length)!=PVER_L_UNIDENT)
+		if(handshake_protocol_identify(src)!=PVER_UNIDENT)
 		{
 			result=1;
 		}

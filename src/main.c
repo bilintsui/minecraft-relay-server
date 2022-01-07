@@ -23,10 +23,9 @@
 
 const char * version_str="1.2-beta3";
 const char * year_str="2020-2022";
-const short version_internal=56;
+const short version_internal=57;
 char global_buffer[BUFSIZ];
 char * cwd=NULL;
-char * execname=NULL;
 char * argoffset_configfile=NULL;
 char * configfile=NULL;
 char * configfile_full=NULL;
@@ -136,14 +135,10 @@ int main(int argc, char ** argv)
 	cwd=(char *)malloc(strlen(global_buffer)+1);
 	strcpy(cwd,global_buffer);
 	memset(global_buffer,0,strlen(global_buffer)+1);
-	strtok_tail(global_buffer,argv[0],'/',strlen(argv[0]));
-	execname=(char *)malloc(strlen(global_buffer)+1);
-	strcpy(execname,global_buffer);
-	memset(global_buffer,0,strlen(global_buffer)+1);
 	if(argc<2)
 	{
 		mksysmsg(1,"",0,255,0,headmsg);
-		mksysmsg(1,"",0,255,0,"Usage: %s %s\n",execname,helpmsg);
+		mksysmsg(1,"",0,255,0,"Usage: %s %s\n",strrchr(argv[0],'/')?strrchr(argv[0],'/')+1:argv[0],helpmsg);
 		return 22;
 	}
 	argoffset_configfile=argv[1];
@@ -214,7 +209,7 @@ int main(int argc, char ** argv)
 		else
 		{
 			mksysmsg(1,"",0,255,0,headmsg);
-			mksysmsg(1,"",0,255,0,"Error: Invalid option \"-%s\"\n\nUsage: %s %s\n",ptr_argv1,execname,helpmsg);
+			mksysmsg(1,"",0,255,0,"Error: Invalid option \"-%s\"\n\nUsage: %s %s\n",ptr_argv1,strrchr(argv[0],'/')?strrchr(argv[0],'/')+1:argv[0],helpmsg);
 			return 22;
 		}
 	}

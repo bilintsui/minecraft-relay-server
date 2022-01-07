@@ -14,16 +14,20 @@
 
 #define _MRS_MODULES_PROTO_MODREN_H_INCLUDED_
 
+#include <stddef.h>
+#include "defines.h"
+
 typedef struct
 {
-	unsigned long id_part1,version,nextstate,id_part2;
+	mcver version;
+	unsigned long id_part1,nextstate,id_part2;
 	unsigned char address[128],username[128];
 	unsigned short version_fml,port;
 } p_handshake;
 
-int make_message(unsigned char * source, unsigned char * target);
-int make_kickreason(unsigned char * source, unsigned char * target);
-int make_motd(unsigned long version, unsigned char * description, unsigned char * target);
+size_t make_message(char * dst, const char * src);
+size_t make_kickreason(char * dst, const char * src);
+size_t make_motd(char * dst, const char * src, mcver ver);
 p_handshake packet_read(unsigned char * sourcepacket);
 int packet_write(p_handshake source, unsigned char * target);
 
