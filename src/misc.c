@@ -16,9 +16,10 @@
 #include <unistd.h>
 #include "basic.h"
 #include "log.h"
-#include "proto_legacy.h"
-#include "proto_modern.h"
-#include "proto_proxy.h"
+#include "protocols/common.h"
+#include "protocols/handshake.h"
+#include "protocols/handshake_legacy.h"
+#include "protocols/proxy.h"
 
 #include "misc.h"
 
@@ -37,7 +38,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 		close(socket_in);
 		return 1;
 	}
-	if(ismcproto(inbound)==0)
+	if(protocol_identify(inbound)==PVER_UNIDENT)
 	{
 		mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, status: reject_unidentproto\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
 		close(socket_in);
@@ -45,7 +46,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 	}
 	if(inbound[0]==0xFE)
 	{
-		int motd_version=legacy_motd_protocol_identify(inbound);
+		int motd_version=protocol_identify(inbound);
 		if(motd_version==PVER_M_LEGACY3)
 		{
 			unsigned char tmp[BUFSIZ];
@@ -161,7 +162,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 		else
 		{
 			mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: motd, status: reject_motdrelay_oldclient\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
-			packlen_rewrited=make_motd_legacy(0,"Proxy: Please use direct connect.",legacy_motd_protocol_identify(inbound),rewrited);
+			packlen_rewrited=make_motd_legacy(0,"Proxy: Please use direct connect.",protocol_identify(inbound),rewrited);
 			send(socket_in,rewrited,packlen_rewrited,0);
 			close(socket_in);
 			return 5;
@@ -169,7 +170,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 	}
 	else if(inbound[0]==2)
 	{
-		int login_version=handshake_protocol_identify(inbound);
+		int login_version=protocol_identify(inbound);
 		if(login_version==PVER_L_LEGACY1)
 		{
 			mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, status: reject_gamerelay_oldclient\n",(char *)&(addrinfo_in.address),addrinfo_in.port);

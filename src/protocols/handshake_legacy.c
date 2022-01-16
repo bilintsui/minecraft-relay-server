@@ -1,5 +1,5 @@
 /*
-	proto_legacy.c: Functions for Legacy Protocol (13w39b and before) on Minecraft Relay Server
+	protocols/handshake_legacy.c: Functions for Legacy Protocol (13w39b and before) on Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
 	Minecraft Relay Server, version 1.2-beta3
@@ -13,9 +13,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "basic.h"
+#include "../basic.h"
+#include "common.h"
 
-#include "proto_legacy.h"
+#include "handshake_legacy.h"
 
 int make_message_legacy(unsigned char * source, unsigned int source_length, unsigned char * target)
 {

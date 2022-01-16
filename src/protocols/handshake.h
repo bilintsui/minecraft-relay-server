@@ -1,5 +1,5 @@
 /*
-	proto_modern.h: Header file of proto_modern.c
+	protocols/handshake.h: Header file of protocols/handshake.c
 	A component of Minecraft Relay Server.
 
 	Minecraft Relay Server, version 1.2-beta3
@@ -10,12 +10,12 @@
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
 
-#ifndef _MRS_PROTO_MODERN_H_INCLUDED_
+#ifndef _MRS_PROTOCOLS_HANDSHAKE_H_INCLUDED_
 
-#define _MRS_PROTO_MODREN_H_INCLUDED_
+#define _MRS_PROTOCOLS_HANDSHAKE_H_INCLUDED_
 
 #include <stddef.h>
-#include "defines.h"
+#include "../defines.h"
 
 typedef struct
 {

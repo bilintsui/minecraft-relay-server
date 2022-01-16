@@ -1,5 +1,5 @@
 /*
-	proto_proxy.c: Functions for HAProxy's Proxy Protocol v1 (ASCII) on Minecraft Relay Server
+	protocols/proxy.c: Functions for HAProxy's Proxy Protocol v1 (ASCII) on Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
 	Minecraft Relay Server, version 1.2-beta3
@@ -13,7 +13,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "proto_proxy.h"
+#include "proxy.h"
 
 sa_family_t protocol_proxy_getfamily(const void * src, size_t n)
 {

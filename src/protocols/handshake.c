@@ -1,5 +1,5 @@
 /*
-	proto_modern.c: Functions for Modern Protocol (13w41a and later) on Minecraft Relay Server
+	protocols/handshake.c: Functions for Modern Protocol (13w41a and later) on Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
 	Minecraft Relay Server, version 1.2-beta3
@@ -12,9 +12,9 @@
 
 #include <stdio.h>
 #include <string.h>
-#include "basic.h"
+#include "../basic.h"
 
-#include "proto_modern.h"
+#include "handshake.h"
 
 size_t make_message(char * dst, const char * src)
 {

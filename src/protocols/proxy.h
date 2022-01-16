@@ -1,5 +1,5 @@
 /*
-	proto_proxy.h: Header file of proto_proxy.c
+	protocols/proxy.h: Header file of protocols/proxy.c
 	A component of Minecraft Relay Server.
 
 	Minecraft Relay Server, version 1.2-beta3
@@ -10,13 +10,13 @@
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
 
-#ifndef _MRS_PROTO_PROXY_H_INCLUDED_
+#ifndef _MRS_PROTOCOLS_PROXY_H_INCLUDED_
 
-#define _MRS_PROTO_PROXY_H_INCLUDED_
+#define _MRS_PROTOCOLS_PROXY_H_INCLUDED_
 
 #define PROTOPROXY_PACKETMAXLEN 104
 
-#include "network.h"
+#include "../network.h"
 
 typedef struct
 {

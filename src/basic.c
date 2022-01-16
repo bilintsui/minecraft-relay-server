@@ -52,52 +52,6 @@ size_t freadall(const char * filename, char ** dst)
 	*dst=result;
 	return filesize;
 }
-int handshake_protocol_identify(const void * src)
-{
-	if(src==NULL)
-	{
-		return PVER_UNIDENT;
-	}
-	const unsigned char * source=(unsigned char *)src;
-	switch(source[0])
-	{
-		case 0x01:
-			return PVER_L_ORIGPRO;
-		case 0x02:
-			switch(source[1])
-			{
-				case 0x00:
-					if(memchr(source+3,';',source[2]*2)&&memchr(source+3,':',source[2]*2))
-					{
-						return PVER_L_LEGACY2;
-					}
-					else
-					{
-						return PVER_L_LEGACY1;
-					}
-				case 0x1F:
-					return PVER_L_LEGACY3;
-				default:
-					return PVER_L_LEGACY4;
-			}
-		default:
-			if((source[source[0]]==1)||(source[source[0]]==2))
-			{
-				if(source[2])
-				{
-					return PVER_L_MODERN2;
-				}
-				else
-				{
-					return PVER_L_MODERN1;
-				}
-			}
-			else
-			{
-				return PVER_UNIDENT;
-			}
-	}
-}
 void * int2varint(unsigned long src, void * dst)
 {
 	if(dst==NULL)
@@ -114,55 +68,6 @@ void * int2varint(unsigned long src, void * dst)
 	} while(src>0);
 	base[i-1]=base[i-1]&0x7F;
 	return dst+i;
-}
-int legacy_motd_protocol_identify(const void * src)
-{
-	if(src==NULL)
-	{
-		return PVER_UNIDENT;
-	}
-	const unsigned char * source=(unsigned char *)src;
-	switch(source[1])
-	{
-		case 0x00:
-			return PVER_M_LEGACY1;
-		case 0x01:
-			switch(source[2])
-			{
-				case 0x00:
-					return PVER_M_LEGACY2;
-				case 0xFA:
-					return PVER_M_LEGACY3;
-				default:
-					return PVER_UNIDENT;
-			}
-		default:
-			return PVER_UNIDENT;
-	}
-}
-int ismcproto(const char * src)
-{
-	if(src==NULL)
-	{
-		return 0;
-	}
-	const unsigned char * source=(unsigned char *)src;
-	int result=0;
-	if(source[0]==0xFE)
-	{
-		if(legacy_motd_protocol_identify(src)!=PVER_UNIDENT)
-		{
-			result=1;
-		}
-	}
-	else
-	{
-		if(handshake_protocol_identify(src)!=PVER_UNIDENT)
-		{
-			result=1;
-		}
-	}
-	return result;
 }
 size_t memcat(void * dst, size_t dst_size, void * src, size_t src_size)
 {

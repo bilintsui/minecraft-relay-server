@@ -218,5 +218,9 @@
 	{
 		"version": 57,
 		"names": ["1.2-beta3-patch2","1.2-beta3-patch3"]
+	},
+	{
+		"version": 58,
+		"names": ["1.2-beta3-patch4"]
 	}
 ]

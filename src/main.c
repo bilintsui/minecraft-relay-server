@@ -17,13 +17,12 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include "basic.h"
 #include "log.h"
 #include "misc.h"
 
 const char * version_str="1.2-beta3";
 const char * year_str="2020-2022";
-const short version_internal=57;
+const short version_internal=58;
 char global_buffer[BUFSIZ];
 char * cwd=NULL;
 char * argoffset_configfile=NULL;

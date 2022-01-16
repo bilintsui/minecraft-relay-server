@@ -1,5 +1,5 @@
 /*
-	proto_legacy.h: Header file of proto_legacy.c
+	protocols/handshake_legacy.h: Header file of protocols/handshake_legacy.c
 	A component of Minecraft Relay Server.
 
 	Minecraft Relay Server, version 1.2-beta3
@@ -10,9 +10,9 @@
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
 
-#ifndef _MRS_PROTO_LEGACY_H_INCLUDED_
+#ifndef _MRS_PROTOCOLS_HANDSHAKE_LEGACY_H_INCLUDED_
 
-#define _MRS_PROTO_LEGACY_H_INCLUDED_
+#define _MRS_PROTOCOLS_HANDSHAKE_LEGACY_H_INCLUDED_
 
 typedef struct
 {
