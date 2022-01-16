@@ -10,9 +10,9 @@
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
 
-#ifndef _MRS_MODULES_BASIC_H_INCLUDED_
+#ifndef _MRS_BASIC_H_INCLUDED_
 
-#define _MRS_MODULES_BASIC_H_INCLUDED_
+#define _MRS_BASIC_H_INCLUDED_
 
 #include <stddef.h>
 

@@ -10,9 +10,9 @@
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
 
-#ifndef _MRS_MODULES_LOG_H_INCLUDED_
+#ifndef _MRS_LOG_H_INCLUDED_
 
-#define _MRS_MODULES_LOG_H_INCLUDED_
+#define _MRS_LOG_H_INCLUDED_
 
 void gettime(unsigned char * target);
 int mksysmsg(unsigned short noprefix, char * logfile, unsigned short runmode, unsigned short maxlevel, unsigned short msglevel, char * format, ...);

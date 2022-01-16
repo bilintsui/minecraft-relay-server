@@ -18,18 +18,19 @@
 #include "log.h"
 #include "proto_legacy.h"
 #include "proto_modern.h"
+#include "proto_proxy.h"
 
 #include "misc.h"
 
 int backbone(int socket_in, int * socket_out, char * logfile, unsigned short runmode, conf * conf_in, net_addrbundle addrinfo_in, short netpriority_enabled)
 {
-	unsigned char inbound[BUFSIZ],outbound[BUFSIZ],rewrited[BUFSIZ],pheader[105];
+	unsigned char inbound[BUFSIZ],outbound[BUFSIZ],rewrited[BUFSIZ],pheader[PROTOPROXY_PACKETMAXLEN+1];
 	int packlen_inbound,packlen_outbound,packlen_rewrited,packlen_pheader;
 	struct sockaddr_in addr_outbound;
 	memset(inbound,0,BUFSIZ);
 	memset(outbound,0,BUFSIZ);
 	memset(rewrited,0,BUFSIZ);
-	memset(pheader,0,105);
+	memset(pheader,0,PROTOPROXY_PACKETMAXLEN+1);
 	packlen_inbound=recv(socket_in,inbound,BUFSIZ,0);
 	if(packlen_inbound==0)
 	{
