@@ -24,36 +24,36 @@ int protocol_identify(const char * src)
 	switch(source[0])
 	{
 		case 0x01:
-			return PVER_L_ORIGPRO;
+			return PVER_ORIGPRO;
 		case 0x02:
 			switch(source[1])
 			{
 				case 0x00:
 					if(memchr(source+3,';',source[2]*2)&&memchr(source+3,':',source[2]*2))
 					{
-						return PVER_L_LEGACY2;
+						return PVER_LEGACYL2;
 					}
 					else
 					{
-						return PVER_L_LEGACY1;
+						return PVER_LEGACYL1;
 					}
 				case 0x1F:
-					return PVER_L_LEGACY3;
+					return PVER_LEGACYL3;
 				default:
-					return PVER_L_LEGACY4;
+					return PVER_LEGACYL4;
 			}
 		case 0xFE:
 			switch(source[1])
 			{
 				case 0x00:
-					return PVER_M_LEGACY1;
+					return PVER_LEGACYM1;
 				case 0x01:
 					switch(source[2])
 					{
 						case 0x00:
-							return PVER_M_LEGACY2;
+							return PVER_LEGACYM2;
 						case 0xFA:
-							return PVER_M_LEGACY3;
+							return PVER_LEGACYM3;
 						default:
 							return PVER_UNIDENT;
 					}
@@ -65,11 +65,11 @@ int protocol_identify(const char * src)
 			{
 				if(source[2])
 				{
-					return PVER_L_MODERN2;
+					return PVER_MODERN2;
 				}
 				else
 				{
-					return PVER_L_MODERN1;
+					return PVER_MODERN1;
 				}
 			}
 			else

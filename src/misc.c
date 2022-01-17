@@ -46,27 +46,17 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 	}
 	if(inbound[0]==0xFE)
 	{
-		int motd_version=protocol_identify(inbound);
-		if(motd_version==PVER_M_LEGACY3)
+		while(packlen_inbound<0x20)
 		{
-			unsigned char tmp[BUFSIZ];
-			int packlen_tmp;
-			int packet_should_length=0x20;
-			int is_host_found=0;
-			while(packlen_inbound<packet_should_length)
-			{
-				memset(tmp,0,BUFSIZ);
-				packlen_tmp=recv(socket_in,tmp,BUFSIZ,MSG_DONTWAIT);
-				if(packlen_tmp>0)
-				{
-					packlen_inbound=memcat(inbound,packlen_inbound,tmp,packlen_tmp);
-				}
-				if((inbound[0x1F]!=0)&&(is_host_found==0))
-				{
-					is_host_found=1;
-					packet_should_length=packet_should_length+inbound[0x1F]*2+4;
-				}
-			}
+			packlen_inbound=packlen_inbound+recv(socket_in,inbound+packlen_inbound,BUFSIZ-packlen_inbound,0);
+		}
+		while(packlen_inbound<(0x20+inbound[0x1F]*2+4))
+		{
+			packlen_inbound=packlen_inbound+recv(socket_in,inbound+packlen_inbound,BUFSIZ-packlen_inbound,0);
+		}
+		int motd_version=protocol_identify(inbound);
+		if(motd_version==PVER_LEGACYM3)
+		{
 			p_motd_legacy inbound_info=packet_read_legacy_motd(inbound,packlen_inbound);
 			conf_proxy proxyinfo=config_proxy_search(conf_in,inbound_info.address);
 			if(proxyinfo.valid==0)
@@ -171,7 +161,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 	else if(inbound[0]==2)
 	{
 		int login_version=protocol_identify(inbound);
-		if(login_version==PVER_L_LEGACY1)
+		if(login_version==PVER_LEGACYL1)
 		{
 			mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, status: reject_gamerelay_oldclient\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
 			packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 12w04a or later!",rewrited);
@@ -179,7 +169,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			close(socket_in);
 			return 5;
 		}
-		else if(login_version==PVER_L_LEGACY3)
+		else if(login_version==PVER_LEGACYL3)
 		{
 			mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, status: reject_gamerelay_12w17a\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
 			packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 12w18a or later!",rewrited);
@@ -187,7 +177,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			close(socket_in);
 			return 5;
 		}
-		else if((login_version==PVER_L_LEGACY2)||(login_version==PVER_L_LEGACY4))
+		else if((login_version==PVER_LEGACYL2)||(login_version==PVER_LEGACYL4))
 		{
 			p_login_legacy inbound_info=packet_read_legacy_login(inbound,packlen_inbound,login_version);
 			conf_proxy proxyinfo=config_proxy_search(conf_in,inbound_info.address);
@@ -287,12 +277,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 	{
 		if((inbound[packlen_inbound-1]==1)||(inbound[packlen_inbound-1]==2))
 		{
-			int packlen_inbound_part1,packlen_inbound_part2;
-			unsigned char inbound_part2[BUFSIZ];
-			memset(inbound_part2,0,BUFSIZ);
-			packlen_inbound_part1=packlen_inbound;
-			packlen_inbound_part2=recv(socket_in,inbound_part2,BUFSIZ,0);
-			packlen_inbound=memcat(inbound,packlen_inbound_part1,inbound_part2,packlen_inbound_part2);
+			packlen_inbound=packlen_inbound+recv(socket_in,inbound+packlen_inbound,BUFSIZ-packlen_inbound,0);
 		}
 		p_handshake inbound_info=packet_read(inbound);
 		if(inbound_info.version==0)

@@ -15,16 +15,16 @@
 #define _MRS_PROTOCOLS_COMMON_H_INCLUDED_
 
 #define PVER_UNIDENT 0
-#define PVER_L_ORIGPRO 1
-#define PVER_L_LEGACY1 2
-#define PVER_L_LEGACY2 3
-#define PVER_L_LEGACY3 4
-#define PVER_L_LEGACY4 5
-#define PVER_L_MODERN1 6
-#define PVER_L_MODERN2 7
-#define PVER_M_LEGACY1 8
-#define PVER_M_LEGACY2 9
-#define PVER_M_LEGACY3 10
+#define PVER_ORIGPRO 1
+#define PVER_LEGACYL1 2
+#define PVER_LEGACYL2 3
+#define PVER_LEGACYL3 4
+#define PVER_LEGACYL4 5
+#define PVER_LEGACYM1 6
+#define PVER_LEGACYM2 7
+#define PVER_LEGACYM3 8
+#define PVER_MODERN1 9
+#define PVER_MODERN2 10
 
 int protocol_identify(const char * src);
 

@@ -63,15 +63,15 @@ int make_motd_legacy(unsigned int version, unsigned char * description, int motd
 	memset(version_str,0,8);
 	switch(motd_version)
 	{
-		case PVER_M_LEGACY1:
+		case PVER_LEGACYM1:
 			strcpy(input,description);
 			input_length=memcat(input,strlen(input),"\xa7",1);
 			input_length=memcat(input,input_length,"0",1);
 			input_length=memcat(input,input_length,"\xa7",1);
 			input_length=memcat(input,input_length,"0",1);
 			break;
-		case PVER_M_LEGACY2:
-		case PVER_M_LEGACY3:
+		case PVER_LEGACYM2:
+		case PVER_LEGACYM3:
 			sprintf(version_str,"%d",version);
 			input[0]=0xA7;
 			input_length=memcat(input,1,"1\0",2);
@@ -98,7 +98,7 @@ p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int source
 	memset(result.username,0,128);
 	memset(result.address,0,128);
 	source_length=packetshrink(sourcepacket,sourcepacket_length,source);
-	if(login_version==PVER_L_LEGACY2)
+	if(login_version==PVER_LEGACYL2)
 	{
 		unsigned char login_field[512];
 		unsigned char * ptr_login_field=login_field;
@@ -117,7 +117,7 @@ p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int source
 	else
 	{
 		unsigned int username_length,address_length;
-		if(login_version==PVER_L_LEGACY1)
+		if(login_version==PVER_LEGACYL1)
 		{
 			ptr_source=ptr_source+1;
 		}
@@ -133,7 +133,7 @@ p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int source
 			result.username[recidx]=*ptr_source;
 			ptr_source++;
 		}
-		if(login_version==PVER_L_LEGACY4)
+		if(login_version==PVER_LEGACYL4)
 		{
 			address_length=*ptr_source;
 			ptr_source++;
@@ -181,7 +181,7 @@ int packet_write_legacy_login(p_login_legacy source, unsigned char * target)
 	memset(tmp,0,BUFSIZ);
 	target[0]=2;
 	size=1;
-	if(source.proto_ver==PVER_L_LEGACY2)
+	if(source.proto_ver==PVER_LEGACYL2)
 	{
 		unsigned char login_field[512],login_field_full[512];
 		memset(login_field,0,512);
@@ -195,7 +195,7 @@ int packet_write_legacy_login(p_login_legacy source, unsigned char * target)
 	}
 	else
 	{
-		if(source.proto_ver!=PVER_L_LEGACY1)
+		if(source.proto_ver!=PVER_LEGACYL1)
 		{
 			target[1]=source.version;
 			size=2;
@@ -206,7 +206,7 @@ int packet_write_legacy_login(p_login_legacy source, unsigned char * target)
 		username_length=memcat(username,1,source.username,username_length);
 		tmp_length=packetexpand(username,username_length,tmp);
 		size=memcat(target,size,tmp,tmp_length);
-		if(source.proto_ver==PVER_L_LEGACY4)
+		if(source.proto_ver==PVER_LEGACYL4)
 		{
 			unsigned char address[128];
 			unsigned int address_length=strlen(source.address);
