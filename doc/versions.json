@@ -226,5 +226,9 @@
 	{
 		"version": 59,
 		"names": ["1.2-beta3-patch5"]
+	},
+	{
+		"version": 60,
+		"names": ["1.2-beta3-patch6"]
 	}
 ]
