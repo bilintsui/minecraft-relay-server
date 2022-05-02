@@ -14,21 +14,23 @@
 
 #define _MRS_PROTOCOLS_HANDSHAKE_H_INCLUDED_
 
-#include <stddef.h>
+#include <netinet/in.h>
 #include "../defines.h"
 
 typedef struct
 {
-	mcver version;
-	unsigned long id_part1,nextstate,id_part2;
-	unsigned char address[128],username[128];
-	unsigned short version_fml,port;
+	varint_l id_part1,id_part2,nextstate,version;
+	void * address,* signature_data,* username;
+	size_t signature_data_length;
+	unsigned short version_fml;
+	in_port_t port;
 } p_handshake;
 
 size_t make_message(char * dst, const char * src);
 size_t make_kickreason(char * dst, const char * src);
-size_t make_motd(char * dst, const char * src, mcver ver);
-p_handshake packet_read(unsigned char * sourcepacket);
-int packet_write(p_handshake source, unsigned char * target);
+size_t make_motd(char * dst, const char * src, varint_l ver);
+p_handshake packet_read(void * sourcepacket);
+size_t packet_write(p_handshake source, void * target);
+void packet_destroy(p_handshake object);
 
 #endif

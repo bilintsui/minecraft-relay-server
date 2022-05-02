@@ -15,6 +15,7 @@
 #define _MRS_CONFIG_H_INCLUDED_
 
 #include <cjson/cJSON.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 
 #define CONF_EARGNULL 1
@@ -43,14 +44,14 @@ typedef struct
 	struct
 	{
 		char * address;
-		u_int16_t port;
+		in_port_t port;
 	} listen;
 	cJSON * proxy;
 } conf;
 typedef struct
 {
 	char * address;
-	u_int16_t port;
+	in_port_t port;
 	short valid,srvenabled,rewrite,pheader;
 } conf_proxy;
 

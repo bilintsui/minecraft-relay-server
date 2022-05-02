@@ -52,7 +52,7 @@ size_t freadall(const char * filename, char ** dst)
 	*dst=result;
 	return filesize;
 }
-void * int2varint(unsigned long src, void * dst)
+void * int2varint(varint_l src, void * dst)
 {
 	if(dst==NULL)
 	{
@@ -213,7 +213,7 @@ size_t strtok_tail(char * dst, char * src, char delim, size_t length)
 	free(buffer);
 	return ptr_delim-buffer;
 }
-void * varint2int(void * src, unsigned long * dst)
+void * varint2int(void * src, varint_l * dst)
 {
 	if(src==NULL)
 	{

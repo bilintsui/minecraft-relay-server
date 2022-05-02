@@ -11,6 +11,7 @@
 */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "../basic.h"
 
@@ -40,34 +41,38 @@ size_t make_kickreason(char * dst, const char * src)
 	sprintf(input,"{\"extra\":[{\"text\":\"%s\"}],\"text\":\"\"}",src);
 	return make_message(dst,input);
 }
-size_t make_motd(char * dst, const char * src, mcver ver)
+size_t make_motd(char * dst, const char * src, varint_l ver)
 {
 	char input[BUFSIZ];
 	sprintf(input,"{\"version\":{\"name\":\"\",\"protocol\":%lu},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},\"description\":{\"text\":\"%s\"}}",ver,src);
 	return make_message(dst,input);
 }
-p_handshake packet_read(unsigned char * sourcepacket)
+p_handshake packet_read(void * sourcepacket)
 {
 	p_handshake result;
-	unsigned long size_part1,address_length,address_length_pure,size_part2,username_length;
-	unsigned char * address_extra_start;
-	memset(result.address,0,128);
-	memset(result.username,0,128);
+	in_port_t port_netorder=0;
+	void * address_extra_start, * part2_start;
+	size_t address_length,address_length_pure,size_part1,size_part2,username_length;
 	sourcepacket=varint2int(sourcepacket,&size_part1);
 	sourcepacket=varint2int(sourcepacket,&result.id_part1);
 	sourcepacket=varint2int(sourcepacket,&result.version);
 	sourcepacket=varint2int(sourcepacket,&address_length);
-	memcat(result.address,0,sourcepacket,address_length);
+	result.address=calloc(1,address_length+1);
+	memcpy(result.address,sourcepacket,address_length);
 	address_length_pure=strlen(result.address);
 	if(address_length!=address_length_pure)
 	{
-		address_extra_start=sourcepacket+address_length_pure+1;
-		if(strcmp(address_extra_start,"FML")==0)
+		address_extra_start=sourcepacket+address_length_pure;
+		if(memcmp(address_extra_start,"\0FML\0",5)==0)
 		{
+			memset(address_extra_start,0,5);
+			result.address=realloc(result.address,address_length_pure+1);
 			result.version_fml=1;
 		}
-		else if(strcmp(address_extra_start,"FML2")==0)
+		else if(memcmp(address_extra_start,"\0FML2\0",6)==0)
 		{
+			memset(address_extra_start,0,6);
+			result.address=realloc(result.address,address_length_pure+1);
 			result.version_fml=2;
 		}
 	}
@@ -76,43 +81,65 @@ p_handshake packet_read(unsigned char * sourcepacket)
 		result.version_fml=0;
 	}
 	sourcepacket=sourcepacket+address_length;
-	result.port=sourcepacket[0]*256+sourcepacket[1];
-	sourcepacket=sourcepacket+2;
+	memcpy(&port_netorder,sourcepacket,sizeof(port_netorder));
+	result.port=ntohs(port_netorder);
+	sourcepacket=sourcepacket+sizeof(port_netorder);
 	sourcepacket=varint2int(sourcepacket,&result.nextstate);
-	sourcepacket=varint2int(sourcepacket,&size_part2);
-	sourcepacket=varint2int(sourcepacket,&result.id_part2);
-	sourcepacket=varint2int(sourcepacket,&username_length);
-	memcat(result.username,0,sourcepacket,username_length);
+	if(result.nextstate==2)
+	{
+		sourcepacket=varint2int(sourcepacket,&size_part2);
+		part2_start=sourcepacket;
+		sourcepacket=varint2int(sourcepacket,&result.id_part2);
+		sourcepacket=varint2int(sourcepacket,&username_length);
+		result.username=calloc(1,username_length+1);
+		memcpy(result.username,sourcepacket,username_length);
+		sourcepacket=sourcepacket+username_length;
+		result.signature_data_length=size_part2-(sourcepacket-part2_start);
+		sourcepacket=varint2int(sourcepacket,NULL);
+		if(result.signature_data_length)
+		{
+			result.signature_data_length--;
+			result.signature_data=malloc(result.signature_data_length);
+			memcpy(result.signature_data,sourcepacket,result.signature_data_length);
+			sourcepacket=sourcepacket+result.signature_data_length;
+		}
+	}
 	return result;
 }
-int packet_write(p_handshake source, unsigned char * target)
+size_t packet_write(p_handshake source, void * target)
 {
-	int size;
-	unsigned long address_length,size_part1,username_length,size_part2;
-	unsigned char part1[512],part2[512],address[128];
-	unsigned char * ptr_target=target;
-	unsigned char * ptr_part1=part1;
-	unsigned char * ptr_part2=part2;
-	memset(part1,0,512);
-	memset(part2,0,512);
-	memset(address,0,128);
+	in_port_t port_netorder=0;
+	size_t address_length,address_length_pure,size,size_part1,size_part2,username_length;
+	void * part1=malloc(BUFSIZ);
+	void * part2=malloc(BUFSIZ);
+	void * ptr_target=target;
+	void * ptr_part1=part1;
+	void * ptr_part2=part2;
 	ptr_part1=int2varint(source.id_part1,ptr_part1);
 	ptr_part1=int2varint(source.version,ptr_part1);
-	address_length=memcat(address,0,source.address,strlen(source.address));
+	address_length_pure=strlen(source.address);
 	if(source.version_fml==1)
 	{
-		address_length=memcat(address,address_length,"\0FML\0",5);
+		address_length=address_length_pure+5;
 	}
 	else if(source.version_fml==2)
 	{
-		address_length=memcat(address,address_length,"\0FML2\0",6);
+		address_length=address_length_pure+6;
 	}
 	ptr_part1=int2varint(address_length,ptr_part1);
-	memcat(ptr_part1,0,address,address_length);
+	memcpy(ptr_part1,source.address,address_length_pure);
+	if(source.version_fml==1)
+	{
+		memcpy(ptr_part1+address_length_pure,"\0FML\0",5);
+	}
+	else if(source.version_fml==2)
+	{
+		memcpy(ptr_part1+address_length_pure,"\0FML2\0",6);
+	}
 	ptr_part1=ptr_part1+address_length;
-	ptr_part1[0]=source.port/256;
-	ptr_part1[1]=source.port-ptr_part1[0]*256;
-	ptr_part1=ptr_part1+2;
+	port_netorder=htons(source.port);
+	memcpy(ptr_part1,&port_netorder,sizeof(port_netorder));
+	ptr_part1=ptr_part1+sizeof(port_netorder);
 	ptr_part1=int2varint(source.nextstate,ptr_part1);
 	size_part1=ptr_part1-part1;
 	ptr_part2=int2varint(source.id_part2,ptr_part2);
@@ -120,16 +147,43 @@ int packet_write(p_handshake source, unsigned char * target)
 	{
 		username_length=strlen(source.username);
 		ptr_part2=int2varint(username_length,ptr_part2);
-		memcat(ptr_part2,0,source.username,username_length);
+		memcpy(ptr_part2,source.username,username_length);
 		ptr_part2=ptr_part2+username_length;
+		if(source.signature_data_length)
+		{
+			memset(ptr_part2,1,1);
+			ptr_part2++;
+			memcpy(ptr_part2,source.signature_data,source.signature_data_length);
+			ptr_part2=ptr_part2+source.signature_data_length;
+		}
 	}
 	size_part2=ptr_part2-part2;
 	ptr_target=int2varint(size_part1,ptr_target);
-	memcat(ptr_target,0,part1,size_part1);
+	memcpy(ptr_target,part1,size_part1);
 	ptr_target=ptr_target+size_part1;
 	ptr_target=int2varint(size_part2,ptr_target);
-	memcat(ptr_target,0,part2,size_part2);
+	memcpy(ptr_target,part2,size_part2);
 	ptr_target=ptr_target+size_part2;
 	size=ptr_target-target;
+	free(part1);
+	free(part2);
 	return size;
+}
+void packet_destroy(p_handshake object)
+{
+	if(object.address!=NULL)
+	{
+		free(object.address);
+		object.address=NULL;
+	}
+	if(object.signature_data!=NULL)
+	{
+		free(object.signature_data);
+		object.signature_data=NULL;
+	}
+	if(object.username!=NULL)
+	{
+		free(object.username);
+		object.username=NULL;
+	}
 }

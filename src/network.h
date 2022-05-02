@@ -61,7 +61,7 @@ net_addrp net_ntop(sa_family_t family, void * src, short v6addition);
 int net_relay(int socket_in, int socket_out);
 void * net_resolve(char * hostname, sa_family_t family);
 net_addr net_resolve_dual(char * hostname, sa_family_t primary_family, short dual);
-int net_socket(short action, sa_family_t family, void * address, u_int16_t port, short reuseaddr);
+int net_socket(short action, sa_family_t family, void * address, in_port_t port, short reuseaddr);
 int net_srvresolve(char * query_name, net_srvrecord * target);
 
 #endif

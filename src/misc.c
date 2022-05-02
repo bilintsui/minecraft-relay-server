@@ -293,6 +293,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 				packlen_rewrited=make_kickreason(rewrited,"Proxy: Unsupported client, use 13w42a or later!");
 			}
 			send(socket_in,rewrited,packlen_rewrited,0);
+			packet_destroy(inbound_info);
 			close(socket_in);
 			return 5;
 		}
@@ -310,6 +311,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 				packlen_rewrited=make_kickreason(rewrited,"Proxy: Please use a legit name to connect!");
 			}
 			send(socket_in,rewrited,packlen_rewrited,0);
+			packet_destroy(inbound_info);
 			close(socket_in);
 			return 3;
 		}
@@ -381,6 +383,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 				}
 				if(proxyinfo.rewrite==1)
 				{
+					inbound_info.address=realloc(inbound_info.address,strlen(proxyinfo.address)+1);
 					strcpy(inbound_info.address,proxyinfo.address);
 					inbound_info.port=proxyinfo.port;
 					packlen_rewrited=packet_write(inbound_info,rewrited);
@@ -391,6 +394,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 					send(*socket_out,inbound,packlen_inbound,0);
 				}
 				config_proxy_search_destroy(&proxyinfo);
+				packet_destroy(inbound_info);
 				return 0;
 			case NET_ENORECORD:
 			case NET_ECONNECT:
@@ -422,6 +426,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 				send(socket_in,rewrited,packlen_rewrited,0);
 				close(socket_in);
 				config_proxy_search_destroy(&proxyinfo);
+				packet_destroy(inbound_info);
 				return 4;
 		}
 	}

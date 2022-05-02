@@ -169,7 +169,7 @@ net_addr net_resolve_dual(char * hostname, sa_family_t primary_family, short dua
 	result.err=errno;
 	return result;
 }
-int net_socket(short action, sa_family_t family, void * address, u_int16_t port, short reuseaddr)
+int net_socket(short action, sa_family_t family, void * address, in_port_t port, short reuseaddr)
 {
 	if((action!=NETSOCK_BIND)&&(action!=NETSOCK_CONN))
 	{

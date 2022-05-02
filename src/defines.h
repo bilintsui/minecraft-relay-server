@@ -14,6 +14,6 @@
 
 #define _MRS_DEFINES_H_INCLUDED_
 
-typedef unsigned long mcver;
+typedef unsigned long varint_l;
 
 #endif

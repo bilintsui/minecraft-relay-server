@@ -15,6 +15,7 @@
 #define _MRS_BASIC_H_INCLUDED_
 
 #include <stddef.h>
+#include "defines.h"
 
 #define FREADALL_SLIMIT 5242880
 #define FREADALL_EINVAL 1
@@ -23,7 +24,7 @@
 #define FREADALL_ENOMEM 4
 
 size_t freadall(const char * filename, char ** dst);
-void * int2varint(unsigned long src, void * dst);
+void * int2varint(varint_l src, void * dst);
 size_t memcat(void * dst, size_t dst_size, void * src, size_t src_size);
 int packetexpand(unsigned char * source, int source_length, unsigned char * target);
 int packetshrink(unsigned char * source, int source_length, unsigned char * target);
@@ -31,6 +32,6 @@ size_t strlen_notail(const char * src, char exemptchr);
 size_t strcmp_notail(const char * str1, const char * str2, char exemptchr, short case_insensitive);
 char * strtok_head(char * dst, char * src, char delim);
 size_t strtok_tail(char * dst, char * src, char delim, size_t length);
-void * varint2int(void * src, unsigned long * dst);
+void * varint2int(void * src, varint_l * dst);
 
 #endif
