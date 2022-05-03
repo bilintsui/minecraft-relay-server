@@ -108,8 +108,8 @@ p_handshake packet_read(void * sourcepacket)
 }
 size_t packet_write(p_handshake source, void * target)
 {
-	in_port_t port_netorder=0;
 	size_t address_length,address_length_pure,size,size_part1,size_part2,username_length;
+	in_port_t port_netorder=0;
 	void * part1=malloc(BUFSIZ);
 	void * part2=malloc(BUFSIZ);
 	void * ptr_target=target;
@@ -138,6 +138,7 @@ size_t packet_write(p_handshake source, void * target)
 	}
 	ptr_part1=ptr_part1+address_length;
 	port_netorder=htons(source.port);
+	in_port_t * ptr_port=ptr_part1;
 	memcpy(ptr_part1,&port_netorder,sizeof(port_netorder));
 	ptr_part1=ptr_part1+sizeof(port_netorder);
 	ptr_part1=int2varint(source.nextstate,ptr_part1);

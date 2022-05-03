@@ -10,6 +10,7 @@
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
 
+#include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,74 +19,60 @@
 
 #include "handshake_legacy.h"
 
-int make_message_legacy(unsigned char * source, unsigned int source_length, unsigned char * target)
+size_t make_message_legacy(void * dst, void * src, size_t n)
 {
-	int size,recidx,string_length;
-	unsigned char tmp[256];
-	unsigned char * ptr_tmp=tmp;
-	unsigned char * ptr_source=source;
-	unsigned char * ptr_target=target;
-	for(recidx=0;recidx<source_length;recidx++)
+	void * tmp=malloc(BUFSIZ);
+	u_int8_t * ptr_src=src;
+	u_int16_t * ptr_tmp=tmp;
+	for(size_t i=0;i<n;i++)
 	{
-		*ptr_tmp=0;
-		ptr_tmp++;
-		*ptr_tmp=*ptr_source;
-		ptr_tmp++;
-		ptr_source++;
-	}
-	string_length=ptr_tmp-tmp;
-	ptr_tmp=tmp;
-	ptr_target[0]=0xFF;
-	ptr_target[1]=0;
-	ptr_target[2]=ptr_source-source;
-	ptr_target=ptr_target+3;
-	for(recidx=0;recidx<string_length;recidx++)
-	{
-		*ptr_target=*ptr_tmp;
-		ptr_target++;
+		*ptr_tmp=htons(*ptr_src);
+		ptr_src++;
 		ptr_tmp++;
 	}
-	size=ptr_target-target;
-	ptr_target=target;
-	return size;
+	memset(dst,0xFF,1);
+	u_int16_t * ptr_dst=dst+1;
+	*ptr_dst=htons(n);
+	ptr_dst++;
+	size_t tmp_length=((void *)ptr_tmp)-tmp;
+	memcpy(ptr_dst,tmp,tmp_length);
+	size_t dst_length=((void *)ptr_dst-dst)+tmp_length;
+	free(tmp);
+	return dst_length;
 }
-int make_kickreason_legacy(unsigned char * source, unsigned char * target)
+size_t make_kickreason_legacy(void * dst, void * src)
 {
-	int size=make_message_legacy(source,strlen(source),target);
-	return size;
+	return make_message_legacy(dst,src,strlen(src));
 }
-int make_motd_legacy(unsigned int version, unsigned char * description, int motd_version, unsigned char * target)
+size_t make_motd_legacy(void * dst, void * src, int motd_version, unsigned int version)
 {
-	int size,input_length;
-	unsigned char input[BUFSIZ];
-	unsigned char version_str[8];
-	memset(input,0,BUFSIZ);
-	memset(version_str,0,8);
+	void * tmp=malloc(BUFSIZ);
+	size_t tmp_length=0;
 	switch(motd_version)
 	{
 		case PVER_LEGACYM1:
-			strcpy(input,description);
-			input_length=memcat(input,strlen(input),"\xa7",1);
-			input_length=memcat(input,input_length,"0",1);
-			input_length=memcat(input,input_length,"\xa7",1);
-			input_length=memcat(input,input_length,"0",1);
+			strcpy(tmp,src);
+			tmp_length=memcat(tmp,strlen(tmp),"\xA7",1);
+			tmp_length=memcat(tmp,tmp_length,"0",1);
+			tmp_length=memcat(tmp,tmp_length,"\xA7",1);
+			tmp_length=memcat(tmp,tmp_length,"0",1);
 			break;
 		case PVER_LEGACYM2:
 		case PVER_LEGACYM3:
-			sprintf(version_str,"%d",version);
-			input[0]=0xA7;
-			input_length=memcat(input,1,"1\0",2);
-			input_length=memcat(input,input_length,version_str,strlen(version_str)+1);
-			input_length=memcat(input,input_length,"",1);
-			input_length=memcat(input,input_length,description,strlen(description)+1);
-			input_length=memcat(input,input_length,"0\0",2);
-			input_length=memcat(input,input_length,"0",1);
+			memset(tmp,0xA7,1);
+			tmp_length=memcat(tmp,1,"1\0",2);
+			tmp_length=tmp_length+sprintf(tmp+tmp_length,"%d",version)+1;
+			tmp_length=memcat(tmp,tmp_length,"",1);
+			tmp_length=memcat(tmp,tmp_length,src,strlen(src)+1);
+			tmp_length=memcat(tmp,tmp_length,"0\0",2);
+			tmp_length=memcat(tmp,tmp_length,"0",1);
 			break;
 		default:
 			break;
 	}
-	size=make_message_legacy(input,input_length,target);
-	return size;
+	size_t dst_length=make_message_legacy(dst,tmp,tmp_length);
+	free(tmp);
+	return dst_length;
 }
 p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int sourcepacket_length, int login_version)
 {

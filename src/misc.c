@@ -35,8 +35,55 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 	packlen_inbound=recv(socket_in,inbound,BUFSIZ,0);
 	if(packlen_inbound==0)
 	{
+		mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, status: abort_init\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
 		close(socket_in);
 		return 1;
+	}
+	size_t packlen_inbound_append=0;
+	switch(inbound[0])
+	{
+		case 0xFE:
+			if(packlen_inbound>2)
+			{
+				while(packlen_inbound<0x20)
+				{
+					packlen_inbound_append=packlen_inbound+recv(socket_in,inbound+packlen_inbound,BUFSIZ-packlen_inbound,0);
+					if(packlen_inbound_append==0)
+					{
+						mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, status: abort_init\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
+						close(socket_in);
+						return 1;
+					}
+					packlen_inbound=packlen_inbound+packlen_inbound_append;
+				}
+				while(packlen_inbound<(0x20+inbound[0x1F]*2+4))
+				{
+					packlen_inbound_append=packlen_inbound+recv(socket_in,inbound+packlen_inbound,BUFSIZ-packlen_inbound,0);
+					if(packlen_inbound_append==0)
+					{
+						mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, status: abort_init\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
+						close(socket_in);
+						return 1;
+					}
+					packlen_inbound=packlen_inbound+packlen_inbound_append;
+				}
+			}
+			break;
+		case 0x02:
+			break;
+		default:
+			if((inbound[packlen_inbound-1]==1)||(inbound[packlen_inbound-1]==2))
+			{
+				packlen_inbound_append=packlen_inbound+recv(socket_in,inbound+packlen_inbound,BUFSIZ-packlen_inbound,0);
+				if(packlen_inbound_append==0)
+				{
+					mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, status: abort_init\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
+					close(socket_in);
+					return 1;
+				}
+				packlen_inbound=packlen_inbound+packlen_inbound_append;
+			}
+			break;
 	}
 	if(protocol_identify(inbound)==PVER_UNIDENT)
 	{
@@ -46,14 +93,6 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 	}
 	if(inbound[0]==0xFE)
 	{
-		while(packlen_inbound<0x20)
-		{
-			packlen_inbound=packlen_inbound+recv(socket_in,inbound+packlen_inbound,BUFSIZ-packlen_inbound,0);
-		}
-		while(packlen_inbound<(0x20+inbound[0x1F]*2+4))
-		{
-			packlen_inbound=packlen_inbound+recv(socket_in,inbound+packlen_inbound,BUFSIZ-packlen_inbound,0);
-		}
 		int motd_version=protocol_identify(inbound);
 		if(motd_version==PVER_LEGACYM3)
 		{
@@ -62,7 +101,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			if(proxyinfo.valid==0)
 			{
 				mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address);
-				packlen_rewrited=make_motd_legacy(inbound_info.version,"[Proxy] Use a legit address to play!",motd_version,rewrited);
+				packlen_rewrited=make_motd_legacy(rewrited,"[Proxy] Use a legit address to play!",motd_version,inbound_info.version);
 				send(socket_in,rewrited,packlen_rewrited,0);
 				close(socket_in);
 				return 3;
@@ -142,7 +181,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 					{
 						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoconnect\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port);
 					}
-					packlen_rewrited=make_motd_legacy(inbound_info.version,"[Proxy] Server Temporary Unavailable.",motd_version,rewrited);
+					packlen_rewrited=make_motd_legacy(rewrited,"[Proxy] Server Temporary Unavailable.",motd_version,inbound_info.version);
 					send(socket_in,rewrited,packlen_rewrited,0);
 					close(socket_in);
 					config_proxy_search_destroy(&proxyinfo);
@@ -152,7 +191,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 		else
 		{
 			mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: motd, status: reject_motdrelay_oldclient\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
-			packlen_rewrited=make_motd_legacy(0,"Proxy: Please use direct connect.",protocol_identify(inbound),rewrited);
+			packlen_rewrited=make_motd_legacy(rewrited,"Proxy: Please use direct connect.",protocol_identify(inbound),0);
 			send(socket_in,rewrited,packlen_rewrited,0);
 			close(socket_in);
 			return 5;
@@ -164,7 +203,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 		if(login_version==PVER_LEGACYL1)
 		{
 			mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, status: reject_gamerelay_oldclient\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
-			packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 12w04a or later!",rewrited);
+			packlen_rewrited=make_kickreason_legacy(rewrited,"Proxy: Unsupported client, use 12w04a or later!");
 			send(socket_in,rewrited,packlen_rewrited,0);
 			close(socket_in);
 			return 5;
@@ -172,7 +211,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 		else if(login_version==PVER_LEGACYL3)
 		{
 			mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, status: reject_gamerelay_12w17a\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
-			packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 12w18a or later!",rewrited);
+			packlen_rewrited=make_kickreason_legacy(rewrited,"Proxy: Unsupported client, use 12w18a or later!");
 			send(socket_in,rewrited,packlen_rewrited,0);
 			close(socket_in);
 			return 5;
@@ -184,7 +223,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			if(proxyinfo.valid==0)
 			{
 				mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, vhost: %s, status: reject_vhostinvalid, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,inbound_info.username);
-				packlen_rewrited=make_kickreason_legacy("Proxy: Please use a legit name to connect!",rewrited);
+				packlen_rewrited=make_kickreason_legacy(rewrited,"Proxy: Please use a legit name to connect!");
 				send(socket_in,rewrited,packlen_rewrited,0);
 				close(socket_in);
 				return 3;
@@ -259,12 +298,12 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 					if(mkoutbound_status==NET_ENORECORD)
 					{
 						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port,inbound_info.username);
-						packlen_rewrited=make_kickreason_legacy("Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.",rewrited);
+						packlen_rewrited=make_kickreason_legacy(rewrited,"Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.");
 					}
 					else if(mkoutbound_status==NET_ECONNECT)
 					{
 						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port,inbound_info.username);
-						packlen_rewrited=make_kickreason_legacy("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
+						packlen_rewrited=make_kickreason_legacy(rewrited,"Proxy(Internal): Failed on connecting to the target server, please try again later.");
 					}
 					send(socket_in,rewrited,packlen_rewrited,0);
 					close(socket_in);
@@ -275,10 +314,6 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 	}
 	else
 	{
-		if((inbound[packlen_inbound-1]==1)||(inbound[packlen_inbound-1]==2))
-		{
-			packlen_inbound=packlen_inbound+recv(socket_in,inbound+packlen_inbound,BUFSIZ-packlen_inbound,0);
-		}
 		p_handshake inbound_info=packet_read(inbound);
 		if(inbound_info.version==0)
 		{
