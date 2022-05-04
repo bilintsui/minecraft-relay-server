@@ -22,16 +22,18 @@ typedef struct
 } p_login_legacy;
 typedef struct
 {
-	unsigned char address[128];
-	unsigned short port,version;
+	void * address;
+	in_port_t port;
+	u_int8_t version;
 } p_motd_legacy;
 
 size_t make_message_legacy(void * dst, void * src, size_t n);
 size_t make_kickreason_legacy(void * dst, void * src);
 size_t make_motd_legacy(void * dst, void * src, int motd_version, unsigned int version);
 p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int sourcepacket_length, int login_version);
-p_motd_legacy packet_read_legacy_motd(unsigned char * sourcepacket, int sourcepacket_length);
+p_motd_legacy packet_read_legacy_motd(void * src);
 int packet_write_legacy_login(p_login_legacy source, unsigned char * target);
-int packet_write_legacy_motd(p_motd_legacy source, unsigned char * target);
+size_t packet_write_legacy_motd(void * dst, p_motd_legacy src);
+void packet_destroy_legacy_motd(p_motd_legacy object);
 
 #endif

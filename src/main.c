@@ -22,7 +22,7 @@
 
 const char * version_str="1.2-beta3";
 const char * year_str="2020-2022";
-const short version_internal=62;
+const short version_internal=63;
 char global_buffer[BUFSIZ];
 char * cwd=NULL;
 char * argoffset_configfile=NULL;

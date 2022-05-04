@@ -134,31 +134,22 @@ p_login_legacy packet_read_legacy_login(unsigned char * sourcepacket, int source
 	}
 	return result;
 }
-p_motd_legacy packet_read_legacy_motd(unsigned char * sourcepacket, int sourcepacket_length)
+p_motd_legacy packet_read_legacy_motd(void * src)
 {
 	p_motd_legacy result;
-	unsigned char tmp[BUFSIZ],source[BUFSIZ];
-	unsigned char * ptr_source=source;
-	int recidx,tmp_length,source_length,address_length;
-	memset(result.address,0,128);
-	memset(tmp,0,BUFSIZ);
-	memset(source,0,BUFSIZ);
-	tmp_length=sourcepacket[0x1C];
-	for(recidx=0;recidx<tmp_length;recidx++)
+	result.version=*(u_int8_t *)(src+0x1D);
+	u_int16_t * ptr_src=src+0x1E;
+	size_t address_length=ntohs(*ptr_src);
+	ptr_src++;
+	result.address=calloc(1,address_length+1);
+	u_int8_t * ptr_address=result.address;
+	for(size_t i=0;i<address_length;i++)
 	{
-		tmp[recidx]=sourcepacket[0x1D+recidx];
+		*ptr_address=ntohs(*ptr_src);
+		ptr_src++;
+		ptr_address++;
 	}
-	source_length=packetshrink(tmp,tmp_length,source);
-	result.version=*ptr_source;
-	ptr_source++;
-	address_length=*ptr_source;
-	ptr_source++;
-	for(recidx=0;recidx<address_length;recidx++)
-	{
-		result.address[recidx]=*ptr_source;
-		ptr_source++;
-	}
-	result.port=ptr_source[0]*256+ptr_source[1];
+	result.port=ntohl(*((u_int32_t *)ptr_src));
 	return result;
 }
 int packet_write_legacy_login(p_login_legacy source, unsigned char * target)
@@ -210,39 +201,35 @@ int packet_write_legacy_login(p_login_legacy source, unsigned char * target)
 	}
 	return size;
 }
-int packet_write_legacy_motd(p_motd_legacy source, unsigned char * target)
+size_t packet_write_legacy_motd(void * dst, p_motd_legacy src)
 {
-	unsigned int size,tmp_length,conststr_full_length;
-	unsigned char tmp[BUFSIZ],conststr_full[128];
-	unsigned char conststr[]="MC|PingHost";
-	memset(tmp,0,BUFSIZ);
-	memset(conststr_full,0,128);
-	target[0]=0xFE;
-	target[1]=1;
-	target[2]=0xFA;
-	size=3;
-	conststr_full[0]=strlen(conststr);
-	conststr_full_length=memcat(conststr_full,1,conststr,strlen(conststr));
-	tmp_length=packetexpand(conststr_full,conststr_full_length,tmp);
-	size=memcat(target,size,tmp,tmp_length);
-	unsigned char pingfield[128],pingfield_full[128];
-	unsigned int pingfield_length,pingfield_full_length;
-	memset(pingfield,0,128);
-	memset(pingfield_full,0,128);
-	pingfield_length=packetexpand(source.address,strlen(source.address),pingfield);
-	pingfield_full[0]=source.version;
-	pingfield_full[1]=0;
-	pingfield_full[2]=strlen(source.address);
-	pingfield_full_length=3;
-	pingfield_full_length=memcat(pingfield_full,pingfield_full_length,pingfield,pingfield_length);
-	pingfield_full[pingfield_full_length]=0;
-	pingfield_full[pingfield_full_length+1]=0;
-	pingfield_full[pingfield_full_length+2]=source.port/256;
-	pingfield_full[pingfield_full_length+3]=source.port-pingfield_full[pingfield_full_length+2]*256;
-	pingfield_full_length=pingfield_full_length+4;
-	target[size]=0;
-	target[size+1]=pingfield_full_length;
-	size=size+2;
-	size=memcat(target,size,pingfield_full,pingfield_full_length);
+	memcpy(dst,"\xFE\x01\xFA\0\x0B\0M\0C\0|\0P\0i\0n\0g\0H\0o\0s\0t",0x1B);
+	u_int16_t * ptr_dst=dst+0x1B;
+	size_t address_length=strlen(src.address);
+	*ptr_dst=htons(address_length*2+7);
+	ptr_dst++;
+	*((u_int8_t *)ptr_dst)=src.version;
+	ptr_dst=((void *)ptr_dst)+1;
+	*ptr_dst=htons(address_length);
+	ptr_dst++;
+	u_int8_t * ptr_address=src.address;
+	u_int16_t tmp_data;
+	for(size_t i=0;i<address_length;i++)
+	{
+		tmp_data=*ptr_address;
+		*ptr_dst=htons(tmp_data);
+		ptr_address++;
+		ptr_dst++;
+	}
+	*((u_int32_t *)ptr_dst)=htonl(src.port);
+	ptr_dst=(u_int16_t *)(((u_int32_t *)ptr_dst)+1);
+	size_t size=(void *)ptr_dst-dst;
 	return size;
+}
+void packet_destroy_legacy_motd(p_motd_legacy object)
+{
+	if(object.address!=NULL)
+	{
+		free(object.address);
+	}
 }

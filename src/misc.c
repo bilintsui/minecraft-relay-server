@@ -96,13 +96,14 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 		int motd_version=protocol_identify(inbound);
 		if(motd_version==PVER_LEGACYM3)
 		{
-			p_motd_legacy inbound_info=packet_read_legacy_motd(inbound,packlen_inbound);
+			p_motd_legacy inbound_info=packet_read_legacy_motd(inbound);
 			conf_proxy proxyinfo=config_proxy_search(conf_in,inbound_info.address);
 			if(proxyinfo.valid==0)
 			{
 				mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address);
 				packlen_rewrited=make_motd_legacy(rewrited,"[Proxy] Use a legit address to play!",motd_version,inbound_info.version);
 				send(socket_in,rewrited,packlen_rewrited,0);
+				packet_destroy_legacy_motd(inbound_info);
 				close(socket_in);
 				return 3;
 			}
@@ -160,9 +161,10 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 					}
 					if(proxyinfo.rewrite==1)
 					{
+						inbound_info.address=realloc(inbound_info.address,strlen(proxyinfo.address)+1);
 						strcpy(inbound_info.address,proxyinfo.address);
 						inbound_info.port=proxyinfo.port;
-						packlen_rewrited=packet_write_legacy_motd(inbound_info,rewrited);
+						packlen_rewrited=packet_write_legacy_motd(rewrited,inbound_info);
 						send(*socket_out,rewrited,packlen_rewrited,0);
 					}
 					else
@@ -170,6 +172,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 						send(*socket_out,inbound,packlen_inbound,0);
 					}
 					config_proxy_search_destroy(&proxyinfo);
+					packet_destroy_legacy_motd(inbound_info);
 					return 0;
 				case NET_ENORECORD:
 				case NET_ECONNECT:
@@ -184,6 +187,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 					packlen_rewrited=make_motd_legacy(rewrited,"[Proxy] Server Temporary Unavailable.",motd_version,inbound_info.version);
 					send(socket_in,rewrited,packlen_rewrited,0);
 					close(socket_in);
+					packet_destroy_legacy_motd(inbound_info);
 					config_proxy_search_destroy(&proxyinfo);
 					return 4;
 			}
@@ -421,7 +425,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 					inbound_info.address=realloc(inbound_info.address,strlen(proxyinfo.address)+1);
 					strcpy(inbound_info.address,proxyinfo.address);
 					inbound_info.port=proxyinfo.port;
-					packlen_rewrited=packet_write(inbound_info,rewrited);
+					packlen_rewrited=packet_write(rewrited,inbound_info);
 					send(*socket_out,rewrited,packlen_rewrited,0);
 				}
 				else

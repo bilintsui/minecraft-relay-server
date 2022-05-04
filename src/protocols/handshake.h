@@ -29,8 +29,8 @@ typedef struct
 size_t make_message(char * dst, const char * src);
 size_t make_kickreason(char * dst, const char * src);
 size_t make_motd(char * dst, const char * src, varint_l ver);
-p_handshake packet_read(void * sourcepacket);
-size_t packet_write(p_handshake source, void * target);
+p_handshake packet_read(void * src);
+size_t packet_write(void * dst, p_handshake src);
 void packet_destroy(p_handshake object);
 
 #endif
