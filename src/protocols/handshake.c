@@ -108,23 +108,21 @@ p_handshake packet_read(void * src)
 }
 size_t packet_write(void * dst, p_handshake src)
 {
+	void * part1,* part2,* ptr_dst,* ptr_part1,* ptr_part2;
 	size_t address_length,address_length_pure,size,size_part1,size_part2,username_length;
-	in_port_t port_netorder=0;
-	void * part1=malloc(BUFSIZ);
-	void * part2=malloc(BUFSIZ);
-	void * ptr_dst=dst;
-	void * ptr_part1=part1;
-	void * ptr_part2=part2;
+	ptr_part1=part1=calloc(1,BUFSIZ);
+	ptr_part2=part2=calloc(1,BUFSIZ);
+	ptr_dst=dst;
 	ptr_part1=int2varint(src.id_part1,ptr_part1);
 	ptr_part1=int2varint(src.version,ptr_part1);
-	address_length_pure=strlen(src.address);
+	address_length=address_length_pure=strlen(src.address);
 	if(src.version_fml==1)
 	{
-		address_length=address_length_pure+5;
+		address_length+=5;
 	}
 	else if(src.version_fml==2)
 	{
-		address_length=address_length_pure+6;
+		address_length+=6;
 	}
 	ptr_part1=int2varint(address_length,ptr_part1);
 	memcpy(ptr_part1,src.address,address_length_pure);
@@ -136,11 +134,9 @@ size_t packet_write(void * dst, p_handshake src)
 	{
 		memcpy(ptr_part1+address_length_pure,"\0FML2\0",6);
 	}
-	ptr_part1=ptr_part1+address_length;
-	port_netorder=htons(src.port);
-	in_port_t * ptr_port=ptr_part1;
-	memcpy(ptr_part1,&port_netorder,sizeof(port_netorder));
-	ptr_part1=ptr_part1+sizeof(port_netorder);
+	ptr_part1+=address_length;
+	*((in_port_t *)ptr_part1)=htons(src.port);
+	ptr_part1=(void *)(((in_port_t *)ptr_part1)+1);
 	ptr_part1=int2varint(src.nextstate,ptr_part1);
 	size_part1=ptr_part1-part1;
 	ptr_part2=int2varint(src.id_part2,ptr_part2);
@@ -149,22 +145,21 @@ size_t packet_write(void * dst, p_handshake src)
 		username_length=strlen(src.username);
 		ptr_part2=int2varint(username_length,ptr_part2);
 		memcpy(ptr_part2,src.username,username_length);
-		ptr_part2=ptr_part2+username_length;
+		ptr_part2+=username_length;
 		if(src.signature_data_length)
 		{
-			memset(ptr_part2,1,1);
-			ptr_part2++;
+			ptr_part2=int2varint(1,ptr_part2);
 			memcpy(ptr_part2,src.signature_data,src.signature_data_length);
-			ptr_part2=ptr_part2+src.signature_data_length;
+			ptr_part2+=src.signature_data_length;
 		}
 	}
 	size_part2=ptr_part2-part2;
 	ptr_dst=int2varint(size_part1,ptr_dst);
 	memcpy(ptr_dst,part1,size_part1);
-	ptr_dst=ptr_dst+size_part1;
+	ptr_dst+=size_part1;
 	ptr_dst=int2varint(size_part2,ptr_dst);
 	memcpy(ptr_dst,part2,size_part2);
-	ptr_dst=ptr_dst+size_part2;
+	ptr_dst+=size_part2;
 	size=ptr_dst-dst;
 	free(part1);
 	free(part2);
