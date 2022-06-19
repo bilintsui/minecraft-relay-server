@@ -17,96 +17,105 @@
 
 #include "handshake.h"
 
-size_t make_message(char * dst, const char * src)
+size_t make_message(void * dst, const void * src)
 {
-	size_t size,string_length,payload_size;
-	char tmp[BUFSIZ];
-	char * ptr_tmp=tmp;
-	char * ptr_dst=dst;
-	*ptr_tmp=0;
-	ptr_tmp++;
-	string_length=strlen(src);
-	ptr_tmp=int2varint(string_length,ptr_tmp);
-	payload_size=ptr_tmp-tmp+string_length;
-	memcpy(ptr_tmp,src,string_length);
-	ptr_tmp=tmp;
-	ptr_dst=int2varint(payload_size,ptr_dst);
-	size=ptr_dst-dst+payload_size;
-	memcpy(ptr_dst,ptr_tmp,payload_size);
-	return size;
+	void * tmp,* ptr_dst,* ptr_tmp;
+	size_t dst_length,payload_length,src_length;
+	tmp=calloc(1,BUFSIZ);
+	ptr_tmp=int2varint(0,tmp);
+	src_length=strlen(src);
+	ptr_tmp=int2varint(src_length,ptr_tmp);
+	memcpy(ptr_tmp,src,src_length);
+	ptr_tmp+=src_length;
+	dst_length=ptr_tmp-tmp;
+	ptr_dst=int2varint(dst_length,dst);
+	memcpy(ptr_dst,tmp,dst_length);
+	ptr_dst+=dst_length;
+	payload_length=ptr_dst-dst;
+	free(tmp);
+	return payload_length;
 }
-size_t make_kickreason(char * dst, const char * src)
+size_t make_kickreason(void * dst, const void * src)
 {
-	char input[BUFSIZ];
-	sprintf(input,"{\"extra\":[{\"text\":\"%s\"}],\"text\":\"\"}",src);
-	return make_message(dst,input);
+	void * input;
+	size_t payload_length;
+	input=calloc(1,BUFSIZ);
+	sprintf(input,"{\"extra\":[{\"text\":\"%s\"}],\"text\":\"\"}",(char *)src);
+	payload_length=make_message(dst,input);
+	free(input);
+	return payload_length;
 }
-size_t make_motd(char * dst, const char * src, varint_l ver)
+size_t make_motd(void * dst, const void * src, varint_l ver)
 {
-	char input[BUFSIZ];
-	sprintf(input,"{\"version\":{\"name\":\"\",\"protocol\":%lu},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},\"description\":{\"text\":\"%s\"}}",ver,src);
-	return make_message(dst,input);
+	void * input;
+	size_t payload_length;
+	input=calloc(1,BUFSIZ);
+	sprintf(input,"{\"version\":{\"name\":\"\",\"protocol\":%lu},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},\"description\":{\"text\":\"%s\"}}",ver,(char *)src);
+	payload_length=make_message(dst,input);
+	free(input);
+	return payload_length;
 }
 p_handshake packet_read(void * src)
 {
 	p_handshake result;
-	in_port_t port_netorder=0;
-	void * address_extra_start, * part2_start;
-	size_t address_length,address_length_pure,size_part1,size_part2,username_length;
+	void * part2_start;
+	size_t address_length,size_part1,size_part2,username_length;
+	memset(&result,0,sizeof(result));
 	src=varint2int(src,&size_part1);
 	src=varint2int(src,&result.id_part1);
 	src=varint2int(src,&result.version);
 	src=varint2int(src,&address_length);
-	result.address=calloc(1,address_length+1);
-	memcpy(result.address,src,address_length);
-	address_length_pure=strlen(result.address);
-	if(address_length!=address_length_pure)
+	if((*((char *)(src+address_length-1)))=='\0')
 	{
-		address_extra_start=src+address_length_pure;
-		if(memcmp(address_extra_start,"\0FML\0",5)==0)
+		result.address=malloc(strlen(src)+1);
+		strcpy(result.address,src);
+		src+=strlen(src);
+		if(memcmp(src,"\0FML\0",5)==0)
 		{
-			memset(address_extra_start,0,5);
-			result.address=realloc(result.address,address_length_pure+1);
 			result.version_fml=1;
+			src+=5;
 		}
-		else if(memcmp(address_extra_start,"\0FML2\0",6)==0)
+		else if(memcmp(src,"\0FML2\0",6)==0)
 		{
-			memset(address_extra_start,0,6);
-			result.address=realloc(result.address,address_length_pure+1);
 			result.version_fml=2;
+			src+=6;
 		}
 	}
 	else
 	{
 		result.version_fml=0;
+		result.address=calloc(1,address_length+1);
+		memcpy(result.address,src,address_length);
+		src+=address_length;
 	}
-	src=src+address_length;
-	memcpy(&port_netorder,src,sizeof(port_netorder));
-	result.port=ntohs(port_netorder);
-	src=src+sizeof(port_netorder);
+	result.port=ntohs(*((in_port_t *)src));
+	src=(void *)(((in_port_t *)src)+1);
 	src=varint2int(src,&result.nextstate);
 	if(result.nextstate==2)
 	{
-		src=varint2int(src,&size_part2);
-		part2_start=src;
+		part2_start=src=varint2int(src,&size_part2);
 		src=varint2int(src,&result.id_part2);
 		src=varint2int(src,&username_length);
 		result.username=calloc(1,username_length+1);
 		memcpy(result.username,src,username_length);
-		src=src+username_length;
+		src+=username_length;
 		result.signature_data_length=size_part2-(src-part2_start);
-		src=varint2int(src,NULL);
-		if(result.signature_data_length)
+		if((result.signature_data_length!=0)&&(*((char *)src)==1))
 		{
 			result.signature_data_length--;
+			src++;
 			result.signature_data=malloc(result.signature_data_length);
 			memcpy(result.signature_data,src,result.signature_data_length);
-			src=src+result.signature_data_length;
+			src+=result.signature_data_length;
+		}
+		else
+		{
+			result.signature_data_length=0;
 		}
 	}
 	return result;
 }
-size_t packet_write(void * dst, p_handshake src)
+size_t packet_write(void * dst, const p_handshake src)
 {
 	void * part1,* part2,* ptr_dst,* ptr_part1,* ptr_part2;
 	size_t address_length,address_length_pure,size,size_part1,size_part2,username_length;

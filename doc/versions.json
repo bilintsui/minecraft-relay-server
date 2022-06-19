@@ -246,5 +246,9 @@
 	{
 		"version": 64,
 		"names": ["1.2-beta3-patch10"]
+	},
+	{
+		"version": 65,
+		"names": ["1.2-beta3-patch11"]
 	}
 ]

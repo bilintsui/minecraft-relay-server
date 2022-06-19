@@ -26,11 +26,11 @@ typedef struct
 	in_port_t port;
 } p_handshake;
 
-size_t make_message(char * dst, const char * src);
-size_t make_kickreason(char * dst, const char * src);
-size_t make_motd(char * dst, const char * src, varint_l ver);
+size_t make_message(void * dst, const void * src);
+size_t make_kickreason(void * dst, const void * src);
+size_t make_motd(void * dst, const void * src, varint_l ver);
 p_handshake packet_read(void * src);
-size_t packet_write(void * dst, p_handshake src);
+size_t packet_write(void * dst, const p_handshake src);
 void packet_destroy(p_handshake object);
 
 #endif
