@@ -1,5 +1,4 @@
-# mcrelay
-Minecraft Relay Server
+# Minecraft Relay Server (mcrelay)
 
 A minecraft reverse proxy server with server address rewrite.
 
@@ -14,8 +13,8 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!
 
 ## Requirements
 * Linux
-* libresolv.so
-* libcjson.so
+* libresolv.so (usually pre-installed)
+* libcjson.so (on debian-like systems, contained in package "libcjson1")
 
 ## Compatibility
 **Due to Minecraft Handshake restrictions, this server supports:**
@@ -24,22 +23,30 @@ Minecraft Versions before 12w04a are **NOT SUPPORTED**!
 * MOTD relay / MOTD status notice on server & client with version 1.6.1 and later, except version 13w41a and 13w41b.
 
 ## Files
-* mcrelay.c: Source code of Main program.
-* config.json.example: config file example.
-* mcrelay.service.forking.example: service unit file of mcrelay for systemd. (using runmode: forking)
-* mcrelay.service.simple.example: service unit file of mcrelay for systemd. (using runmode: simple)
-* mod: directory of essential modules.
-* version.json: version manifest.
-* loglevel.info: definations for messages.
+* CMakeLists.txt: CMake configuration for compiling
+* doc: Folder of documents
+* doc/loglevel.info: Definations of log levels
+* doc/versions.json: Version manifest
+* examples: File templates
+* examples/config: Folder of example configurations
+* examples/systemd: Folder of example systemd service files
+* src: Folder of source codes
 
 ## Compile
+Before compiling, you need to install cJSON at first.
+
+For example, you can install it on a debian-like systems by <code>apt install libcjson-dev</code>.
+
+Then you can use CMake to compile it, by following:
 <pre>
-gcc -o mcrelay mcrelay.c -lresolv -lcjson
-</pre>
-or
-<pre>
+mkdir build
+cd build
+cmake ..
 make
 </pre>
+Additionally, if you want cross compiling, following CMake properties will helpful:
+* <code>-DCMAKE_C_COMPILER</code>: Specify an alternative compiler, CMake using <code>cc</code> by default.
+* <code>-DEXEC_SUFFIX</code>: Add a suffix to the final binary file, the file will generated called <code>mcrelay</code>.
 
 ## Usage
 <pre>
@@ -51,7 +58,7 @@ The program will run as a non-exit-style program by default.
 When using "-f" or "--forking" option, the program will become daemonized, and store its main process' PID into /tmp/mcrelay.pid.
 
 ## Config
-See "config.json.example" for instructions.
+See "examples/config/config.json" for instructions.
 
 ## Instruction of using a DNS-based redirection (SRV)
 If you are using a SRV record to provide your service, you should follow the instructions below.

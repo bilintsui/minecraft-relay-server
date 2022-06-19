@@ -2,13 +2,21 @@
 	basic.c: Basic Functions for Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.2-beta2
-	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
+	Minecraft Relay Server, version 1.2-beta3
+	Copyright (c) 2020-2022 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
+
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "basic.h"
+
 size_t freadall(const char * filename, char ** dst)
 {
 	if((filename==NULL)||(dst==NULL))
@@ -44,71 +52,7 @@ size_t freadall(const char * filename, char ** dst)
 	*dst=result;
 	return filesize;
 }
-int handshake_protocol_identify(unsigned char * source, unsigned int length)
-{
-	int protocol_version=0;
-	int semicolon_found=0;
-	int colon_found=0;
-	int i;
-	switch(source[0])
-	{
-		case 1:
-			protocol_version=PVER_L_ORIGPRO;
-			break;
-		case 2:
-			switch(source[1])
-			{
-				case 0:
-					for(i=0;i<length;i++)
-					{
-						if(source[i]==';')
-						{
-							semicolon_found=1;
-						}
-						if(source[i]==':')
-						{
-							colon_found=1;
-						}
-					}
-					if((semicolon_found==1)&&(colon_found==1))
-					{
-						protocol_version=PVER_L_LEGACY2;
-					}
-					else
-					{
-						protocol_version=PVER_L_LEGACY1;
-					}
-					break;
-				case 0x1F:
-					protocol_version=PVER_L_LEGACY3;
-					break;
-				default:
-					protocol_version=PVER_L_LEGACY4;
-					break;
-			}
-			break;
-		default:
-			if((source[source[0]]==1)||(source[source[0]]==2))
-			{
-				switch(source[2])
-				{
-					case 0:
-						protocol_version=PVER_L_MODERN1;
-						break;
-					default:
-						protocol_version=PVER_L_MODERN2;
-						break;
-				}
-			}
-			else
-			{
-				protocol_version=PVER_L_UNIDENT;
-			}
-			break;
-	}
-	return protocol_version;
-}
-void * int2varint(unsigned long src, void * dst)
+void * int2varint(varint_l src, void * dst)
 {
 	if(dst==NULL)
 	{
@@ -124,45 +68,6 @@ void * int2varint(unsigned long src, void * dst)
 	} while(src>0);
 	base[i-1]=base[i-1]&0x7F;
 	return dst+i;
-}
-int legacy_motd_protocol_identify(unsigned char * source)
-{
-	int proto_version=PVER_M_UNIDENT;
-	if(source[1]==0)
-	{
-		proto_version=PVER_M_LEGACY1;
-	}
-	else if(source[1]==1)
-	{
-		if(source[2]==0)
-		{
-			proto_version=PVER_M_LEGACY2;
-		}
-		else if(source[2]==0xFA)
-		{
-			proto_version=PVER_M_LEGACY3;
-		}
-	}
-	return proto_version;
-}
-int ismcproto(unsigned char * data_in, unsigned int data_length)
-{
-	int result=0;
-	if(data_in[0]==0xFE)
-	{
-		if(legacy_motd_protocol_identify(data_in)!=PVER_M_UNIDENT)
-		{
-			result=1;
-		}
-	}
-	else
-	{
-		if(handshake_protocol_identify(data_in,data_length)!=PVER_L_UNIDENT)
-		{
-			result=1;
-		}
-	}
-	return result;
 }
 size_t memcat(void * dst, size_t dst_size, void * src, size_t src_size)
 {
@@ -308,7 +213,7 @@ size_t strtok_tail(char * dst, char * src, char delim, size_t length)
 	free(buffer);
 	return ptr_delim-buffer;
 }
-void * varint2int(void * src, unsigned long * dst)
+void * varint2int(void * src, varint_l * dst)
 {
 	if(src==NULL)
 	{

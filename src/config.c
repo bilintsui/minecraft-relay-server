@@ -2,13 +2,22 @@
 	config.c: Functions for Config reading on Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.2-beta2
-	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
+	Minecraft Relay Server, version 1.2-beta3
+	Copyright (c) 2020-2022 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
+
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "basic.h"
+
+#include "config.h"
+
 void config_destroy(conf * target)
 {
 	if(target!=NULL)
@@ -229,35 +238,35 @@ cJSON * config_proxy_parse(cJSON * src)
 					errno=CONF_ECPROXYDUP;
 					return output_str;
 				}
-				char ** vhost_namelist_new=(char **)realloc(vhost_namelist,(dupdet_count+1)*sizeof(char **));
-				if(vhost_namelist_new==NULL)
+				if(i==(dupdet_count-1))
 				{
-					for(int j=0;j<dupdet_count;j++)
+					char ** vhost_namelist_new=(char **)realloc(vhost_namelist,(dupdet_count+1)*sizeof(char **));
+					if(vhost_namelist_new==NULL)
 					{
-						free(vhost_namelist[j]);
+						for(int j=0;j<dupdet_count;j++)
+						{
+							free(vhost_namelist[j]);
+						}
+						free(vhost_namelist);
+						cJSON_Delete(result);
+						errno=CONF_ECMEMORY;
+						return NULL;
 					}
-					free(vhost_namelist);
-					cJSON_Delete(result);
-					errno=CONF_ECMEMORY;
-					return NULL;
-				}
-				vhost_namelist=vhost_namelist_new;
-				vhost_namelist[dupdet_count]=(char *)malloc(strlen(rec_result_vhostname->valuestring)+1);
-				if(vhost_namelist[dupdet_count]==NULL)
-				{
-					for(int j=0;j<dupdet_count;j++)
+					vhost_namelist=vhost_namelist_new;
+					vhost_namelist[dupdet_count]=(char *)malloc(strlen(rec_result_vhostname->valuestring)+1);
+					if(vhost_namelist[dupdet_count]==NULL)
 					{
-						free(vhost_namelist[j]);
+						for(int j=0;j<dupdet_count;j++)
+						{
+							free(vhost_namelist[j]);
+						}
+						free(vhost_namelist);
+						cJSON_Delete(result);
+						errno=CONF_ECMEMORY;
+						return NULL;
 					}
-					free(vhost_namelist);
-					cJSON_Delete(result);
-					errno=CONF_ECMEMORY;
-					return NULL;
-				}
-				strcpy(vhost_namelist[dupdet_count],rec_result_vhostname->valuestring);
-				dupdet_count++;
-				if(i==(dupdet_count-2))
-				{
+					strcpy(vhost_namelist[dupdet_count],rec_result_vhostname->valuestring);
+					dupdet_count++;
 					break;
 				}
 			}

@@ -210,5 +210,45 @@
 	{
 		"version": 55,
 		"names": ["1.2-beta2-patch13","1.2-beta2"]
+	},
+	{
+		"version": 56,
+		"names": ["1.2-beta3-patch1"]
+	},
+	{
+		"version": 57,
+		"names": ["1.2-beta3-patch2","1.2-beta3-patch3"]
+	},
+	{
+		"version": 58,
+		"names": ["1.2-beta3-patch4"]
+	},
+	{
+		"version": 59,
+		"names": ["1.2-beta3-patch5"]
+	},
+	{
+		"version": 60,
+		"names": ["1.2-beta3-patch6"]
+	},
+	{
+		"version": 61,
+		"names": ["1.2-beta3-patch7"]
+	},
+	{
+		"version": 62,
+		"names": ["1.2-beta3-patch8"]
+	},
+	{
+		"version": 63,
+		"names": ["1.2-beta3-patch9"]
+	},
+	{
+		"version": 64,
+		"names": ["1.2-beta3-patch10"]
+	},
+	{
+		"version": 65,
+		"names": ["1.2-beta3-patch11","1.2-beta3"]
 	}
 ]

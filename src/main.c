@@ -2,19 +2,29 @@
 	main.c: Main source code for Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.2-beta2
-	Copyright (c) 2020-2021 Bilin Tsui. All right reserved.
+	Minecraft Relay Server, version 1.2-beta3
+	Copyright (c) 2020-2022 Bilin Tsui. All right reserved.
 	This is a Free Software, absolutely no warranty.
 
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
 	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
 */
-const char * version_str="1.2-beta2";
-const char * year_str="2020-2021";
-const short version_internal=55;
+
+#include <errno.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include "log.h"
+#include "misc.h"
+
+const char * version_str="1.2-beta3";
+const char * year_str="2020-2022";
+const short version_internal=65;
 char global_buffer[BUFSIZ];
 char * cwd=NULL;
-char * execname=NULL;
 char * argoffset_configfile=NULL;
 char * configfile=NULL;
 char * configfile_full=NULL;
@@ -103,7 +113,14 @@ void deal_sigusr1()
 int main(int argc, char ** argv)
 {
 	char helpmsg[]="<arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-f / --forking:\tMade the process become daemonize.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server";
-	char headmsg[]="Minecraft Relay Server [Version %s]\n(C) %s Bilin Tsui. All rights reserved.\n\n";
+	snprintf(global_buffer,BUFSIZ,"Minecraft Relay Server [Version %s/%d]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,version_internal,year_str);
+	char * headmsg=(char *)malloc(strlen(global_buffer)+1);
+	if(headmsg==NULL)
+	{
+		return 12;
+	}
+	strcpy(headmsg,global_buffer);
+	memset(global_buffer,0,strlen(global_buffer)+1);
 	int socket_inbound_server,socket_inbound_client;
 	union {
 		struct sockaddr_in v4;
@@ -117,14 +134,10 @@ int main(int argc, char ** argv)
 	cwd=(char *)malloc(strlen(global_buffer)+1);
 	strcpy(cwd,global_buffer);
 	memset(global_buffer,0,strlen(global_buffer)+1);
-	strtok_tail(global_buffer,argv[0],'/',strlen(argv[0]));
-	execname=(char *)malloc(strlen(global_buffer)+1);
-	strcpy(execname,global_buffer);
-	memset(global_buffer,0,strlen(global_buffer)+1);
 	if(argc<2)
 	{
-		mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
-		mksysmsg(1,"",0,255,0,"Usage: %s %s\n",execname,helpmsg);
+		mksysmsg(1,"",0,255,0,headmsg);
+		mksysmsg(1,"",0,255,0,"Usage: %s %s\n",strrchr(argv[0],'/')?strrchr(argv[0],'/')+1:argv[0],helpmsg);
 		return 22;
 	}
 	argoffset_configfile=argv[1];
@@ -139,7 +152,7 @@ int main(int argc, char ** argv)
 			pidfd=fopen("/tmp/mcrelay.pid","r");
 			if(pidfd==NULL)
 			{
-				mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
+				mksysmsg(1,"",0,255,0,headmsg);
 				mksysmsg(0,"",0,255,0,"Cannot read /tmp/mcrelay.pid.\n");
 				return 2;
 			}
@@ -147,13 +160,13 @@ int main(int argc, char ** argv)
 			fclose(pidfd);
 			if(kill(prevpid,SIGUSR1)==0)
 			{
-				mksysmsg(1,"",0,255,2,headmsg,version_str,year_str);
+				mksysmsg(1,"",0,255,2,headmsg);
 				mksysmsg(0,"",0,255,2,"Successfully send reload signal to currently running process.\n");
 				return 0;
 			}
 			else
 			{
-				mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
+				mksysmsg(1,"",0,255,0,headmsg);
 				mksysmsg(0,"",0,255,0,"Failed on send reload signal to currently running process.\n");
 				return 3;
 			}
@@ -163,7 +176,7 @@ int main(int argc, char ** argv)
 			pidfd=fopen("/tmp/mcrelay.pid","r");
 			if(pidfd==NULL)
 			{
-				mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
+				mksysmsg(1,"",0,255,0,headmsg);
 				mksysmsg(0,"",0,255,0,"Cannot read /tmp/mcrelay.pid.\n");
 				return 2;
 			}
@@ -171,13 +184,13 @@ int main(int argc, char ** argv)
 			fclose(pidfd);
 			if(kill(prevpid,SIGTERM)==0)
 			{
-				mksysmsg(1,"",0,255,2,headmsg,version_str,year_str);
+				mksysmsg(1,"",0,255,2,headmsg);
 				mksysmsg(0,"",0,255,2,"Successfully send terminate signal to currently running process.\n");
 				return 0;
 			}
 			else
 			{
-				mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
+				mksysmsg(1,"",0,255,0,headmsg);
 				mksysmsg(0,"",0,255,0,"Failed on send terminate signal to currently running process.\n");
 				return 3;
 			}
@@ -194,8 +207,8 @@ int main(int argc, char ** argv)
 		}
 		else
 		{
-			mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
-			mksysmsg(1,"",0,255,0,"Error: Invalid option \"-%s\"\n\nUsage: %s %s\n",ptr_argv1,execname,helpmsg);
+			mksysmsg(1,"",0,255,0,headmsg);
+			mksysmsg(1,"",0,255,0,"Error: Invalid option \"-%s\"\n\nUsage: %s %s\n",ptr_argv1,strrchr(argv[0],'/')?strrchr(argv[0],'/')+1:argv[0],helpmsg);
 			return 22;
 		}
 	}
@@ -208,13 +221,13 @@ int main(int argc, char ** argv)
 			fclose(pidfd);
 			if(kill(prevpid,0)==0)
 			{
-				mksysmsg(1,"",0,255,0,headmsg,version_str,year_str);
+				mksysmsg(1,"",0,255,0,headmsg);
 				mksysmsg(0,"",0,255,0,"You cannot running multiple instances in one time. Previous running process PID: %d.\n",prevpid);
 				return 1;
 			}
 		}
 	}
-	mksysmsg(1,"",0,255,2,headmsg,version_str,year_str);
+	mksysmsg(1,"",0,255,2,headmsg);
 	if(argoffset_configfile==NULL)
 	{
 		mksysmsg(0,"",0,255,0,"Config filename can not be empty!\n",configfile);
