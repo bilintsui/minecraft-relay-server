@@ -23,406 +23,156 @@
 
 #include "misc.h"
 
+void misc_srvresolve(conf_proxy * info)
+{
+	net_srvrecord srvrecords[128];
+	if(net_srvresolve(info->address,srvrecords)>0)
+	{
+		info->address=(char *)realloc(info->address,strlen(srvrecords[0].target)+1);
+		strcpy(info->address,srvrecords[0].target);
+		info->port=srvrecords[0].port;
+		info->srvenabled=0;
+	}
+}
 int backbone(int socket_in, int * socket_out, char * logfile, unsigned short runmode, conf * conf_in, net_addrbundle addrinfo_in, short netpriority_enabled)
 {
-	unsigned char inbound[BUFSIZ],outbound[BUFSIZ],rewrited[BUFSIZ],pheader[PROTOPROXY_PACKETMAXLEN+1];
-	int packlen_inbound,packlen_outbound,packlen_rewrited,packlen_pheader;
-	struct sockaddr_in addr_outbound;
+	unsigned char inbound[BUFSIZ],rewrited[BUFSIZ];
+	size_t packlen_inbound,packlen_rewrited;
 	memset(inbound,0,BUFSIZ);
-	memset(outbound,0,BUFSIZ);
 	memset(rewrited,0,BUFSIZ);
-	memset(pheader,0,PROTOPROXY_PACKETMAXLEN+1);
 	packlen_inbound=recv(socket_in,inbound,BUFSIZ,0);
 	if(packlen_inbound==0)
 	{
+		mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, status: abort_init\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
 		close(socket_in);
 		return 1;
 	}
-	if(protocol_identify(inbound)==PVER_UNIDENT)
+	size_t packlen_inbound_append=0; //fetch full packet
+	switch(inbound[0])
 	{
-		mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, status: reject_unidentproto\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
-		close(socket_in);
-		return 2;
-	}
-	if(inbound[0]==0xFE)
-	{
-		while(packlen_inbound<0x20)
-		{
-			packlen_inbound=packlen_inbound+recv(socket_in,inbound+packlen_inbound,BUFSIZ-packlen_inbound,0);
-		}
-		while(packlen_inbound<(0x20+inbound[0x1F]*2+4))
-		{
-			packlen_inbound=packlen_inbound+recv(socket_in,inbound+packlen_inbound,BUFSIZ-packlen_inbound,0);
-		}
-		int motd_version=protocol_identify(inbound);
-		if(motd_version==PVER_LEGACYM3)
-		{
-			p_motd_legacy inbound_info=packet_read_legacy_motd(inbound,packlen_inbound);
-			conf_proxy proxyinfo=config_proxy_search(conf_in,inbound_info.address);
-			if(proxyinfo.valid==0)
+		case 0xFE:
+			if(packlen_inbound>2) //process PVER_LEGACYM3 only
 			{
-				mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address);
-				packlen_rewrited=make_motd_legacy(inbound_info.version,"[Proxy] Use a legit address to play!",motd_version,rewrited);
-				send(socket_in,rewrited,packlen_rewrited,0);
-				close(socket_in);
-				return 3;
-			}
-			int mkoutbound_status,outmsg_level;
-			if(proxyinfo.srvenabled==1)
-			{
-				net_srvrecord srvrecords[128];
-				if(net_srvresolve(proxyinfo.address,srvrecords)>0)
+				while(packlen_inbound<0x20)
 				{
-					proxyinfo.address=(char *)realloc(proxyinfo.address,strlen(srvrecords[0].target)+1);
-					strcpy(proxyinfo.address,srvrecords[0].target);
-					proxyinfo.port=srvrecords[0].port;
-					proxyinfo.srvenabled=0;
+					packlen_inbound_append=packlen_inbound+recv(socket_in,inbound+packlen_inbound,BUFSIZ-packlen_inbound,0);
+					if(packlen_inbound_append==0)
+					{
+						mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, status: abort_init\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
+						close(socket_in);
+						return 1;
+					}
+					packlen_inbound=packlen_inbound+packlen_inbound_append;
+				}
+				while(packlen_inbound<(0x20+inbound[0x1F]*2+4))
+				{
+					packlen_inbound_append=packlen_inbound+recv(socket_in,inbound+packlen_inbound,BUFSIZ-packlen_inbound,0);
+					if(packlen_inbound_append==0)
+					{
+						mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, status: abort_init\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
+						close(socket_in);
+						return 1;
+					}
+					packlen_inbound=packlen_inbound+packlen_inbound_append;
 				}
 			}
-			mkoutbound_status=0;
-			net_addr connaddr=net_resolve_dual(proxyinfo.address,addrinfo_in.family,netpriority_enabled);
-			if(connaddr.family==0)
+			break;
+		case 0x02:
+			break;
+		default:
+			if((inbound[packlen_inbound-1]==1)||(inbound[packlen_inbound-1]==2))
 			{
-				mkoutbound_status=NET_ENORECORD;
-			}
-			*socket_out=net_socket(NETSOCK_CONN,connaddr.family,&(connaddr.addr),proxyinfo.port,0);
-			if(*socket_out==-1)
-			{
-				mkoutbound_status=NET_ECONNECT;
-			}
-			if(mkoutbound_status!=0)
-			{
-				outmsg_level=1;
-			}
-			else
-			{
-				outmsg_level=3;
-			}
-			switch(mkoutbound_status)
-			{
-				case 0:
-					mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: accept\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port);
-					if(proxyinfo.pheader==1)
-					{
-						if(connaddr.family==addrinfo_in.family)
-						{
-							net_addrp addrinfo_out=net_ntop(connaddr.family,&(connaddr.addr),0);
-							if(addrinfo_in.family==AF_INET)
-							{
-								packlen_pheader=sprintf(pheader,"PROXY TCP4 %s %s %d %d\r\n",(char *)&(addrinfo_in.address_clean),(char *)&addrinfo_out,addrinfo_in.port,proxyinfo.port);
-								send(*socket_out,pheader,packlen_pheader,0);
-							}
-							else if(addrinfo_in.family==AF_INET6)
-							{
-								packlen_pheader=sprintf(pheader,"PROXY TCP6 %s %s %d %d\r\n",(char *)&(addrinfo_in.address_clean),(char *)&addrinfo_out,addrinfo_in.port,proxyinfo.port);
-								send(*socket_out,pheader,packlen_pheader,0);
-							}
-						}
-					}
-					if(proxyinfo.rewrite==1)
-					{
-						strcpy(inbound_info.address,proxyinfo.address);
-						inbound_info.port=proxyinfo.port;
-						packlen_rewrited=packet_write_legacy_motd(inbound_info,rewrited);
-						send(*socket_out,rewrited,packlen_rewrited,0);
-					}
-					else
-					{
-						send(*socket_out,inbound,packlen_inbound,0);
-					}
-					config_proxy_search_destroy(&proxyinfo);
-					return 0;
-				case NET_ENORECORD:
-				case NET_ECONNECT:
-					if(mkoutbound_status==NET_ENORECORD)
-					{
-						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoresolve\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port);
-					}
-					else if(mkoutbound_status==NET_ECONNECT)
-					{
-						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoconnect\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port);
-					}
-					packlen_rewrited=make_motd_legacy(inbound_info.version,"[Proxy] Server Temporary Unavailable.",motd_version,rewrited);
-					send(socket_in,rewrited,packlen_rewrited,0);
+				packlen_inbound_append=packlen_inbound+recv(socket_in,inbound+packlen_inbound,BUFSIZ-packlen_inbound,0);
+				if(packlen_inbound_append==0)
+				{
+					mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, status: abort_init\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
 					close(socket_in);
-					config_proxy_search_destroy(&proxyinfo);
-					return 4;
+					return 1;
+				}
+				packlen_inbound=packlen_inbound+packlen_inbound_append;
 			}
-		}
-		else
-		{
-			mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: motd, status: reject_motdrelay_oldclient\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
-			packlen_rewrited=make_motd_legacy(0,"Proxy: Please use direct connect.",protocol_identify(inbound),rewrited);
-			send(socket_in,rewrited,packlen_rewrited,0);
-			close(socket_in);
-			return 5;
-		}
-	}
-	else if(inbound[0]==2)
+			break;
+	}  //fetch full packet done
+	int protocol_type=protocol_identify(inbound);
+	switch(protocol_type)
 	{
-		int login_version=protocol_identify(inbound);
-		if(login_version==PVER_LEGACYL1)
-		{
+		case PVER_UNIDENT: //unidentified protocol
+			mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, status: reject_unidentproto\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
+			close(socket_in);
+			return 2;
+		case PVER_ORIGPRO: //login: a1.0.15
+			mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, status: reject_gamerelay_oldclient_alpha\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
+			close(socket_in);
+			return 2;
+		case PVER_LEGACYL1: //login: a1.0.16~12w03a
 			mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, status: reject_gamerelay_oldclient\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
 			packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 12w04a or later!",rewrited);
 			send(socket_in,rewrited,packlen_rewrited,0);
 			close(socket_in);
 			return 5;
-		}
-		else if(login_version==PVER_LEGACYL3)
-		{
+		case PVER_LEGACYL3: //login: 12w17a
 			mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, status: reject_gamerelay_12w17a\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
 			packlen_rewrited=make_kickreason_legacy("Proxy: Unsupported client, use 12w18a or later!",rewrited);
 			send(socket_in,rewrited,packlen_rewrited,0);
 			close(socket_in);
 			return 5;
-		}
-		else if((login_version==PVER_LEGACYL2)||(login_version==PVER_LEGACYL4))
-		{
-			p_login_legacy inbound_info=packet_read_legacy_login(inbound,packlen_inbound,login_version);
-			conf_proxy proxyinfo=config_proxy_search(conf_in,inbound_info.address);
-			if(proxyinfo.valid==0)
-			{
-				mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, vhost: %s, status: reject_vhostinvalid, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,inbound_info.username);
-				packlen_rewrited=make_kickreason_legacy("Proxy: Please use a legit name to connect!",rewrited);
-				send(socket_in,rewrited,packlen_rewrited,0);
-				close(socket_in);
-				return 3;
-			}
-			int mkoutbound_status,outmsg_level;
-			if(proxyinfo.srvenabled==1)
-			{
-				net_srvrecord srvrecords[128];
-				if(net_srvresolve(proxyinfo.address,srvrecords)>0)
-				{
-					proxyinfo.address=(char *)realloc(proxyinfo.address,strlen(srvrecords[0].target)+1);
-					strcpy(proxyinfo.address,srvrecords[0].target);
-					proxyinfo.port=srvrecords[0].port;
-					proxyinfo.srvenabled=0;
-				}
-			}
-			mkoutbound_status=0;
-			net_addr connaddr=net_resolve_dual(proxyinfo.address,addrinfo_in.family,netpriority_enabled);
-			if(connaddr.family==0)
-			{
-				mkoutbound_status=NET_ENORECORD;
-			}
-			*socket_out=net_socket(NETSOCK_CONN,connaddr.family,&(connaddr.addr),proxyinfo.port,0);
-			if(*socket_out==-1)
-			{
-				mkoutbound_status=NET_ECONNECT;
-			}
-			if(mkoutbound_status!=0)
-			{
-				outmsg_level=1;
-			}
-			else
-			{
-				outmsg_level=2;
-			}
-			switch(mkoutbound_status)
-			{
-				case 0:
-					mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: accept, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port,inbound_info.username);
-					if(proxyinfo.pheader==1)
-					{
-						if(connaddr.family==addrinfo_in.family)
-						{
-							net_addrp addrinfo_out=net_ntop(connaddr.family,&(connaddr.addr),0);
-							if(addrinfo_in.family==AF_INET)
-							{
-								packlen_pheader=sprintf(pheader,"PROXY TCP4 %s %s %d %d\r\n",(char *)&(addrinfo_in.address_clean),(char *)&addrinfo_out,addrinfo_in.port,proxyinfo.port);
-								send(*socket_out,pheader,packlen_pheader,0);
-							}
-							else if(addrinfo_in.family==AF_INET6)
-							{
-								packlen_pheader=sprintf(pheader,"PROXY TCP6 %s %s %d %d\r\n",(char *)&(addrinfo_in.address_clean),(char *)&addrinfo_out,addrinfo_in.port,proxyinfo.port);
-								send(*socket_out,pheader,packlen_pheader,0);
-							}
-						}
-					}
-					if(proxyinfo.rewrite==1)
-					{
-						strcpy(inbound_info.address,proxyinfo.address);
-						inbound_info.port=proxyinfo.port;
-						packlen_rewrited=packet_write_legacy_login(inbound_info,rewrited);
-						send(*socket_out,rewrited,packlen_rewrited,0);
-					}
-					else
-					{
-						send(*socket_out,inbound,packlen_inbound,0);
-					}
-					config_proxy_search_destroy(&proxyinfo);
-					return 0;
-				case NET_ENORECORD:
-				case NET_ECONNECT:
-					if(mkoutbound_status==NET_ENORECORD)
-					{
-						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port,inbound_info.username);
-						packlen_rewrited=make_kickreason_legacy("Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.",rewrited);
-					}
-					else if(mkoutbound_status==NET_ECONNECT)
-					{
-						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port,inbound_info.username);
-						packlen_rewrited=make_kickreason_legacy("Proxy(Internal): Failed on connecting to the target server, please try again later.",rewrited);
-					}
-					send(socket_in,rewrited,packlen_rewrited,0);
-					close(socket_in);
-					config_proxy_search_destroy(&proxyinfo);
-					return 4;
-			}
-		}
-	}
-	else
-	{
-		if((inbound[packlen_inbound-1]==1)||(inbound[packlen_inbound-1]==2))
-		{
-			packlen_inbound=packlen_inbound+recv(socket_in,inbound+packlen_inbound,BUFSIZ-packlen_inbound,0);
-		}
-		p_handshake inbound_info=packet_read(inbound);
-		if(inbound_info.version==0)
-		{
-			if(inbound[inbound[0]]==1)
-			{
-				mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: motd, status: reject_motdrelay_13w41*\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
-				packlen_rewrited=make_motd(rewrited,"[Proxy] Use 13w42a or later to play!",inbound_info.version);
-			}
-			else if(inbound[inbound[0]]==2)
-			{
-				mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, status: reject_gamerelay_13w41*\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
-				packlen_rewrited=make_kickreason(rewrited,"Proxy: Unsupported client, use 13w42a or later!");
-			}
+		case PVER_LEGACYM1: //motd: b1.8-pre1~12w42a
+		case PVER_LEGACYM2: //motd: 12w42b~1.6
+			mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: motd, status: reject_motdrelay_oldclient\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
+			packlen_rewrited=make_motd_legacy(0,"Proxy: Please use direct connect.",protocol_type,rewrited);
 			send(socket_in,rewrited,packlen_rewrited,0);
 			close(socket_in);
 			return 5;
-		}
-		conf_proxy proxyinfo=config_proxy_search(conf_in,inbound_info.address);
-		if(proxyinfo.valid==0)
+		case PVER_MODERN1: //login&motd: 13w41a~13w41b
 		{
-			if(inbound_info.nextstate==1)
+			unsigned long packlen_inbound_part1=0;
+			void * inbound_offset=inbound;
+			inbound_offset=varint2int(inbound_offset,&packlen_inbound_part1);
+			inbound_offset=inbound_offset+packlen_inbound_part1-1;
+			switch(*((unsigned char *)inbound_offset))
 			{
-				mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address);
-				packlen_rewrited=make_motd(rewrited,"[Proxy] Use a legit address to play!",inbound_info.version);
-			}
-			else if(inbound_info.nextstate==2)
-			{
-				mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, vhost: %s, status: reject_vhostinvalid, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,inbound_info.username);
-				packlen_rewrited=make_kickreason(rewrited,"Proxy: Please use a legit name to connect!");
+				case 0x01:
+					mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: motd, status: reject_motdrelay_13w41*\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
+					packlen_rewrited=make_motd(rewrited,"[Proxy] Use 13w42a or later to play!",0);
+					break;
+				case 0x02:
+					mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, status: reject_gamerelay_13w41*\n",(char *)&(addrinfo_in.address),addrinfo_in.port);
+					packlen_rewrited=make_kickreason(rewrited,"Proxy: Unsupported client, use 13w42a or later!");
+					break;
 			}
 			send(socket_in,rewrited,packlen_rewrited,0);
 			close(socket_in);
-			return 3;
+			break;
 		}
-		int mkoutbound_status,outmsg_level;
-		if(proxyinfo.srvenabled==1)
+		case PVER_LEGACYL2: //login: 12w04a~12w16a
+		case PVER_LEGACYL4: //login: 12w18a~13w39b
 		{
-			net_srvrecord srvrecords[128];
-			if(net_srvresolve(proxyinfo.address,srvrecords)>0)
+			break; //continue, do further processes.
+		}
+		case PVER_LEGACYM3: //motd: 1.6.1~13w39b
+		{
+			break; //continue, do further processes.
+		}
+		case PVER_MODERN2: //login&motd: 13w42a+
+			/* p_handshake inbound_info=packet_read(inbound);
+			conf_proxy proxyinfo=config_proxy_search(conf_in,inbound_info.address);
+			if(!proxyinfo.valid)
 			{
-				proxyinfo.address=(char *)realloc(proxyinfo.address,strlen(srvrecords[0].target)+1);
-				strcpy(proxyinfo.address,srvrecords[0].target);
-				proxyinfo.port=srvrecords[0].port;
-				proxyinfo.srvenabled=0;
-			}
-		}
-		mkoutbound_status=0;
-		net_addr connaddr=net_resolve_dual(proxyinfo.address,addrinfo_in.family,netpriority_enabled);
-		if(connaddr.family==0)
-		{
-			mkoutbound_status=NET_ENORECORD;
-		}
-		*socket_out=net_socket(NETSOCK_CONN,connaddr.family,&(connaddr.addr),proxyinfo.port,0);
-		if(*socket_out==-1)
-		{
-			mkoutbound_status=NET_ECONNECT;
-		}
-		if(mkoutbound_status!=0)
-		{
-			outmsg_level=1;
-		}
-		else
-		{
-			if(inbound_info.nextstate==1)
-			{
-				outmsg_level=3;
-			}
-			else if(inbound_info.nextstate==2)
-			{
-				outmsg_level=2;
-			}
-		}
-		switch(mkoutbound_status)
-		{
-			case 0:
-				if(inbound_info.nextstate==1)
+				switch(inbound_info.nextstate)
 				{
-					mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: accept\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port);
-				}
-				else if(inbound_info.nextstate==2)
-				{
-					mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: accept, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port,inbound_info.username);
-				}
-				if(proxyinfo.pheader==1)
-				{
-					if(connaddr.family==addrinfo_in.family)
-					{
-						net_addrp addrinfo_out=net_ntop(connaddr.family,&(connaddr.addr),0);
-						if(addrinfo_in.family==AF_INET)
-						{
-							packlen_pheader=sprintf(pheader,"PROXY TCP4 %s %s %d %d\r\n",(char *)&(addrinfo_in.address_clean),(char *)&addrinfo_out,addrinfo_in.port,proxyinfo.port);
-							send(*socket_out,pheader,packlen_pheader,0);
-						}
-						else if(addrinfo_in.family==AF_INET6)
-						{
-							packlen_pheader=sprintf(pheader,"PROXY TCP6 %s %s %d %d\r\n",(char *)&(addrinfo_in.address_clean),(char *)&addrinfo_out,addrinfo_in.port,proxyinfo.port);
-							send(*socket_out,pheader,packlen_pheader,0);
-						}
-					}
-				}
-				if(proxyinfo.rewrite==1)
-				{
-					strcpy(inbound_info.address,proxyinfo.address);
-					inbound_info.port=proxyinfo.port;
-					packlen_rewrited=packet_write(inbound_info,rewrited);
-					send(*socket_out,rewrited,packlen_rewrited,0);
-				}
-				else
-				{
-					send(*socket_out,inbound,packlen_inbound,0);
-				}
-				config_proxy_search_destroy(&proxyinfo);
-				return 0;
-			case NET_ENORECORD:
-			case NET_ECONNECT:
-				if(inbound_info.nextstate==1)
-				{
-					packlen_rewrited=make_motd(rewrited,"[Proxy] Server Temporary Unavailable.",inbound_info.version);
-					if(mkoutbound_status==NET_ENORECORD)
-					{
-						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoresolve\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port);
-					}
-					else if(mkoutbound_status==NET_ECONNECT)
-					{
-						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoconnect\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port);
-					}
-				}
-				else if(inbound_info.nextstate==2)
-				{
-					if(mkoutbound_status==NET_ENORECORD)
-					{
-						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port,inbound_info.username);
-						packlen_rewrited=make_kickreason(rewrited,"Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.");
-					}
-					else if(mkoutbound_status==NET_ECONNECT)
-					{
-						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port,inbound_info.username);
-						packlen_rewrited=make_kickreason(rewrited,"Proxy(Internal): Failed on connecting to the target server, please try again later.");
-					}
+					case 1:
+						mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address);
+						packlen_rewrited=make_motd(rewrited,"[Proxy] Use a legit address to play!",inbound_info.version);
+						break;
+					case 2:
+						mksysmsg(0,logfile,runmode,conf_in->log.level,1,"src: %s:%d, type: game, vhost: %s, status: reject_vhostinvalid, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,inbound_info.username);
+						packlen_rewrited=make_kickreason(rewrited,"Proxy: Please use a legit name to connect!");
+						break;
 				}
 				send(socket_in,rewrited,packlen_rewrited,0);
 				close(socket_in);
-				config_proxy_search_destroy(&proxyinfo);
-				return 4;
-		}
+				return 3;
+			} */
+			break; //continue, do further processes.
 	}
 }
