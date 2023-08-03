@@ -14,6 +14,10 @@
 
 #define _MRS_DEFINES_H_INCLUDED_
 
+#define PVERDB_SNAPMASK 0xBFFFFFFF
+#define PVERDB_R_1_20_1 763
+#define PVERDB_S_1_20_1_RC1 0x8E
+
 typedef unsigned long varint_l;
 
 #endif

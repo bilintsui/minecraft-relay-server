@@ -100,10 +100,13 @@ p_handshake packet_read(void * src)
 		memcpy(result.username,src,username_length);
 		src+=username_length;
 		result.signature_data_length=size_part2-(src-part2_start);
-		if((result.signature_data_length!=0)&&(*((char *)src)==1))
+		if(result.signature_data_length)
 		{
-			result.signature_data_length--;
-			src++;
+			if(((result.version<=PVERDB_R_1_20_1)||((result.version&PVERDB_SNAPMASK)<=PVERDB_S_1_20_1_RC1))&&(*((char *)src)==1))
+			{
+				result.signature_data_length--;
+				src++;
+			}
 			result.signature_data=malloc(result.signature_data_length);
 			memcpy(result.signature_data,src,result.signature_data_length);
 			src+=result.signature_data_length;
@@ -157,7 +160,10 @@ size_t packet_write(void * dst, const p_handshake src)
 		ptr_part2+=username_length;
 		if(src.signature_data_length)
 		{
-			ptr_part2=int2varint(1,ptr_part2);
+			if((src.version<=PVERDB_R_1_20_1)||((src.version&PVERDB_SNAPMASK)<=PVERDB_S_1_20_1_RC1))
+			{
+				ptr_part2=int2varint(1,ptr_part2);
+			}
 			memcpy(ptr_part2,src.signature_data,src.signature_data_length);
 			ptr_part2+=src.signature_data_length;
 		}

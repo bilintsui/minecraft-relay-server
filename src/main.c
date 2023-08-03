@@ -20,9 +20,9 @@
 #include "log.h"
 #include "misc.h"
 
-const char * version_str="1.2-beta3";
-const char * year_str="2020-2022";
-const short version_internal=65;
+const char * version_str="1.2-beta4";
+const char * year_str="2020-2023";
+const short version_internal=66;
 char global_buffer[BUFSIZ];
 char * cwd=NULL;
 char * argoffset_configfile=NULL;
