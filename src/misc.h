@@ -2,8 +2,8 @@
 	misc.h: Header file of misc.c
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.2-beta3
-	Copyright (c) 2020-2022 Bilin Tsui. All right reserved.
+	Minecraft Relay Server, version 1.2-beta4
+	(c) 2020-2024 Bilin Tsui.
 	This is a Free Software, absolutely no warranty.
 
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).

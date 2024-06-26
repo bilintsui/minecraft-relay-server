@@ -2,8 +2,8 @@
 	main.c: Main source code for Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
-	Minecraft Relay Server, version 1.2-beta3
-	Copyright (c) 2020-2022 Bilin Tsui. All right reserved.
+	Minecraft Relay Server, version 1.2-beta4
+	(c) 2020-2024 Bilin Tsui.
 	This is a Free Software, absolutely no warranty.
 
 	Licensed with GNU General Public License Version 3 (GNU GPL v3).
@@ -21,7 +21,7 @@
 #include "misc.h"
 
 const char * version_str="1.2-beta4";
-const char * year_str="2020-2023";
+const char * year_str="2020-2024";
 const short version_internal=66;
 char global_buffer[BUFSIZ];
 char * cwd=NULL;
@@ -113,7 +113,7 @@ void deal_sigusr1()
 int main(int argc, char ** argv)
 {
 	char helpmsg[]="<arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-f / --forking:\tMade the process become daemonize.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server";
-	snprintf(global_buffer,BUFSIZ,"Minecraft Relay Server [Version %s/%d]\n(C) %s Bilin Tsui. All rights reserved.\n\n",version_str,version_internal,year_str);
+	snprintf(global_buffer,BUFSIZ,"Minecraft Relay Server [Version %s/%d]\n(c) %s Bilin Tsui.\n\n",version_str,version_internal,year_str);
 	char * headmsg=(char *)malloc(strlen(global_buffer)+1);
 	if(headmsg==NULL)
 	{
