@@ -20,14 +20,15 @@ jobs:
         run: |
           sudo apt install -y gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf gcc-powerpc64le-linux-gnu gcc-riscv64-linux-gnu gcc-s390x-linux-gnu
           sudo rm /etc/apt/sources.list
-          echo 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/main.list
-          echo 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/main.list
-          echo 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu jammy-backports main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/main.list
-          echo 'deb [arch=amd64] http://security.ubuntu.com/ubuntu jammy-security main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/main.list
-          echo 'deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/port.list
-          echo 'deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/port.list
-          echo 'deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/port.list
-          echo 'deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://security.ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/port.list
+          echo 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu $codename main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/main.list
+          echo 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu $codename-updates main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/main.list
+          echo 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu $codename-backports main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/main.list
+          echo 'deb [arch=amd64] http://security.ubuntu.com/ubuntu $codename-security main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/main.list
+          echo 'deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports $codename main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/port.list
+          echo 'deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports $codename-updates main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/port.list
+          echo 'deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports $codename-backports main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/port.list
+          echo 'deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://security.ports.ubuntu.com/ubuntu-ports $codename-security main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/port.list
+          lsb_release -c | awk '{print "sed -i \"s/$codename/"$2"/g\" /etc/apt/sources.list.d/*"}' | sed "s/\"/'/g" | sudo bash
           sudo dpkg --add-architecture arm64
           sudo dpkg --add-architecture armhf
           sudo dpkg --add-architecture ppc64el
