@@ -26,6 +26,6 @@
 #define PVER_MODERN1 9
 #define PVER_MODERN2 10
 
-int protocol_identify(const char * src);
+int protocol_identify(const char *src);
 
 #endif

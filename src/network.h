@@ -29,39 +29,37 @@
 #define NET_ELISTEN 9
 #define NET_ECONNECT 10
 
-typedef struct
-{
+typedef struct {
 	sa_family_t family;
 	int err;
-	union
-	{
+	union {
 		uint32_t v4;
 		unsigned char v6[16];
 	} addr;
 } net_addr;
 typedef union {
 	char v4[INET_ADDRSTRLEN];
-	char v6[INET6_ADDRSTRLEN+2];
+	char v6[INET6_ADDRSTRLEN + 2];
 } net_addrp;
-typedef struct
-{
+typedef struct {
 	sa_family_t family;
-	net_addrp address,address_clean;
+	net_addrp address, address_clean;
 	in_port_t port;
 } net_addrbundle;
-typedef struct
-{
+typedef struct {
 	char target[128];
 	unsigned short port;
 } net_srvrecord;
 
 size_t net_getaddrsize(sa_family_t family);
 sa_family_t net_getaltfamily(sa_family_t family);
-net_addrp net_ntop(sa_family_t family, void * src, short v6addition);
+net_addrp net_ntop(sa_family_t family, void *src, short v6addition);
 int net_relay(int socket_in, int socket_out);
-void * net_resolve(char * hostname, sa_family_t family);
-net_addr net_resolve_dual(char * hostname, sa_family_t primary_family, short dual);
-int net_socket(short action, sa_family_t family, void * address, in_port_t port, short reuseaddr);
-int net_srvresolve(char * query_name, net_srvrecord * target);
+void *net_resolve(char *hostname, sa_family_t family);
+net_addr net_resolve_dual(char *hostname, sa_family_t primary_family,
+			  short dual);
+int net_socket(short action, sa_family_t family, void *address, in_port_t port,
+	       short reuseaddr);
+int net_srvresolve(char *query_name, net_srvrecord * target);
 
 #endif

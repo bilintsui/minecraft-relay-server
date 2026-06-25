@@ -14,7 +14,9 @@
 
 #define _MRS_LOG_H_INCLUDED_
 
-void gettime(unsigned char * target);
-int mksysmsg(unsigned short noprefix, char * logfile, unsigned short runmode, unsigned short maxlevel, unsigned short msglevel, char * format, ...);
+void gettime(unsigned char *target);
+int mksysmsg(unsigned short noprefix, char *logfile, unsigned short runmode,
+	     unsigned short maxlevel, unsigned short msglevel, char *format,
+	     ...);
 
 #endif

@@ -29,38 +29,33 @@
 #define CONF_ECPROXY 9
 #define CONF_ECPROXYDUP 10
 
-typedef struct
-{
-	struct
-	{
+typedef struct {
+	struct {
 		short enabled;
 		sa_family_t protocol;
 	} netpriority;
-	struct
-	{
-		char * filename;
-		short level,binary;
+	struct {
+		char *filename;
+		short level, binary;
 	} log;
-	struct
-	{
-		char * address;
+	struct {
+		char *address;
 		in_port_t port;
 	} listen;
-	cJSON * proxy;
+	cJSON *proxy;
 } conf;
-typedef struct
-{
-	char * address;
+typedef struct {
+	char *address;
 	in_port_t port;
-	short valid,srvenabled,rewrite,pheader;
+	short valid, srvenabled, rewrite, pheader;
 } conf_proxy;
 
 void config_destroy(conf * target);
 short config_jsonbool(cJSON * src, short defaultvalue);
 void config_dumper(conf * src);
-cJSON * config_proxy_parse(cJSON * src);
-conf_proxy config_proxy_search(conf * src, const char * targetvhost);
+cJSON *config_proxy_parse(cJSON * src);
+conf_proxy config_proxy_search(conf * src, const char *targetvhost);
 void config_proxy_search_destroy(conf_proxy * target);
-conf * config_read(char * filename);
+conf *config_read(char *filename);
 
 #endif
