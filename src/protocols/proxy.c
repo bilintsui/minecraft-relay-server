@@ -6,8 +6,8 @@
 	(c) 2020-2024 Bilin Tsui.
 	This is a Free Software, absolutely no warranty.
 
-	Licensed with GNU General Public License Version 3 (GNU GPL v3).
-	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
+	Licensed under GNU General Public License Version 3 (GNU GPL v3).
+	For detailed license text, see: https://www.gnu.org/licenses/gpl-3.0.html
 */
 
 #include <stdio.h>

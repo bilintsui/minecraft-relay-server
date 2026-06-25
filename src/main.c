@@ -6,8 +6,8 @@
 	(c) 2020-2024 Bilin Tsui.
 	This is a Free Software, absolutely no warranty.
 
-	Licensed with GNU General Public License Version 3 (GNU GPL v3).
-	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
+	Licensed under GNU General Public License Version 3 (GNU GPL v3).
+	For detailed license text, see: https://www.gnu.org/licenses/gpl-3.0.html
 */
 
 #include <errno.h>
@@ -81,7 +81,7 @@ void deal_sigusr1()
 			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Not a valid JSON format, will keep your old configurations.\n");
 			break;
 		case CONF_ECMEMORY:
-			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in processing configurations: Failed to allocate memory while internal processing, will keep your old configurations.\n");
+			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in processing configurations: Failed to allocate memory during internal processing, will keep your old configurations.\n");
 			break;
 		case CONF_ECNETPRIORITYPROTOCOL:
 			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in configurations: Entry \"netpriority.protocol\" must be IPv4 or IPv6 (case sensitive), will keep your old configurations.\n");
@@ -104,7 +104,7 @@ void deal_sigusr1()
 			}
 			break;
 		default:
-			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in processing configurations: Unknown error occured, code: %d, will keep your old configurations\n",errno);
+			mksysmsg(0,config_logfull_old,config_runmode,config_maxlevel,1,"Error in processing configurations: Unknown error occurred, code: %d, will keep your old configurations\n",errno);
 			break;
 	}
 	free(config_logfull_old);
@@ -112,7 +112,7 @@ void deal_sigusr1()
 }
 int main(int argc, char ** argv)
 {
-	char helpmsg[]="<arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-f / --forking:\tMade the process become daemonize.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server";
+	char helpmsg[]="<arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-f / --forking:\tMakes the process become daemonized.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server";
 	snprintf(global_buffer,BUFSIZ,"Minecraft Relay Server [Version %s/%d]\n(c) %s Bilin Tsui.\n\n",version_str,version_internal,year_str);
 	char * headmsg=(char *)malloc(strlen(global_buffer)+1);
 	if(headmsg==NULL)
@@ -161,13 +161,13 @@ int main(int argc, char ** argv)
 			if(kill(prevpid,SIGUSR1)==0)
 			{
 				mksysmsg(1,"",0,255,2,headmsg);
-				mksysmsg(0,"",0,255,2,"Successfully send reload signal to currently running process.\n");
+				mksysmsg(0,"",0,255,2,"Successfully sent reload signal to currently running process.\n");
 				return 0;
 			}
 			else
 			{
 				mksysmsg(1,"",0,255,0,headmsg);
-				mksysmsg(0,"",0,255,0,"Failed on send reload signal to currently running process.\n");
+				mksysmsg(0,"",0,255,0,"Failed to send reload signal to currently running process.\n");
 				return 3;
 			}
 		}
@@ -185,13 +185,13 @@ int main(int argc, char ** argv)
 			if(kill(prevpid,SIGTERM)==0)
 			{
 				mksysmsg(1,"",0,255,2,headmsg);
-				mksysmsg(0,"",0,255,2,"Successfully send terminate signal to currently running process.\n");
+				mksysmsg(0,"",0,255,2,"Successfully sent terminate signal to currently running process.\n");
 				return 0;
 			}
 			else
 			{
 				mksysmsg(1,"",0,255,0,headmsg);
-				mksysmsg(0,"",0,255,0,"Failed on send terminate signal to currently running process.\n");
+				mksysmsg(0,"",0,255,0,"Failed to send terminate signal to currently running process.\n");
 				return 3;
 			}
 		}
@@ -222,7 +222,7 @@ int main(int argc, char ** argv)
 			if(kill(prevpid,0)==0)
 			{
 				mksysmsg(1,"",0,255,0,headmsg);
-				mksysmsg(0,"",0,255,0,"You cannot running multiple instances in one time. Previous running process PID: %d.\n",prevpid);
+				mksysmsg(0,"",0,255,0,"You cannot run multiple instances at a time. Previous running process PID: %d.\n",prevpid);
 				return 1;
 			}
 		}
@@ -230,7 +230,7 @@ int main(int argc, char ** argv)
 	mksysmsg(1,"",0,255,2,headmsg);
 	if(argoffset_configfile==NULL)
 	{
-		mksysmsg(0,"",0,255,0,"Config filename can not be empty!\n",configfile);
+		mksysmsg(0,"",0,255,0,"Config filename cannot be empty!\n",configfile);
 		return 22;
 	}
 	configfile=(char *)malloc(strlen(argoffset_configfile)+1);
@@ -280,7 +280,7 @@ int main(int argc, char ** argv)
 			mksysmsg(0,"",0,255,0,"Error in configurations: Not a valid JSON format.\n");
 			return 38;
 		case CONF_ECMEMORY:
-			mksysmsg(0,"",0,255,0,"Error in processing configurations: Failed to allocate memory while internal processing.\n");
+			mksysmsg(0,"",0,255,0,"Error in processing configurations: Failed to allocate memory during internal processing.\n");
 			return 12;
 		case CONF_ECNETPRIORITYPROTOCOL:
 			mksysmsg(0,"",0,255,0,"Error in configurations: Entry \"netpriority.protocol\" must be IPv4 or IPv6 (case sensitive).\n");
@@ -303,7 +303,7 @@ int main(int argc, char ** argv)
 			}
 			return 22;
 		default:
-			mksysmsg(0,"",0,255,0,"Error in processing configurations: Unknown error occured, code: %d\n",errno);
+			mksysmsg(0,"",0,255,0,"Error in processing configurations: Unknown error occurred, code: %d\n",errno);
 			return 255;
 	}
 	FILE * tmpfd=fopen(config_logfull,"a");

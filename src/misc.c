@@ -6,8 +6,8 @@
 	(c) 2020-2024 Bilin Tsui.
 	This is a Free Software, absolutely no warranty.
 
-	Licensed with GNU General Public License Version 3 (GNU GPL v3).
-	For detailed license text, watch: https://www.gnu.org/licenses/gpl-3.0.html
+	Licensed under GNU General Public License Version 3 (GNU GPL v3).
+	For detailed license text, see: https://www.gnu.org/licenses/gpl-3.0.html
 */
 
 #include <stdio.h>
@@ -184,7 +184,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 					{
 						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoconnect\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port);
 					}
-					packlen_rewrited=make_motd_legacy(rewrited,"[Proxy] Server Temporary Unavailable.",motd_version,inbound_info.version);
+					packlen_rewrited=make_motd_legacy(rewrited,"[Proxy] Server Temporarily Unavailable.",motd_version,inbound_info.version);
 					send(socket_in,rewrited,packlen_rewrited,0);
 					close(socket_in);
 					packet_destroy_legacy_motd(inbound_info);
@@ -302,12 +302,12 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 					if(mkoutbound_status==NET_ENORECORD)
 					{
 						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port,inbound_info.username);
-						packlen_rewrited=make_kickreason_legacy(rewrited,"Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.");
+						packlen_rewrited=make_kickreason_legacy(rewrited,"Proxy(Internal): Temporarily failed to resolve the address for the target server, please try again later.");
 					}
 					else if(mkoutbound_status==NET_ECONNECT)
 					{
 						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port,inbound_info.username);
-						packlen_rewrited=make_kickreason_legacy(rewrited,"Proxy(Internal): Failed on connecting to the target server, please try again later.");
+						packlen_rewrited=make_kickreason_legacy(rewrited,"Proxy(Internal): Failed to connect to the target server, please try again later.");
 					}
 					send(socket_in,rewrited,packlen_rewrited,0);
 					close(socket_in);
@@ -439,7 +439,7 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 			case NET_ECONNECT:
 				if(inbound_info.nextstate==1)
 				{
-					packlen_rewrited=make_motd(rewrited,"[Proxy] Server Temporary Unavailable.",inbound_info.version);
+					packlen_rewrited=make_motd(rewrited,"[Proxy] Server Temporarily Unavailable.",inbound_info.version);
 					if(mkoutbound_status==NET_ENORECORD)
 					{
 						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoresolve\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port);
@@ -454,12 +454,12 @@ int backbone(int socket_in, int * socket_out, char * logfile, unsigned short run
 					if(mkoutbound_status==NET_ENORECORD)
 					{
 						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port,inbound_info.username);
-						packlen_rewrited=make_kickreason(rewrited,"Proxy(Internal): Temporary failed on resolving address for the target server, please try again later.");
+						packlen_rewrited=make_kickreason(rewrited,"Proxy(Internal): Temporarily failed to resolve the address for the target server, please try again later.");
 					}
 					else if(mkoutbound_status==NET_ECONNECT)
 					{
 						mksysmsg(0,logfile,runmode,conf_in->log.level,outmsg_level,"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s\n",(char *)&(addrinfo_in.address),addrinfo_in.port,inbound_info.address,proxyinfo.address,proxyinfo.port,inbound_info.username);
-						packlen_rewrited=make_kickreason(rewrited,"Proxy(Internal): Failed on connecting to the target server, please try again later.");
+						packlen_rewrited=make_kickreason(rewrited,"Proxy(Internal): Failed to connect to the target server, please try again later.");
 					}
 				}
 				send(socket_in,rewrited,packlen_rewrited,0);
