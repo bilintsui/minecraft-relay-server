@@ -1,4 +1,4 @@
-// These comments are only valid in JSON5. Remove them when writing your own configuration for JSON compliance.
+// These comments are only valid in JSONC. Remove them when writing your own configuration for JSON compliance.
 {
   // Optional, global setting of how an IP address or a hostname is resolved
   "netpriority": {
