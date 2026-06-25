@@ -1,5 +1,5 @@
 /*
-	protocols/proxy.c: Functions for HAProxy's Proxy Protocol v1 (ASCII) on Minecraft Relay Server
+	protocol/proxy.c: Functions for HAProxy's Proxy Protocol v1 (ASCII) on Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
 	Minecraft Relay Server, version 1.2-beta4

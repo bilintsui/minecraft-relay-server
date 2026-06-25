@@ -1,5 +1,5 @@
 /*
-	protocols/handshake_legacy.c: Functions for Legacy Protocol (13w39b and before) on Minecraft Relay Server
+	protocol/handshake_legacy.c: Functions for Legacy Protocol (13w39b and before) on Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
 	Minecraft Relay Server, version 1.2-beta4

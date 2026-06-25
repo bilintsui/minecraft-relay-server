@@ -16,10 +16,10 @@
 #include <unistd.h>
 #include "basic.h"
 #include "log.h"
-#include "protocols/common.h"
-#include "protocols/handshake.h"
-#include "protocols/handshake_legacy.h"
-#include "protocols/proxy.h"
+#include "protocol/common.h"
+#include "protocol/handshake.h"
+#include "protocol/handshake_legacy.h"
+#include "protocol/proxy.h"
 
 #include "misc.h"
 

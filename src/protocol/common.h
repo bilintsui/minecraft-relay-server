@@ -1,5 +1,5 @@
 /*
-	protocols/common.h: Header file of protocols/common.c
+	protocol/common.h: Header file of protocol/common.c
 	A component of Minecraft Relay Server.
 
 	Minecraft Relay Server, version 1.2-beta4

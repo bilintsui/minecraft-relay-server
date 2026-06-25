@@ -1,5 +1,5 @@
 /*
-	protocols/proxy.h: Header file of protocols/proxy.c
+	protocol/proxy.h: Header file of protocol/proxy.c
 	A component of Minecraft Relay Server.
 
 	Minecraft Relay Server, version 1.2-beta4

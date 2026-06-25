@@ -1,5 +1,5 @@
 /*
-	protocols/handshake_legacy.h: Header file of protocols/handshake_legacy.c
+	protocol/handshake_legacy.h: Header file of protocol/handshake_legacy.c
 	A component of Minecraft Relay Server.
 
 	Minecraft Relay Server, version 1.2-beta4

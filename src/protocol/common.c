@@ -1,5 +1,5 @@
 /*
-	protocols/common.c: Common Functions for Protocols on Minecraft Relay Server
+	protocol/common.c: Common Functions for Protocols on Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
 	Minecraft Relay Server, version 1.2-beta4
