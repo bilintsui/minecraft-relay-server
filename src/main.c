@@ -33,13 +33,13 @@ conf *config = NULL;
 short config_netpriority_enabled = 1;
 sa_family_t config_netpriority_protocol = AF_INET6;
 unsigned short config_runmode = 1;
-void deal_sigterm()
+void deal_sigterm(int signum)
 {
 	unlink("/tmp/mcrelay.pid");
 	exit(0);
 }
 
-void deal_sigusr1()
+void deal_sigusr1(int signum)
 {
 	unsigned short config_maxlevel = config->log.level;
 	char *config_logfull_old = (char *)malloc(strlen(config_logfull) + 1);
