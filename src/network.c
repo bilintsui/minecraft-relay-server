@@ -10,8 +10,10 @@
 	For detailed license text, see: https://www.gnu.org/licenses/gpl-3.0.html
 */
 
+#define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <resolv.h>
 #include <stdlib.h>
@@ -65,42 +67,82 @@ net_addrp net_ntop(sa_family_t family, void *src, short v6addition)
 
 int net_relay(int socket_in, int socket_out)
 {
-	char buffer[BUFSIZ];
+	int pipefd[2] = { -1, -1 };
 	struct epoll_event ev, events[2];
-	int epfd, nfds, i, read_bytes, socket_peer;
+	int epfd = -1, nfds, i, src, dst, bytes, written, res, ret = 0;
+	if (pipe(pipefd) == -1) {
+		ret = -1;
+		goto cleanup;
+	}
 	epfd = epoll_create(2);
+	if (epfd == -1) {
+		ret = -1;
+		goto cleanup;
+	}
+	ev.events = EPOLLIN;
 	ev.data.fd = socket_in;
-	ev.events = EPOLLIN;
-	epoll_ctl(epfd, EPOLL_CTL_ADD, socket_in, &ev);
+	if (epoll_ctl(epfd, EPOLL_CTL_ADD, socket_in, &ev) == -1) {
+		ret = -1;
+		goto cleanup;
+	}
 	ev.data.fd = socket_out;
-	ev.events = EPOLLIN;
-	epoll_ctl(epfd, EPOLL_CTL_ADD, socket_out, &ev);
+	if (epoll_ctl(epfd, EPOLL_CTL_ADD, socket_out, &ev) == -1) {
+		ret = -1;
+		goto cleanup;
+	}
 	while (1) {
 		nfds = epoll_wait(epfd, events, 2, -1);
+		if (nfds == -1) {
+			if (errno == EINTR) {
+				continue;
+			}
+			ret = -1;
+			goto cleanup;
+		}
 		for (i = 0; i < nfds; i++) {
+			if (events[i].events & (EPOLLERR | EPOLLHUP)) {
+				goto cleanup;
+			}
 			if (events[i].events & EPOLLIN) {
-				if (events[i].data.fd == socket_in) {
-					socket_peer = socket_out;
-				} else if (events[i].data.fd == socket_out) {
-					socket_peer = socket_in;
+				src = events[i].data.fd;
+				dst =
+				    (src == socket_in) ? socket_out : socket_in;
+				bytes =
+				    splice(src, NULL, pipefd[1], NULL, 65536,
+					   SPLICE_F_MOVE);
+				if (bytes == 0) {
+					goto cleanup;
 				}
-				read_bytes = BUFSIZ;
-				while (read_bytes == BUFSIZ) {
-					read_bytes =
-					    recv(events[i].data.fd, buffer,
-						 BUFSIZ, 0);
-					if (read_bytes == 0) {
-						close(socket_peer);
-						return 0;
+				if (bytes < 0) {
+					if (errno == EINTR)
+						continue;
+					goto cleanup;
+				}
+				written = 0;
+				while (written < bytes) {
+					res = splice(pipefd[0], NULL, dst, NULL,
+						     bytes - written,
+						     SPLICE_F_MOVE);
+					if (res <= 0) {
+						if (res < 0 && errno == EINTR)
+							continue;
+						goto cleanup;
 					}
-					if (read_bytes > 0) {
-						send(socket_peer, buffer,
-						     read_bytes, 0);
-					}
+					written += res;
 				}
 			}
 		}
 	}
+ cleanup:
+	close(socket_in);
+	close(socket_out);
+	if (pipefd[0] != -1)
+		close(pipefd[0]);
+	if (pipefd[1] != -1)
+		close(pipefd[1]);
+	if (epfd != -1)
+		close(epfd);
+	return ret;
 }
 
 void *net_resolve(char *hostname, sa_family_t family)
