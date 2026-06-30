@@ -69,11 +69,14 @@ int net_relay(int socket_in, int socket_out)
 {
 	int pipefd[2] = { -1, -1 };
 	struct epoll_event ev, events[2];
-	int epfd = -1, nfds, i, src, dst, bytes, written, res, ret = 0;
+	int epfd = -1, nfds, i, src, dst, bytes, written, res, ret = 0, pipe_sz;
 	if (pipe(pipefd) == -1) {
 		ret = -1;
 		goto cleanup;
 	}
+	pipe_sz = fcntl(pipefd[0], F_GETPIPE_SZ);
+	if (pipe_sz <= 0)
+		pipe_sz = 65536;
 	epfd = epoll_create(2);
 	if (epfd == -1) {
 		ret = -1;
@@ -108,7 +111,7 @@ int net_relay(int socket_in, int socket_out)
 				dst =
 				    (src == socket_in) ? socket_out : socket_in;
 				bytes =
-				    splice(src, NULL, pipefd[1], NULL, 65536,
+				    splice(src, NULL, pipefd[1], NULL, pipe_sz,
 					   SPLICE_F_MOVE);
 				if (bytes == 0) {
 					goto cleanup;
