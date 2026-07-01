@@ -32,13 +32,20 @@ conf *config = NULL;
 short config_netpriority_enabled = 1;
 sa_family_t config_netpriority_protocol = AF_INET6;
 unsigned short config_runmode = 1;
-void deal_sigterm(int signum)
+volatile sig_atomic_t reload_flag = 0;
+void deal_signal(int signum)
 {
-	unlink("/run/mcrelay/mcrelay.pid");
-	exit(0);
+	switch (signum) {
+	case SIGTERM:
+	case SIGINT:
+		unlink("/run/mcrelay/mcrelay.pid");
+		exit(0);
+	case SIGUSR1:
+		reload_flag = 1;
+	}
 }
 
-void deal_sigusr1(int signum)
+static void do_reload(void)
 {
 	unsigned short config_maxlevel = config->log.level;
 	char config_logfull_old[PATH_MAX];
@@ -138,8 +145,6 @@ int main(int argc, char **argv)
 		struct sockaddr_in6 v6;
 	} addr_inbound_client;
 	int strulen = sizeof(addr_inbound_client);
-	signal(SIGTERM, deal_sigterm);
-	signal(SIGINT, deal_sigterm);
 	getcwd(cwd, PATH_MAX);
 	if (argc < 2) {
 		mksysmsg(1, "", 0, 255, 0, headmsg);
@@ -385,18 +390,35 @@ int main(int argc, char **argv)
 		fprintf(pidfd, "%d", pid);
 		fclose(pidfd);
 	}
-	signal(SIGUSR1, deal_sigusr1);
+	struct sigaction sa;
+	memset(&sa, 0, sizeof(sa));
+	sigemptyset(&sa.sa_mask);
+	sa.sa_handler = deal_signal;
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGINT, &sa, NULL);
+	sigaction(SIGUSR1, &sa, NULL);
 	signal(SIGCHLD, SIG_IGN);
 	while (1) {
+		if (reload_flag) {
+			do_reload();
+			reload_flag = 0;
+		}
 		socket_inbound_client =
 		    accept(socket_inbound_server,
 			   (struct sockaddr *)&addr_inbound_client, &strulen);
+		if (socket_inbound_client == -1) {
+			if (errno == EINTR)
+				continue;
+			break;
+		}
 		pid = fork();
 		if (pid > 0) {
 			close(socket_inbound_client);
 		} else if (pid < 0) {
 			break;
 		} else {
+			signal(SIGUSR1, SIG_DFL);
+			close(socket_inbound_server);
 			net_addrbundle addrbundle_inbound_client;
 			addrbundle_inbound_client.family =
 			    *((sa_family_t *) & addr_inbound_client);
@@ -405,10 +427,12 @@ int main(int argc, char **argv)
 			case AF_INET:
 				addrbundle_inbound_client.address =
 				    net_ntop(AF_INET, &(((struct sockaddr_in *)
-							 &addr_inbound_client)->sin_addr), 1);
+							 &addr_inbound_client)->
+							sin_addr), 1);
 				addrbundle_inbound_client.address_clean =
 				    net_ntop(AF_INET, &(((struct sockaddr_in *)
-							 &addr_inbound_client)->sin_addr), 0);
+							 &addr_inbound_client)->
+							sin_addr), 0);
 				addrbundle_inbound_client.port =
 				    ntohs(((struct sockaddr_in *)
 					   &addr_inbound_client)->sin_port);
@@ -438,8 +462,6 @@ int main(int argc, char **argv)
 					   &addr_inbound_client)->sin6_port);
 				break;
 			}
-			signal(SIGUSR1, SIG_DFL);
-			close(socket_inbound_server);
 			int socket_outbound;
 			if (backbone
 			    (socket_inbound_client, &socket_outbound,
