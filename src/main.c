@@ -42,7 +42,8 @@ void deal_sigusr1(int signum)
 {
 	unsigned short config_maxlevel = config->log.level;
 	char config_logfull_old[PATH_MAX];
-	strcpy(config_logfull_old, config_logfull);
+	strncpy(config_logfull_old, config_logfull, PATH_MAX - 1);
+	config_logfull_old[PATH_MAX - 1] = '\0';
 	mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel, 2,
 		 "Reloading config from file: %s\n", configfile);
 	conf *config_new = config_read(configfile_full);
@@ -54,7 +55,9 @@ void deal_sigusr1(int signum)
 			snprintf(config_logfull, PATH_MAX, "%s/%s", cwd,
 				 config->log.filename);
 		} else {
-			strcpy(config_logfull, config->log.filename);
+			strncpy(config_logfull, config->log.filename,
+				PATH_MAX - 1);
+			config_logfull[PATH_MAX - 1] = '\0';
 		}
 		mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel,
 			 2, "Configuration reloaded.\n");
@@ -236,11 +239,13 @@ int main(int argc, char **argv)
 			 configfile);
 		return EXITCODE_BADARG;
 	}
-	strcpy(configfile, argoffset_configfile);
+	strncpy(configfile, argoffset_configfile, PATH_MAX - 1);
+	configfile[PATH_MAX - 1] = '\0';
 	if (configfile[0] != '/') {
 		snprintf(configfile_full, PATH_MAX, "%s/%s", cwd, configfile);
 	} else {
-		strcpy(configfile_full, configfile);
+		strncpy(configfile_full, configfile, PATH_MAX - 1);
+		configfile_full[PATH_MAX - 1] = '\0';
 	}
 	mksysmsg(0, "", 0, 255, 2, "Loading configurations from file: %s\n\n",
 		 configfile);
@@ -251,7 +256,9 @@ int main(int argc, char **argv)
 			snprintf(config_logfull, PATH_MAX, "%s/%s", cwd,
 				 config->log.filename);
 		} else {
-			strcpy(config_logfull, config->log.filename);
+			strncpy(config_logfull, config->log.filename,
+				PATH_MAX - 1);
+			config_logfull[PATH_MAX - 1] = '\0';
 		}
 		config_netpriority_enabled = config->netpriority.enabled;
 		config_netpriority_protocol = config->netpriority.protocol;
