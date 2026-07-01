@@ -395,11 +395,13 @@ int main(int argc, char **argv)
 		fprintf(pidfd, "%d", pid);
 		fclose(pidfd);
 	}
-	mksysmsg(0, config_logfull, config_runmode, config->log.level, 2,
-		 "Bind Successful.\n\n");
-	mksysmsg(0, "", config_runmode, config->log.level, 2,
-		 "For more information, see log file: %s\n\n",
-		 config->log.filename);
+	if (config_runmode != 2) {
+		mksysmsg(0, config_logfull, config_runmode, config->log.level,
+			 2, "Bind Successful.\n\n");
+		mksysmsg(0, "", config_runmode, config->log.level, 2,
+			 "For more information, see log file: %s\n\n",
+			 config->log.filename);
+	}
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
 	sigemptyset(&sa.sa_mask);
