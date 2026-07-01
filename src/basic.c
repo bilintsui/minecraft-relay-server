@@ -213,4 +213,5 @@ void *varint2int(void *src, varint_t *dst)
 			return NULL;
 		}
 	}
+	return NULL;
 }
