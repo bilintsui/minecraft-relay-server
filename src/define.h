@@ -1,5 +1,5 @@
 /*
-	defines.h: Header file for general defines on Minecraft Relay Server
+	define.h: Header file for general defines on Minecraft Relay Server
 	A component of Minecraft Relay Server.
 
 	Minecraft Relay Server, version 1.2-beta4

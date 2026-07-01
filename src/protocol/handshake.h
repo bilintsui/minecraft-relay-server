@@ -15,7 +15,7 @@
 #define _MRS_PROTOCOLS_HANDSHAKE_H_INCLUDED_
 
 #include <netinet/in.h>
-#include "../defines.h"
+#include "../define.h"
 
 typedef struct {
 	varint_t id_part1, id_part2, nextstate, version;

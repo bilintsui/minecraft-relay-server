@@ -15,7 +15,7 @@
 #define _MRS_BASIC_H_INCLUDED_
 
 #include <stddef.h>
-#include "defines.h"
+#include "define.h"
 
 #define FREADALL_SLIMIT 5242880
 #define FREADALL_EINVAL 1

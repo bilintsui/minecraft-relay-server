@@ -18,7 +18,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include "defines.h"
+#include "define.h"
 #include "exitcode.h"
 #include "log.h"
 #include "misc.h"
