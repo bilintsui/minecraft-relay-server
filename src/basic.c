@@ -202,15 +202,17 @@ void *varint2int(void *src, varint_t *dst)
 	varint_t result_single = 0;
 	for (size_t i = 0; i <= VARINT_T_MAXIDX; i++) {
 		result_single = base[i] & 0x7F;
+		if (i == VARINT_T_MAXIDX) {
+			if ((base[i] & 0x80)
+			    || result_single > VARINT_T_LAST_MASK)
+				return NULL;
+		}
 		result = result | (result_single << (i * 7));
 		if (!(base[i] & 0x80)) {
 			if (dst != NULL) {
 				*dst = result;
 			}
 			return src + i + 1;
-		}
-		if (i == VARINT_T_MAXIDX) {
-			return NULL;
 		}
 	}
 	return NULL;
