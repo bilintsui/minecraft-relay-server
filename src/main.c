@@ -19,6 +19,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "defines.h"
+#include "exitcode.h"
 #include "log.h"
 #include "misc.h"
 
@@ -143,7 +144,7 @@ int main(int argc, char **argv)
 			 strrchr(argv[0], '/') ? strrchr(argv[0],
 							 '/') + 1 : argv[0],
 			 helpmsg);
-		return 22;
+		return EXITCODE_BADARG;
 	}
 	argoffset_configfile = argv[1];
 	FILE *pidfd = NULL;
@@ -158,7 +159,7 @@ int main(int argc, char **argv)
 				mksysmsg(1, "", 0, 255, 0, headmsg);
 				mksysmsg(0, "", 0, 255, 0,
 					 "Cannot read /run/mcrelay/mcrelay.pid.\n");
-				return 2;
+				return EXITCODE_NOPIDFILE;
 			}
 			fscanf(pidfd, "%d", &prevpid);
 			fclose(pidfd);
@@ -166,12 +167,12 @@ int main(int argc, char **argv)
 				mksysmsg(1, "", 0, 255, 2, headmsg);
 				mksysmsg(0, "", 0, 255, 2,
 					 "Successfully sent reload signal to currently running process.\n");
-				return 0;
+				return EXITCODE_OK;
 			} else {
 				mksysmsg(1, "", 0, 255, 0, headmsg);
 				mksysmsg(0, "", 0, 255, 0,
 					 "Failed to send reload signal to currently running process.\n");
-				return 3;
+				return EXITCODE_NOSIGNAL;
 			}
 		} else if ((strcmp(ptr_argv1, "t") == 0)
 			   || (strcmp(ptr_argv1, "-stop") == 0)) {
@@ -180,7 +181,7 @@ int main(int argc, char **argv)
 				mksysmsg(1, "", 0, 255, 0, headmsg);
 				mksysmsg(0, "", 0, 255, 0,
 					 "Cannot read /run/mcrelay/mcrelay.pid.\n");
-				return 2;
+				return EXITCODE_NOPIDFILE;
 			}
 			fscanf(pidfd, "%d", &prevpid);
 			fclose(pidfd);
@@ -188,12 +189,12 @@ int main(int argc, char **argv)
 				mksysmsg(1, "", 0, 255, 2, headmsg);
 				mksysmsg(0, "", 0, 255, 2,
 					 "Successfully sent terminate signal to currently running process.\n");
-				return 0;
+				return EXITCODE_OK;
 			} else {
 				mksysmsg(1, "", 0, 255, 0, headmsg);
 				mksysmsg(0, "", 0, 255, 0,
 					 "Failed to send terminate signal to currently running process.\n");
-				return 3;
+				return EXITCODE_NOSIGNAL;
 			}
 		} else if ((strcmp(ptr_argv1, "f") == 0)
 			   || (strcmp(ptr_argv1, "-forking") == 0)) {
@@ -204,7 +205,7 @@ int main(int argc, char **argv)
 			mksysmsg(1, "", 0, 255, 2, "v%s(%s)\n",
 				 MCRELAY_VERSION_DISPLAY,
 				 MCRELAY_VERSION_INTERNAL);
-			return 0;
+			return EXITCODE_OK;
 		} else {
 			mksysmsg(1, "", 0, 255, 0, headmsg);
 			mksysmsg(1, "", 0, 255, 0,
@@ -213,7 +214,7 @@ int main(int argc, char **argv)
 						    '/') ? strrchr(argv[0],
 								   '/') +
 				 1 : argv[0], helpmsg);
-			return 22;
+			return EXITCODE_BADARG;
 		}
 	} else {
 		pidfd = fopen("/run/mcrelay/mcrelay.pid", "r");
@@ -225,7 +226,7 @@ int main(int argc, char **argv)
 				mksysmsg(0, "", 0, 255, 0,
 					 "You cannot run multiple instances at a time. Previous running process PID: %d.\n",
 					 prevpid);
-				return 1;
+				return EXITCODE_MULTIINSTANCE;
 			}
 		}
 	}
@@ -233,7 +234,7 @@ int main(int argc, char **argv)
 	if (argoffset_configfile == NULL) {
 		mksysmsg(0, "", 0, 255, 0, "Config filename cannot be empty!\n",
 			 configfile);
-		return 22;
+		return EXITCODE_BADARG;
 	}
 	strcpy(configfile, argoffset_configfile);
 	if (configfile[0] != '/') {
@@ -258,35 +259,35 @@ int main(int argc, char **argv)
 	case CONF_EROPENFAIL:
 		mksysmsg(0, "", 0, 255, 0, "Cannot read config file: %s\n",
 			 configfile);
-		return 2;
+		return EXITCODE_NOCONFFILE;
 	case CONF_EROPENLARGE:
 		mksysmsg(0, "", 0, 255, 0,
 			 "Error in configurations: File too large (5MB).\n");
-		return 27;
+		return EXITCODE_FILELARGE;
 	case CONF_ERMEMORY:
 		mksysmsg(0, "", 0, 255, 0,
 			 "Error in configurations: Failed to allocate memory when reading file.\n");
-		return 12;
+		return EXITCODE_NOMEM;
 	case CONF_ERPARSE:
 		mksysmsg(0, "", 0, 255, 0,
 			 "Error in configurations: Not a valid JSON format.\n");
-		return 38;
+		return EXITCODE_BADJSON;
 	case CONF_ECMEMORY:
 		mksysmsg(0, "", 0, 255, 0,
 			 "Error in processing configurations: Failed to allocate memory during internal processing.\n");
-		return 12;
+		return EXITCODE_NOMEM;
 	case CONF_ECNETPRIORITYPROTOCOL:
 		mksysmsg(0, "", 0, 255, 0,
 			 "Error in configurations: Entry \"netpriority.protocol\" must be IPv4 or IPv6 (case sensitive).\n");
-		return 22;
+		return EXITCODE_BADARG;
 	case CONF_ECLISTENPORT:
 		mksysmsg(0, "", 0, 255, 0,
 			 "Error in configurations: Entry \"listen.port\" must be an unsigned short integer (0-65535).\n");
-		return 22;
+		return EXITCODE_BADARG;
 	case CONF_ECPROXY:
 		mksysmsg(0, "", 0, 255, 0,
 			 "Error in configurations: Entry \"proxy\" is missing!\n");
-		return 22;
+		return EXITCODE_BADARG;
 	case CONF_ECPROXYDUP:
 		if (config_duperr[0] != '\0') {
 			mksysmsg(0, "", 0, 255, 0,
@@ -297,19 +298,19 @@ int main(int argc, char **argv)
 			mksysmsg(0, "", 0, 255, 0,
 				 "Error in configurations: Duplication found in proxy virtual hostnames.\n");
 		}
-		return 22;
+		return EXITCODE_BADARG;
 	default:
 		mksysmsg(0, "", 0, 255, 0,
 			 "Error in processing configurations: Unknown error occurred, code: %d\n",
 			 errno);
-		return 255;
+		return EXITCODE_INTERNAL;
 	}
 	FILE *tmpfd = fopen(config_logfull, "a");
 	if (tmpfd == NULL) {
 		mksysmsg(0, "", 0, 255, 0,
 			 "Error: Cannot write log to \"%s\".\n",
 			 config->log.filename);
-		return 13;
+		return EXITCODE_CANTCREAT;
 	} else {
 		fclose(tmpfd);
 	}
@@ -323,7 +324,7 @@ int main(int argc, char **argv)
 	if (config->listen.port == 0) {
 		mksysmsg(0, config_logfull, config_runmode, config->log.level,
 			 0, "Error: Invalid bind port!\n");
-		return 14;
+		return EXITCODE_BADPORT;
 	}
 	net_addrp bindaddrp = net_ntop(bindaddr.family, &(bindaddr.addr), 1);
 	mksysmsg(0, config_logfull, config_runmode, config->log.level, 2,
@@ -335,7 +336,7 @@ int main(int argc, char **argv)
 	if (socket_inbound_server == -1) {
 		mksysmsg(0, config_logfull, config_runmode, config->log.level,
 			 0, "Bind Failed!\n");
-		return 2;
+		return EXITCODE_BINDFAIL;
 	}
 	mksysmsg(0, config_logfull, config_runmode, config->log.level, 2,
 		 "Bind Successful.\n\n");
@@ -351,9 +352,9 @@ int main(int argc, char **argv)
 			fclose(pidfd);
 			mksysmsg(0, "", 0, config->log.level, 2,
 				 "Server running on PID: %d\n", pid);
-			return 0;
+			return EXITCODE_OK;
 		} else if (pid < 0) {
-			return 10;
+			return EXITCODE_FORKFAIL;
 		}
 		setsid();
 		fclose(stdin);
@@ -428,10 +429,10 @@ int main(int argc, char **argv)
 			     config_logfull, config_runmode, config,
 			     addrbundle_inbound_client,
 			     config_netpriority_enabled)) {
-				return 0;
+				return EXITCODE_OK;
 			}
 			net_relay(socket_inbound_client, socket_outbound);
-			return 0;
+			return EXITCODE_OK;
 		}
 	}
 }
