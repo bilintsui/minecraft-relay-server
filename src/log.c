@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "log.h"
 
@@ -79,7 +80,9 @@ int mksysmsg(unsigned short noprefix, char *logfile, unsigned short runmode,
 	va_end(varlist);
 	va_start(varlist, format);
 	if (runmode != 2) {
-		if (msglevel == 0) {
+		if (noprefix && !isatty(STDOUT_FILENO)) {
+			status = 0;
+		} else if (msglevel == 0) {
 			if (noprefix == 0) {
 				fprintf(stderr, "[%s] ", level_str);
 			}

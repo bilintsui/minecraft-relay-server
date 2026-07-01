@@ -403,6 +403,10 @@ int main(int argc, char **argv)
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGUSR1, &sa, NULL);
 	signal(SIGCHLD, SIG_IGN);
+	if (!isatty(STDOUT_FILENO)) {
+		fclose(stdout);
+		fclose(stderr);
+	}
 	while (1) {
 		if (reload_flag) {
 			do_reload();
