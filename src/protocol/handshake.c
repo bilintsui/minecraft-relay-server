@@ -61,7 +61,7 @@ size_t make_motd(void *dst, const void *src, varint_t ver)
 	return payload_length;
 }
 
-p_handshake packet_read(void *src)
+p_handshake packet_read(void *src, void *end)
 {
 	p_handshake result;
 	void *part2_start;
@@ -82,6 +82,8 @@ p_handshake packet_read(void *src)
 	if (address_length > PROTOHANDSHAKE_ADDRESSMAXLEN)
 		goto cleanup;
 	if (address_length == 0)
+		goto cleanup;
+	if ((char *)src + address_length > (char *)end)
 		goto cleanup;
 	if ((*((char *)(src + address_length - 1))) == '\0') {
 		result.address = malloc(strlen(src) + 1);
@@ -104,6 +106,8 @@ p_handshake packet_read(void *src)
 		memcpy(result.address, src, address_length);
 		src += address_length;
 	}
+	if ((char *)src + sizeof(in_port_t) > (char *)end)
+		goto cleanup;
 	result.port = ntohs(*((in_port_t *) src));
 	src = (void *)(((in_port_t *) src) + 1);
 	src = varint2int(src, &result.nextstate);
@@ -121,6 +125,8 @@ p_handshake packet_read(void *src)
 			goto cleanup;
 		if (username_length > PROTOHANDSHAKE_USERNAMEMAXLEN)
 			goto cleanup;
+		if ((char *)src + username_length > (char *)end)
+			goto cleanup;
 		result.username = calloc(1, username_length + 1);
 		if (result.username == NULL)
 			goto cleanup;
@@ -137,6 +143,9 @@ p_handshake packet_read(void *src)
 				result.signature_data_length--;
 				src++;
 			}
+			if ((char *)src + result.signature_data_length >
+			    (char *)end)
+				goto cleanup;
 			result.signature_data =
 			    malloc(result.signature_data_length);
 			if (result.signature_data == NULL)

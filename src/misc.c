@@ -159,10 +159,9 @@ int backbone(int socket_in, int *socket_out, char *logfile,
 				}
 			}
 			mkoutbound_status = 0;
-			net_addr connaddr =
-			    net_resolve_dual(proxyinfo.address,
-					     addrinfo_in.family,
-					     netpriority_enabled);
+			net_addr connaddr = net_resolve_dual(proxyinfo.address,
+							     addrinfo_in.family,
+							     netpriority_enabled);
 			if (connaddr.family == 0) {
 				mkoutbound_status = NET_ENORECORD;
 			}
@@ -199,14 +198,9 @@ int backbone(int socket_in, int *socket_out, char *logfile,
 								    "PROXY TCP4 %s %s %d %d\r\n",
 								    (char *)
 								    &
-								    (addrinfo_in.
-								     address_clean),
+								    (addrinfo_in.address_clean),
 								    (char *)
-								    &addrinfo_out,
-								    addrinfo_in.
-								    port,
-								    proxyinfo.
-								    port);
+								    &addrinfo_out, addrinfo_in.port, proxyinfo.port);
 							send(*socket_out,
 							     pheader,
 							     packlen_pheader,
@@ -218,14 +212,9 @@ int backbone(int socket_in, int *socket_out, char *logfile,
 								    "PROXY TCP6 %s %s %d %d\r\n",
 								    (char *)
 								    &
-								    (addrinfo_in.
-								     address_clean),
+								    (addrinfo_in.address_clean),
 								    (char *)
-								    &addrinfo_out,
-								    addrinfo_in.
-								    port,
-								    proxyinfo.
-								    port);
+								    &addrinfo_out, addrinfo_in.port, proxyinfo.port);
 							send(*socket_out,
 							     pheader,
 							     packlen_pheader,
@@ -362,10 +351,9 @@ int backbone(int socket_in, int *socket_out, char *logfile,
 				}
 			}
 			mkoutbound_status = 0;
-			net_addr connaddr =
-			    net_resolve_dual(proxyinfo.address,
-					     addrinfo_in.family,
-					     netpriority_enabled);
+			net_addr connaddr = net_resolve_dual(proxyinfo.address,
+							     addrinfo_in.family,
+							     netpriority_enabled);
 			if (connaddr.family == 0) {
 				mkoutbound_status = NET_ENORECORD;
 			}
@@ -403,14 +391,9 @@ int backbone(int socket_in, int *socket_out, char *logfile,
 								    "PROXY TCP4 %s %s %d %d\r\n",
 								    (char *)
 								    &
-								    (addrinfo_in.
-								     address_clean),
+								    (addrinfo_in.address_clean),
 								    (char *)
-								    &addrinfo_out,
-								    addrinfo_in.
-								    port,
-								    proxyinfo.
-								    port);
+								    &addrinfo_out, addrinfo_in.port, proxyinfo.port);
 							send(*socket_out,
 							     pheader,
 							     packlen_pheader,
@@ -422,14 +405,9 @@ int backbone(int socket_in, int *socket_out, char *logfile,
 								    "PROXY TCP6 %s %s %d %d\r\n",
 								    (char *)
 								    &
-								    (addrinfo_in.
-								     address_clean),
+								    (addrinfo_in.address_clean),
 								    (char *)
-								    &addrinfo_out,
-								    addrinfo_in.
-								    port,
-								    proxyinfo.
-								    port);
+								    &addrinfo_out, addrinfo_in.port, proxyinfo.port);
 							send(*socket_out,
 							     pheader,
 							     packlen_pheader,
@@ -490,7 +468,8 @@ int backbone(int socket_in, int *socket_out, char *logfile,
 			}
 		}
 	} else {
-		p_handshake inbound_info = packet_read(inbound);
+		p_handshake inbound_info =
+		    packet_read(inbound, inbound + packlen_inbound);
 		if (inbound_info.version == 0) {
 			if (inbound[inbound[0]] == 1) {
 				mksysmsg(0, logfile, runmode,
@@ -553,8 +532,8 @@ int backbone(int socket_in, int *socket_out, char *logfile,
 			if (net_srvresolve(proxyinfo.address, srvrecords) > 0) {
 				proxyinfo.address =
 				    (char *)realloc(proxyinfo.address,
-						    strlen(srvrecords[0].
-							   target) + 1);
+						    strlen(srvrecords[0].target)
+						    + 1);
 				strcpy(proxyinfo.address, srvrecords[0].target);
 				proxyinfo.port = srvrecords[0].port;
 				proxyinfo.srvenabled = 0;
@@ -610,8 +589,8 @@ int backbone(int socket_in, int *socket_out, char *logfile,
 						    sprintf(pheader,
 							    "PROXY TCP4 %s %s %d %d\r\n",
 							    (char *)
-							    &(addrinfo_in.
-							      address_clean),
+							    &
+							    (addrinfo_in.address_clean),
 							    (char *)
 							    &addrinfo_out,
 							    addrinfo_in.port,
@@ -624,8 +603,8 @@ int backbone(int socket_in, int *socket_out, char *logfile,
 						    sprintf(pheader,
 							    "PROXY TCP6 %s %s %d %d\r\n",
 							    (char *)
-							    &(addrinfo_in.
-							      address_clean),
+							    &
+							    (addrinfo_in.address_clean),
 							    (char *)
 							    &addrinfo_out,
 							    addrinfo_in.port,
