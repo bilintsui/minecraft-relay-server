@@ -81,8 +81,12 @@ p_handshake packet_read(void *src)
 		goto cleanup;
 	if (address_length > PROTOHANDSHAKE_ADDRESSMAXLEN)
 		goto cleanup;
+	if (address_length == 0)
+		goto cleanup;
 	if ((*((char *)(src + address_length - 1))) == '\0') {
 		result.address = malloc(strlen(src) + 1);
+		if (result.address == NULL)
+			goto cleanup;
 		strcpy(result.address, src);
 		src += strlen(src);
 		if (memcmp(src, "\0FML\0", 5) == 0) {
@@ -95,6 +99,8 @@ p_handshake packet_read(void *src)
 	} else {
 		result.version_fml = 0;
 		result.address = calloc(1, address_length + 1);
+		if (result.address == NULL)
+			goto cleanup;
 		memcpy(result.address, src, address_length);
 		src += address_length;
 	}
@@ -116,8 +122,12 @@ p_handshake packet_read(void *src)
 		if (username_length > PROTOHANDSHAKE_USERNAMEMAXLEN)
 			goto cleanup;
 		result.username = calloc(1, username_length + 1);
+		if (result.username == NULL)
+			goto cleanup;
 		memcpy(result.username, src, username_length);
 		src += username_length;
+		if ((size_t)(src - part2_start) > size_part2)
+			goto cleanup;
 		result.signature_data_length = size_part2 - (src - part2_start);
 		if (result.signature_data_length) {
 			if (((result.version <= PVERDB_R_1_20_1)
@@ -129,6 +139,8 @@ p_handshake packet_read(void *src)
 			}
 			result.signature_data =
 			    malloc(result.signature_data_length);
+			if (result.signature_data == NULL)
+				goto cleanup;
 			memcpy(result.signature_data, src,
 			       result.signature_data_length);
 			src += result.signature_data_length;
