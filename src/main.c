@@ -153,10 +153,10 @@ int main(int argc, char **argv)
 	getcwd(cwd, PATH_MAX);
 	if (argc < 2) {
 		mksysmsg(1, "", 0, 255, 0, headmsg);
-		mksysmsg(1, "", 0, 255, 0, "Usage: %s %s\n",
-			 strrchr(argv[0], '/') ? strrchr(argv[0],
-							 '/') + 1 : argv[0],
-			 helpmsg);
+		fprintf(stderr, "Usage: %s %s\n",
+			strrchr(argv[0], '/') ? strrchr(argv[0],
+							'/') + 1 : argv[0],
+			helpmsg);
 		return EXITCODE_BADARG;
 	}
 	argoffset_configfile = argv[1];
@@ -215,18 +215,17 @@ int main(int argc, char **argv)
 			argoffset_configfile = argv[2];
 		} else if ((strcmp(ptr_argv1, "v") == 0)
 			   || (strcmp(ptr_argv1, "-version") == 0)) {
-			mksysmsg(1, "", 0, 255, 2, "v%s(%s)\n",
-				 MCRELAY_VERSION_DISPLAY,
-				 MCRELAY_VERSION_INTERNAL);
+			fprintf(stdout, "v%s(%s)\n", MCRELAY_VERSION_DISPLAY,
+				MCRELAY_VERSION_INTERNAL);
 			return EXITCODE_OK;
 		} else {
 			mksysmsg(1, "", 0, 255, 0, headmsg);
-			mksysmsg(1, "", 0, 255, 0,
-				 "Error: Invalid option \"-%s\"\n\nUsage: %s %s\n",
-				 ptr_argv1, strrchr(argv[0],
-						    '/') ? strrchr(argv[0],
-								   '/') +
-				 1 : argv[0], helpmsg);
+			fprintf(stderr,
+				"Error: Invalid option \"-%s\"\n\nUsage: %s %s\n",
+				ptr_argv1,
+				strrchr(argv[0], '/') ? strrchr(argv[0],
+								'/') +
+				1 : argv[0], helpmsg);
 			return EXITCODE_BADARG;
 		}
 	} else {
@@ -442,12 +441,10 @@ int main(int argc, char **argv)
 			case AF_INET:
 				addrbundle_inbound_client.address =
 				    net_ntop(AF_INET, &(((struct sockaddr_in *)
-							 &addr_inbound_client)->
-							sin_addr), 1);
+							 &addr_inbound_client)->sin_addr), 1);
 				addrbundle_inbound_client.address_clean =
 				    net_ntop(AF_INET, &(((struct sockaddr_in *)
-							 &addr_inbound_client)->
-							sin_addr), 0);
+							 &addr_inbound_client)->sin_addr), 0);
 				addrbundle_inbound_client.port =
 				    ntohs(((struct sockaddr_in *)
 					   &addr_inbound_client)->sin_port);
