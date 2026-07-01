@@ -408,7 +408,7 @@ int main(int argc, char **argv)
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGUSR1, &sa, NULL);
 	signal(SIGCHLD, SIG_IGN);
-	if (!isatty(STDOUT_FILENO)) {
+	if (config_runmode != 2 && !isatty(STDOUT_FILENO)) {
 		fclose(stdout);
 		fclose(stderr);
 	}
