@@ -2,35 +2,37 @@
 
 A Minecraft reverse proxy server with server address rewrite.
 
-Supports Minecraft Servers and Clients with version 12w04a or later. (Basically means release 1.2.1 and later.)
+Supports Minecraft servers and clients with version 12w04a and later (basically means release 1.2.1 and later).
 
-Minecraft Versions before 12w04a are **NOT SUPPORTED**!
+Minecraft versions before 12w04a are **NOT SUPPORTED**!
 
 ## Features
 * Support reverse proxy for Minecraft servers by server address in the handshake packet which the client sends.
-* Support rewrite server address and server port to camouflage a connection which uses an official server address. (e.g., pretend to be a normal connection to Hypixel, avoiding their server address check.)
-* Support IP forwarding using HAProxy's Proxy Protocol. (But it refuses any incoming connection using this protocol.)
+* Support rewrite server address and server port to camouflage a connection which uses an official server address (e.g., pretend to be a normal connection to Hypixel, avoiding their server address check).
+* Support IP forwarding using HAProxy's Proxy Protocol (but it refuses any incoming connection using this protocol).
 
 ## Requirements
 * Linux
-* libresolv.so (usually pre-installed)
-* libcjson.so (on Debian-like systems, contained in package "libcjson1")
+* <code>libresolv.so</code> (usually pre-installed)
+* <code>libcjson.so</code> (on Debian-like systems, contained in package <code>libcjson1</code>)
 
 ## Compatibility
-**Due to Minecraft Handshake restrictions, this server supports:**
+**Due to Minecraft handshake restrictions, this server supports:**
 
 * Game relay on server & client with version 12w04a and later, except version 12w17a, 13w41a and 13w41b.
-* MOTD relay / MOTD status notice on server & client with version 1.6.1 and later, except version 13w41a and 13w41b.
+* MOTD relay or MOTD status notice on server and client with version 1.6.1 and later, except version 13w41a and 13w41b.
 
 ## Files
-* CMakeLists.txt: CMake configuration for compiling
-* doc: Folder of documents
-* doc/loglevel.info: Definitions of log levels
-* doc/versions.json: Version manifest
-* examples: File templates
-* examples/config: Folder of example configurations
-* examples/systemd: Folder of example systemd service files
-* src: Folder of source codes
+* <code>CMakeLists.txt</code> CMake configuration for compiling.
+* <code>doc</code> Folder of documents.
+* <code>doc/information</code> Informational documents.
+* <code>doc/information/loglevel.info</code> Definitions of log levels.
+* <code>doc/information/versions.json</code> Version manifest.
+* <code>doc/configuration</code> Configuration examples.
+* <code>doc/configuration/config</code> Configurations read by mcrelay itself.
+* <code>doc/configuration/logrotate</code> Configuration used by logrotate.
+* <code>doc/configuration/systemd</code> Configuration used by systemd, when using mcrelay as a service.
+* <code>src</code> Folder of source codes.
 
 ## Compile
 Before compiling, you need to install cJSON at first.
@@ -50,15 +52,21 @@ Additionally, if you want cross-compiling, the following CMake properties will b
 
 ## Usage
 <pre>
-mcrelay < arguments | config_file >
+mcrelay &lt;arguments|config_file&gt;
+
+Arguments
+	-r / --reload:	Reload config on the running instance.
+	-t / --stop:	Terminate the running instance.
+	-f / --forking:	Makes the process become daemonized.
+	-v / --version:	Show current mcrelay version.
 </pre>
 
 The program will run as a non-exit-style program by default.
 
-When using the "-f" or "--forking" option, the program will become daemonized, and store its main process's PID into /tmp/mcrelay.pid.
+When using the <code>-f</code> or <code>--forking</code> option, the program will become daemonized, and store its main process's PID into <code>/tmp/mcrelay.pid</code>.
 
 ## Config
-See "examples/config/config.json" for instructions.
+See [<code>doc/configuration/config/config.jsonc</code>](doc/configuration/config/config.jsonc) for instructions.
 
 ## Instructions for using DNS-based redirection (SRV)
 If you are using an SRV record to provide your service, you should follow the instructions below.
@@ -69,16 +77,16 @@ For example, your SRV record should be like this:
 <pre>
 _minecraft._tcp.srvrecord.example.com. => PRIORITY WEIGHT PORT host.example.com
 </pre>
-If you provide "srvrecord.example.com" to your user, you should set your vhostname in the configuration file as follows:
-* For most Minecraft versions, use "host.example.com".
-* For Minecraft versions from 21w20a to 1.17, use "srvrecord.example.com".
+If you provide <code>srvrecord.example.com</code> to your user, you should set your virtual hostname in the configuration file as follows:
+* For most Minecraft versions, use <code>host.example.com</code>.
+* For Minecraft versions from 21w20a to 1.17, use <code>srvrecord.example.com</code>.
 
 For compatibility, it's recommended to add both of them to your configuration.
 
 ## IP Forwarding
 You can provide the real client address and port through HAProxy's Proxy Protocol by this feature.
 
-It's compatible with any server which supports this protocol. (e.g. Bungeecord)
+It's compatible with any server which supports this protocol (e.g. Bungeecord).
 
 ### Bungeecord
-To use this feature correctly, turn on the "proxy_protocol" in the "config.yml". ("false" to "true")
+To use this feature correctly, turn on the <code>proxy_protocol</code> in the <code>config.yml</code> (<code>false</code> to <code>true</code>).
