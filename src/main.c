@@ -133,12 +133,17 @@ static void do_reload(void)
 
 int main(int argc, char **argv)
 {
-	char helpmsg[] =
-	    "<arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-f / --forking:\tMakes the process become daemonized.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server";
 	static const char *headmsg =
 	    "Minecraft Relay Server [Version " MCRELAY_VERSION_DISPLAY "/"
 	    MCRELAY_VERSION_INTERNAL "]\n"
-	    "(c) " MCRELAY_COPYYEAR " Bilin Tsui.\n\n";
+	    "(c) " MCRELAY_COPYYEAR " Bilin Tsui\n\n";
+	char *helpmsg =
+	    "<arguments|config_file>\n\n"
+	    "Arguments\n\t-r / --reload:\tReload config on the running instance\n"
+	    "\t-t / --stop:\tTerminate the running instance\n"
+	    "\t-f / --forking:\tMakes the process become daemonized\n"
+	    "\t-v / --version:\tShow current mcrelay version\n\n"
+	    "See more: https://github.com/bilintsui/minecraft-relay-server";
 	int socket_inbound_server, socket_inbound_client;
 	union {
 		struct sockaddr_in v4;
@@ -353,7 +358,7 @@ int main(int argc, char **argv)
 	mksysmsg(0, config_logfull, config_runmode, config->log.level, 2,
 		 "Bind Successful.\n\n");
 	mksysmsg(0, "", config_runmode, config->log.level, 2,
-		 "For more information, watch log file: %s\n\n",
+		 "For more information, see log file: %s\n\n",
 		 config->log.filename);
 	int pid;
 	if (config_runmode == 2) {
