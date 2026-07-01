@@ -6,9 +6,10 @@ Wants=network-online.target
 [Service]
 Type=forking
 User=nobody
+RuntimeDirectory=mcrelay
 Restart=on-failure
 RestartSec=5s
-PIDFile=/tmp/mcrelay.pid
+PIDFile=/run/mcrelay/mcrelay.pid
 ExecStart=/usr/local/bin/mcrelay -f /usr/local/etc/mcrelay/config.json
 ExecStop=/usr/local/bin/mcrelay -t
 ExecReload=/usr/local/bin/mcrelay -r

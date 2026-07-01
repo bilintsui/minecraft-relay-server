@@ -6,6 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=nobody
+RuntimeDirectory=mcrelay
 Restart=on-failure
 RestartSec=5s
 ExecStart=/usr/local/bin/mcrelay /usr/local/etc/mcrelay/config.json

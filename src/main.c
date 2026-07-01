@@ -35,7 +35,7 @@ sa_family_t config_netpriority_protocol = AF_INET6;
 unsigned short config_runmode = 1;
 void deal_sigterm(int signum)
 {
-	unlink("/tmp/mcrelay.pid");
+	unlink("/run/mcrelay/mcrelay.pid");
 	exit(0);
 }
 
@@ -176,11 +176,11 @@ int main(int argc, char **argv)
 		ptr_argv1++;
 		if ((strcmp(ptr_argv1, "r") == 0)
 		    || (strcmp(ptr_argv1, "-reload") == 0)) {
-			pidfd = fopen("/tmp/mcrelay.pid", "r");
+			pidfd = fopen("/run/mcrelay/mcrelay.pid", "r");
 			if (pidfd == NULL) {
 				mksysmsg(1, "", 0, 255, 0, headmsg);
 				mksysmsg(0, "", 0, 255, 0,
-					 "Cannot read /tmp/mcrelay.pid.\n");
+					 "Cannot read /run/mcrelay/mcrelay.pid.\n");
 				return 2;
 			}
 			fscanf(pidfd, "%d", &prevpid);
@@ -198,11 +198,11 @@ int main(int argc, char **argv)
 			}
 		} else if ((strcmp(ptr_argv1, "t") == 0)
 			   || (strcmp(ptr_argv1, "-stop") == 0)) {
-			pidfd = fopen("/tmp/mcrelay.pid", "r");
+			pidfd = fopen("/run/mcrelay/mcrelay.pid", "r");
 			if (pidfd == NULL) {
 				mksysmsg(1, "", 0, 255, 0, headmsg);
 				mksysmsg(0, "", 0, 255, 0,
-					 "Cannot read /tmp/mcrelay.pid.\n");
+					 "Cannot read /run/mcrelay/mcrelay.pid.\n");
 				return 2;
 			}
 			fscanf(pidfd, "%d", &prevpid);
@@ -238,7 +238,7 @@ int main(int argc, char **argv)
 			return 22;
 		}
 	} else {
-		pidfd = fopen("/tmp/mcrelay.pid", "r");
+		pidfd = fopen("/run/mcrelay/mcrelay.pid", "r");
 		if (pidfd != NULL) {
 			fscanf(pidfd, "%d", &prevpid);
 			fclose(pidfd);
@@ -380,7 +380,7 @@ int main(int argc, char **argv)
 	if (config_runmode == 2) {
 		pid = fork();
 		if (pid > 0) {
-			FILE *pidfd = fopen("/tmp/mcrelay.pid", "w");
+			FILE *pidfd = fopen("/run/mcrelay/mcrelay.pid", "w");
 			fprintf(pidfd, "%d", pid);
 			fclose(pidfd);
 			mksysmsg(0, "", 0, config->log.level, 2,
@@ -397,7 +397,7 @@ int main(int argc, char **argv)
 		umask(0);
 	} else {
 		pid = getpid();
-		FILE *pidfd = fopen("/tmp/mcrelay.pid", "w");
+		FILE *pidfd = fopen("/run/mcrelay/mcrelay.pid", "w");
 		fprintf(pidfd, "%d", pid);
 		fclose(pidfd);
 	}

@@ -63,7 +63,7 @@ Arguments
 
 The program will run as a non-exit-style program by default.
 
-When using the <code>-f</code> or <code>--forking</code> option, the program will become daemonized, and store its main process's PID into <code>/tmp/mcrelay.pid</code>.
+When using the <code>-f</code> or <code>--forking</code> option, the program will become daemonized, and store its main process's PID into <code>/run/mcrelay/mcrelay.pid</code>.
 
 ## Config
 See [<code>doc/configuration/mcrelay/config.jsonc</code>](doc/configuration/mcrelay/config.jsonc) for instructions.
