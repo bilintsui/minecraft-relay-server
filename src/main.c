@@ -348,6 +348,11 @@ int main(int argc, char **argv)
 		pid = fork();
 		if (pid > 0) {
 			FILE *pidfd = fopen("/run/mcrelay/mcrelay.pid", "w");
+			if (pidfd == NULL) {
+				mksysmsg(0, "", 0, config->log.level, 0,
+					 "Cannot write PID file /run/mcrelay/mcrelay.pid\n");
+				return EXITCODE_CANTCREAT;
+			}
 			fprintf(pidfd, "%d", pid);
 			fclose(pidfd);
 			mksysmsg(0, "", 0, config->log.level, 2,
@@ -365,6 +370,11 @@ int main(int argc, char **argv)
 	} else {
 		pid = getpid();
 		FILE *pidfd = fopen("/run/mcrelay/mcrelay.pid", "w");
+		if (pidfd == NULL) {
+			mksysmsg(0, "", 0, config->log.level, 0,
+				 "Cannot write PID file /run/mcrelay/mcrelay.pid\n");
+			return EXITCODE_CANTCREAT;
+		}
 		fprintf(pidfd, "%d", pid);
 		fclose(pidfd);
 	}
