@@ -416,8 +416,11 @@ int main(int argc, char **argv)
 	}
 	while (1) {
 		if (reload_flag) {
-			do_reload();
+			/* Clear before reloading: a SIGUSR1 arriving during
+			 * do_reload() must remain pending for the next loop
+			 * iteration instead of being clobbered here. */
 			reload_flag = 0;
+			do_reload();
 		}
 		socket_inbound_client =
 		    accept(socket_inbound_server,
