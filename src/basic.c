@@ -49,7 +49,7 @@ size_t freadall(const char *filename, char **dst)
 	return filesize;
 }
 
-void *int2varint(varint_l src, void *dst)
+void *int2varint(varint_t src, void *dst)
 {
 	if (dst == NULL) {
 		return NULL;
@@ -116,8 +116,8 @@ size_t strlen_notail(const char *src, char exemptchr)
 	return result;
 }
 
-size_t strcmp_notail(const char *str1, const char *str2, char exemptchr,
-		     short case_insensitive)
+int strcmp_notail(const char *str1, const char *str2, char exemptchr,
+		  short case_insensitive)
 {
 	size_t str1_length = strlen(str1);
 	size_t str2_length = strlen_notail(str2, exemptchr);
@@ -192,16 +192,15 @@ size_t strtok_tail(char *dst, char *src, char delim, size_t length)
 	return ptr_delim - buffer;
 }
 
-void *varint2int(void *src, varint_l *dst)
+void *varint2int(void *src, varint_t *dst)
 {
 	if (src == NULL) {
 		return NULL;
 	}
 	unsigned char *base = src;
-	unsigned long result = 0;
-	unsigned long result_single = 0;
-	size_t index_lastunit = sizeof(*dst) * 8 / 7;
-	for (size_t i = 0; i <= index_lastunit; i++) {
+	varint_t result = 0;
+	varint_t result_single = 0;
+	for (size_t i = 0; i <= VARINT_T_MAXIDX; i++) {
 		result_single = base[i] & 0x7F;
 		result = result | (result_single << (i * 7));
 		if (!(base[i] & 0x80)) {
@@ -209,10 +208,9 @@ void *varint2int(void *src, varint_l *dst)
 				*dst = result;
 			}
 			return src + i + 1;
-			break;
 		}
-		if (i == index_lastunit) {
-			return src;
+		if (i == VARINT_T_MAXIDX) {
+			return NULL;
 		}
 	}
 }

@@ -48,13 +48,13 @@ size_t make_kickreason(void *dst, const void *src)
 	return payload_length;
 }
 
-size_t make_motd(void *dst, const void *src, varint_l ver)
+size_t make_motd(void *dst, const void *src, varint_t ver)
 {
 	void *input;
 	size_t payload_length;
 	input = calloc(1, BUFSIZ);
 	sprintf(input,
-		"{\"version\":{\"name\":\"\",\"protocol\":%lu},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},\"description\":{\"text\":\"%s\"}}",
+		"{\"version\":{\"name\":\"\",\"protocol\":%u},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},\"description\":{\"text\":\"%s\"}}",
 		ver, (char *)src);
 	payload_length = make_message(dst, input);
 	free(input);
@@ -65,12 +65,22 @@ p_handshake packet_read(void *src)
 {
 	p_handshake result;
 	void *part2_start;
-	size_t address_length, size_part1, size_part2, username_length;
+	varint_t address_length, size_part1, size_part2, username_length;
 	memset(&result, 0, sizeof(result));
 	src = varint2int(src, &size_part1);
+	if (src == NULL)
+		goto cleanup;
 	src = varint2int(src, &result.id_part1);
+	if (src == NULL)
+		goto cleanup;
 	src = varint2int(src, &result.version);
+	if (src == NULL)
+		goto cleanup;
 	src = varint2int(src, &address_length);
+	if (src == NULL)
+		goto cleanup;
+	if (address_length > PROTOHANDSHAKE_ADDRESSMAXLEN)
+		goto cleanup;
 	if ((*((char *)(src + address_length - 1))) == '\0') {
 		result.address = malloc(strlen(src) + 1);
 		strcpy(result.address, src);
@@ -91,10 +101,20 @@ p_handshake packet_read(void *src)
 	result.port = ntohs(*((in_port_t *) src));
 	src = (void *)(((in_port_t *) src) + 1);
 	src = varint2int(src, &result.nextstate);
+	if (src == NULL)
+		goto cleanup;
 	if (result.nextstate == 2) {
 		part2_start = src = varint2int(src, &size_part2);
+		if (src == NULL)
+			goto cleanup;
 		src = varint2int(src, &result.id_part2);
+		if (src == NULL)
+			goto cleanup;
 		src = varint2int(src, &username_length);
+		if (src == NULL)
+			goto cleanup;
+		if (username_length > PROTOHANDSHAKE_USERNAMEMAXLEN)
+			goto cleanup;
 		result.username = calloc(1, username_length + 1);
 		memcpy(result.username, src, username_length);
 		src += username_length;
@@ -116,6 +136,10 @@ p_handshake packet_read(void *src)
 			result.signature_data_length = 0;
 		}
 	}
+	return result;
+ cleanup:
+	packet_destroy(result);
+	memset(&result, 0, sizeof(result));
 	return result;
 }
 

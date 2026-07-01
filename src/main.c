@@ -11,24 +11,22 @@
 */
 
 #include <errno.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "defines.h"
 #include "log.h"
 #include "misc.h"
 
-const char *version_str = "1.2-beta4";
-const char *year_str = "2020-2026";
-const short version_internal = 66;
-char global_buffer[BUFSIZ];
-char *cwd = NULL;
+char cwd[PATH_MAX];
 char *argoffset_configfile = NULL;
-char *configfile = NULL;
-char *configfile_full = NULL;
-char *config_logfull = NULL;
+char configfile[PATH_MAX];
+char configfile_full[PATH_MAX];
+char config_logfull[PATH_MAX];
 conf *config = NULL;
 short config_netpriority_enabled = 1;
 sa_family_t config_netpriority_protocol = AF_INET6;
@@ -42,10 +40,7 @@ void deal_sigterm(int signum)
 void deal_sigusr1(int signum)
 {
 	unsigned short config_maxlevel = config->log.level;
-	char *config_logfull_old = (char *)malloc(strlen(config_logfull) + 1);
-	if (config_logfull_old == NULL) {
-		return;
-	}
+	char config_logfull_old[PATH_MAX];
 	strcpy(config_logfull_old, config_logfull);
 	mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel, 2,
 		 "Reloading config from file: %s\n", configfile);
@@ -55,17 +50,9 @@ void deal_sigusr1(int signum)
 		config_destroy(config);
 		config = config_new;
 		if (config->log.filename[0] != '/') {
-			sprintf(global_buffer, "%s/%s", cwd,
-				config->log.filename);
-			config_logfull =
-			    (char *)realloc(config_logfull,
-					    strlen(global_buffer) + 1);
-			strcpy(config_logfull, global_buffer);
-			memset(global_buffer, 0, strlen(global_buffer) + 1);
+			snprintf(config_logfull, PATH_MAX, "%s/%s", cwd,
+				 config->log.filename);
 		} else {
-			config_logfull =
-			    (char *)realloc(config_logfull,
-					    strlen(config->log.filename) + 1);
 			strcpy(config_logfull, config->log.filename);
 		}
 		mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel,
@@ -111,16 +98,16 @@ void deal_sigusr1(int signum)
 			 "Error in configurations: Entry \"proxy\" is missing, will keep your old configurations.\n");
 		break;
 	case CONF_ECPROXYDUP:
-		if (config_new == NULL) {
-			mksysmsg(0, config_logfull_old, config_runmode,
-				 config_maxlevel, 1,
-				 "Error in configurations: Duplication found in proxy virtual hostnames, will keep your old configurations.\n");
-		} else {
+		if (config_duperr[0] != '\0') {
 			mksysmsg(0, config_logfull_old, config_runmode,
 				 config_maxlevel, 1,
 				 "Error in configurations: Duplication found in proxy virtual hostnames. Affected: \"%s\", will keep your old configurations.\n",
-				 config_new);
-			free(config_new);
+				 config_duperr);
+			config_duperr[0] = '\0';
+		} else {
+			mksysmsg(0, config_logfull_old, config_runmode,
+				 config_maxlevel, 1,
+				 "Error in configurations: Duplication found in proxy virtual hostnames, will keep your old configurations.\n");
 		}
 		break;
 	default:
@@ -130,7 +117,6 @@ void deal_sigusr1(int signum)
 			 errno);
 		break;
 	}
-	free(config_logfull_old);
 	return;
 }
 
@@ -138,15 +124,10 @@ int main(int argc, char **argv)
 {
 	char helpmsg[] =
 	    "<arguments|config_file>\n\nArguments\n\t-r / --reload:\tReload config on the running instance.\n\t-t / --stop:\tTerminate the running instance.\n\t-f / --forking:\tMakes the process become daemonized.\n\t-v / --version:\tShow current mcrelay version.\n\nSee more, watch: https://github.com/bilintsui/minecraft-relay-server";
-	snprintf(global_buffer, BUFSIZ,
-		 "Minecraft Relay Server [Version %s/%d]\n(c) %s Bilin Tsui.\n\n",
-		 version_str, version_internal, year_str);
-	char *headmsg = (char *)malloc(strlen(global_buffer) + 1);
-	if (headmsg == NULL) {
-		return 12;
-	}
-	strcpy(headmsg, global_buffer);
-	memset(global_buffer, 0, strlen(global_buffer) + 1);
+	static const char *headmsg =
+	    "Minecraft Relay Server [Version " MCRELAY_VERSION_DISPLAY "/"
+	    MCRELAY_VERSION_INTERNAL "]\n"
+	    "(c) " MCRELAY_COPYYEAR " Bilin Tsui.\n\n";
 	int socket_inbound_server, socket_inbound_client;
 	union {
 		struct sockaddr_in v4;
@@ -155,11 +136,7 @@ int main(int argc, char **argv)
 	int strulen = sizeof(addr_inbound_client);
 	signal(SIGTERM, deal_sigterm);
 	signal(SIGINT, deal_sigterm);
-	memset(global_buffer, 0, BUFSIZ);
-	getcwd(global_buffer, BUFSIZ);
-	cwd = (char *)malloc(strlen(global_buffer) + 1);
-	strcpy(cwd, global_buffer);
-	memset(global_buffer, 0, strlen(global_buffer) + 1);
+	getcwd(cwd, PATH_MAX);
 	if (argc < 2) {
 		mksysmsg(1, "", 0, 255, 0, headmsg);
 		mksysmsg(1, "", 0, 255, 0, "Usage: %s %s\n",
@@ -224,8 +201,9 @@ int main(int argc, char **argv)
 			argoffset_configfile = argv[2];
 		} else if ((strcmp(ptr_argv1, "v") == 0)
 			   || (strcmp(ptr_argv1, "-version") == 0)) {
-			mksysmsg(1, "", 0, 255, 2, "v%s(%d)\n", version_str,
-				 version_internal);
+			mksysmsg(1, "", 0, 255, 2, "v%s(%s)\n",
+				 MCRELAY_VERSION_DISPLAY,
+				 MCRELAY_VERSION_INTERNAL);
 			return 0;
 		} else {
 			mksysmsg(1, "", 0, 255, 0, headmsg);
@@ -257,15 +235,10 @@ int main(int argc, char **argv)
 			 configfile);
 		return 22;
 	}
-	configfile = (char *)malloc(strlen(argoffset_configfile) + 1);
 	strcpy(configfile, argoffset_configfile);
 	if (configfile[0] != '/') {
-		sprintf(global_buffer, "%s/%s", cwd, configfile);
-		configfile_full = (char *)malloc(strlen(global_buffer) + 1);
-		strcpy(configfile_full, global_buffer);
-		memset(global_buffer, 0, strlen(global_buffer) + 1);
+		snprintf(configfile_full, PATH_MAX, "%s/%s", cwd, configfile);
 	} else {
-		configfile_full = (char *)malloc(strlen(configfile) + 1);
 		strcpy(configfile_full, configfile);
 	}
 	mksysmsg(0, "", 0, 255, 2, "Loading configurations from file: %s\n\n",
@@ -274,15 +247,9 @@ int main(int argc, char **argv)
 	switch (errno) {
 	case 0:
 		if (config->log.filename[0] != '/') {
-			sprintf(global_buffer, "%s/%s", cwd,
-				config->log.filename);
-			config_logfull =
-			    (char *)malloc(strlen(global_buffer) + 1);
-			strcpy(config_logfull, global_buffer);
-			memset(global_buffer, 0, strlen(global_buffer) + 1);
+			snprintf(config_logfull, PATH_MAX, "%s/%s", cwd,
+				 config->log.filename);
 		} else {
-			config_logfull =
-			    (char *)malloc(strlen(config->log.filename) + 1);
 			strcpy(config_logfull, config->log.filename);
 		}
 		config_netpriority_enabled = config->netpriority.enabled;
@@ -321,14 +288,14 @@ int main(int argc, char **argv)
 			 "Error in configurations: Entry \"proxy\" is missing!\n");
 		return 22;
 	case CONF_ECPROXYDUP:
-		if (config == NULL) {
-			mksysmsg(0, "", 0, 255, 0,
-				 "Error in configurations: Duplication found in proxy virtual hostnames.\n");
-		} else {
+		if (config_duperr[0] != '\0') {
 			mksysmsg(0, "", 0, 255, 0,
 				 "Error in configurations: Duplication found in proxy virtual hostnames. Affected: \"%s\".\n",
-				 config);
-			free(config);
+				 config_duperr);
+			config_duperr[0] = '\0';
+		} else {
+			mksysmsg(0, "", 0, 255, 0,
+				 "Error in configurations: Duplication found in proxy virtual hostnames.\n");
 		}
 		return 22;
 	default:
@@ -346,10 +313,9 @@ int main(int argc, char **argv)
 	} else {
 		fclose(tmpfd);
 	}
-	net_addr bindaddr =
-	    net_resolve_dual(config->listen.address,
-			     config_netpriority_protocol,
-			     config_netpriority_enabled);
+	net_addr bindaddr = net_resolve_dual(config->listen.address,
+					     config_netpriority_protocol,
+					     config_netpriority_enabled);
 	if (bindaddr.family == 0) {
 		mksysmsg(0, config_logfull, config_runmode, config->log.level,
 			 0, "Error: Invalid bind address!\n");
@@ -420,15 +386,11 @@ int main(int argc, char **argv)
 			switch (addrbundle_inbound_client.family) {
 			case AF_INET:
 				addrbundle_inbound_client.address =
-				    net_ntop(AF_INET,
-					     &(((struct sockaddr_in *)
-						&addr_inbound_client)->
-					       sin_addr), 1);
+				    net_ntop(AF_INET, &(((struct sockaddr_in *)
+							 &addr_inbound_client)->sin_addr), 1);
 				addrbundle_inbound_client.address_clean =
-				    net_ntop(AF_INET,
-					     &(((struct sockaddr_in *)
-						&addr_inbound_client)->
-					       sin_addr), 0);
+				    net_ntop(AF_INET, &(((struct sockaddr_in *)
+							 &addr_inbound_client)->sin_addr), 0);
 				addrbundle_inbound_client.port =
 				    ntohs(((struct sockaddr_in *)
 					   &addr_inbound_client)->sin_port);

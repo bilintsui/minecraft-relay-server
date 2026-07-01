@@ -18,6 +18,8 @@
 
 #include "config.h"
 
+char config_duperr[CONFIG_ADDRESSMAXLEN] = { 0 };
+
 void config_destroy(conf *target)
 {
 	if (target != NULL) {
@@ -184,8 +186,7 @@ cJSON *config_proxy_parse(cJSON *src)
 					errno = CONF_ECMEMORY;
 					return NULL;
 				}
-				vhost_namelist[dupdet_count] =
-				    (char *)
+				vhost_namelist[dupdet_count] = (char *)
 				    malloc(strlen
 					   (rec_result_vhostname->valuestring) +
 					   1);
@@ -204,22 +205,19 @@ cJSON *config_proxy_parse(cJSON *src)
 				if (strcasecmp
 				    (vhost_namelist[i],
 				     rec_result_vhostname->valuestring) == 0) {
-					void *output_str =
-					    malloc(strlen
-						   (rec_result_vhostname->
-						    valuestring) + 1);
-					if (output_str != NULL) {
-						strcpy(output_str,
-						       rec_result_vhostname->
-						       valuestring);
-					}
+					strncpy(config_duperr,
+						rec_result_vhostname->
+						valuestring,
+						CONFIG_ADDRESSMAXLEN - 1);
+					config_duperr[CONFIG_ADDRESSMAXLEN -
+						      1] = '\0';
 					for (int j = 0; j < dupdet_count; j++) {
 						free(vhost_namelist[j]);
 					}
 					free(vhost_namelist);
 					cJSON_Delete(result);
 					errno = CONF_ECPROXYDUP;
-					return output_str;
+					return NULL;
 				}
 				if (i == (dupdet_count - 1)) {
 					char **vhost_namelist_new =
@@ -238,11 +236,11 @@ cJSON *config_proxy_parse(cJSON *src)
 						return NULL;
 					}
 					vhost_namelist = vhost_namelist_new;
-					vhost_namelist[dupdet_count] =
-					    (char *)
+					vhost_namelist[dupdet_count] = (char *)
 					    malloc(strlen
 						   (rec_result_vhostname->
-						    valuestring) + 1);
+						    valuestring)
+						   + 1);
 					if (vhost_namelist[dupdet_count] ==
 					    NULL) {
 						for (int j = 0;
@@ -295,8 +293,7 @@ conf_proxy config_proxy_search(conf *src, const char *targetvhost)
 				if (strcmp_notail
 				    (rec_vhostname->valuestring, targetvhost,
 				     '.', 1) == 0) {
-					result.address =
-					    (char *)
+					result.address = (char *)
 					    malloc(strlen
 						   (cJSON_GetObjectItemCaseSensitive
 						    (rec_proxylist,
@@ -433,7 +430,8 @@ conf *config_read(char *filename)
 							    filename,
 							    strlen
 							    (config_json_log_filename->
-							     valuestring) + 1);
+							     valuestring)
+							    + 1);
 					if (result_log_filename_new == NULL) {
 						cJSON_Delete(config_json);
 						config_destroy(result);
@@ -486,7 +484,8 @@ conf *config_read(char *filename)
 							    address,
 							    strlen
 							    (config_json_listen_address->
-							     valuestring) + 1);
+							     valuestring)
+							    + 1);
 					if (result_listen_address_new == NULL) {
 						cJSON_Delete(config_json);
 						config_destroy(result);
@@ -542,7 +541,7 @@ conf *config_read(char *filename)
 	config_json_proxy = config_proxy_parse(config_json_proxy);
 	if (errno) {
 		config_destroy(result);
-		return (void *)config_json_proxy;
+		return NULL;
 	}
 	result->proxy = config_json_proxy;
 	errno = 0;

@@ -50,6 +50,8 @@ typedef struct {
 	short valid, srvenabled, rewrite, pheader;
 } conf_proxy;
 
+#define CONFIG_ADDRESSMAXLEN ADDRESS_MAXLEN
+extern char config_duperr[CONFIG_ADDRESSMAXLEN];
 void config_destroy(conf * target);
 short config_jsonbool(cJSON * src, short defaultvalue);
 void config_dumper(conf * src);

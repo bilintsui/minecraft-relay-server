@@ -16,7 +16,7 @@
 
 void gettime(unsigned char *target);
 int mksysmsg(unsigned short noprefix, char *logfile, unsigned short runmode,
-	     unsigned short maxlevel, unsigned short msglevel, char *format,
-	     ...);
+	     unsigned short maxlevel, unsigned short msglevel,
+	     const char *format, ...);
 
 #endif

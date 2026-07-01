@@ -18,16 +18,19 @@
 #include "../defines.h"
 
 typedef struct {
-	varint_l id_part1, id_part2, nextstate, version;
+	varint_t id_part1, id_part2, nextstate, version;
 	void *address, *signature_data, *username;
 	size_t signature_data_length;
 	unsigned short version_fml;
 	in_port_t port;
 } p_handshake;
 
+#define PROTOHANDSHAKE_ADDRESSMAXLEN ADDRESS_MAXLEN
+#define PROTOHANDSHAKE_USERNAMEMAXLEN 128
+
 size_t make_message(void *dst, const void *src);
 size_t make_kickreason(void *dst, const void *src);
-size_t make_motd(void *dst, const void *src, varint_l ver);
+size_t make_motd(void *dst, const void *src, varint_t ver);
 p_handshake packet_read(void *src);
 size_t packet_write(void *dst, const p_handshake src);
 void packet_destroy(p_handshake object);
