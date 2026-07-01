@@ -65,11 +65,18 @@ net_addrp net_ntop(sa_family_t family, void *src, short v6addition)
 	return pre_result;
 }
 
+/*
+ * net_relay - bidirectional zero-copy relay between two sockets.
+ * Both sockets must be blocking (no O_NONBLOCK).  splice() on a
+ * non-blocking socket can return EAGAIN/EWOULDBLOCK, which the
+ * current EPOLLIN-only design does not handle.
+ */
 int net_relay(int socket_in, int socket_out)
 {
 	int pipefd[2] = { -1, -1 };
 	struct epoll_event ev, events[2];
-	int epfd = -1, nfds, i, src, dst, bytes, written, res, ret = 0, pipe_sz;
+	int epfd = -1, nfds, i, src, dst, ret = 0, pipe_sz;
+	ssize_t bytes, written, res;
 	if (pipe(pipefd) == -1) {
 		ret = -1;
 		goto cleanup;
