@@ -3,7 +3,7 @@
 	A component of Minecraft Relay Server.
 
 	Minecraft Relay Server, version 1.2-beta4
-	(c) 2020-2024 Bilin Tsui.
+	(c) 2020-2026 Bilin Tsui.
 	This is a Free Software, absolutely no warranty.
 
 	Licensed under GNU General Public License Version 3 (GNU GPL v3).
