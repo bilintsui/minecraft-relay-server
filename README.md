@@ -29,8 +29,8 @@ Minecraft versions before 12w04a are **NOT SUPPORTED**!
 * <code>doc/information/loglevel.info</code> Definitions of log levels.
 * <code>doc/information/versions.json</code> Version manifest.
 * <code>doc/configuration</code> Configuration examples.
-* <code>doc/configuration/config</code> Configurations read by mcrelay itself.
 * <code>doc/configuration/logrotate</code> Configuration used by logrotate.
+* <code>doc/configuration/mcrelay</code> Configurations read by mcrelay itself.
 * <code>doc/configuration/systemd</code> Configuration used by systemd, when using mcrelay as a service.
 * <code>src</code> Folder of source codes.
 
@@ -66,7 +66,7 @@ The program will run as a non-exit-style program by default.
 When using the <code>-f</code> or <code>--forking</code> option, the program will become daemonized, and store its main process's PID into <code>/tmp/mcrelay.pid</code>.
 
 ## Config
-See [<code>doc/configuration/config/config.jsonc</code>](doc/configuration/config/config.jsonc) for instructions.
+See [<code>doc/configuration/mcrelay/config.jsonc</code>](doc/configuration/mcrelay/config.jsonc) for instructions.
 
 ## Instructions for using DNS-based redirection (SRV)
 If you are using an SRV record to provide your service, you should follow the instructions below.
