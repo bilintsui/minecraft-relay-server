@@ -185,11 +185,12 @@ size_t strtok_tail(char *dst, char *src, char delim, size_t length)
 		free(buffer);
 		return 0;
 	}
+	ptrdiff_t offset = ptr_delim - buffer;
 	if (dst != NULL) {
 		strcpy(dst, ptr_delim + 1);
 	}
 	free(buffer);
-	return ptr_delim - buffer;
+	return offset;
 }
 
 void *varint2int(void *src, varint_t *dst)
