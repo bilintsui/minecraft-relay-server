@@ -696,4 +696,12 @@ int backbone(int socket_in, int *socket_out, char *logfile,
 			return 4;
 		}
 	}
+	/* Fallback for -Werror=return-type: not every inbound[0] branch
+	 * above provably returns -- the mkoutbound_status switches have no
+	 * default and the legacy-login version chain has no trailing else.
+	 * Unreachable in practice: mkoutbound_status is always 0,
+	 * NET_ENORECORD, or NET_ECONNECT, and protocol_identify() yields
+	 * only L1-L4 for inbound[0] == 2. */
+	close(socket_in);
+	return 1;
 }
