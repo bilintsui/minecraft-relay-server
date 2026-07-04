@@ -119,8 +119,8 @@ int strcmp_notail(const char *str1, const char *str2, char exemptchr, short case
 	}
 }
 
-char *strtok_head(char *dst, char *src, char delim) {
-	if (src == NULL) {
+char *strtok_head(char *dst, size_t dst_size, char *src, char delim) {
+	if ((src == NULL) || (dst_size == 0)) {
 		return NULL;
 	}
 	if (*src == '\0') {
@@ -132,19 +132,22 @@ char *strtok_head(char *dst, char *src, char delim) {
 	char *ptr_delim = strchr(src, delim);
 	if (ptr_delim == NULL) {
 		if (dst != NULL) {
-			strcpy(dst, src);
+			snprintf(dst, dst_size, "%s", src);
 		}
 		return NULL;
 	}
 	size_t length = ptr_delim - src;
+	if (length >= dst_size) {
+		length = dst_size - 1;
+	}
 	if (dst != NULL) {
-		strncpy(dst, src, length);
+		memcpy(dst, src, length);
 		dst[length] = '\0';
 	}
 	return ptr_delim + 1;
 }
 
-size_t strtok_tail(char *dst, char *src, char delim, size_t length) {
+size_t strtok_tail(char *dst, size_t dst_size, char *src, char delim, size_t length) {
 	if (src == NULL) {
 		return 0;
 	}
@@ -158,19 +161,19 @@ size_t strtok_tail(char *dst, char *src, char delim, size_t length) {
 	if (buffer == NULL) {
 		return length;
 	}
-	strncpy(buffer, src, length);
+	memcpy(buffer, src, length);
 	buffer[length] = '\0';
 	char *ptr_delim = strrchr(buffer, delim);
 	if (ptr_delim == NULL) {
 		if (dst != NULL) {
-			strcpy(dst, buffer);
+			snprintf(dst, dst_size, "%s", buffer);
 		}
 		free(buffer);
 		return 0;
 	}
 	ptrdiff_t offset = ptr_delim - buffer;
 	if (dst != NULL) {
-		strcpy(dst, ptr_delim + 1);
+		snprintf(dst, dst_size, "%s", ptr_delim + 1);
 	}
 	free(buffer);
 	return offset;

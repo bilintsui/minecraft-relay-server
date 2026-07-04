@@ -50,7 +50,7 @@ net_addrp net_ntop(sa_family_t family, void *src, short v6addition) {
 	if ((v6addition) && (family == AF_INET6)) {
 		net_addrp result;
 		memset(&result, 0, sizeof(result));
-		sprintf((char *)&result, "[%s]", (char *)&pre_result);
+		snprintf((char *)&result, sizeof(result), "[%s]", (char *)&pre_result);
 		return result;
 	}
 	return pre_result;
@@ -284,7 +284,7 @@ int net_socket(short action, sa_family_t family, void *address, in_port_t port, 
 int net_srvresolve(char *query_name, net_srvrecord *target) {
 	char query_name_full[256];
 	memset(query_name_full, 0, 256);
-	sprintf(query_name_full, "_minecraft._tcp.%s", query_name);
+	snprintf(query_name_full, sizeof(query_name_full), "_minecraft._tcp.%s", query_name);
 	struct {
 		unsigned short priority, weight, port;
 		char target[128];

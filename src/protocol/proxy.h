@@ -9,7 +9,7 @@
 
 #define _MRS_PROTOCOLS_PROXY_H_INCLUDED_
 
-#define PROTOPROXY_PACKETMAXLEN	104
+#define PROTOPROXY_PACKETMAXLEN	128
 
 #include "../network.h"
 

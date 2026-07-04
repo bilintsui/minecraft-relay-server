@@ -176,8 +176,7 @@ cJSON *config_proxy_parse(cJSON *src) {
 			}
 			for (int i = 0; i < dupdet_count; i++) {
 				if (strcasecmp(vhost_namelist[i], rec_result_vhostname->valuestring) == 0) {
-					strncpy(config_duperr, rec_result_vhostname->valuestring, CONF_ADDRESSMAXLEN - 1);
-					config_duperr[CONF_ADDRESSMAXLEN - 1] = '\0';
+					snprintf(config_duperr, sizeof(config_duperr), "%s", rec_result_vhostname->valuestring);
 					for (int j = 0; j < dupdet_count; j++) {
 						free(vhost_namelist[j]);
 					}

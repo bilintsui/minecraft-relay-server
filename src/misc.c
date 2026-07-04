@@ -111,10 +111,13 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			if (proxyinfo.srvenabled == 1) {
 				net_srvrecord srvrecords[128];
 				if (net_srvresolve(proxyinfo.address, srvrecords) > 0) {
-					proxyinfo.address = (char *)realloc(proxyinfo.address, strlen(srvrecords[0].target) + 1);
-					strcpy(proxyinfo.address, srvrecords[0].target);
-					proxyinfo.port = srvrecords[0].port;
-					proxyinfo.srvenabled = 0;
+					char *proxyaddr_new = (char *)realloc(proxyinfo.address, strlen(srvrecords[0].target) + 1);
+					if (proxyaddr_new != NULL) {
+						proxyinfo.address = proxyaddr_new;
+						strcpy(proxyinfo.address, srvrecords[0].target);
+						proxyinfo.port = srvrecords[0].port;
+						proxyinfo.srvenabled = 0;
+					}
 				}
 			}
 			mkoutbound_status = 0;
@@ -141,13 +144,13 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 						if (connaddr.family == addrinfo_in.family) {
 							net_addrp addrinfo_out = net_ntop(connaddr.family, &(connaddr.addr), 0);
 							if (addrinfo_in.family == AF_INET) {
-								packlen_pheader = sprintf(pheader,
+								packlen_pheader = snprintf(pheader, sizeof(pheader),
 									"PROXY TCP4 %s %s %d %d\r\n",
 									(char *)&(addrinfo_in.address_clean), (char *)&addrinfo_out, addrinfo_in.port, proxyinfo.port
 								);
 								send(*socket_out, pheader, packlen_pheader, 0);
 							} else if (addrinfo_in.family == AF_INET6) {
-								packlen_pheader = sprintf(pheader,
+								packlen_pheader = snprintf(pheader, sizeof(pheader),
 									"PROXY TCP6 %s %s %d %d\r\n",
 									(char *)&(addrinfo_in.address_clean), (char *)&addrinfo_out, addrinfo_in.port, proxyinfo.port
 								);
@@ -156,11 +159,16 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 						}
 					}
 					if (proxyinfo.rewrite == 1) {
-						inbound_info.address = realloc(inbound_info.address, strlen(proxyinfo.address) + 1);
-						strcpy(inbound_info.address, proxyinfo.address);
-						inbound_info.port = proxyinfo.port;
-						packlen_rewrited = packet_write_legacy_motd(rewrited, inbound_info);
-						send(*socket_out, rewrited, packlen_rewrited, 0);
+						void *inbound_addr_new = realloc(inbound_info.address, strlen(proxyinfo.address) + 1);
+						if (inbound_addr_new != NULL) {
+							inbound_info.address = inbound_addr_new;
+							strcpy(inbound_info.address, proxyinfo.address);
+							inbound_info.port = proxyinfo.port;
+							packlen_rewrited = packet_write_legacy_motd(rewrited, inbound_info);
+							send(*socket_out, rewrited, packlen_rewrited, 0);
+						} else {
+							send(*socket_out, inbound, packlen_inbound, 0);
+						}
 					} else {
 						send(*socket_out, inbound, packlen_inbound, 0);
 					}
@@ -234,10 +242,13 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			if (proxyinfo.srvenabled == 1) {
 				net_srvrecord srvrecords[128];
 				if (net_srvresolve(proxyinfo.address, srvrecords) > 0) {
-					proxyinfo.address = (char *)realloc(proxyinfo.address, strlen(srvrecords[0].target) + 1);
-					strcpy(proxyinfo.address, srvrecords[0].target);
-					proxyinfo.port = srvrecords[0].port;
-					proxyinfo.srvenabled = 0;
+					char *proxyaddr_new = (char *)realloc(proxyinfo.address, strlen(srvrecords[0].target) + 1);
+					if (proxyaddr_new != NULL) {
+						proxyinfo.address = proxyaddr_new;
+						strcpy(proxyinfo.address, srvrecords[0].target);
+						proxyinfo.port = srvrecords[0].port;
+						proxyinfo.srvenabled = 0;
+					}
 				}
 			}
 			mkoutbound_status = 0;
@@ -264,13 +275,13 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 						if (connaddr.family == addrinfo_in.family) {
 							net_addrp addrinfo_out = net_ntop(connaddr.family, &(connaddr.addr), 0);
 							if (addrinfo_in.family == AF_INET) {
-								packlen_pheader = sprintf(pheader,
+								packlen_pheader = snprintf(pheader, sizeof(pheader),
 									"PROXY TCP4 %s %s %d %d\r\n",
 									(char *)&(addrinfo_in.address_clean), (char *)&addrinfo_out, addrinfo_in.port, proxyinfo.port
 								);
 								send(*socket_out, pheader, packlen_pheader, 0);
 							} else if (addrinfo_in.family == AF_INET6) {
-								packlen_pheader = sprintf(pheader,
+								packlen_pheader = snprintf(pheader, sizeof(pheader),
 									"PROXY TCP6 %s %s %d %d\r\n",
 									(char *)&(addrinfo_in.address_clean), (char *)&addrinfo_out, addrinfo_in.port, proxyinfo.port
 								);
@@ -279,7 +290,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 						}
 					}
 					if (proxyinfo.rewrite == 1) {
-						strcpy(inbound_info.address, proxyinfo.address);
+						snprintf(inbound_info.address, sizeof(inbound_info.address), "%s", proxyinfo.address);
 						inbound_info.port = proxyinfo.port;
 						packlen_rewrited = packet_write_legacy_login(inbound_info, rewrited);
 						send(*socket_out, rewrited, packlen_rewrited, 0);
@@ -354,10 +365,13 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 		if (proxyinfo.srvenabled == 1) {
 			net_srvrecord srvrecords[128];
 			if (net_srvresolve(proxyinfo.address, srvrecords) > 0) {
-				proxyinfo.address = (char *)realloc(proxyinfo.address, strlen(srvrecords[0].target) + 1);
-				strcpy(proxyinfo.address, srvrecords[0].target);
-				proxyinfo.port = srvrecords[0].port;
-				proxyinfo.srvenabled = 0;
+				char *proxyaddr_new = (char *)realloc(proxyinfo.address, strlen(srvrecords[0].target) + 1);
+				if (proxyaddr_new != NULL) {
+					proxyinfo.address = proxyaddr_new;
+					strcpy(proxyinfo.address, srvrecords[0].target);
+					proxyinfo.port = srvrecords[0].port;
+					proxyinfo.srvenabled = 0;
+				}
 			}
 		}
 		mkoutbound_status = 0;
@@ -395,13 +409,13 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 					if (connaddr.family == addrinfo_in.family) {
 						net_addrp addrinfo_out = net_ntop(connaddr.family, &(connaddr.addr), 0);
 						if (addrinfo_in.family == AF_INET) {
-							packlen_pheader = sprintf(pheader,
+							packlen_pheader = snprintf(pheader, sizeof(pheader),
 								"PROXY TCP4 %s %s %d %d\r\n",
 								(char *)&(addrinfo_in.address_clean), (char *)&addrinfo_out, addrinfo_in.port, proxyinfo.port
 							);
 							send(*socket_out, pheader, packlen_pheader, 0);
 						} else if (addrinfo_in.family == AF_INET6) {
-							packlen_pheader = sprintf(pheader,
+							packlen_pheader = snprintf(pheader, sizeof(pheader),
 								"PROXY TCP6 %s %s %d %d\r\n",
 								(char *)&(addrinfo_in.address_clean), (char *)&addrinfo_out, addrinfo_in.port, proxyinfo.port
 							);
@@ -410,11 +424,16 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 					}
 				}
 				if (proxyinfo.rewrite == 1) {
-					inbound_info.address = realloc(inbound_info.address, strlen(proxyinfo.address) + 1);
-					strcpy(inbound_info.address, proxyinfo.address);
-					inbound_info.port = proxyinfo.port;
-					packlen_rewrited = packet_write(rewrited, inbound_info);
-					send(*socket_out, rewrited, packlen_rewrited, 0);
+					void *inbound_addr_new = realloc(inbound_info.address, strlen(proxyinfo.address) + 1);
+					if (inbound_addr_new != NULL) {
+						inbound_info.address = inbound_addr_new;
+						strcpy(inbound_info.address, proxyinfo.address);
+						inbound_info.port = proxyinfo.port;
+						packlen_rewrited = packet_write(rewrited, inbound_info);
+						send(*socket_out, rewrited, packlen_rewrited, 0);
+					} else {
+						send(*socket_out, inbound, packlen_inbound, 0);
+					}
 				} else {
 					send(*socket_out, inbound, packlen_inbound, 0);
 				}

@@ -43,8 +43,7 @@ void deal_signal(int signum) {
 static void do_reload(void) {
 	unsigned short config_maxlevel = config->log.level;
 	char config_logfull_old[PATH_MAX];
-	strncpy(config_logfull_old, config_logfull, PATH_MAX - 1);
-	config_logfull_old[PATH_MAX - 1] = '\0';
+	snprintf(config_logfull_old, sizeof(config_logfull_old), "%s", config_logfull);
 	mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_INFORMATION,
 		"Reloading config from file: %s\n",
 		configfile
@@ -55,10 +54,9 @@ static void do_reload(void) {
 			config_destroy(config);
 			config = config_new;
 			if (config->log.filename[0] != '/') {
-				snprintf(config_logfull, PATH_MAX, "%s/%s", cwd, config->log.filename);
+				snprintf(config_logfull, sizeof(config_logfull), "%s/%s", cwd, config->log.filename);
 			} else {
-				strncpy(config_logfull, config->log.filename, PATH_MAX - 1);
-				config_logfull[PATH_MAX - 1] = '\0';
+				snprintf(config_logfull, sizeof(config_logfull), "%s", config->log.filename);
 			}
 			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_INFORMATION,
 				"Configuration reloaded.\n"
@@ -262,13 +260,11 @@ int main(int argc, char **argv) {
 		);
 		return EXITCODE_BADARG;
 	}
-	strncpy(configfile, argoffset_configfile, PATH_MAX - 1);
-	configfile[PATH_MAX - 1] = '\0';
+	snprintf(configfile, sizeof(configfile), "%s", argoffset_configfile);
 	if (configfile[0] != '/') {
-		snprintf(configfile_full, PATH_MAX, "%s/%s", cwd, configfile);
+		snprintf(configfile_full, sizeof(configfile_full), "%s/%s", cwd, configfile);
 	} else {
-		strncpy(configfile_full, configfile, PATH_MAX - 1);
-		configfile_full[PATH_MAX - 1] = '\0';
+		snprintf(configfile_full, sizeof(configfile_full), "%s", configfile);
 	}
 	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION,
 		"Loading configurations from file: %s\n\n",
@@ -278,10 +274,9 @@ int main(int argc, char **argv) {
 	switch (errno) {
 		case 0:
 			if (config->log.filename[0] != '/') {
-				snprintf(config_logfull, PATH_MAX, "%s/%s", cwd, config->log.filename);
+				snprintf(config_logfull, sizeof(config_logfull), "%s/%s", cwd, config->log.filename);
 			} else {
-				strncpy(config_logfull, config->log.filename, PATH_MAX - 1);
-				config_logfull[PATH_MAX - 1] = '\0';
+				snprintf(config_logfull, sizeof(config_logfull), "%s", config->log.filename);
 			}
 			config_netpriority_enabled = config->netpriority.enabled;
 			config_netpriority_protocol = config->netpriority.protocol;

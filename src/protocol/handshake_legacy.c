@@ -85,10 +85,14 @@ p_login_legacy packet_read_legacy_login(unsigned char *sourcepacket, int sourcep
 		for (recidx = 0; recidx < source[1]; recidx++) {
 			login_field[recidx] = source[2 + recidx];
 		}
-		ptr_login_field = strtok_head(result.username, ptr_login_field, ';');
-		size_t fieldsize_address = strtok_tail(NULL, ptr_login_field, ':', strlen(ptr_login_field));
-		strncpy(result.address, ptr_login_field, fieldsize_address);
-		result.address[fieldsize_address] = '\0';
+		login_field[sizeof(result.username) - 1] = '\0';
+		ptr_login_field = strtok_head(result.username, sizeof(result.username), ptr_login_field, ';');
+		if (ptr_login_field == NULL) {
+			memset(&result, 0, sizeof(result));
+			return result;
+		}
+		size_t fieldsize_address = strtok_tail(NULL, 0, ptr_login_field, ':', strlen(ptr_login_field));
+		snprintf(result.address, sizeof(result.address), "%.*s", (int)fieldsize_address, ptr_login_field);
 		ptr_login_field = ptr_login_field + fieldsize_address + 1;
 		result.port = atoi(ptr_login_field);
 	} else {
@@ -100,6 +104,10 @@ p_login_legacy packet_read_legacy_login(unsigned char *sourcepacket, int sourcep
 			ptr_source = ptr_source + 2;
 		}
 		username_length = *ptr_source;
+		if (username_length >= sizeof(result.username)) {
+			memset(&result, 0, sizeof(result));
+			return result;
+		}
 		ptr_source++;
 		for (recidx = 0; recidx < username_length; recidx++) {
 			result.username[recidx] = *ptr_source;
@@ -107,6 +115,10 @@ p_login_legacy packet_read_legacy_login(unsigned char *sourcepacket, int sourcep
 		}
 		if (login_version == PVER_LEGACYL4) {
 			address_length = *ptr_source;
+			if (address_length >= sizeof(result.address)) {
+				memset(&result, 0, sizeof(result));
+				return result;
+			}
 			ptr_source++;
 			for (recidx = 0; recidx < address_length; recidx++) {
 				result.address[recidx] = *ptr_source;

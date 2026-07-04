@@ -65,9 +65,9 @@ size_t protocol_proxy_write(void *dst, p_proxy src) {
 	net_addrp dstaddrp = net_ntop(src.family, &(src.dstaddr.addr), 0);
 	switch (src.family) {
 		case AF_INET:
-			return sprintf(dst, "PROXY TCP4 %s %s %hu %hu\r\n", (char *)&srcaddrp, (char *)&dstaddrp, src.srcport, src.dstport);
+			return snprintf(dst, PROTOPROXY_PACKETMAXLEN + 1, "PROXY TCP4 %s %s %hu %hu\r\n", (char *)&srcaddrp, (char *)&dstaddrp, src.srcport, src.dstport);
 		case AF_INET6:
-			return sprintf(dst, "PROXY TCP6 %s %s %hu %hu\r\n", (char *)&srcaddrp, (char *)&dstaddrp, src.srcport, src.dstport);
+			return snprintf(dst, PROTOPROXY_PACKETMAXLEN + 1, "PROXY TCP6 %s %s %hu %hu\r\n", (char *)&srcaddrp, (char *)&dstaddrp, src.srcport, src.dstport);
 		default:
 			return 0;
 	}

@@ -26,8 +26,8 @@ int packetexpand(unsigned char *source, int source_length, unsigned char *target
 int packetshrink(unsigned char *source, int source_length, unsigned char *target);
 size_t strlen_notail(const char *src, char exemptchr);
 int strcmp_notail(const char *str1, const char *str2, char exemptchr, short case_insensitive);
-char *strtok_head(char *dst, char *src, char delim);
-size_t strtok_tail(char *dst, char *src, char delim, size_t length);
+char *strtok_head(char *dst, size_t dst_size, char *src, char delim);
+size_t strtok_tail(char *dst, size_t dst_size, char *src, char delim, size_t length);
 void *varint2int(void *src, varint_t *dst);
 
 #endif
