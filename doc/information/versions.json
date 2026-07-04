@@ -394,5 +394,11 @@
       "1.2-beta4-patch1",
       "1.2-beta4"
     ]
+  },
+  {
+    "version": 67,
+    "names": [
+      "1.2-beta5"
+    ]
   }
 ]
