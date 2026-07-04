@@ -27,7 +27,7 @@ char config_logfull[PATH_MAX];
 conf *config = NULL;
 short config_netpriority_enabled = 1;
 sa_family_t config_netpriority_protocol = AF_INET6;
-unsigned short config_runmode = 1;
+unsigned short config_runmode = RUNMODE_SIMPLE;
 volatile sig_atomic_t reload_flag = 0;
 void deal_signal(int signum) {
 	switch (signum) {
@@ -45,7 +45,7 @@ static void do_reload(void) {
 	char config_logfull_old[PATH_MAX];
 	strncpy(config_logfull_old, config_logfull, PATH_MAX - 1);
 	config_logfull_old[PATH_MAX - 1] = '\0';
-	mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel, 2,
+	mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_INFORMATION,
 		"Reloading config from file: %s\n",
 		configfile
 	);
@@ -60,67 +60,67 @@ static void do_reload(void) {
 				strncpy(config_logfull, config->log.filename, PATH_MAX - 1);
 				config_logfull[PATH_MAX - 1] = '\0';
 			}
-			mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel, 2,
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_INFORMATION,
 				"Configuration reloaded.\n"
 			);
 			break;
 		case CONF_EROPENFAIL:
-			mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel, 1,
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING,
 				"Cannot read config file: %s\n",
 				configfile
 			);
 			break;
 		case CONF_EROPENLARGE:
-			mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel, 1,
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING,
 				"Error in configurations: File too large (5MB), will keep your old configurations.\n"
 			);
 			break;
 		case CONF_ERMEMORY:
-			mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel, 1,
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING,
 				"Error in configurations: Failed to allocate memory when reading file, will keep your old configurations.\n"
 			);
 			break;
 		case CONF_ERPARSE:
-			mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel, 1,
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING,
 				"Error in configurations: Not a valid JSON format, will keep your old configurations.\n"
 			);
 			break;
 		case CONF_ECMEMORY:
-			mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel, 1,
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING,
 				"Error in processing configurations: Failed to allocate memory during internal processing, will keep your old configurations.\n"
 			);
 			break;
 		case CONF_ECNETPRIORITYPROTOCOL:
-			mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel, 1,
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING,
 				"Error in configurations: Entry \"netpriority.protocol\" must be IPv4 or IPv6 (case sensitive), will keep your old configurations.\n"
 			);
 			break;
 		case CONF_ECLISTENPORT:
-			mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel, 1,
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING,
 				"Error in configurations: Entry \"listen.port\" must be an unsigned short integer (0-65535), will keep your old configurations.\n"
 			);
 			break;
 		case CONF_ECPROXY:
-			mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel, 1,
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING,
 				"Error in configurations: Entry \"proxy\" is missing, will keep your old configurations.\n"
 			);
 			break;
 		case CONF_ECPROXYDUP:
 			if (config_duperr[0] != '\0') {
-				mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel, 1,
+				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING,
 					"Error in configurations: Duplication found in proxy virtual hostnames. "
 					"Affected: \"%s\", will keep your old configurations.\n",
 					config_duperr
 				);
 				config_duperr[0] = '\0';
 			} else {
-				mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel, 1,
+				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING,
 					"Error in configurations: Duplication found in proxy virtual hostnames, will keep your old configurations.\n"
 				);
 			}
 			break;
 		default:
-			mksysmsg(0, config_logfull_old, config_runmode, config_maxlevel, 1,
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING,
 				"Error in processing configurations: Unknown error occurred, code: %d, will keep your old configurations\n",
 				errno
 			);
@@ -149,7 +149,10 @@ int main(int argc, char **argv) {
 	int strulen = sizeof(addr_inbound_client);
 	getcwd(cwd, PATH_MAX);
 	if (argc < 2) {
-		mksysmsg(1, "", 0, 255, 0, headmsg);
+		mksysmsg(
+			MKSYS_PREFIX_OFF, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+			headmsg
+		);
 		fprintf(stderr, "Usage: %s %s\n", strrchr(argv[0], '/') ? strrchr(argv[0],'/') + 1 : argv[0], helpmsg);
 		return EXITCODE_BADARG;
 	}
@@ -162,47 +165,73 @@ int main(int argc, char **argv) {
 		if ((strcmp(ptr_argv1, "r") == 0) || (strcmp(ptr_argv1, "-reload") == 0)) {
 			pidfd = fopen("/run/mcrelay/mcrelay.pid", "r");
 			if (pidfd == NULL) {
-				mksysmsg(1, "", 0, 255, 0, headmsg);
-				mksysmsg(0, "", 0, 255, 0, "Cannot read /run/mcrelay/mcrelay.pid.\n");
+				mksysmsg(MKSYS_PREFIX_OFF, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+					headmsg
+				);
+				mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+					"Cannot read /run/mcrelay/mcrelay.pid.\n"
+				);
 				return EXITCODE_NOPIDFILE;
 			}
 			fscanf(pidfd, "%d", &prevpid);
 			fclose(pidfd);
 			if (kill(prevpid, SIGUSR1) == 0) {
-				mksysmsg(1, "", 0, 255, 2, headmsg);
-				mksysmsg(0, "", 0, 255, 2, "Successfully sent reload signal to currently running process.\n");
+				mksysmsg(MKSYS_PREFIX_OFF, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION,
+					headmsg
+				);
+				mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION,
+					"Successfully sent reload signal to currently running process.\n"
+				);
 				return EXITCODE_OK;
 			} else {
-				mksysmsg(1, "", 0, 255, 0, headmsg);
-				mksysmsg(0, "", 0, 255, 0, "Failed to send reload signal to currently running process.\n");
+				mksysmsg(MKSYS_PREFIX_OFF, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+					headmsg
+				);
+				mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+					"Failed to send reload signal to currently running process.\n"
+				);
 				return EXITCODE_NOSIGNAL;
 			}
 		} else if ((strcmp(ptr_argv1, "t") == 0) || (strcmp(ptr_argv1, "-stop") == 0)) {
 			pidfd = fopen("/run/mcrelay/mcrelay.pid", "r");
 			if (pidfd == NULL) {
-				mksysmsg(1, "", 0, 255, 0, headmsg);
-				mksysmsg(0, "", 0, 255, 0, "Cannot read /run/mcrelay/mcrelay.pid.\n");
+				mksysmsg(MKSYS_PREFIX_OFF, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+					headmsg
+				);
+				mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+					"Cannot read /run/mcrelay/mcrelay.pid.\n"
+				);
 				return EXITCODE_NOPIDFILE;
 			}
 			fscanf(pidfd, "%d", &prevpid);
 			fclose(pidfd);
 			if (kill(prevpid, SIGTERM) == 0) {
-				mksysmsg(1, "", 0, 255, 2, headmsg);
-				mksysmsg(0, "", 0, 255, 2, "Successfully sent terminate signal to currently running process.\n");
+				mksysmsg(MKSYS_PREFIX_OFF, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION,
+					headmsg
+				);
+				mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION,
+					"Successfully sent terminate signal to currently running process.\n"
+				);
 				return EXITCODE_OK;
 			} else {
-				mksysmsg(1, "", 0, 255, 0, headmsg);
-				mksysmsg(0, "", 0, 255, 0, "Failed to send terminate signal to currently running process.\n");
+				mksysmsg(MKSYS_PREFIX_OFF, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+					headmsg
+				);
+				mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+					"Failed to send terminate signal to currently running process.\n"
+				);
 				return EXITCODE_NOSIGNAL;
 			}
 		} else if ((strcmp(ptr_argv1, "f") == 0) || (strcmp(ptr_argv1, "-forking") == 0)) {
-			config_runmode = 2;
+			config_runmode = RUNMODE_FORKING;
 			argoffset_configfile = argv[2];
 		} else if ((strcmp(ptr_argv1, "v") == 0) || (strcmp(ptr_argv1, "-version") == 0)) {
 			fprintf(stdout, "v%s(%s)\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_INTERNAL);
 			return EXITCODE_OK;
 		} else {
-			mksysmsg(1, "", 0, 255, 0, headmsg);
+			mksysmsg(MKSYS_PREFIX_OFF, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+				headmsg
+			);
 			fprintf(stderr, "Error: Invalid option \"-%s\"\n\nUsage: %s %s\n", ptr_argv1, strrchr(argv[0], '/') ? strrchr(argv[0], '/') + 1 : argv[0], helpmsg);
 			return EXITCODE_BADARG;
 		}
@@ -212,15 +241,25 @@ int main(int argc, char **argv) {
 			fscanf(pidfd, "%d", &prevpid);
 			fclose(pidfd);
 			if (kill(prevpid, 0) == 0) {
-				mksysmsg(1, "", 0, 255, 0, headmsg);
-				mksysmsg(0, "", 0, 255, 0, "You cannot run multiple instances at a time. Previous running process PID: %d.\n", prevpid);
+				mksysmsg(MKSYS_PREFIX_OFF, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+					headmsg
+				);
+				mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+					"You cannot run multiple instances at a time. Previous running process PID: %d.\n",
+					prevpid
+				);
 				return EXITCODE_MULTIINSTANCE;
 			}
 		}
 	}
-	mksysmsg(1, "", 0, 255, 2, headmsg);
+	mksysmsg(MKSYS_PREFIX_OFF, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION,
+		headmsg
+	);
 	if (argoffset_configfile == NULL) {
-		mksysmsg(0, "", 0, 255, 0, "Config filename cannot be empty!\n", configfile);
+		mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+			"Config filename cannot be empty!\n",
+			configfile
+		);
 		return EXITCODE_BADARG;
 	}
 	strncpy(configfile, argoffset_configfile, PATH_MAX - 1);
@@ -231,7 +270,10 @@ int main(int argc, char **argv) {
 		strncpy(configfile_full, configfile, PATH_MAX - 1);
 		configfile_full[PATH_MAX - 1] = '\0';
 	}
-	mksysmsg(0, "", 0, 255, 2, "Loading configurations from file: %s\n\n", configfile);
+	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION,
+		"Loading configurations from file: %s\n\n",
+		configfile
+	);
 	config = config_read(configfile_full);
 	switch (errno) {
 		case 0:
@@ -245,77 +287,124 @@ int main(int argc, char **argv) {
 			config_netpriority_protocol = config->netpriority.protocol;
 			break;
 		case CONF_EROPENFAIL:
-			mksysmsg(0, "", 0, 255, 0, "Cannot read config file: %s\n", configfile);
+			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+				"Cannot read config file: %s\n",
+				configfile
+			);
 			return EXITCODE_NOCONFFILE;
 		case CONF_EROPENLARGE:
-			mksysmsg(0, "", 0, 255, 0, "Error in configurations: File too large (5MB).\n");
+			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+				"Error in configurations: File too large (5MB).\n"
+			);
 			return EXITCODE_FILELARGE;
 		case CONF_ERMEMORY:
-			mksysmsg(0, "", 0, 255, 0, "Error in configurations: Failed to allocate memory when reading file.\n");
+			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+				"Error in configurations: Failed to allocate memory when reading file.\n"
+			);
 			return EXITCODE_NOMEM;
 		case CONF_ERPARSE:
-			mksysmsg(0, "", 0, 255, 0, "Error in configurations: Not a valid JSON format.\n");
+			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+				"Error in configurations: Not a valid JSON format.\n"
+			);
 			return EXITCODE_BADJSON;
 		case CONF_ECMEMORY:
-			mksysmsg(0, "", 0, 255, 0, "Error in processing configurations: Failed to allocate memory during internal processing.\n");
+			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+				"Error in processing configurations: Failed to allocate memory during internal processing.\n"
+			);
 			return EXITCODE_NOMEM;
 		case CONF_ECNETPRIORITYPROTOCOL:
-			mksysmsg(0, "", 0, 255, 0, "Error in configurations: Entry \"netpriority.protocol\" must be IPv4 or IPv6 (case sensitive).\n");
+			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+				"Error in configurations: Entry \"netpriority.protocol\" must be IPv4 or IPv6 (case sensitive).\n"
+			);
 			return EXITCODE_BADARG;
 		case CONF_ECLISTENPORT:
-			mksysmsg(0, "", 0, 255, 0, "Error in configurations: Entry \"listen.port\" must be an unsigned short integer (0-65535).\n");
+			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+				"Error in configurations: Entry \"listen.port\" must be an unsigned short integer (0-65535).\n"
+			);
 			return EXITCODE_BADARG;
 		case CONF_ECPROXY:
-			mksysmsg(0, "", 0, 255, 0, "Error in configurations: Entry \"proxy\" is missing!\n");
+			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+				"Error in configurations: Entry \"proxy\" is missing!\n"
+			);
 			return EXITCODE_BADARG;
 		case CONF_ECPROXYDUP:
 			if (config_duperr[0] != '\0') {
-				mksysmsg(0, "", 0, 255, 0, "Error in configurations: Duplication found in proxy virtual hostnames. Affected: \"%s\".\n", config_duperr);
+				mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+					"Error in configurations: Duplication found in proxy virtual hostnames. Affected: \"%s\".\n",
+					config_duperr
+				);
 				config_duperr[0] = '\0';
 			} else {
-				mksysmsg(0, "", 0, 255, 0, "Error in configurations: Duplication found in proxy virtual hostnames.\n");
+				mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+					"Error in configurations: Duplication found in proxy virtual hostnames.\n"
+				);
 			}
 			return EXITCODE_BADARG;
 		default:
-			mksysmsg(0, "", 0, 255, 0, "Error in processing configurations: Unknown error occurred, code: %d\n", errno);
+			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+				"Error in processing configurations: Unknown error occurred, code: %d\n",
+				errno
+			);
 			return EXITCODE_INTERNAL;
 	}
 	FILE *tmpfd = fopen(config_logfull, "a");
 	if (tmpfd == NULL) {
-		mksysmsg(0, "", 0, 255, 0, "Error: Cannot write log to \"%s\".\n", config->log.filename);
+		mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+			"Error: Cannot write log to \"%s\".\n",
+			config->log.filename
+		);
 		return EXITCODE_CANTCREAT;
 	} else {
 		fclose(tmpfd);
 	}
 	net_addr bindaddr = net_resolve_dual(config->listen.address, config_netpriority_protocol, config_netpriority_enabled);
 	if (bindaddr.family == 0) {
-		mksysmsg(0, config_logfull, config_runmode, config->log.level, 0, "Error: Invalid bind address!\n");
+		mksysmsg(MKSYS_PREFIX_ON, config_logfull, config_runmode, config->log.level, MKSYS_LEVEL_CRITICAL,
+			"Error: Invalid bind address!\n"
+		);
 	}
 	if (config->listen.port == 0) {
-		mksysmsg(0, config_logfull, config_runmode, config->log.level, 0, "Error: Invalid bind port!\n");
+		mksysmsg(MKSYS_PREFIX_ON, config_logfull, config_runmode, config->log.level, MKSYS_LEVEL_CRITICAL,
+			"Error: Invalid bind port!\n"
+		);
 		return EXITCODE_BADPORT;
 	}
 	net_addrp bindaddrp = net_ntop(bindaddr.family, &(bindaddr.addr), 1);
-	mksysmsg(0, config_logfull, config_runmode, config->log.level, 2, "Binding on %s:%d...\n", (char *)&bindaddrp, config->listen.port);
+	mksysmsg(MKSYS_PREFIX_ON, config_logfull, config_runmode, config->log.level, MKSYS_LEVEL_INFORMATION,
+		"Binding on %s:%d...\n",
+		(char *)&bindaddrp, config->listen.port
+	);
 	socket_inbound_server = net_socket(NETSOCK_BIND, bindaddr.family, &(bindaddr.addr), config->listen.port, 1);
 	if (socket_inbound_server == -1) {
-		mksysmsg(0, config_logfull, config_runmode, config->log.level, 0, "Bind Failed!\n");
+		mksysmsg(MKSYS_PREFIX_ON, config_logfull, config_runmode, config->log.level, MKSYS_LEVEL_CRITICAL,
+			"Bind Failed!\n"
+		);
 		return EXITCODE_BINDFAIL;
 	}
 	int pid;
-	if (config_runmode == 2) {
+	if (config_runmode == RUNMODE_FORKING) {
 		pid = fork();
 		if (pid > 0) {
 			FILE *pidfd = fopen("/run/mcrelay/mcrelay.pid", "w");
 			if (pidfd == NULL) {
-				mksysmsg(0, "", 0, config->log.level, 0, "Cannot write PID file /run/mcrelay/mcrelay.pid\n");
+				mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, config->log.level, MKSYS_LEVEL_CRITICAL,
+					"Cannot write PID file /run/mcrelay/mcrelay.pid\n"
+				);
 				return EXITCODE_CANTCREAT;
 			}
 			fprintf(pidfd, "%d", pid);
 			fclose(pidfd);
-			mksysmsg(0, config_logfull, config_runmode, config->log.level, 2, "Bind Successful.\n\n");
-			mksysmsg(0, "", config_runmode, config->log.level, 2, "For more information, see log file: %s\n\n", config->log.filename);
-			mksysmsg(0, "", 0, config->log.level, 2, "Server running on PID: %d\n", pid);
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull, config_runmode, config->log.level, MKSYS_LEVEL_INFORMATION,
+				"Bind Successful.\n\n"
+			);
+			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, config_runmode, config->log.level, MKSYS_LEVEL_INFORMATION,
+				"For more information, see log file: %s\n\n",
+				config->log.filename
+			);
+			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, config->log.level, MKSYS_LEVEL_INFORMATION,
+				"Server running on PID: %d\n",
+				pid
+			);
 			return EXITCODE_OK;
 		} else if (pid < 0) {
 			return EXITCODE_FORKFAIL;
@@ -330,15 +419,22 @@ int main(int argc, char **argv) {
 		pid = getpid();
 		FILE *pidfd = fopen("/run/mcrelay/mcrelay.pid", "w");
 		if (pidfd == NULL) {
-			mksysmsg(0, "", 0, config->log.level, 0, "Cannot write PID file /run/mcrelay/mcrelay.pid\n");
+			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, config->log.level, MKSYS_LEVEL_CRITICAL,
+				"Cannot write PID file /run/mcrelay/mcrelay.pid\n"
+			);
 			return EXITCODE_CANTCREAT;
 		}
 		fprintf(pidfd, "%d", pid);
 		fclose(pidfd);
 	}
-	if (config_runmode != 2) {
-		mksysmsg(0, config_logfull, config_runmode, config->log.level, 2, "Bind Successful.\n\n");
-		mksysmsg(0, "", config_runmode, config->log.level, 2, "For more information, see log file: %s\n\n", config->log.filename);
+	if (config_runmode != RUNMODE_FORKING) {
+		mksysmsg(MKSYS_PREFIX_ON, config_logfull, config_runmode, config->log.level, MKSYS_LEVEL_INFORMATION,
+			"Bind Successful.\n\n"
+		);
+		mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, config_runmode, config->log.level, MKSYS_LEVEL_INFORMATION,
+			"For more information, see log file: %s\n\n",
+			config->log.filename
+		);
 	}
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
@@ -348,7 +444,7 @@ int main(int argc, char **argv) {
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGUSR1, &sa, NULL);
 	signal(SIGCHLD, SIG_IGN);
-	if (config_runmode != 2 && !isatty(STDOUT_FILENO)) {
+	if (config_runmode != RUNMODE_FORKING && !isatty(STDOUT_FILENO)) {
 		fclose(stdout);
 		fclose(stderr);
 	}

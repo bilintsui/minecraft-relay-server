@@ -29,7 +29,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 	memset(pheader, 0, PROTOPROXY_PACKETMAXLEN + 1);
 	packlen_inbound = recv(socket_in, inbound, BUFSIZ, 0);
 	if (packlen_inbound == 0) {
-		mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
+		mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, status: abort_init\n",
 			(char *)&(addrinfo_in.address), addrinfo_in.port
 		);
@@ -43,7 +43,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 				while (packlen_inbound < 0x20) {
 					packlen_inbound_append = packlen_inbound + recv(socket_in, inbound + packlen_inbound, BUFSIZ - packlen_inbound, 0);
 					if (packlen_inbound_append == 0) {
-						mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
+						mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 							"src: %s:%d, status: abort_init\n",
 							(char *)&(addrinfo_in.address), addrinfo_in.port
 						);
@@ -55,7 +55,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 				while (packlen_inbound < (0x20 + inbound[0x1F] * 2 + 4)) {
 					packlen_inbound_append = packlen_inbound + recv(socket_in, inbound + packlen_inbound, BUFSIZ - packlen_inbound, 0);
 					if (packlen_inbound_append == 0) {
-						mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
+						mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 							"src: %s:%d, status: abort_init\n",
 							(char *)&(addrinfo_in.address), addrinfo_in.port
 						);
@@ -72,7 +72,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			if ((inbound[packlen_inbound - 1] == 1) || (inbound[packlen_inbound - 1] == 2)) {
 				packlen_inbound_append = packlen_inbound + recv(socket_in, inbound + packlen_inbound, BUFSIZ - packlen_inbound, 0);
 				if (packlen_inbound_append == 0) {
-					mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 						"src: %s:%d, status: abort_init\n",
 						(char *)&(addrinfo_in.address), addrinfo_in.port
 					);
@@ -84,7 +84,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			break;
 	}
 	if (protocol_identify(inbound) == PVER_UNIDENT) {
-		mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
+		mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, status: reject_unidentproto\n",
 			(char *)&(addrinfo_in.address), addrinfo_in.port
 		);
@@ -97,7 +97,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			p_motd_legacy inbound_info = packet_read_legacy_motd(inbound);
 			conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
 			if (proxyinfo.valid == 0) {
-				mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
+				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 					"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n",
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address
 				);
@@ -127,13 +127,13 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 				mkoutbound_status = NET_ECONNECT;
 			}
 			if (mkoutbound_status != 0) {
-				outmsg_level = 1;
+				outmsg_level = MKSYS_LEVEL_WARNING;
 			} else {
-				outmsg_level = 3;
+				outmsg_level = MKSYS_LEVEL_INFORMATION + 1;
 			}
 			switch (mkoutbound_status) {
 				case 0:
-					mksysmsg(0, logfile, runmode, conf_in->log.level, outmsg_level,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
 						"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: accept\n",
 						(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 					);
@@ -170,12 +170,12 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 				case NET_ENORECORD:
 				case NET_ECONNECT:
 					if (mkoutbound_status == NET_ENORECORD) {
-						mksysmsg(0, logfile, runmode, conf_in->log.level, outmsg_level,
+						mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
 							"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoresolve\n",
 							(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 						);
 					} else if (mkoutbound_status == NET_ECONNECT) {
-						mksysmsg(0, logfile, runmode, conf_in->log.level, outmsg_level,
+						mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
 							"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoconnect\n",
 							(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 						);
@@ -188,7 +188,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 					return (mkoutbound_status == NET_ENORECORD) ? BACKBONE_ENORECORD : BACKBONE_ENOCONNECT;
 			}
 		} else {
-			mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
+			mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 				"src: %s:%d, type: motd, status: reject_motdrelay_oldclient\n",
 				(char *)&(addrinfo_in.address), addrinfo_in.port
 			);
@@ -200,7 +200,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 	} else if (inbound[0] == 2) {
 		int login_version = protocol_identify(inbound);
 		if (login_version == PVER_LEGACYL1) {
-			mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
+			mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 				"src: %s:%d, type: game, status: reject_gamerelay_oldclient\n",
 				(char *)&(addrinfo_in.address), addrinfo_in.port
 			);
@@ -209,7 +209,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			close(socket_in);
 			return BACKBONE_EOLDCLIENT;
 		} else if (login_version == PVER_LEGACYL3) {
-			mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
+			mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 				"src: %s:%d, type: game, status: reject_gamerelay_12w17a\n",
 				(char *)&(addrinfo_in.address), addrinfo_in.port
 			);
@@ -221,7 +221,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			p_login_legacy inbound_info = packet_read_legacy_login(inbound, packlen_inbound, login_version);
 			conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
 			if (proxyinfo.valid == 0) {
-				mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
+				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 					"src: %s:%d, type: game, vhost: %s, status: reject_vhostinvalid, username: %s\n",
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, inbound_info.username
 				);
@@ -250,13 +250,13 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 				mkoutbound_status = NET_ECONNECT;
 			}
 			if (mkoutbound_status != 0) {
-				outmsg_level = 1;
+				outmsg_level = MKSYS_LEVEL_WARNING;
 			} else {
-				outmsg_level = 2;
+				outmsg_level = MKSYS_LEVEL_INFORMATION;
 			}
 			switch (mkoutbound_status) {
 				case 0:
-					mksysmsg(0, logfile, runmode, conf_in->log.level, outmsg_level,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
 						"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: accept, username: %s\n",
 						(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 					);
@@ -291,13 +291,13 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 				case NET_ENORECORD:
 				case NET_ECONNECT:
 					if (mkoutbound_status == NET_ENORECORD) {
-						mksysmsg(0, logfile, runmode, conf_in->log.level, outmsg_level,
+						mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
 							"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s\n",
 							(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 						);
 						packlen_rewrited = make_kickreason_legacy(rewrited, "Proxy(Internal): Temporarily failed to resolve the address for the target server, please try again later.");
 					} else if (mkoutbound_status == NET_ECONNECT) {
-						mksysmsg(0, logfile, runmode, conf_in->log.level, outmsg_level,
+						mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
 							"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s\n",
 							(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 						);
@@ -313,13 +313,13 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 		p_handshake inbound_info = packet_read(inbound, inbound + packlen_inbound);
 		if (inbound_info.version == 0) {
 			if (inbound[inbound[0]] == 1) {
-				mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
+				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 					"src: %s:%d, type: motd, status: reject_motdrelay_13w41*\n",
 					(char *)&(addrinfo_in.address), addrinfo_in.port
 				);
 				packlen_rewrited = make_motd(rewrited, "[Proxy] Use 13w42a or later to play!", inbound_info.version);
 			} else if (inbound[inbound[0]] == 2) {
-				mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
+				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 					"src: %s:%d, type: game, status: reject_gamerelay_13w41*\n",
 					(char *)&(addrinfo_in.address), addrinfo_in.port
 				);
@@ -333,13 +333,13 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 		conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
 		if (proxyinfo.valid == 0) {
 			if (inbound_info.nextstate == 1) {
-				mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
+				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 					"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n",
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address
 				);
 				packlen_rewrited = make_motd(rewrited, "[Proxy] Use a legit address to play!", inbound_info.version);
 			} else if (inbound_info.nextstate == 2) {
-				mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
+				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 					"src: %s:%d, type: game, vhost: %s, status: reject_vhostinvalid, username: %s\n",
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, inbound_info.username
 				);
@@ -370,23 +370,23 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			mkoutbound_status = NET_ECONNECT;
 		}
 		if (mkoutbound_status != 0) {
-			outmsg_level = 1;
+			outmsg_level = MKSYS_LEVEL_WARNING;
 		} else {
 			if (inbound_info.nextstate == 1) {
-				outmsg_level = 3;
+				outmsg_level = MKSYS_LEVEL_INFORMATION + 1;
 			} else if (inbound_info.nextstate == 2) {
-				outmsg_level = 2;
+				outmsg_level = MKSYS_LEVEL_INFORMATION;
 			}
 		}
 		switch (mkoutbound_status) {
 			case 0:
 				if (inbound_info.nextstate == 1) {
-					mksysmsg(0, logfile, runmode, conf_in->log.level, outmsg_level,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
 						"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: accept\n",
 						(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 					);
 				} else if (inbound_info.nextstate == 2) {
-					mksysmsg(0, logfile, runmode, conf_in->log.level, outmsg_level,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
 						"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: accept, username: %s\n",
 						(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 					);
@@ -426,25 +426,25 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 				if (inbound_info.nextstate == 1) {
 					packlen_rewrited = make_motd(rewrited, "[Proxy] Server Temporarily Unavailable.", inbound_info.version);
 					if (mkoutbound_status == NET_ENORECORD) {
-						mksysmsg(0, logfile, runmode, conf_in->log.level, outmsg_level,
+						mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
 							"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoresolve\n",
 							(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 						);
 					} else if (mkoutbound_status == NET_ECONNECT) {
-						mksysmsg(0, logfile, runmode, conf_in->log.level, outmsg_level,
+						mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
 							"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoconnect\n",
 							(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 						);
 					}
 				} else if (inbound_info.nextstate == 2) {
 					if (mkoutbound_status == NET_ENORECORD) {
-						mksysmsg(0, logfile, runmode, conf_in->log.level, outmsg_level,
+						mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
 							"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s\n",
 							(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 						);
 						packlen_rewrited = make_kickreason(rewrited, "Proxy(Internal): Temporarily failed to resolve the address for the target server, please try again later.");
 					} else if (mkoutbound_status == NET_ECONNECT) {
-						mksysmsg(0, logfile, runmode, conf_in->log.level, outmsg_level,
+						mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
 							"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s\n",
 							(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 						);

@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "basic.h"
+#include "log.h"
 
 #include "config.h"
 
@@ -332,7 +333,7 @@ conf *config_read(char *filename) {
 		return NULL;
 	}
 	strcpy(result->log.filename, config_default_log_filename);
-	result->log.level = 2;
+	result->log.level = MKSYS_LEVEL_INFORMATION;
 	result->log.binary = 0;
 	cJSON *config_json_log = cJSON_GetObjectItemCaseSensitive(config_json, "log");
 	if (config_json_log != NULL) {

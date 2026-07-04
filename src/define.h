@@ -24,6 +24,10 @@
 
 #define ADDRESS_MAXLEN	1024
 
+#define RUNMODE_CONSOLE	0
+#define RUNMODE_SIMPLE	1
+#define RUNMODE_FORKING	2
+
 typedef uint32_t varint_t;
 
 #endif

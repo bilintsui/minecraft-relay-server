@@ -11,6 +11,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "define.h"
 #include "log.h"
 
 void gettime(unsigned char *target) {
@@ -39,10 +40,10 @@ int mksysmsg(unsigned short noprefix, char *logfile, unsigned short runmode, uns
 	}
 	memset(level_str, 0, 8);
 	switch (msglevel) {
-		case 0:
+		case MKSYS_LEVEL_CRITICAL:
 			strcpy(level_str, "CRIT");
 			break;
-		case 1:
+		case MKSYS_LEVEL_WARNING:
 			strcpy(level_str, "WARN");
 			break;
 		default:
@@ -50,13 +51,13 @@ int mksysmsg(unsigned short noprefix, char *logfile, unsigned short runmode, uns
 			break;
 	}
 	va_start(varlist, format);
-	if (strcmp(logfile, "") != 0) {
+	if (strcmp(logfile, MKSYS_NOLOGFILE) != 0) {
 		char time_str[32];
 		memset(time_str, 0, 32);
 		gettime(time_str);
 		FILE *logfd = fopen(logfile, "a");
 		if (logfd != NULL) {
-			if (noprefix == 0) {
+			if (noprefix == MKSYS_PREFIX_ON) {
 				fprintf(logfd, "[%s] [%s] ", time_str, level_str);
 			}
 			char format_output[BUFSIZ];
@@ -73,16 +74,16 @@ int mksysmsg(unsigned short noprefix, char *logfile, unsigned short runmode, uns
 	}
 	va_end(varlist);
 	va_start(varlist, format);
-	if (runmode != 2) {
-		if (noprefix && !isatty(STDOUT_FILENO)) {
+	if (runmode != RUNMODE_FORKING) {
+		if (noprefix == MKSYS_PREFIX_OFF && !isatty(STDOUT_FILENO)) {
 			status = 0;
-		} else if (msglevel == 0) {
-			if (noprefix == 0) {
+		} else if (msglevel == MKSYS_LEVEL_CRITICAL) {
+			if (noprefix == MKSYS_PREFIX_ON) {
 				fprintf(stderr, "[%s] ", level_str);
 			}
 			status = vfprintf(stderr, format, varlist);
 		} else {
-			if (noprefix == 0) {
+			if (noprefix == MKSYS_PREFIX_ON) {
 				fprintf(stdout, "[%s] ", level_str);
 			}
 			status = vfprintf(stdout, format, varlist);
