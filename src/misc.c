@@ -34,7 +34,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			(char *)&(addrinfo_in.address), addrinfo_in.port
 		);
 		close(socket_in);
-		return 1;
+		return BACKBONE_EABORT;
 	}
 	size_t packlen_inbound_append = 0;
 	switch (inbound[0]) {
@@ -48,7 +48,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 							(char *)&(addrinfo_in.address), addrinfo_in.port
 						);
 						close(socket_in);
-						return 1;
+						return BACKBONE_EABORT;
 					}
 					packlen_inbound = packlen_inbound + packlen_inbound_append;
 				}
@@ -60,7 +60,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 							(char *)&(addrinfo_in.address), addrinfo_in.port
 						);
 						close(socket_in);
-						return 1;
+						return BACKBONE_EABORT;
 					}
 					packlen_inbound = packlen_inbound + packlen_inbound_append;
 				}
@@ -77,7 +77,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 						(char *)&(addrinfo_in.address), addrinfo_in.port
 					);
 					close(socket_in);
-					return 1;
+					return BACKBONE_EABORT;
 				}
 				packlen_inbound = packlen_inbound + packlen_inbound_append;
 			}
@@ -89,7 +89,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			(char *)&(addrinfo_in.address), addrinfo_in.port
 		);
 		close(socket_in);
-		return 2;
+		return BACKBONE_EUNIDENT;
 	}
 	if (inbound[0] == 0xFE) {
 		int motd_version = protocol_identify(inbound);
@@ -105,7 +105,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 				send(socket_in, rewrited, packlen_rewrited, 0);
 				packet_destroy_legacy_motd(inbound_info);
 				close(socket_in);
-				return 3;
+				return BACKBONE_ENOVHOST;
 			}
 			int mkoutbound_status, outmsg_level;
 			if (proxyinfo.srvenabled == 1) {
@@ -185,7 +185,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 					close(socket_in);
 					packet_destroy_legacy_motd(inbound_info);
 					config_proxy_search_destroy(&proxyinfo);
-					return 4;
+					return (mkoutbound_status == NET_ENORECORD) ? BACKBONE_ENORECORD : BACKBONE_ENOCONNECT;
 			}
 		} else {
 			mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
@@ -195,7 +195,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			packlen_rewrited = make_motd_legacy(rewrited, "Proxy: Please use direct connect.", protocol_identify(inbound), 0);
 			send(socket_in, rewrited, packlen_rewrited, 0);
 			close(socket_in);
-			return 5;
+			return BACKBONE_EOLDCLIENT;
 		}
 	} else if (inbound[0] == 2) {
 		int login_version = protocol_identify(inbound);
@@ -207,7 +207,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			packlen_rewrited = make_kickreason_legacy(rewrited, "Proxy: Unsupported client, use 12w04a or later!");
 			send(socket_in, rewrited, packlen_rewrited, 0);
 			close(socket_in);
-			return 5;
+			return BACKBONE_EOLDCLIENT;
 		} else if (login_version == PVER_LEGACYL3) {
 			mksysmsg(0, logfile, runmode, conf_in->log.level, 1,
 				"src: %s:%d, type: game, status: reject_gamerelay_12w17a\n",
@@ -216,7 +216,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			packlen_rewrited = make_kickreason_legacy(rewrited, "Proxy: Unsupported client, use 12w18a or later!");
 			send(socket_in, rewrited, packlen_rewrited, 0);
 			close(socket_in);
-			return 5;
+			return BACKBONE_EOLDCLIENT;
 		} else if ((login_version == PVER_LEGACYL2) || (login_version == PVER_LEGACYL4)) {
 			p_login_legacy inbound_info = packet_read_legacy_login(inbound, packlen_inbound, login_version);
 			conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
@@ -228,7 +228,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 				packlen_rewrited = make_kickreason_legacy(rewrited, "Proxy: Please use a legit name to connect!");
 				send(socket_in, rewrited, packlen_rewrited, 0);
 				close(socket_in);
-				return 3;
+				return BACKBONE_ENOVHOST;
 			}
 			int mkoutbound_status, outmsg_level;
 			if (proxyinfo.srvenabled == 1) {
@@ -306,7 +306,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 					send(socket_in, rewrited, packlen_rewrited, 0);
 					close(socket_in);
 					config_proxy_search_destroy(&proxyinfo);
-					return 4;
+					return (mkoutbound_status == NET_ENORECORD) ? BACKBONE_ENORECORD : BACKBONE_ENOCONNECT;
 			}
 		}
 	} else {
@@ -328,7 +328,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			send(socket_in, rewrited, packlen_rewrited, 0);
 			packet_destroy(inbound_info);
 			close(socket_in);
-			return 5;
+			return BACKBONE_EOLDCLIENT;
 		}
 		conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
 		if (proxyinfo.valid == 0) {
@@ -348,7 +348,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			send(socket_in, rewrited, packlen_rewrited, 0);
 			packet_destroy(inbound_info);
 			close(socket_in);
-			return 3;
+			return BACKBONE_ENOVHOST;
 		}
 		int mkoutbound_status, outmsg_level;
 		if (proxyinfo.srvenabled == 1) {
@@ -455,7 +455,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 				close(socket_in);
 				config_proxy_search_destroy(&proxyinfo);
 				packet_destroy(inbound_info);
-				return 4;
+				return (mkoutbound_status == NET_ENORECORD) ? BACKBONE_ENORECORD : BACKBONE_ENOCONNECT;
 		}
 	}
 	/*
@@ -467,5 +467,5 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 	 * only L1-L4 for inbound[0] == 2.
 	 */
 	close(socket_in);
-	return 1;
+	return BACKBONE_EABORT;
 }

@@ -9,6 +9,14 @@
 
 #define _MRS_MISC_H_INCLUDED_
 
+#define BACKBONE_OK	0
+#define BACKBONE_EABORT	1
+#define BACKBONE_EUNIDENT	2
+#define BACKBONE_ENOVHOST	3
+#define BACKBONE_ENORECORD	4
+#define BACKBONE_ENOCONNECT	5
+#define BACKBONE_EOLDCLIENT	6
+
 #include "config.h"
 #include "network.h"
 
