@@ -1,16 +1,12 @@
 /*
-	network.c: Network Functions for Minecraft Relay Server
-	A component of Minecraft Relay Server.
-
-	Minecraft Relay Server, version 1.2-beta4
-	(c) 2020-2026 Bilin Tsui.
-	This is a Free Software, absolutely no warranty.
-
-	Licensed under GNU General Public License Version 3 (GNU GPL v3).
-	For detailed license text, see: https://www.gnu.org/licenses/gpl-3.0.html
-*/
+ * network.c: Functions for fundamental communications
+ *
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) 2020-2026 Bilin Tsui
+ */
 
 #define _GNU_SOURCE
+
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -23,37 +19,32 @@
 
 #include "network.h"
 
-size_t net_getaddrsize(sa_family_t family)
-{
+size_t net_getaddrsize(sa_family_t family) {
 	switch (family) {
-	case AF_INET:
-		return sizeof(uint32_t);
-	case AF_INET6:
-		return sizeof(char) * 16;
-	default:
-		return 0;
+		case AF_INET:
+			return sizeof(uint32_t);
+		case AF_INET6:
+			return sizeof(char) * 16;
+		default:
+			return 0;
 	}
 }
 
-sa_family_t net_getaltfamily(sa_family_t family)
-{
+sa_family_t net_getaltfamily(sa_family_t family) {
 	switch (family) {
-	case AF_INET:
-		return AF_INET6;
-	case AF_INET6:
-		return AF_INET;
-	default:
-		return 0;
+		case AF_INET:
+			return AF_INET6;
+		case AF_INET6:
+			return AF_INET;
+		default:
+			return 0;
 	}
 }
 
-net_addrp net_ntop(sa_family_t family, void *src, short v6addition)
-{
+net_addrp net_ntop(sa_family_t family, void *src, short v6addition) {
 	net_addrp pre_result;
 	memset(&pre_result, 0, sizeof(pre_result));
-	if (((family != AF_INET) && (family != AF_INET6)) || (src == NULL)
-	    || (inet_ntop(family, src, (char *)&pre_result, sizeof(pre_result))
-		== NULL)) {
+	if (((family != AF_INET) && (family != AF_INET6)) || (src == NULL) || (inet_ntop(family, src, (char *)&pre_result, sizeof(pre_result)) == NULL)) {
 		return pre_result;
 	}
 	if ((v6addition) && (family == AF_INET6)) {
@@ -71,8 +62,7 @@ net_addrp net_ntop(sa_family_t family, void *src, short v6addition)
  * non-blocking socket can return EAGAIN/EWOULDBLOCK, which the
  * current EPOLLIN-only design does not handle.
  */
-int net_relay(int socket_in, int socket_out)
-{
+int net_relay(int socket_in, int socket_out) {
 	int pipefd[2] = { -1, -1 };
 	struct epoll_event ev, events[2];
 	int epfd = -1, nfds, i, src, dst, ret = 0, pipe_sz;
@@ -82,8 +72,9 @@ int net_relay(int socket_in, int socket_out)
 		goto cleanup;
 	}
 	pipe_sz = fcntl(pipefd[0], F_GETPIPE_SZ);
-	if (pipe_sz <= 0)
+	if (pipe_sz <= 0) {
 		pipe_sz = 65536;
+	}
 	epfd = epoll_create(2);
 	if (epfd == -1) {
 		ret = -1;
@@ -115,27 +106,24 @@ int net_relay(int socket_in, int socket_out)
 			}
 			if (events[i].events & EPOLLIN) {
 				src = events[i].data.fd;
-				dst =
-				    (src == socket_in) ? socket_out : socket_in;
-				bytes =
-				    splice(src, NULL, pipefd[1], NULL, pipe_sz,
-					   SPLICE_F_MOVE);
+				dst = (src == socket_in) ? socket_out : socket_in;
+				bytes = splice(src, NULL, pipefd[1], NULL, pipe_sz, SPLICE_F_MOVE);
 				if (bytes == 0) {
 					goto cleanup;
 				}
 				if (bytes < 0) {
-					if (errno == EINTR)
+					if (errno == EINTR) {
 						continue;
+					}
 					goto cleanup;
 				}
 				written = 0;
 				while (written < bytes) {
-					res = splice(pipefd[0], NULL, dst, NULL,
-						     bytes - written,
-						     SPLICE_F_MOVE);
+					res = splice(pipefd[0], NULL, dst, NULL, bytes - written, SPLICE_F_MOVE);
 					if (res <= 0) {
-						if (res < 0 && errno == EINTR)
+						if (res < 0 && errno == EINTR) {
 							continue;
+						}
 						goto cleanup;
 					}
 					written += res;
@@ -143,20 +131,22 @@ int net_relay(int socket_in, int socket_out)
 			}
 		}
 	}
- cleanup:
+cleanup:
 	close(socket_in);
 	close(socket_out);
-	if (pipefd[0] != -1)
+	if (pipefd[0] != -1) {
 		close(pipefd[0]);
-	if (pipefd[1] != -1)
+	}
+	if (pipefd[1] != -1) {
 		close(pipefd[1]);
-	if (epfd != -1)
+	}
+	if (epfd != -1) {
 		close(epfd);
+	}
 	return ret;
 }
 
-void *net_resolve(char *hostname, sa_family_t family)
-{
+void *net_resolve(char *hostname, sa_family_t family) {
 	if ((family != AF_INET) && (family != AF_INET6)) {
 		errno = NET_EARGFAMILY;
 		return NULL;
@@ -179,9 +169,7 @@ void *net_resolve(char *hostname, sa_family_t family)
 	return result;
 }
 
-net_addr net_resolve_dual(char *hostname, sa_family_t primary_family,
-			  short dual)
-{
+net_addr net_resolve_dual(char *hostname, sa_family_t primary_family, short dual) {
 	net_addr result;
 	result.family = 0;
 	result.err = 0;
@@ -193,8 +181,7 @@ net_addr net_resolve_dual(char *hostname, sa_family_t primary_family,
 	void *resolved = net_resolve(hostname, primary_family);
 	if (resolved != NULL) {
 		result.family = primary_family;
-		memcpy(&(result.addr), resolved,
-		       net_getaddrsize(result.family));
+		memcpy(&(result.addr), resolved, net_getaddrsize(result.family));
 		free(resolved);
 		return result;
 	}
@@ -205,8 +192,7 @@ net_addr net_resolve_dual(char *hostname, sa_family_t primary_family,
 	resolved = net_resolve(hostname, net_getaltfamily(primary_family));
 	if (resolved != NULL) {
 		result.family = net_getaltfamily(primary_family);
-		memcpy(&(result.addr), resolved,
-		       net_getaddrsize(result.family));
+		memcpy(&(result.addr), resolved, net_getaddrsize(result.family));
 		free(resolved);
 		return result;
 	}
@@ -214,9 +200,7 @@ net_addr net_resolve_dual(char *hostname, sa_family_t primary_family,
 	return result;
 }
 
-int net_socket(short action, sa_family_t family, void *address, in_port_t port,
-	       short reuseaddr)
-{
+int net_socket(short action, sa_family_t family, void *address, in_port_t port, short reuseaddr) {
 	if ((action != NETSOCK_BIND) && (action != NETSOCK_CONN)) {
 		errno = NET_EARGACTION;
 		return -1;
@@ -264,9 +248,7 @@ int net_socket(short action, sa_family_t family, void *address, in_port_t port,
 	}
 	if (reuseaddr) {
 		int socket_opt = 1;
-		if (setsockopt
-		    (result, SOL_SOCKET, SO_REUSEADDR, &socket_opt,
-		     sizeof(socket_opt)) == -1) {
+		if (setsockopt(result, SOL_SOCKET, SO_REUSEADDR, &socket_opt, sizeof(socket_opt)) == -1) {
 			free(serv_addr);
 			close(result);
 			errno = NET_EREUSEADDR;
@@ -299,8 +281,7 @@ int net_socket(short action, sa_family_t family, void *address, in_port_t port,
 	return result;
 }
 
-int net_srvresolve(char *query_name, net_srvrecord *target)
-{
+int net_srvresolve(char *query_name, net_srvrecord *target) {
 	char query_name_full[256];
 	memset(query_name_full, 0, 256);
 	sprintf(query_name_full, "_minecraft._tcp.%s", query_name);
@@ -311,9 +292,7 @@ int net_srvresolve(char *query_name, net_srvrecord *target)
 	memset(records, 0, sizeof(records));
 	res_init();
 	unsigned char query_buffer[1024];
-	int response =
-	    res_query(query_name_full, C_IN, ns_t_srv, query_buffer,
-		      sizeof(query_buffer));
+	int response = res_query(query_name_full, C_IN, ns_t_srv, query_buffer, sizeof(query_buffer));
 	if (response == -1) {
 		return -1;
 	}
@@ -329,15 +308,10 @@ int net_srvresolve(char *query_name, net_srvrecord *target)
 	for (rec_record = 0; rec_record < max_record; rec_record++) {
 		ns_rr rr;
 		ns_parserr(&nsMsg, ns_s_an, rec_record, &rr);
-		records[rec_record].priority =
-		    ntohs(*((unsigned short *)ns_rr_rdata(rr) + 0));
-		records[rec_record].weight =
-		    ntohs(*((unsigned short *)ns_rr_rdata(rr) + 1));
-		records[rec_record].port =
-		    ntohs(*((unsigned short *)ns_rr_rdata(rr) + 2));
-		dn_expand(ns_msg_base(nsMsg), ns_msg_end(nsMsg),
-			  ns_rr_rdata(rr) + 6, records[rec_record].target,
-			  sizeof(records[rec_record].target));
+		records[rec_record].priority = ntohs(*((unsigned short *)ns_rr_rdata(rr) + 0));
+		records[rec_record].weight = ntohs(*((unsigned short *)ns_rr_rdata(rr) + 1));
+		records[rec_record].port = ntohs(*((unsigned short *)ns_rr_rdata(rr) + 2));
+		dn_expand(ns_msg_base(nsMsg), ns_msg_end(nsMsg), ns_rr_rdata(rr) + 6, records[rec_record].target, sizeof(records[rec_record].target));
 		if (records[rec_record].priority < priority_min) {
 			priority_min = records[rec_record].priority;
 		}
@@ -345,29 +319,19 @@ int net_srvresolve(char *query_name, net_srvrecord *target)
 	int max_record_minpriority = 0;
 	for (rec_record = 0; rec_record < max_record; rec_record++) {
 		if (records[rec_record].priority == priority_min) {
-			records_minpriority[max_record_minpriority] =
-			    records[rec_record];
-			if (records_minpriority[max_record_minpriority].weight >
-			    weight_max) {
-				weight_max =
-				    records_minpriority[max_record_minpriority].
-				    weight;
+			records_minpriority[max_record_minpriority] = records[rec_record];
+			if (records_minpriority[max_record_minpriority].weight > weight_max) {
+				weight_max = records_minpriority[max_record_minpriority].weight;
 			}
 			max_record_minpriority++;
 		}
 	}
 	int rec_record_minpriority = 0;
 	int max_record_maxweight = 0;
-	for (rec_record_minpriority = 0;
-	     rec_record_minpriority < max_record_minpriority;
-	     rec_record_minpriority++) {
-		if (records_minpriority[rec_record_minpriority].weight ==
-		    weight_max) {
-			strcpy(target[max_record_maxweight].target,
-			       records_minpriority[rec_record_minpriority].
-			       target);
-			target[max_record_maxweight].port =
-			    records_minpriority[rec_record_minpriority].port;
+	for (rec_record_minpriority = 0; rec_record_minpriority < max_record_minpriority; rec_record_minpriority++) {
+		if (records_minpriority[rec_record_minpriority].weight == weight_max) {
+			strcpy(target[max_record_maxweight].target, records_minpriority[rec_record_minpriority].target);
+			target[max_record_maxweight].port = records_minpriority[rec_record_minpriority].port;
 			max_record_maxweight++;
 		}
 	}

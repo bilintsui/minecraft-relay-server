@@ -1,14 +1,9 @@
 /*
-	config.h: Header file of config.c
-	A component of Minecraft Relay Server.
-
-	Minecraft Relay Server, version 1.2-beta4
-	(c) 2020-2026 Bilin Tsui.
-	This is a Free Software, absolutely no warranty.
-
-	Licensed under GNU General Public License Version 3 (GNU GPL v3).
-	For detailed license text, see: https://www.gnu.org/licenses/gpl-3.0.html
-*/
+ * config.h: Header file of config.c
+ *
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) 2020-2026 Bilin Tsui
+ */
 
 #ifndef _MRS_CONFIG_H_INCLUDED_
 
@@ -18,16 +13,18 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 
-#define CONF_EARGNULL 1
-#define CONF_EROPENFAIL 2
-#define CONF_EROPENLARGE 3
-#define CONF_ERMEMORY 4
-#define CONF_ERPARSE 5
-#define CONF_ECMEMORY 6
-#define CONF_ECNETPRIORITYPROTOCOL 7
-#define CONF_ECLISTENPORT 8
-#define CONF_ECPROXY 9
-#define CONF_ECPROXYDUP 10
+#define CONF_ADDRESSMAXLEN	ADDRESS_MAXLEN
+
+#define CONF_EARGNULL	1
+#define CONF_EROPENFAIL	2
+#define CONF_EROPENLARGE	3
+#define CONF_ERMEMORY	4
+#define CONF_ERPARSE	5
+#define CONF_ECMEMORY	6
+#define CONF_ECNETPRIORITYPROTOCOL	7
+#define CONF_ECLISTENPORT	8
+#define CONF_ECPROXY	9
+#define CONF_ECPROXYDUP	10
 
 typedef struct {
 	struct {
@@ -50,8 +47,7 @@ typedef struct {
 	short valid, srvenabled, rewrite, pheader;
 } conf_proxy;
 
-#define CONFIG_ADDRESSMAXLEN ADDRESS_MAXLEN
-extern char config_duperr[CONFIG_ADDRESSMAXLEN];
+extern char config_duperr[CONF_ADDRESSMAXLEN];
 void config_destroy(conf * target);
 short config_jsonbool(cJSON * src, short defaultvalue);
 void config_dumper(conf * src);

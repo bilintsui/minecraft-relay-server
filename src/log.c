@@ -1,14 +1,9 @@
 /*
-	log.c: Log Functions for Minecraft Relay Server
-	A component of Minecraft Relay Server.
-
-	Minecraft Relay Server, version 1.2-beta4
-	(c) 2020-2026 Bilin Tsui.
-	This is a Free Software, absolutely no warranty.
-
-	Licensed under GNU General Public License Version 3 (GNU GPL v3).
-	For detailed license text, see: https://www.gnu.org/licenses/gpl-3.0.html
-*/
+ * log.c: Functions for logging
+ *
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) 2020-2026 Bilin Tsui
+ */
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -18,24 +13,24 @@
 
 #include "log.h"
 
-void gettime(unsigned char *target)
-{
+void gettime(unsigned char *target) {
 	time_t timestamp = time(NULL);
 	struct tm tm_local;
 	localtime_r(&timestamp, &tm_local);
 	int tzdiff = -timezone + tm_local.tm_isdst * 3600;
 	short tzdiff_hour = tzdiff / 3600;
 	short tzdiff_min = tzdiff / 60 - tzdiff_hour * 60;
-	sprintf(target, "%04d-%02d-%02d %02d:%02d:%02d UTC%+03d:%02d",
-		tm_local.tm_year + 1900, tm_local.tm_mon + 1, tm_local.tm_mday,
-		tm_local.tm_hour, tm_local.tm_min, tm_local.tm_sec, tzdiff_hour,
-		tzdiff_min);
+	sprintf(target,
+		"%04d-%02d-%02d "	/* format: date */
+		"%02d:%02d:%02d "	/* format: time */
+		"UTC%+03d:%02d",	/* format: timezone */
+		tm_local.tm_year + 1900, tm_local.tm_mon + 1, tm_local.tm_mday,	/* data: date */
+		tm_local.tm_hour, tm_local.tm_min, tm_local.tm_sec,	/* data: time */
+		tzdiff_hour, tzdiff_min	/* data: timezone */
+	);
 }
 
-int mksysmsg(unsigned short noprefix, char *logfile, unsigned short runmode,
-	     unsigned short maxlevel, unsigned short msglevel,
-	     const char *format, ...)
-{
+int mksysmsg(unsigned short noprefix, char *logfile, unsigned short runmode, unsigned short maxlevel, unsigned short msglevel, const char *format, ...) {
 	char level_str[8];
 	int status;
 	va_list varlist;
@@ -44,15 +39,15 @@ int mksysmsg(unsigned short noprefix, char *logfile, unsigned short runmode,
 	}
 	memset(level_str, 0, 8);
 	switch (msglevel) {
-	case 0:
-		strcpy(level_str, "CRIT");
-		break;
-	case 1:
-		strcpy(level_str, "WARN");
-		break;
-	default:
-		strcpy(level_str, "INFO");
-		break;
+		case 0:
+			strcpy(level_str, "CRIT");
+			break;
+		case 1:
+			strcpy(level_str, "WARN");
+			break;
+		default:
+			strcpy(level_str, "INFO");
+			break;
 	}
 	va_start(varlist, format);
 	if (strcmp(logfile, "") != 0) {
@@ -62,8 +57,7 @@ int mksysmsg(unsigned short noprefix, char *logfile, unsigned short runmode,
 		FILE *logfd = fopen(logfile, "a");
 		if (logfd != NULL) {
 			if (noprefix == 0) {
-				fprintf(logfd, "[%s] [%s] ", time_str,
-					level_str);
+				fprintf(logfd, "[%s] [%s] ", time_str, level_str);
 			}
 			char format_output[BUFSIZ];
 			memset(format_output, 0, BUFSIZ);

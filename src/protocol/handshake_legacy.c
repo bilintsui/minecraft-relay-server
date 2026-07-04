@@ -1,26 +1,21 @@
 /*
-	protocol/handshake_legacy.c: Functions for Legacy Protocol (13w39b and before) on Minecraft Relay Server
-	A component of Minecraft Relay Server.
-
-	Minecraft Relay Server, version 1.2-beta4
-	(c) 2020-2026 Bilin Tsui.
-	This is a Free Software, absolutely no warranty.
-
-	Licensed under GNU General Public License Version 3 (GNU GPL v3).
-	For detailed license text, see: https://www.gnu.org/licenses/gpl-3.0.html
-*/
+ * protocol/handshake_legacy.c: Functions for legacy protocol handshake (13w39b and before)
+ *
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) 2020-2026 Bilin Tsui
+ */
 
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include "../basic.h"
 #include "common.h"
 
 #include "handshake_legacy.h"
 
-size_t make_message_legacy(void *dst, void *src, size_t n)
-{
+size_t make_message_legacy(void *dst, void *src, size_t n) {
 	void *tmp = malloc(BUFSIZ);
 	u_int8_t *ptr_src = src;
 	u_int16_t *ptr_tmp = tmp;
@@ -40,47 +35,40 @@ size_t make_message_legacy(void *dst, void *src, size_t n)
 	return dst_length;
 }
 
-size_t make_kickreason_legacy(void *dst, void *src)
-{
+size_t make_kickreason_legacy(void *dst, void *src) {
 	return make_message_legacy(dst, src, strlen(src));
 }
 
-size_t make_motd_legacy(void *dst, void *src, int motd_version,
-			unsigned int version)
-{
+size_t make_motd_legacy(void *dst, void *src, int motd_version, unsigned int version) {
 	void *tmp = malloc(BUFSIZ);
 	size_t tmp_length = 0;
 	switch (motd_version) {
-	case PVER_LEGACYM1:
-		strcpy(tmp, src);
-		tmp_length = memcat(tmp, strlen(tmp), "\xA7", 1);
-		tmp_length = memcat(tmp, tmp_length, "0", 1);
-		tmp_length = memcat(tmp, tmp_length, "\xA7", 1);
-		tmp_length = memcat(tmp, tmp_length, "0", 1);
-		break;
-	case PVER_LEGACYM2:
-	case PVER_LEGACYM3:
-		memset(tmp, 0xA7, 1);
-		tmp_length = memcat(tmp, 1, "1\0", 2);
-		tmp_length =
-		    tmp_length + sprintf(tmp + tmp_length, "%d", version) + 1;
-		tmp_length = memcat(tmp, tmp_length, "", 1);
-		tmp_length = memcat(tmp, tmp_length, src, strlen(src) + 1);
-		tmp_length = memcat(tmp, tmp_length, "0\0", 2);
-		tmp_length = memcat(tmp, tmp_length, "0", 1);
-		break;
-	default:
-		break;
+		case PVER_LEGACYM1:
+			strcpy(tmp, src);
+			tmp_length = memcat(tmp, strlen(tmp), "\xA7", 1);
+			tmp_length = memcat(tmp, tmp_length, "0", 1);
+			tmp_length = memcat(tmp, tmp_length, "\xA7", 1);
+			tmp_length = memcat(tmp, tmp_length, "0", 1);
+			break;
+		case PVER_LEGACYM2:
+		case PVER_LEGACYM3:
+			memset(tmp, 0xA7, 1);
+			tmp_length = memcat(tmp, 1, "1\0", 2);
+			tmp_length = tmp_length + sprintf(tmp + tmp_length, "%d", version) + 1;
+			tmp_length = memcat(tmp, tmp_length, "", 1);
+			tmp_length = memcat(tmp, tmp_length, src, strlen(src) + 1);
+			tmp_length = memcat(tmp, tmp_length, "0\0", 2);
+			tmp_length = memcat(tmp, tmp_length, "0", 1);
+			break;
+		default:
+			break;
 	}
 	size_t dst_length = make_message_legacy(dst, tmp, tmp_length);
 	free(tmp);
 	return dst_length;
 }
 
-p_login_legacy packet_read_legacy_login(unsigned char *sourcepacket,
-					int sourcepacket_length,
-					int login_version)
-{
+p_login_legacy packet_read_legacy_login(unsigned char *sourcepacket, int sourcepacket_length, int login_version) {
 	p_login_legacy result;
 	unsigned char source[BUFSIZ];
 	unsigned char *ptr_source = source;
@@ -97,11 +85,8 @@ p_login_legacy packet_read_legacy_login(unsigned char *sourcepacket,
 		for (recidx = 0; recidx < source[1]; recidx++) {
 			login_field[recidx] = source[2 + recidx];
 		}
-		ptr_login_field =
-		    strtok_head(result.username, ptr_login_field, ';');
-		size_t fieldsize_address =
-		    strtok_tail(NULL, ptr_login_field, ':',
-				strlen(ptr_login_field));
+		ptr_login_field = strtok_head(result.username, ptr_login_field, ';');
+		size_t fieldsize_address = strtok_tail(NULL, ptr_login_field, ':', strlen(ptr_login_field));
 		strncpy(result.address, ptr_login_field, fieldsize_address);
 		result.address[fieldsize_address] = '\0';
 		ptr_login_field = ptr_login_field + fieldsize_address + 1;
@@ -133,10 +118,9 @@ p_login_legacy packet_read_legacy_login(unsigned char *sourcepacket,
 	return result;
 }
 
-p_motd_legacy packet_read_legacy_motd(void *src)
-{
+p_motd_legacy packet_read_legacy_motd(void *src) {
 	p_motd_legacy result;
-	result.version = *(u_int8_t *) (src + 0x1D);
+	result.version = *(u_int8_t *)(src + 0x1D);
 	u_int16_t *ptr_src = src + 0x1E;
 	size_t address_length = ntohs(*ptr_src);
 	ptr_src++;
@@ -147,12 +131,11 @@ p_motd_legacy packet_read_legacy_motd(void *src)
 		ptr_src++;
 		ptr_address++;
 	}
-	result.port = ntohl(*((u_int32_t *) ptr_src));
+	result.port = ntohl(*((u_int32_t *)ptr_src));
 	return result;
 }
 
-int packet_write_legacy_login(p_login_legacy source, unsigned char *target)
-{
+int packet_write_legacy_login(p_login_legacy source, unsigned char *target) {
 	unsigned char tmp[BUFSIZ];
 	unsigned int tmp_length, size;
 	memset(tmp, 0, BUFSIZ);
@@ -162,16 +145,11 @@ int packet_write_legacy_login(p_login_legacy source, unsigned char *target)
 		unsigned char login_field[512], login_field_full[512];
 		memset(login_field, 0, 512);
 		memset(login_field_full, 0, 512);
-		sprintf(login_field, "%s;%s:%d", source.username,
-			source.address, source.port);
+		sprintf(login_field, "%s;%s:%d", source.username, source.address, source.port);
 		unsigned int login_field_length = strlen(login_field);
 		login_field_full[0] = login_field_length;
-		unsigned int login_field_full_length =
-		    memcat(login_field_full, 1, login_field,
-			   login_field_length);
-		tmp_length =
-		    packetexpand(login_field_full, login_field_full_length,
-				 tmp);
+		unsigned int login_field_full_length = memcat(login_field_full, 1, login_field, login_field_length);
+		tmp_length = packetexpand(login_field_full, login_field_full_length, tmp);
 		size = memcat(target, size, tmp, tmp_length);
 	} else {
 		if (source.proto_ver != PVER_LEGACYL1) {
@@ -181,16 +159,14 @@ int packet_write_legacy_login(p_login_legacy source, unsigned char *target)
 		unsigned char username[128];
 		unsigned int username_length = strlen(source.username);
 		username[0] = username_length;
-		username_length =
-		    memcat(username, 1, source.username, username_length);
+		username_length = memcat(username, 1, source.username, username_length);
 		tmp_length = packetexpand(username, username_length, tmp);
 		size = memcat(target, size, tmp, tmp_length);
 		if (source.proto_ver == PVER_LEGACYL4) {
 			unsigned char address[128];
 			unsigned int address_length = strlen(source.address);
 			address[0] = address_length;
-			address_length =
-			    memcat(address, 1, source.address, address_length);
+			address_length = memcat(address, 1, source.address, address_length);
 			tmp_length = packetexpand(address, address_length, tmp);
 			size = memcat(target, size, tmp, tmp_length);
 			target[size] = 0;
@@ -203,15 +179,13 @@ int packet_write_legacy_login(p_login_legacy source, unsigned char *target)
 	return size;
 }
 
-size_t packet_write_legacy_motd(void *dst, p_motd_legacy src)
-{
-	memcpy(dst, "\xFE\x01\xFA\0\x0B\0M\0C\0|\0P\0i\0n\0g\0H\0o\0s\0t",
-	       0x1B);
+size_t packet_write_legacy_motd(void *dst, p_motd_legacy src) {
+	memcpy(dst, "\xFE\x01\xFA\0\x0B\0M\0C\0|\0P\0i\0n\0g\0H\0o\0s\0t", 0x1B);
 	u_int16_t *ptr_dst = dst + 0x1B;
 	size_t address_length = strlen(src.address);
 	*ptr_dst = htons(address_length * 2 + 7);
 	ptr_dst++;
-	*((u_int8_t *) ptr_dst) = src.version;
+	*((u_int8_t *)ptr_dst) = src.version;
 	ptr_dst = ((void *)ptr_dst) + 1;
 	*ptr_dst = htons(address_length);
 	ptr_dst++;
@@ -223,14 +197,13 @@ size_t packet_write_legacy_motd(void *dst, p_motd_legacy src)
 		ptr_address++;
 		ptr_dst++;
 	}
-	*((u_int32_t *) ptr_dst) = htonl(src.port);
-	ptr_dst = (u_int16_t *) (((u_int32_t *) ptr_dst) + 1);
+	*((u_int32_t *)ptr_dst) = htonl(src.port);
+	ptr_dst = (u_int16_t *)(((u_int32_t *)ptr_dst) + 1);
 	size_t size = (void *)ptr_dst - dst;
 	return size;
 }
 
-void packet_destroy_legacy_motd(p_motd_legacy object)
-{
+void packet_destroy_legacy_motd(p_motd_legacy object) {
 	if (object.address != NULL) {
 		free(object.address);
 	}

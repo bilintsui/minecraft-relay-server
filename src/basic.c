@@ -1,14 +1,9 @@
 /*
-	basic.c: Basic Functions for Minecraft Relay Server
-	A component of Minecraft Relay Server.
-
-	Minecraft Relay Server, version 1.2-beta4
-	(c) 2020-2026 Bilin Tsui.
-	This is a Free Software, absolutely no warranty.
-
-	Licensed under GNU General Public License Version 3 (GNU GPL v3).
-	For detailed license text, see: https://www.gnu.org/licenses/gpl-3.0.html
-*/
+ * basic.c: Basic functions used across the project
+ *
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) 2020-2026 Bilin Tsui
+ */
 
 #include <errno.h>
 #include <stdio.h>
@@ -17,8 +12,7 @@
 
 #include "basic.h"
 
-size_t freadall(const char *filename, char **dst)
-{
+size_t freadall(const char *filename, char **dst) {
 	if ((filename == NULL) || (dst == NULL)) {
 		errno = FREADALL_EINVAL;
 		return 0;
@@ -49,8 +43,7 @@ size_t freadall(const char *filename, char **dst)
 	return filesize;
 }
 
-void *int2varint(varint_t src, void *dst)
-{
+void *int2varint(varint_t src, void *dst) {
 	if (dst == NULL) {
 		return NULL;
 	}
@@ -65,15 +58,12 @@ void *int2varint(varint_t src, void *dst)
 	return dst + i;
 }
 
-size_t memcat(void *dst, size_t dst_size, void *src, size_t src_size)
-{
+size_t memcat(void *dst, size_t dst_size, void *src, size_t src_size) {
 	memcpy(dst + dst_size, src, src_size);
 	return dst_size + src_size;
 }
 
-int packetexpand(unsigned char *source, int source_length,
-		 unsigned char *target)
-{
+int packetexpand(unsigned char *source, int source_length, unsigned char *target) {
 	int size, recidx;
 	unsigned char *ptr_target = target;
 	for (recidx = 0; recidx < source_length; recidx++) {
@@ -86,9 +76,7 @@ int packetexpand(unsigned char *source, int source_length,
 	return size;
 }
 
-int packetshrink(unsigned char *source, int source_length,
-		 unsigned char *target)
-{
+int packetshrink(unsigned char *source, int source_length, unsigned char *target) {
 	int size, recidx;
 	unsigned char *ptr_target = target;
 	for (recidx = 0; recidx < source_length; recidx++) {
@@ -101,8 +89,7 @@ int packetshrink(unsigned char *source, int source_length,
 	return size;
 }
 
-size_t strlen_notail(const char *src, char exemptchr)
-{
+size_t strlen_notail(const char *src, char exemptchr) {
 	if (src == NULL) {
 		return 0;
 	}
@@ -116,9 +103,7 @@ size_t strlen_notail(const char *src, char exemptchr)
 	return result;
 }
 
-int strcmp_notail(const char *str1, const char *str2, char exemptchr,
-		  short case_insensitive)
-{
+int strcmp_notail(const char *str1, const char *str2, char exemptchr, short case_insensitive) {
 	size_t str1_length = strlen(str1);
 	size_t str2_length = strlen_notail(str2, exemptchr);
 	if (str1_length < str2_length) {
@@ -134,8 +119,7 @@ int strcmp_notail(const char *str1, const char *str2, char exemptchr,
 	}
 }
 
-char *strtok_head(char *dst, char *src, char delim)
-{
+char *strtok_head(char *dst, char *src, char delim) {
 	if (src == NULL) {
 		return NULL;
 	}
@@ -160,8 +144,7 @@ char *strtok_head(char *dst, char *src, char delim)
 	return ptr_delim + 1;
 }
 
-size_t strtok_tail(char *dst, char *src, char delim, size_t length)
-{
+size_t strtok_tail(char *dst, char *src, char delim, size_t length) {
 	if (src == NULL) {
 		return 0;
 	}
@@ -193,8 +176,7 @@ size_t strtok_tail(char *dst, char *src, char delim, size_t length)
 	return offset;
 }
 
-void *varint2int(void *src, varint_t *dst)
-{
+void *varint2int(void *src, varint_t *dst) {
 	if (src == NULL) {
 		return NULL;
 	}
@@ -204,9 +186,9 @@ void *varint2int(void *src, varint_t *dst)
 	for (size_t i = 0; i <= VARINT_T_MAXIDX; i++) {
 		result_single = base[i] & 0x7F;
 		if (i == VARINT_T_MAXIDX) {
-			if ((base[i] & 0x80)
-			    || result_single > VARINT_T_LAST_MASK)
+			if ((base[i] & 0x80) || result_single > VARINT_T_LAST_MASK) {
 				return NULL;
+			}
 		}
 		result = result | (result_single << (i * 7));
 		if (!(base[i] & 0x80)) {

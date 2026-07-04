@@ -1,27 +1,22 @@
 /*
-	config.c: Functions for Config reading on Minecraft Relay Server
-	A component of Minecraft Relay Server.
-
-	Minecraft Relay Server, version 1.2-beta4
-	(c) 2020-2026 Bilin Tsui.
-	This is a Free Software, absolutely no warranty.
-
-	Licensed under GNU General Public License Version 3 (GNU GPL v3).
-	For detailed license text, see: https://www.gnu.org/licenses/gpl-3.0.html
-*/
+ * config.c: Functions for config reading
+ *
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) 2020-2026 Bilin Tsui
+ */
 
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include "basic.h"
 
 #include "config.h"
 
-char config_duperr[CONFIG_ADDRESSMAXLEN] = { 0 };
+char config_duperr[CONF_ADDRESSMAXLEN] = { 0 };
 
-void config_destroy(conf *target)
-{
+void config_destroy(conf *target) {
 	if (target != NULL) {
 		free(target->log.filename);
 		free(target->listen.address);
@@ -32,8 +27,7 @@ void config_destroy(conf *target)
 	}
 }
 
-short config_jsonbool(cJSON *src, short defaultvalue)
-{
+short config_jsonbool(cJSON *src, short defaultvalue) {
 	if (src == NULL) {
 		return defaultvalue;
 	}
@@ -46,8 +40,7 @@ short config_jsonbool(cJSON *src, short defaultvalue)
 	}
 }
 
-void config_dumper(conf *src)
-{
+void config_dumper(conf *src) {
 	printf("Config Detail:\n");
 	printf("\n[NETPRIORITY]\n");
 	if (src->netpriority.enabled) {
@@ -76,36 +69,28 @@ void config_dumper(conf *src)
 	int proxy_count = 1;
 	cJSON_ArrayForEach(single, proxy) {
 		printf("\n[PROXY #%d]\n", proxy_count);
-		cJSON *single_vhost =
-		    cJSON_GetObjectItemCaseSensitive(single, "vhost");
+		cJSON *single_vhost = cJSON_GetObjectItemCaseSensitive(single, "vhost");
 		cJSON *recvhost = NULL;
 		int vhost_count = 1;
 		cJSON_ArrayForEach(recvhost, single_vhost) {
 			if (cJSON_IsString(recvhost)) {
-				printf("vHost #%d\t%s\n", vhost_count,
-				       recvhost->valuestring);
+				printf("vHost #%d\t%s\n", vhost_count, recvhost->valuestring);
 				vhost_count++;
 			}
 		}
-		printf("Address\t\t%s\n",
-		       cJSON_GetObjectItemCaseSensitive(single,
-							"address")->
-		       valuestring);
-		cJSON *single_port =
-		    cJSON_GetObjectItemCaseSensitive(single, "port");
+		printf("Address\t\t%s\n", cJSON_GetObjectItemCaseSensitive(single, "address")->valuestring);
+		cJSON *single_port = cJSON_GetObjectItemCaseSensitive(single, "port");
 		if (single_port == NULL) {
 			printf("Port\t\t<SRV>\n");
 		} else {
 			printf("Port\t\t%d\n", single_port->valueint);
 		}
-		if (config_jsonbool
-		    (cJSON_GetObjectItemCaseSensitive(single, "rewrite"), 0)) {
+		if (config_jsonbool(cJSON_GetObjectItemCaseSensitive(single, "rewrite"), 0)) {
 			printf("Rewrite\t\ttrue\n");
 		} else {
 			printf("Rewrite\t\tfalse\n");
 		}
-		if (config_jsonbool
-		    (cJSON_GetObjectItemCaseSensitive(single, "pheader"), 0)) {
+		if (config_jsonbool(cJSON_GetObjectItemCaseSensitive(single, "pheader"), 0)) {
 			printf("PHeader\t\ttrue\n");
 		} else {
 			printf("PHeader\t\tfalse\n");
@@ -114,12 +99,10 @@ void config_dumper(conf *src)
 	}
 }
 
-cJSON *config_proxy_parse(cJSON *src)
-{
+cJSON *config_proxy_parse(cJSON *src) {
 	cJSON *single = NULL;
 	cJSON_ArrayForEach(single, src) {
-		cJSON *single_vhost =
-		    cJSON_GetObjectItemCaseSensitive(single, "vhost");
+		cJSON *single_vhost = cJSON_GetObjectItemCaseSensitive(single, "vhost");
 		if (single_vhost == NULL) {
 			cJSON_DetachItemViaPointer(src, single);
 			continue;
@@ -129,23 +112,19 @@ cJSON *config_proxy_parse(cJSON *src)
 				cJSON_DetachItemViaPointer(src, single);
 				continue;
 			}
-			char *vhost =
-			    (char *)malloc(strlen(single_vhost->valuestring) +
-					   1);
+			char *vhost = (char *)malloc(strlen(single_vhost->valuestring) + 1);
 			if (vhost == NULL) {
 				errno = CONF_ECMEMORY;
 				return NULL;
 			}
 			strcpy(vhost, single_vhost->valuestring);
-			cJSON_DeleteItemFromObjectCaseSensitive(single,
-								"vhost");
+			cJSON_DeleteItemFromObjectCaseSensitive(single, "vhost");
 			single_vhost = cJSON_AddArrayToObject(single, "vhost");
 			cJSON *item_vhost = cJSON_CreateString(vhost);
 			free(vhost);
 			cJSON_AddItemToArray(single_vhost, item_vhost);
 		}
-		cJSON *single_address =
-		    cJSON_GetObjectItemCaseSensitive(single, "address");
+		cJSON *single_address = cJSON_GetObjectItemCaseSensitive(single, "address");
 		if (single_address == NULL) {
 			cJSON_DetachItemViaPointer(src, single);
 			continue;
@@ -154,8 +133,7 @@ cJSON *config_proxy_parse(cJSON *src)
 			cJSON_DetachItemViaPointer(src, single);
 			continue;
 		}
-		cJSON *single_port =
-		    cJSON_GetObjectItemCaseSensitive(single, "port");
+		cJSON *single_port = cJSON_GetObjectItemCaseSensitive(single, "port");
 		if (single_port != NULL) {
 			if (!cJSON_IsNumber(single_port)) {
 				cJSON_DetachItemViaPointer(src, single);
@@ -174,43 +152,31 @@ cJSON *config_proxy_parse(cJSON *src)
 	char **vhost_namelist = NULL;
 	cJSON *rec_result = NULL;
 	cJSON_ArrayForEach(rec_result, result) {
-		cJSON *result_vhostname =
-		    cJSON_GetObjectItemCaseSensitive(rec_result, "vhost");
+		cJSON *result_vhostname = cJSON_GetObjectItemCaseSensitive(rec_result, "vhost");
 		cJSON *rec_result_vhostname = NULL;
 		cJSON_ArrayForEach(rec_result_vhostname, result_vhostname) {
 			if (dupdet_count == 0) {
-				vhost_namelist =
-				    (char **)calloc(1, sizeof(char **));
+				vhost_namelist = (char **)calloc(1, sizeof(char **));
 				if (vhost_namelist == NULL) {
 					cJSON_Delete(result);
 					errno = CONF_ECMEMORY;
 					return NULL;
 				}
-				vhost_namelist[dupdet_count] = (char *)
-				    malloc(strlen
-					   (rec_result_vhostname->valuestring) +
-					   1);
+				vhost_namelist[dupdet_count] = (char *)malloc(strlen(rec_result_vhostname->valuestring) + 1);
 				if (vhost_namelist[dupdet_count] == NULL) {
 					free(vhost_namelist);
 					cJSON_Delete(result);
 					errno = CONF_ECMEMORY;
 					return NULL;
 				}
-				strcpy(vhost_namelist[dupdet_count],
-				       rec_result_vhostname->valuestring);
+				strcpy(vhost_namelist[dupdet_count], rec_result_vhostname->valuestring);
 				dupdet_count++;
 				continue;
 			}
 			for (int i = 0; i < dupdet_count; i++) {
-				if (strcasecmp
-				    (vhost_namelist[i],
-				     rec_result_vhostname->valuestring) == 0) {
-					strncpy(config_duperr,
-						rec_result_vhostname->
-						valuestring,
-						CONFIG_ADDRESSMAXLEN - 1);
-					config_duperr[CONFIG_ADDRESSMAXLEN -
-						      1] = '\0';
+				if (strcasecmp(vhost_namelist[i], rec_result_vhostname->valuestring) == 0) {
+					strncpy(config_duperr, rec_result_vhostname->valuestring, CONF_ADDRESSMAXLEN - 1);
+					config_duperr[CONF_ADDRESSMAXLEN - 1] = '\0';
 					for (int j = 0; j < dupdet_count; j++) {
 						free(vhost_namelist[j]);
 					}
@@ -220,14 +186,9 @@ cJSON *config_proxy_parse(cJSON *src)
 					return NULL;
 				}
 				if (i == (dupdet_count - 1)) {
-					char **vhost_namelist_new =
-					    (char **)realloc(vhost_namelist,
-							     (dupdet_count +
-							      1) *
-							     sizeof(char **));
+					char **vhost_namelist_new = (char **)realloc(vhost_namelist, (dupdet_count + 1) * sizeof(char **));
 					if (vhost_namelist_new == NULL) {
-						for (int j = 0;
-						     j < dupdet_count; j++) {
+						for (int j = 0; j < dupdet_count; j++) {
 							free(vhost_namelist[j]);
 						}
 						free(vhost_namelist);
@@ -236,15 +197,9 @@ cJSON *config_proxy_parse(cJSON *src)
 						return NULL;
 					}
 					vhost_namelist = vhost_namelist_new;
-					vhost_namelist[dupdet_count] = (char *)
-					    malloc(strlen
-						   (rec_result_vhostname->
-						    valuestring)
-						   + 1);
-					if (vhost_namelist[dupdet_count] ==
-					    NULL) {
-						for (int j = 0;
-						     j < dupdet_count; j++) {
+					vhost_namelist[dupdet_count] = (char *)malloc(strlen(rec_result_vhostname->valuestring) + 1);
+					if (vhost_namelist[dupdet_count] == NULL) {
+						for (int j = 0; j < dupdet_count; j++) {
 							free(vhost_namelist[j]);
 						}
 						free(vhost_namelist);
@@ -252,9 +207,7 @@ cJSON *config_proxy_parse(cJSON *src)
 						errno = CONF_ECMEMORY;
 						return NULL;
 					}
-					strcpy(vhost_namelist[dupdet_count],
-					       rec_result_vhostname->
-					       valuestring);
+					strcpy(vhost_namelist[dupdet_count], rec_result_vhostname->valuestring);
 					dupdet_count++;
 					break;
 				}
@@ -269,8 +222,7 @@ cJSON *config_proxy_parse(cJSON *src)
 	return result;
 }
 
-conf_proxy config_proxy_search(conf *src, const char *targetvhost)
-{
+conf_proxy config_proxy_search(conf *src, const char *targetvhost) {
 	conf_proxy result;
 	memset(&result, 0, sizeof(result));
 	if ((src == NULL) || (targetvhost == NULL)) {
@@ -282,48 +234,28 @@ conf_proxy config_proxy_search(conf *src, const char *targetvhost)
 	}
 	cJSON *rec_proxylist = NULL;
 	cJSON_ArrayForEach(rec_proxylist, proxylist) {
-		cJSON *vhostnames =
-		    cJSON_GetObjectItemCaseSensitive(rec_proxylist, "vhost");
+		cJSON *vhostnames = cJSON_GetObjectItemCaseSensitive(rec_proxylist, "vhost");
 		if (vhostnames == NULL) {
 			return result;
 		}
 		cJSON *rec_vhostname = NULL;
 		cJSON_ArrayForEach(rec_vhostname, vhostnames) {
 			if (cJSON_IsString(rec_vhostname)) {
-				if (strcmp_notail
-				    (rec_vhostname->valuestring, targetvhost,
-				     '.', 1) == 0) {
-					result.address = (char *)
-					    malloc(strlen
-						   (cJSON_GetObjectItemCaseSensitive
-						    (rec_proxylist,
-						     "address")->valuestring) +
-						   1);
+				if (strcmp_notail(rec_vhostname->valuestring, targetvhost, '.', 1) == 0) {
+					result.address = (char *)malloc(strlen(cJSON_GetObjectItemCaseSensitive(rec_proxylist, "address")->valuestring) + 1);
 					if (result.address == NULL) {
 						return result;
 					}
 					result.valid = 1;
-					strcpy(result.address,
-					       cJSON_GetObjectItemCaseSensitive
-					       (rec_proxylist,
-						"address")->valuestring);
-					cJSON *target_port =
-					    cJSON_GetObjectItemCaseSensitive
-					    (rec_proxylist, "port");
+					strcpy(result.address, cJSON_GetObjectItemCaseSensitive(rec_proxylist, "address")->valuestring);
+					cJSON *target_port = cJSON_GetObjectItemCaseSensitive(rec_proxylist, "port");
 					if (target_port == NULL) {
 						result.srvenabled = 1;
 					} else {
-						result.port =
-						    target_port->valueint;
+						result.port = target_port->valueint;
 					}
-					result.rewrite =
-					    config_jsonbool
-					    (cJSON_GetObjectItemCaseSensitive
-					     (rec_proxylist, "rewrite"), 0);
-					result.pheader =
-					    config_jsonbool
-					    (cJSON_GetObjectItemCaseSensitive
-					     (rec_proxylist, "pheader"), 0);
+					result.rewrite = config_jsonbool(cJSON_GetObjectItemCaseSensitive(rec_proxylist, "rewrite"), 0);
+					result.pheader = config_jsonbool(cJSON_GetObjectItemCaseSensitive(rec_proxylist, "pheader"), 0);
 					return result;
 				}
 			}
@@ -332,8 +264,7 @@ conf_proxy config_proxy_search(conf *src, const char *targetvhost)
 	return result;
 }
 
-void config_proxy_search_destroy(conf_proxy *target)
-{
+void config_proxy_search_destroy(conf_proxy *target) {
 	if (target->address != NULL) {
 		free(target->address);
 		target->address = NULL;
@@ -341,8 +272,7 @@ void config_proxy_search_destroy(conf_proxy *target)
 	memset(target, 0, sizeof(conf_proxy));
 }
 
-conf *config_read(char *filename)
-{
+conf *config_read(char *filename) {
 	if (filename == NULL) {
 		errno = CONF_EARGNULL;
 		return NULL;
@@ -350,15 +280,15 @@ conf *config_read(char *filename)
 	char *config_raw = NULL;
 	if (freadall(filename, &config_raw) == 0) {
 		switch (errno) {
-		case FREADALL_ERFAIL:
-			errno = CONF_EROPENFAIL;
-			break;
-		case FREADALL_ELARGE:
-			errno = CONF_EROPENLARGE;
-			break;
-		case FREADALL_ENOMEM:
-			errno = CONF_ERMEMORY;
-			break;
+			case FREADALL_ERFAIL:
+				errno = CONF_EROPENFAIL;
+				break;
+			case FREADALL_ELARGE:
+				errno = CONF_EROPENLARGE;
+				break;
+			case FREADALL_ENOMEM:
+				errno = CONF_ERMEMORY;
+				break;
 		}
 		return NULL;
 	}
@@ -368,7 +298,7 @@ conf *config_read(char *filename)
 		errno = CONF_ERPARSE;
 		return NULL;
 	}
-	conf *result = (conf *) calloc(1, sizeof(conf));
+	conf *result = (conf *)calloc(1, sizeof(conf));
 	if (result == NULL) {
 		cJSON_Delete(config_json);
 		errno = CONF_ECMEMORY;
@@ -376,24 +306,14 @@ conf *config_read(char *filename)
 	}
 	result->netpriority.enabled = 1;
 	result->netpriority.protocol = AF_INET6;
-	cJSON *config_json_netpriority =
-	    cJSON_GetObjectItemCaseSensitive(config_json, "netpriority");
+	cJSON *config_json_netpriority = cJSON_GetObjectItemCaseSensitive(config_json, "netpriority");
 	if (config_json_netpriority != NULL) {
-		result->netpriority.enabled =
-		    config_jsonbool(cJSON_GetObjectItemCaseSensitive
-				    (config_json_netpriority, "enabled"), 1);
-		cJSON *config_json_netpriority_protocol =
-		    cJSON_GetObjectItemCaseSensitive(config_json_netpriority,
-						     "protocol");
+		result->netpriority.enabled = config_jsonbool(cJSON_GetObjectItemCaseSensitive(config_json_netpriority, "enabled"), 1);
+		cJSON *config_json_netpriority_protocol = cJSON_GetObjectItemCaseSensitive(config_json_netpriority, "protocol");
 		if (cJSON_IsString(config_json_netpriority_protocol)) {
-			if (strcmp
-			    (config_json_netpriority_protocol->valuestring,
-			     "IPv4") == 0) {
+			if (strcmp(config_json_netpriority_protocol->valuestring, "IPv4") == 0) {
 				result->netpriority.protocol = AF_INET;
-			} else
-			    if (strcmp
-				(config_json_netpriority_protocol->valuestring,
-				 "IPv6") == 0) {
+			} else if (strcmp(config_json_netpriority_protocol->valuestring, "IPv6") == 0) {
 				result->netpriority.protocol = AF_INET6;
 			} else {
 				cJSON_Delete(config_json);
@@ -404,8 +324,7 @@ conf *config_read(char *filename)
 		}
 	}
 	char *config_default_log_filename = "/var/log/mcrelay/access.log";
-	result->log.filename =
-	    (char *)malloc(strlen(config_default_log_filename) + 1);
+	result->log.filename = (char *)malloc(strlen(config_default_log_filename) + 1);
 	if (result->log.filename == NULL) {
 		cJSON_Delete(config_json);
 		config_destroy(result);
@@ -415,52 +334,34 @@ conf *config_read(char *filename)
 	strcpy(result->log.filename, config_default_log_filename);
 	result->log.level = 2;
 	result->log.binary = 0;
-	cJSON *config_json_log =
-	    cJSON_GetObjectItemCaseSensitive(config_json, "log");
+	cJSON *config_json_log = cJSON_GetObjectItemCaseSensitive(config_json, "log");
 	if (config_json_log != NULL) {
-		cJSON *config_json_log_filename =
-		    cJSON_GetObjectItemCaseSensitive(config_json_log,
-						     "filename");
+		cJSON *config_json_log_filename = cJSON_GetObjectItemCaseSensitive(config_json_log, "filename");
 		if (config_json_log_filename != NULL) {
 			if (cJSON_IsString(config_json_log_filename)) {
-				if (config_json_log_filename->valuestring !=
-				    NULL) {
-					char *result_log_filename_new =
-					    (char *)realloc(result->log.
-							    filename,
-							    strlen
-							    (config_json_log_filename->
-							     valuestring)
-							    + 1);
+				if (config_json_log_filename->valuestring != NULL) {
+					char *result_log_filename_new = (char *)realloc(result->log.filename, strlen(config_json_log_filename->valuestring) + 1);
 					if (result_log_filename_new == NULL) {
 						cJSON_Delete(config_json);
 						config_destroy(result);
 						errno = CONF_ECMEMORY;
 						return NULL;
 					}
-					result->log.filename =
-					    result_log_filename_new;
-					strcpy(result->log.filename,
-					       config_json_log_filename->
-					       valuestring);
+					result->log.filename = result_log_filename_new;
+					strcpy(result->log.filename, config_json_log_filename->valuestring);
 				}
 			}
 		}
-		cJSON *config_json_log_level =
-		    cJSON_GetObjectItemCaseSensitive(config_json_log, "level");
+		cJSON *config_json_log_level = cJSON_GetObjectItemCaseSensitive(config_json_log, "level");
 		if (config_json_log_level != NULL) {
 			if (cJSON_IsNumber(config_json_log_level)) {
-				result->log.level =
-				    config_json_log_level->valueint;
+				result->log.level = config_json_log_level->valueint;
 			}
 		}
-		result->log.binary =
-		    config_jsonbool(cJSON_GetObjectItemCaseSensitive
-				    (config_json_log, "binary"), 0);
+		result->log.binary = config_jsonbool(cJSON_GetObjectItemCaseSensitive(config_json_log, "binary"), 0);
 	}
 	char *config_default_listen_address = "::";
-	result->listen.address =
-	    (char *)malloc(strlen(config_default_listen_address) + 1);
+	result->listen.address = (char *)malloc(strlen(config_default_listen_address) + 1);
 	if (result->listen.address == NULL) {
 		cJSON_Delete(config_json);
 		config_destroy(result);
@@ -469,40 +370,25 @@ conf *config_read(char *filename)
 	}
 	strcpy(result->listen.address, config_default_listen_address);
 	result->listen.port = 25565;
-	cJSON *config_json_listen =
-	    cJSON_GetObjectItemCaseSensitive(config_json, "listen");
+	cJSON *config_json_listen = cJSON_GetObjectItemCaseSensitive(config_json, "listen");
 	if (config_json_listen != NULL) {
-		cJSON *config_json_listen_address =
-		    cJSON_GetObjectItemCaseSensitive(config_json_listen,
-						     "address");
+		cJSON *config_json_listen_address = cJSON_GetObjectItemCaseSensitive(config_json_listen, "address");
 		if (config_json_listen_address != NULL) {
 			if (cJSON_IsString(config_json_listen_address)) {
-				if (config_json_listen_address->valuestring !=
-				    NULL) {
-					char *result_listen_address_new =
-					    (char *)realloc(result->listen.
-							    address,
-							    strlen
-							    (config_json_listen_address->
-							     valuestring)
-							    + 1);
+				if (config_json_listen_address->valuestring != NULL) {
+					char *result_listen_address_new = (char *)realloc(result->listen.address, strlen(config_json_listen_address->valuestring) + 1);
 					if (result_listen_address_new == NULL) {
 						cJSON_Delete(config_json);
 						config_destroy(result);
 						errno = CONF_ECMEMORY;
 						return NULL;
 					}
-					result->listen.address =
-					    result_listen_address_new;
-					strcpy(result->listen.address,
-					       config_json_listen_address->
-					       valuestring);
+					result->listen.address = result_listen_address_new;
+					strcpy(result->listen.address, config_json_listen_address->valuestring);
 				}
 			}
 		}
-		cJSON *config_json_listen_port =
-		    cJSON_GetObjectItemCaseSensitive(config_json_listen,
-						     "port");
+		cJSON *config_json_listen_port = cJSON_GetObjectItemCaseSensitive(config_json_listen, "port");
 		if (config_json_listen_port != NULL) {
 			if (cJSON_IsNumber(config_json_listen_port)) {
 				int port = config_json_listen_port->valueint;
@@ -516,9 +402,7 @@ conf *config_read(char *filename)
 			}
 		}
 	}
-	cJSON *config_json_proxy =
-	    cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive
-			    (config_json, "proxy"), 1);
+	cJSON *config_json_proxy = cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(config_json, "proxy"), 1);
 	if (config_json_proxy == NULL) {
 		cJSON_Delete(config_json);
 		config_destroy(result);
