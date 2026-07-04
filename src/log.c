@@ -11,7 +11,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "define.h"
+#include "define/global.h"
 #include "log.h"
 
 void gettime(unsigned char *target) {

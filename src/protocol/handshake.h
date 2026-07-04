@@ -11,7 +11,7 @@
 
 #include <netinet/in.h>
 
-#include "../define.h"
+#include "../define/global.h"
 
 #define PROTOHANDSHAKE_ADDRESSMAXLEN	ADDRESS_MAXLEN
 #define PROTOHANDSHAKE_USERNAMEMAXLEN	128

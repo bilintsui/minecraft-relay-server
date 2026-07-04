@@ -14,8 +14,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "define.h"
-#include "exitcode.h"
+#include "define/exitcode.h"
+#include "define/global.h"
 #include "log.h"
 #include "misc.h"
 

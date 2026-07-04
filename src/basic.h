@@ -11,7 +11,7 @@
 
 #include <stddef.h>
 
-#include "define.h"
+#include "define/global.h"
 
 #define FREADALL_SLIMIT	5242880
 #define FREADALL_EINVAL	1
