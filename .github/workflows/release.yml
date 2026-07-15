@@ -8,74 +8,90 @@ on:
 jobs:
   build_mcrelay:
     name: Build Minecraft Relay Server
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v6
       - name: Upgrade environment
         run: |
-          sudo apt update
-          sudo apt upgrade -y
+          sudo apt-get update
+          sudo apt-get upgrade -y
       - name: Install toolchain
         run: |
-          sudo apt install -y gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf gcc-powerpc64le-linux-gnu gcc-riscv64-linux-gnu gcc-s390x-linux-gnu
-          sudo rm /etc/apt/sources.list
-          echo 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu $codename main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/main.list
-          echo 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu $codename-updates main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/main.list
-          echo 'deb [arch=amd64] http://archive.ubuntu.com/ubuntu $codename-backports main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/main.list
-          echo 'deb [arch=amd64] http://security.ubuntu.com/ubuntu $codename-security main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/main.list
-          echo 'deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports $codename main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/port.list
-          echo 'deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports $codename-updates main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/port.list
-          echo 'deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports $codename-backports main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/port.list
-          echo 'deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://security.ports.ubuntu.com/ubuntu-ports $codename-security main restricted universe multiverse' | sudo tee -a /etc/apt/sources.list.d/port.list
-          lsb_release -c | awk '{print "sed -i \"s/$codename/"$2"/g\" /etc/apt/sources.list.d/*"}' | sed "s/\"/'/g" | sudo bash
+          sudo apt-get install -y gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf gcc-powerpc64le-linux-gnu gcc-riscv64-linux-gnu gcc-s390x-linux-gnu gcc-i686-linux-gnu
+          CODENAME=$(lsb_release -cs)
+          sudo rm -f /etc/apt/sources.list
+          sudo rm -f /etc/apt/sources.list.d/*
+          echo "deb [arch=amd64,amd64v3,arm64,i386] http://archive.ubuntu.com/ubuntu ${CODENAME} main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/main.list
+          echo "deb [arch=amd64,amd64v3,arm64,i386] http://archive.ubuntu.com/ubuntu ${CODENAME}-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/main.list
+          echo "deb [arch=amd64,amd64v3,arm64,i386] http://archive.ubuntu.com/ubuntu ${CODENAME}-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/main.list
+          echo "deb [arch=amd64,amd64v3,arm64,i386] http://security.ubuntu.com/ubuntu ${CODENAME}-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/main.list
+          echo "deb [arch=armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports ${CODENAME} main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/port.list
+          echo "deb [arch=armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/port.list
+          echo "deb [arch=armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/port.list
+          echo "deb [arch=armhf,ppc64el,riscv64,s390x] http://security.ports.ubuntu.com/ubuntu-ports ${CODENAME}-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/port.list
           sudo dpkg --add-architecture arm64
           sudo dpkg --add-architecture armhf
           sudo dpkg --add-architecture ppc64el
           sudo dpkg --add-architecture riscv64
           sudo dpkg --add-architecture s390x
-          sudo apt update
-          sudo apt install -y libcjson-dev:amd64 libcjson-dev:arm64 libcjson-dev:armhf libcjson-dev:ppc64el libcjson-dev:riscv64 libcjson-dev:s390x
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y libcjson-dev:amd64 libcjson-dev:arm64 libcjson-dev:armhf libcjson-dev:ppc64el libcjson-dev:riscv64 libcjson-dev:s390x libcjson-dev:i386
       - name: Build amd64
         run: |
           mkdir build-amd64
           cd build-amd64
-          cmake -DCMAKE_C_COMPILER=`which gcc` -DEXEC_SUFFIX="-amd64" ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which gcc` -DCMAKE_C_FLAGS="-march=x86-64" -DEXEC_SUFFIX="-amd64" ..
+          make
+          cd ..
+      - name: Build amd64v3
+        run: |
+          mkdir build-amd64v3
+          cd build-amd64v3
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which gcc` -DCMAKE_C_FLAGS="-march=x86-64-v3" -DEXEC_SUFFIX="-amd64v3" ..
           make
           cd ..
       - name: Build arm64
         run: |
           mkdir build-arm64
           cd build-arm64
-          cmake -DCMAKE_C_COMPILER=`which aarch64-linux-gnu-gcc` -DEXEC_SUFFIX="-arm64" ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which aarch64-linux-gnu-gcc` -DEXEC_SUFFIX="-arm64" ..
           make
           cd ..
       - name: Build armhf
         run: |
           mkdir build-armhf
           cd build-armhf
-          cmake -DCMAKE_C_COMPILER=`which arm-linux-gnueabihf-gcc` -DEXEC_SUFFIX="-armhf" ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which arm-linux-gnueabihf-gcc` -DEXEC_SUFFIX="-armhf" ..
           make
           cd ..
       - name: Build ppc64el
         run: |
           mkdir build-ppc64el
           cd build-ppc64el
-          cmake -DCMAKE_C_COMPILER=`which powerpc64le-linux-gnu-gcc` -DEXEC_SUFFIX="-ppc64el" ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which powerpc64le-linux-gnu-gcc` -DEXEC_SUFFIX="-ppc64el" ..
           make
           cd ..
       - name: Build riscv64
         run: |
           mkdir build-riscv64
           cd build-riscv64
-          cmake -DCMAKE_C_COMPILER=`which riscv64-linux-gnu-gcc` -DEXEC_SUFFIX="-riscv64" ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which riscv64-linux-gnu-gcc` -DEXEC_SUFFIX="-riscv64" ..
           make
           cd ..
       - name: Build s390x
         run: |
           mkdir build-s390x
           cd build-s390x
-          cmake -DCMAKE_C_COMPILER=`which s390x-linux-gnu-gcc` -DEXEC_SUFFIX="-s390x" ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which s390x-linux-gnu-gcc` -DEXEC_SUFFIX="-s390x" ..
+          make
+          cd ..
+      - name: Build i386
+        run: |
+          mkdir build-i386
+          cd build-i386
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which i686-linux-gnu-gcc` -DEXEC_SUFFIX="-i386" ..
           make
           cd ..
       - name: Post build
@@ -83,13 +99,15 @@ jobs:
           mkdir build
           cd build
           cp ../build-amd64/mcrelay-amd64 .
+          cp ../build-amd64v3/mcrelay-amd64v3 .
           cp ../build-arm64/mcrelay-arm64 .
           cp ../build-armhf/mcrelay-armhf .
           cp ../build-ppc64el/mcrelay-ppc64el .
           cp ../build-riscv64/mcrelay-riscv64 .
           cp ../build-s390x/mcrelay-s390x .
+          cp ../build-i386/mcrelay-i386 .
       - name: Upload artifacts
-        uses: AButler/upload-release-assets@v2.0
+        uses: AButler/upload-release-assets@v4.0.0
         with:
           files: 'build/mcrelay-*'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
