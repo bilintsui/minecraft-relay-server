@@ -7,6 +7,8 @@
 
 #include <string.h>
 
+#include "handshake.h"
+
 #include "common.h"
 
 int protocol_identify(const char *src) {
@@ -46,8 +48,9 @@ int protocol_identify(const char *src) {
 				default:
 					return PVER_UNIDENT;
 			}
-		default:
-			if ((source[source[0]] == 1) || (source[source[0]] == 2)) {
+		default: {
+			intent_t intent = source[source[0]];
+			if ((intent == CLIENT_INTENT_STATUS) || (intent == CLIENT_INTENT_LOGIN) || (intent == CLIENT_INTENT_TRANSFER)) {
 				if (source[2]) {
 					return PVER_MODERN2;
 				} else {
@@ -56,5 +59,6 @@ int protocol_identify(const char *src) {
 			} else {
 				return PVER_UNIDENT;
 			}
+		}
 	}
 }

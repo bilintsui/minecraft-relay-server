@@ -113,7 +113,7 @@ p_handshake packet_read(void *src, void *end) {
 	if (src == NULL) {
 		goto cleanup;
 	}
-	if (result.nextstate == 2) {
+	if ((result.nextstate == CLIENT_INTENT_LOGIN) || (result.nextstate == CLIENT_INTENT_TRANSFER)) {
 		part2_start = src = varint2int(src, &size_part2);
 		if (src == NULL) {
 			goto cleanup;
@@ -194,7 +194,7 @@ size_t packet_write(void *dst, const p_handshake src) {
 	ptr_part1 = int2varint(src.nextstate, ptr_part1);
 	size_part1 = ptr_part1 - part1;
 	ptr_part2 = int2varint(src.id_part2, ptr_part2);
-	if (src.nextstate == 2) {
+	if ((src.nextstate == CLIENT_INTENT_LOGIN) || (src.nextstate == CLIENT_INTENT_TRANSFER)) {
 		username_length = strlen(src.username);
 		ptr_part2 = int2varint(username_length, ptr_part2);
 		memcpy(ptr_part2, src.username, username_length);

@@ -28,6 +28,7 @@
 #define RUNMODE_SIMPLE	1
 #define RUNMODE_FORKING	2
 
+typedef uint8_t intent_t;
 typedef uint32_t varint_t;
 
 #endif
