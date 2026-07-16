@@ -53,6 +53,7 @@ static void do_reload(void) {
 		case 0:
 			config_destroy(config);
 			config = config_new;
+			config_icon_load(config, config_logfull, config_runmode, config_maxlevel);
 			if (config->log.filename[0] != '/') {
 				snprintf(config_logfull, sizeof(config_logfull), "%s/%s", cwd, config->log.filename);
 			} else {
@@ -280,6 +281,7 @@ int main(int argc, char **argv) {
 			}
 			config_netpriority_enabled = config->netpriority.enabled;
 			config_netpriority_protocol = config->netpriority.protocol;
+			config_icon_load(config, config_logfull, config_runmode, config->log.level);
 			break;
 		case CONF_EROPENFAIL:
 			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,

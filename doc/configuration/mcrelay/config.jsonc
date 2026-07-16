@@ -58,6 +58,8 @@
      */
     "port": 25565
   },
+  // Optional, custom icon displayed on server list, when connection cannot be established
+  "icon": "",	// Use barrier by default
   // Mandatory, proxy list
   "proxy": [
     {

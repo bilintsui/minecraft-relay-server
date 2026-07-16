@@ -330,7 +330,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 					"src: %s:%d, type: motd, status: reject_motdrelay_13w41*\n",
 					(char *)&(addrinfo_in.address), addrinfo_in.port
 				);
-				packlen_rewrited = make_motd(rewrited, "[Proxy] Use 13w42a or later to play!", inbound_info.version);
+				packlen_rewrited = make_motd(rewrited, "[Proxy] Use 13w42a or later to play!", inbound_info.version, conf_in->icon_b64);
 			} else if (inbound[inbound[0]] == 2) {
 				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 					"src: %s:%d, type: game, status: reject_gamerelay_13w41*\n",
@@ -351,7 +351,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 					"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n",
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address
 				);
-				packlen_rewrited = make_motd(rewrited, "[Proxy] Use a legit address to play!", inbound_info.version);
+				packlen_rewrited = make_motd(rewrited, "[Proxy] Use a legit address to play!", inbound_info.version, conf_in->icon_b64);
 			} else if ((inbound_info.nextstate == CLIENT_INTENT_LOGIN) || (inbound_info.nextstate == CLIENT_INTENT_TRANSFER)) {
 				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 					"src: %s:%d, type: %s, vhost: %s, status: reject_vhostinvalid, username: %s\n",
@@ -446,7 +446,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			case NET_ENORECORD:
 			case NET_ECONNECT:
 				if (inbound_info.nextstate == CLIENT_INTENT_STATUS) {
-					packlen_rewrited = make_motd(rewrited, "[Proxy] Server Temporarily Unavailable.", inbound_info.version);
+					packlen_rewrited = make_motd(rewrited, "[Proxy] Server Temporarily Unavailable.", inbound_info.version, conf_in->icon_b64);
 					if (mkoutbound_status == NET_ENORECORD) {
 						mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
 							"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoresolve\n",

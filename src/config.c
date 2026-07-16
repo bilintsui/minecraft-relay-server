@@ -21,6 +21,8 @@ void config_destroy(conf *target) {
 	if (target != NULL) {
 		free(target->log.filename);
 		free(target->listen.address);
+		free(target->icon_path);
+		free(target->icon_b64);
 		if (target->proxy != NULL) {
 			cJSON_Delete(target->proxy);
 		}
@@ -65,6 +67,11 @@ void config_dumper(conf *src) {
 	printf("\n[LISTEN]\n");
 	printf("Address\t\t%s\n", src->listen.address);
 	printf("Port\t\t%d\n", src->listen.port);
+	if (src->icon_path != NULL && src->icon_path[0] != '\0') {
+		printf("Icon\t\t%s\n", src->icon_path);
+	} else {
+		printf("Icon\t\t<default>\n");
+	}
 	cJSON *proxy = src->proxy;
 	cJSON *single = NULL;
 	int proxy_count = 1;
@@ -97,6 +104,70 @@ void config_dumper(conf *src) {
 			printf("PHeader\t\tfalse\n");
 		}
 		proxy_count++;
+	}
+}
+
+/*
+ * Load and base64-encode the icon file specified in cfg->icon_path.
+ * If the encoded result exceeds CONF_ICON_B64MAX or any step fails,
+ * cfg->icon_b64 stays NULL (caller falls back to FAVICON_BASE64).
+ */
+void config_icon_load(conf *cfg, char *logfile, unsigned short runmode, unsigned short loglevel) {
+	if (cfg->icon_path == NULL) {
+		return;
+	}
+	char *icon_raw = NULL;
+	size_t icon_size = freadall(cfg->icon_path, &icon_raw);
+	if (icon_size > 0) {
+		size_t blocks = icon_size / 3;
+		size_t b64_size = (blocks + (icon_size % 3 > 0)) * 4;
+		if (b64_size > CONF_ICON_B64MAX) {
+			mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+				"Icon too large (base64: %zu > %u bytes), using default.\n",
+				b64_size, CONF_ICON_B64MAX
+			);
+		} else {
+			cfg->icon_b64 = (char *)malloc(b64_size + 1);
+			if (cfg->icon_b64 != NULL) {
+				base64_encode(cfg->icon_b64, b64_size, icon_raw, icon_size);
+				cfg->icon_b64[b64_size] = '\0';
+			} else {
+				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+					"No memory for icon, using default.\n"
+				);
+			}
+		}
+		free(icon_raw);
+	} else {
+		if (icon_raw != NULL) {
+			free(icon_raw);
+		}
+		switch (errno) {
+			case FREADALL_ERFAIL:
+				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+					"Cannot open icon file %s, using default.\n",
+					cfg->icon_path
+				);
+				break;
+			case FREADALL_ELARGE:
+				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+					"Icon file %s too large, using default.\n",
+					cfg->icon_path
+				);
+				break;
+			case FREADALL_ENOMEM:
+				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+					"No memory to read icon file %s, using default.\n",
+					cfg->icon_path
+				);
+				break;
+			default:
+				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+					"Cannot read icon file %s, using default.\n",
+					cfg->icon_path
+				);
+				break;
+		}
 	}
 }
 
@@ -402,6 +473,21 @@ conf *config_read(char *filename) {
 			}
 		}
 	}
+	cJSON *config_json_icon = cJSON_GetObjectItemCaseSensitive(config_json, "icon");
+	if (cJSON_IsString(config_json_icon) && config_json_icon->valuestring != NULL
+		&& config_json_icon->valuestring[0] != '\0') {
+		result->icon_path = (char *)malloc(strlen(config_json_icon->valuestring) + 1);
+		if (result->icon_path == NULL) {
+			cJSON_Delete(config_json);
+			config_destroy(result);
+			errno = CONF_ECMEMORY;
+			return NULL;
+		}
+		strcpy(result->icon_path, config_json_icon->valuestring);
+	} else {
+		result->icon_path = NULL;
+	}
+	result->icon_b64 = NULL;
 	cJSON *config_json_proxy = cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(config_json, "proxy"), 1);
 	if (config_json_proxy == NULL) {
 		cJSON_Delete(config_json);

@@ -19,6 +19,7 @@
 #define FREADALL_ELARGE	3
 #define FREADALL_ENOMEM	4
 
+size_t base64_encode(void *dst, size_t dst_cap, const void *src, size_t src_len);
 size_t freadall(const char *filename, char **dst);
 void *int2varint(varint_t src, void *dst);
 size_t memcat(void *dst, size_t dst_size, void *src, size_t src_size);

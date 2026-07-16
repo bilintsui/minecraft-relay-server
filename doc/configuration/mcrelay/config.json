@@ -12,6 +12,7 @@
     "address": "::",
     "port": 25565
   },
+  "icon": "",
   "proxy": [
     {
       "vhost": "mc.example.com",

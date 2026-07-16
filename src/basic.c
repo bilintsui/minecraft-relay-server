@@ -6,11 +6,47 @@
  */
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "basic.h"
+
+size_t base64_encode(void *dst, size_t dst_cap, const void *src, size_t src_len) {
+	if ((dst == NULL) || (src == NULL) || (dst_cap == 0) || (src_len == 0)) {
+		return 0;
+	}
+
+	const char *map = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+	uint8_t *dst_ptr = dst;
+	const uint8_t *src_ptr = src;
+
+	size_t full_blocks = src_len / 3;
+	size_t remainder = src_len % 3;
+	size_t total_blocks = full_blocks + (remainder > 0);
+
+	if (dst_cap < total_blocks * 4) {
+		total_blocks = full_blocks = dst_cap / 4;
+		remainder = 0;
+	}
+
+	for (size_t i = 0; i < total_blocks; i++) {
+		size_t s = i * 3;
+		uint8_t b0 = src_ptr[s];
+		uint8_t b1 = (i < full_blocks || remainder > 1) ? src_ptr[s + 1] : 0;
+		uint8_t b2 = (i < full_blocks) ? src_ptr[s + 2] : 0;
+
+		size_t d = i * 4;
+		dst_ptr[d] = map[(b0 & 0b11111100) >> 2];
+		dst_ptr[d + 1] = map[((b0 & 0b00000011) << 4) | ((b1 & 0b11110000) >> 4)];
+		dst_ptr[d + 2] = (i < full_blocks || remainder > 1) ? map[((b1 & 0b00001111) << 2) | ((b2 & 0b11000000) >> 6)] : '=';
+		dst_ptr[d + 3] = (i < full_blocks) ? map[b2 & 0b00111111] : '=';
+	}
+
+	return total_blocks * 4;
+}
 
 size_t freadall(const char *filename, char **dst) {
 	if ((filename == NULL) || (dst == NULL)) {
