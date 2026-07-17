@@ -219,7 +219,6 @@ cJSON *config_proxy_parse(cJSON *src) {
 		}
 	}
 	cJSON *result = cJSON_Duplicate(src, 1);
-	cJSON_Delete(src);
 	int dupdet_count = 0;
 	char **vhost_namelist = NULL;
 	cJSON *rec_result = NULL;
@@ -289,6 +288,7 @@ cJSON *config_proxy_parse(cJSON *src) {
 		free(vhost_namelist[i]);
 	}
 	free(vhost_namelist);
+	cJSON_Delete(src);
 	errno = 0;
 	return result;
 }
@@ -509,12 +509,13 @@ conf *config_read(char *filename) {
 		errno = CONF_ECPROXY;
 		return NULL;
 	}
-	config_json_proxy = config_proxy_parse(config_json_proxy);
+	cJSON *config_json_proxy_parsed = config_proxy_parse(config_json_proxy);
 	if (errno) {
+		cJSON_Delete(config_json_proxy);
 		config_destroy(result);
 		return NULL;
 	}
-	result->proxy = config_json_proxy;
+	result->proxy = config_json_proxy_parsed;
 	errno = 0;
 	return result;
 }
