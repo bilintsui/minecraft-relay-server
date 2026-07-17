@@ -39,10 +39,10 @@ size_t base64_encode(void *dst, size_t dst_cap, const void *src, size_t src_len)
 		uint8_t b2 = (i < full_blocks) ? src_ptr[s + 2] : 0;
 
 		size_t d = i * 4;
-		dst_ptr[d] = map[(b0 & 0b11111100) >> 2];
-		dst_ptr[d + 1] = map[((b0 & 0b00000011) << 4) | ((b1 & 0b11110000) >> 4)];
-		dst_ptr[d + 2] = (i < full_blocks || remainder > 1) ? map[((b1 & 0b00001111) << 2) | ((b2 & 0b11000000) >> 6)] : '=';
-		dst_ptr[d + 3] = (i < full_blocks) ? map[b2 & 0b00111111] : '=';
+		dst_ptr[d] = map[(b0 & 0xFC) >> 2];
+		dst_ptr[d + 1] = map[((b0 & 0x03) << 4) | ((b1 & 0xF0) >> 4)];
+		dst_ptr[d + 2] = (i < full_blocks || remainder > 1) ? map[((b1 & 0x0F) << 2) | ((b2 & 0xC0) >> 6)] : '=';
+		dst_ptr[d + 3] = (i < full_blocks) ? map[b2 & 0x3F] : '=';
 	}
 
 	return total_blocks * 4;
@@ -91,11 +91,11 @@ void *int2varint(varint_t src, void *dst) {
 		i++;
 	} while (src > 0);
 	base[i - 1] = base[i - 1] & 0x7F;
-	return dst + i;
+	return base + i;
 }
 
 size_t memcat(void *dst, size_t dst_size, void *src, size_t src_size) {
-	memcpy(dst + dst_size, src, src_size);
+	memcpy((uint8_t *)dst + dst_size, src, src_size);
 	return dst_size + src_size;
 }
 
@@ -234,7 +234,7 @@ void *varint2int(void *src, varint_t *dst) {
 			if (dst != NULL) {
 				*dst = result;
 			}
-			return src + i + 1;
+			return base + i + 1;
 		}
 	}
 	return NULL;

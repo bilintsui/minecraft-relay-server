@@ -24,13 +24,13 @@ sa_family_t protocol_proxy_getfamily(const void *src, size_t n) {
 	if (src_endptr == NULL) {
 		return AF_UNSPEC;
 	}
-	if (n != src_endptr - src + 2) {
+	if (n != (const uint8_t *)src_endptr - (const uint8_t *)src + 2) {
 		return AF_UNSPEC;
 	}
 	if (memcmp(src_endptr, "\r\n", 2)) {
 		return AF_UNSPEC;
 	}
-	switch (*((char *)(src + 9))) {
+	switch (*((const char *)src + 9)) {
 		case '4':
 			return AF_INET;
 		case '6':
@@ -51,7 +51,7 @@ p_proxy protocol_proxy_read(const void *src, size_t n) {
 		return result;
 	}
 	net_addrp srcaddrp, dstaddrp;
-	sscanf(src + 11, "%s %s %hu %hu\r\n", (char *)&srcaddrp, (char *)&dstaddrp, &(result.srcport), &(result.dstport));
+	sscanf((const char *)src + 11, "%s %s %hu %hu\r\n", (char *)&srcaddrp, (char *)&dstaddrp, &(result.srcport), &(result.dstport));
 	result.srcaddr = net_resolve_dual((char *)&srcaddrp, result.family, 0);
 	result.dstaddr = net_resolve_dual((char *)&dstaddrp, result.family, 0);
 	if (result.srcaddr.err || result.dstaddr.err) {

@@ -14,7 +14,7 @@
 #include "handshake.h"
 
 size_t make_message(void *dst, const void *src) {
-	void *tmp, *ptr_dst, *ptr_tmp;
+	uint8_t *tmp, *ptr_dst, *ptr_tmp;
 	size_t dst_length, payload_length, src_length;
 	tmp = calloc(1, BUFSIZ);
 	ptr_tmp = int2varint(0, tmp);
@@ -26,7 +26,7 @@ size_t make_message(void *dst, const void *src) {
 	ptr_dst = int2varint(dst_length, dst);
 	memcpy(ptr_dst, tmp, dst_length);
 	ptr_dst += dst_length;
-	payload_length = ptr_dst - dst;
+	payload_length = ptr_dst - (uint8_t *)dst;
 	free(tmp);
 	return payload_length;
 }
@@ -85,19 +85,19 @@ p_handshake packet_read(void *src, void *end) {
 	if ((char *)src + address_length > (char *)end) {
 		goto cleanup;
 	}
-	if ((*((char *)(src + address_length - 1))) == '\0') {
+	if ((*((char *)src + address_length - 1)) == '\0') {
 		result.address = malloc(strlen(src) + 1);
 		if (result.address == NULL) {
 			goto cleanup;
 		}
 		strcpy(result.address, src);
-		src += strlen(src);
+		src = (char *)src + strlen(src);
 		if (memcmp(src, "\0FML\0", 5) == 0) {
 			result.version_fml = 1;
-			src += 5;
+			src = (char *)src + 5;
 		} else if (memcmp(src, "\0FML2\0", 6) == 0) {
 			result.version_fml = 2;
-			src += 6;
+			src = (char *)src + 6;
 		}
 	} else {
 		result.version_fml = 0;
@@ -106,7 +106,7 @@ p_handshake packet_read(void *src, void *end) {
 			goto cleanup;
 		}
 		memcpy(result.address, src, address_length);
-		src += address_length;
+		src = (char *)src + address_length;
 	}
 	if ((char *)src + sizeof(in_port_t) > (char *)end) {
 		goto cleanup;
@@ -141,15 +141,15 @@ p_handshake packet_read(void *src, void *end) {
 			goto cleanup;
 		}
 		memcpy(result.username, src, username_length);
-		src += username_length;
-		if ((size_t)(src - part2_start) > size_part2) {
+		src = (char *)src + username_length;
+		if ((size_t)((char *)src - (char *)part2_start) > size_part2) {
 			goto cleanup;
 		}
-		result.signature_data_length = size_part2 - (src - part2_start);
+		result.signature_data_length = size_part2 - ((char *)src - (char *)part2_start);
 		if (result.signature_data_length) {
 			if (((result.version <= PVERDB_R_1_20_1) || ((result.version & PVERDB_SNAPMASK) <= PVERDB_S_1_20_1_RC1)) && (*((char *)src) == 1)) {
 				result.signature_data_length--;
-				src++;
+				src = (char *)src + 1;
 			}
 			if ((char *)src + result.signature_data_length > (char *)end) {
 				goto cleanup;
@@ -159,7 +159,7 @@ p_handshake packet_read(void *src, void *end) {
 				goto cleanup;
 			}
 			memcpy(result.signature_data, src, result.signature_data_length);
-			src += result.signature_data_length;
+			src = (char *)src + result.signature_data_length;
 		} else {
 			result.signature_data_length = 0;
 		}
@@ -172,7 +172,7 @@ cleanup:
 }
 
 size_t packet_write(void *dst, const p_handshake src) {
-	void *part1, *part2, *ptr_dst, *ptr_part1, *ptr_part2;
+	uint8_t *part1, *part2, *ptr_dst, *ptr_part1, *ptr_part2;
 	size_t address_length, address_length_pure, size, size_part1, size_part2, username_length;
 	ptr_part1 = part1 = calloc(1, BUFSIZ);
 	ptr_part2 = part2 = calloc(1, BUFSIZ);
@@ -218,7 +218,7 @@ size_t packet_write(void *dst, const p_handshake src) {
 	ptr_dst = int2varint(size_part2, ptr_dst);
 	memcpy(ptr_dst, part2, size_part2);
 	ptr_dst += size_part2;
-	size = ptr_dst - dst;
+	size = ptr_dst - (uint8_t *)dst;
 	free(part1);
 	free(part2);
 	return size;

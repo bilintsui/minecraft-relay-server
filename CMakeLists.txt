@@ -2,5 +2,9 @@ cmake_minimum_required(VERSION 3.10)
 project(mcrelay${EXEC_SUFFIX}
 	VERSION 1.2
 	LANGUAGES C)
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 add_executable(mcrelay${EXEC_SUFFIX} src/basic.c src/config.c src/log.c src/main.c src/misc.c src/network.c src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c)
+target_compile_definitions(mcrelay${EXEC_SUFFIX} PRIVATE _GNU_SOURCE)
 target_link_libraries(mcrelay${EXEC_SUFFIX} -lresolv -lcjson)

@@ -5,8 +5,6 @@
  * Copyright (C) 2020-2026 Bilin Tsui
  */
 
-#define _GNU_SOURCE
-
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>

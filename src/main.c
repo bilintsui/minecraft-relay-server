@@ -483,7 +483,7 @@ int main(int argc, char **argv) {
 					addr_inbound_client_addroffset = (unsigned char *)&(((struct sockaddr_in6 *)&addr_inbound_client)->sin6_addr);
 					if (memcmp(addr_inbound_client_addroffset, "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\xFF\xFF", 12) == 0) {
 						addrbundle_inbound_client.family = AF_INET;
-						addr_inbound_client_addroffset = addr_inbound_client_addroffset + 12;
+						addr_inbound_client_addroffset = (uint8_t *)addr_inbound_client_addroffset + 12;
 					}
 					addrbundle_inbound_client.address = net_ntop(addrbundle_inbound_client.family, addr_inbound_client_addroffset, 1);
 					addrbundle_inbound_client.address_clean = net_ntop(addrbundle_inbound_client.family, addr_inbound_client_addroffset, 0);

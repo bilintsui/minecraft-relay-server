@@ -25,12 +25,12 @@ size_t make_message_legacy(void *dst, void *src, size_t n) {
 		ptr_tmp++;
 	}
 	memset(dst, 0xFF, 1);
-	u_int16_t *ptr_dst = dst + 1;
+	uint16_t *ptr_dst = (uint16_t *)((uint8_t *)dst + 1);
 	*ptr_dst = htons(n);
 	ptr_dst++;
-	size_t tmp_length = ((void *)ptr_tmp) - tmp;
+	size_t tmp_length = (uint8_t *)ptr_tmp - (uint8_t *)tmp;
 	memcpy(ptr_dst, tmp, tmp_length);
-	size_t dst_length = ((void *)ptr_dst - dst) + tmp_length;
+	size_t dst_length = ((uint8_t *)ptr_dst - (uint8_t *)dst) + tmp_length;
 	free(tmp);
 	return dst_length;
 }
@@ -54,7 +54,7 @@ size_t make_motd_legacy(void *dst, void *src, int motd_version, unsigned int ver
 		case PVER_LEGACYM3:
 			memset(tmp, 0xA7, 1);
 			tmp_length = memcat(tmp, 1, "1\0", 2);
-			tmp_length = tmp_length + sprintf(tmp + tmp_length, "%d", version) + 1;
+			tmp_length = tmp_length + sprintf((char *)tmp + tmp_length, "%d", version) + 1;
 			tmp_length = memcat(tmp, tmp_length, "", 1);
 			tmp_length = memcat(tmp, tmp_length, src, strlen(src) + 1);
 			tmp_length = memcat(tmp, tmp_length, "0\0", 2);
@@ -132,8 +132,8 @@ p_login_legacy packet_read_legacy_login(unsigned char *sourcepacket, int sourcep
 
 p_motd_legacy packet_read_legacy_motd(void *src) {
 	p_motd_legacy result;
-	result.version = *(u_int8_t *)(src + 0x1D);
-	u_int16_t *ptr_src = src + 0x1E;
+	result.version = *((uint8_t *)src + 0x1D);
+	uint16_t *ptr_src = (uint16_t *)((uint8_t *)src + 0x1E);
 	size_t address_length = ntohs(*ptr_src);
 	ptr_src++;
 	result.address = calloc(1, address_length + 1);
@@ -193,12 +193,12 @@ int packet_write_legacy_login(p_login_legacy source, unsigned char *target) {
 
 size_t packet_write_legacy_motd(void *dst, p_motd_legacy src) {
 	memcpy(dst, "\xFE\x01\xFA\0\x0B\0M\0C\0|\0P\0i\0n\0g\0H\0o\0s\0t", 0x1B);
-	u_int16_t *ptr_dst = dst + 0x1B;
+	uint16_t *ptr_dst = (uint16_t *)((uint8_t *)dst + 0x1B);
 	size_t address_length = strlen(src.address);
 	*ptr_dst = htons(address_length * 2 + 7);
 	ptr_dst++;
-	*((u_int8_t *)ptr_dst) = src.version;
-	ptr_dst = ((void *)ptr_dst) + 1;
+	*((uint8_t *)ptr_dst) = src.version;
+	ptr_dst = (uint16_t *)((uint8_t *)ptr_dst + 1);
 	*ptr_dst = htons(address_length);
 	ptr_dst++;
 	u_int8_t *ptr_address = src.address;
@@ -209,9 +209,9 @@ size_t packet_write_legacy_motd(void *dst, p_motd_legacy src) {
 		ptr_address++;
 		ptr_dst++;
 	}
-	*((u_int32_t *)ptr_dst) = htonl(src.port);
-	ptr_dst = (u_int16_t *)(((u_int32_t *)ptr_dst) + 1);
-	size_t size = (void *)ptr_dst - dst;
+	*((uint32_t *)ptr_dst) = htonl(src.port);
+	ptr_dst = (uint16_t *)(((uint32_t *)ptr_dst) + 1);
+	size_t size = (uint8_t *)ptr_dst - (uint8_t *)dst;
 	return size;
 }
 
