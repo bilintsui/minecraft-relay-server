@@ -52,8 +52,8 @@ p_proxy protocol_proxy_read(const void *src, size_t n) {
 	}
 	net_addrp srcaddrp, dstaddrp;
 	sscanf((const char *)src + 11, "%s %s %hu %hu\r\n", (char *)&srcaddrp, (char *)&dstaddrp, &(result.srcport), &(result.dstport));
-	result.srcaddr = net_resolve_dual((char *)&srcaddrp, result.family, 0);
-	result.dstaddr = net_resolve_dual((char *)&dstaddrp, result.family, 0);
+	result.srcaddr = net_resolve_dual((char *)&srcaddrp, result.family, false);
+	result.dstaddr = net_resolve_dual((char *)&dstaddrp, result.family, false);
 	if (result.srcaddr.err || result.dstaddr.err) {
 		result.family = AF_UNSPEC;
 	}
@@ -61,8 +61,8 @@ p_proxy protocol_proxy_read(const void *src, size_t n) {
 }
 
 size_t protocol_proxy_write(void *dst, p_proxy src) {
-	net_addrp srcaddrp = net_ntop(src.family, &(src.srcaddr.addr), 0);
-	net_addrp dstaddrp = net_ntop(src.family, &(src.dstaddr.addr), 0);
+	net_addrp srcaddrp = net_ntop(src.family, &(src.srcaddr.addr), false);
+	net_addrp dstaddrp = net_ntop(src.family, &(src.dstaddr.addr), false);
 	switch (src.family) {
 		case AF_INET:
 			return snprintf(dst, PROTOPROXY_PACKETMAXLEN + 1, "PROXY TCP4 %s %s %hu %hu\r\n", (char *)&srcaddrp, (char *)&dstaddrp, src.srcport, src.dstport);

@@ -9,23 +9,27 @@
 
 #define _MRS_PROTOCOLS_HANDSHAKE_LEGACY_H_INCLUDED_
 
+#include <netinet/in.h>
+#include <stdint.h>
+
 typedef struct {
 	int proto_ver;
-	unsigned char username[128], address[128];
-	unsigned short port, version;
+	char username[128], address[128];
+	in_port_t port;
+	uint8_t version;
 } p_login_legacy;
 typedef struct {
 	void *address;
 	in_port_t port;
-	u_int8_t version;
+	uint8_t version;
 } p_motd_legacy;
 
-size_t make_message_legacy(void *dst, void *src, size_t n);
-size_t make_kickreason_legacy(void *dst, void *src);
-size_t make_motd_legacy(void *dst, void *src, int motd_version, unsigned int version);
-p_login_legacy packet_read_legacy_login(unsigned char *sourcepacket, int sourcepacket_length, int login_version);
-p_motd_legacy packet_read_legacy_motd(void *src);
-int packet_write_legacy_login(p_login_legacy source, unsigned char *target);
+size_t make_message_legacy(void *dst, const void *src, size_t n);
+size_t make_kickreason_legacy(void *dst, const void *src);
+size_t make_motd_legacy(void *dst, const void *src, uint8_t motd_version, uint8_t version);
+p_login_legacy packet_read_legacy_login(const void *sourcepacket, size_t sourcepacket_length, uint8_t login_version);
+p_motd_legacy packet_read_legacy_motd(const void *src);
+size_t packet_write_legacy_login(p_login_legacy source, void *target);
 size_t packet_write_legacy_motd(void *dst, p_motd_legacy src);
 void packet_destroy_legacy_motd(p_motd_legacy object);
 

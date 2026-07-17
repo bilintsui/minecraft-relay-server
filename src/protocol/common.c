@@ -5,17 +5,18 @@
  * Copyright (C) 2020-2026 Bilin Tsui
  */
 
+#include <stdint.h>
 #include <string.h>
 
 #include "handshake.h"
 
 #include "common.h"
 
-int protocol_identify(const char *src) {
+uint8_t protocol_identify(const void *src) {
 	if (src == NULL) {
 		return PVER_UNIDENT;
 	}
-	const unsigned char *source = (unsigned char *)src;
+	const uint8_t *source = src;
 	switch (source[0]) {
 		case 0x01:
 			return PVER_ORIGPRO;

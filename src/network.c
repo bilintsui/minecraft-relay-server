@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include "network.h"
@@ -22,7 +23,7 @@ size_t net_getaddrsize(sa_family_t family) {
 		case AF_INET:
 			return sizeof(uint32_t);
 		case AF_INET6:
-			return sizeof(char) * 16;
+			return sizeof(uint8_t) * 16;
 		default:
 			return 0;
 	}
@@ -39,7 +40,7 @@ sa_family_t net_getaltfamily(sa_family_t family) {
 	}
 }
 
-net_addrp net_ntop(sa_family_t family, void *src, short v6addition) {
+net_addrp net_ntop(sa_family_t family, const void *src, bool v6addition) {
 	net_addrp pre_result;
 	memset(&pre_result, 0, sizeof(pre_result));
 	if (((family != AF_INET) && (family != AF_INET6)) || (src == NULL) || (inet_ntop(family, src, (char *)&pre_result, sizeof(pre_result)) == NULL)) {
@@ -144,7 +145,7 @@ cleanup:
 	return ret;
 }
 
-void *net_resolve(char *hostname, sa_family_t family) {
+void *net_resolve(const char *hostname, sa_family_t family) {
 	if ((family != AF_INET) && (family != AF_INET6)) {
 		errno = NET_EARGFAMILY;
 		return NULL;
@@ -167,7 +168,7 @@ void *net_resolve(char *hostname, sa_family_t family) {
 	return result;
 }
 
-net_addr net_resolve_dual(char *hostname, sa_family_t primary_family, short dual) {
+net_addr net_resolve_dual(const char *hostname, sa_family_t primary_family, bool dual) {
 	net_addr result;
 	result.family = 0;
 	result.err = 0;
@@ -198,7 +199,7 @@ net_addr net_resolve_dual(char *hostname, sa_family_t primary_family, short dual
 	return result;
 }
 
-int net_socket(short action, sa_family_t family, void *address, in_port_t port, short reuseaddr) {
+int net_socket(short action, sa_family_t family, const void *address, in_port_t port, bool reuseaddr) {
 	if ((action != NETSOCK_BIND) && (action != NETSOCK_CONN)) {
 		errno = NET_EARGACTION;
 		return -1;
@@ -212,7 +213,7 @@ int net_socket(short action, sa_family_t family, void *address, in_port_t port, 
 		return -1;
 	}
 	void *serv_addr = NULL;
-	int stru_size = 0;
+	socklen_t stru_size = 0;
 	if (family == AF_INET) {
 		stru_size = sizeof(struct sockaddr_in);
 		serv_addr = malloc(stru_size);
@@ -224,7 +225,7 @@ int net_socket(short action, sa_family_t family, void *address, in_port_t port, 
 		struct sockaddr_in *addr = serv_addr;
 		addr->sin_family = AF_INET;
 		addr->sin_port = htons(port);
-		memcpy(&(addr->sin_addr.s_addr), address, sizeof(u_int32_t));
+		memcpy(&(addr->sin_addr.s_addr), address, sizeof(uint32_t));
 	} else if (family == AF_INET6) {
 		stru_size = sizeof(struct sockaddr_in6);
 		serv_addr = malloc(stru_size);
@@ -236,7 +237,7 @@ int net_socket(short action, sa_family_t family, void *address, in_port_t port, 
 		struct sockaddr_in6 *addr = serv_addr;
 		addr->sin6_family = AF_INET6;
 		addr->sin6_port = htons(port);
-		memcpy(&(addr->sin6_addr), address, sizeof(char) * 16);
+		memcpy(&(addr->sin6_addr), address, sizeof(uint8_t) * 16);
 	}
 	int result = socket(family, SOCK_STREAM, 0);
 	if (result == -1) {
@@ -284,7 +285,8 @@ int net_srvresolve(char *query_name, net_srvrecord *target) {
 	memset(query_name_full, 0, 256);
 	snprintf(query_name_full, sizeof(query_name_full), "_minecraft._tcp.%s", query_name);
 	struct {
-		unsigned short priority, weight, port;
+		uint16_t priority, weight;
+		in_port_t port;
 		char target[128];
 	} records[128], records_minpriority[128], records_maxweight[128];
 	memset(records, 0, sizeof(records));
@@ -296,8 +298,8 @@ int net_srvresolve(char *query_name, net_srvrecord *target) {
 	}
 	ns_msg nsMsg;
 	ns_initparse(query_buffer, response, &nsMsg);
-	unsigned short priority_min = 65535;
-	unsigned short weight_max = 0;
+	uint16_t priority_min = 65535;
+	uint16_t weight_max = 0;
 	int rec_record = 0;
 	int max_record = ns_msg_count(nsMsg, ns_s_an);
 	if (max_record == 0) {
@@ -306,9 +308,9 @@ int net_srvresolve(char *query_name, net_srvrecord *target) {
 	for (rec_record = 0; rec_record < max_record; rec_record++) {
 		ns_rr rr;
 		ns_parserr(&nsMsg, ns_s_an, rec_record, &rr);
-		records[rec_record].priority = ntohs(*((unsigned short *)ns_rr_rdata(rr) + 0));
-		records[rec_record].weight = ntohs(*((unsigned short *)ns_rr_rdata(rr) + 1));
-		records[rec_record].port = ntohs(*((unsigned short *)ns_rr_rdata(rr) + 2));
+		records[rec_record].priority = ntohs(*((const uint16_t *)ns_rr_rdata(rr) + 0));
+		records[rec_record].weight = ntohs(*((const uint16_t *)ns_rr_rdata(rr) + 1));
+		records[rec_record].port = ntohs(*((const in_port_t *)ns_rr_rdata(rr) + 2));
 		dn_expand(ns_msg_base(nsMsg), ns_msg_end(nsMsg), ns_rr_rdata(rr) + 6, records[rec_record].target, sizeof(records[rec_record].target));
 		if (records[rec_record].priority < priority_min) {
 			priority_min = records[rec_record].priority;

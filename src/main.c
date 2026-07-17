@@ -8,6 +8,8 @@
 #include <errno.h>
 #include <limits.h>
 #include <signal.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,10 +27,11 @@ char configfile[PATH_MAX];
 char configfile_full[PATH_MAX];
 char config_logfull[PATH_MAX];
 conf *config = NULL;
-short config_netpriority_enabled = 1;
+bool config_netpriority_enabled = true;
 sa_family_t config_netpriority_protocol = AF_INET6;
-unsigned short config_runmode = RUNMODE_SIMPLE;
+uint8_t config_runmode = RUNMODE_SIMPLE;
 volatile sig_atomic_t reload_flag = 0;
+
 void deal_signal(int signum) {
 	switch (signum) {
 		case SIGTERM:
@@ -41,7 +44,7 @@ void deal_signal(int signum) {
 }
 
 static void do_reload(void) {
-	unsigned short config_maxlevel = config->log.level;
+	uint8_t config_maxlevel = config->log.level;
 	char config_logfull_old[PATH_MAX];
 	snprintf(config_logfull_old, sizeof(config_logfull_old), "%s", config_logfull);
 	mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_INFORMATION,
@@ -133,7 +136,7 @@ int main(int argc, char **argv) {
 		"Minecraft Relay Server [Version " MCRELAY_VERSION_DISPLAY "/"
 		MCRELAY_VERSION_INTERNAL "]\n"
 		"(c) " MCRELAY_COPYYEAR " Bilin Tsui\n\n";
-	char *helpmsg =
+	static const char *helpmsg =
 		"<arguments|config_file>\n\n"
 		"Arguments\n\t-r / --reload:\tReload config on the running instance\n"
 		"\t-t / --stop:\tTerminate the running instance\n"
@@ -145,7 +148,7 @@ int main(int argc, char **argv) {
 		struct sockaddr_in v4;
 		struct sockaddr_in6 v6;
 	} addr_inbound_client;
-	int strulen = sizeof(addr_inbound_client);
+	socklen_t strulen = sizeof(addr_inbound_client);
 	getcwd(cwd, PATH_MAX);
 	if (argc < 2) {
 		mksysmsg(
@@ -366,12 +369,12 @@ int main(int argc, char **argv) {
 		);
 		return EXITCODE_BADPORT;
 	}
-	net_addrp bindaddrp = net_ntop(bindaddr.family, &(bindaddr.addr), 1);
+	net_addrp bindaddrp = net_ntop(bindaddr.family, &(bindaddr.addr), true);
 	mksysmsg(MKSYS_PREFIX_ON, config_logfull, config_runmode, config->log.level, MKSYS_LEVEL_INFORMATION,
 		"Binding on %s:%d...\n",
 		(char *)&bindaddrp, config->listen.port
 	);
-	socket_inbound_server = net_socket(NETSOCK_BIND, bindaddr.family, &(bindaddr.addr), config->listen.port, 1);
+	socket_inbound_server = net_socket(NETSOCK_BIND, bindaddr.family, &(bindaddr.addr), config->listen.port, true);
 	if (socket_inbound_server == -1) {
 		mksysmsg(MKSYS_PREFIX_ON, config_logfull, config_runmode, config->log.level, MKSYS_LEVEL_CRITICAL,
 			"Bind Failed!\n"
@@ -475,18 +478,18 @@ int main(int argc, char **argv) {
 			void *addr_inbound_client_addroffset = NULL;
 			switch (addrbundle_inbound_client.family) {
 				case AF_INET:
-					addrbundle_inbound_client.address = net_ntop(AF_INET, &(((struct sockaddr_in *)&addr_inbound_client)->sin_addr), 1);
-					addrbundle_inbound_client.address_clean = net_ntop(AF_INET, &(((struct sockaddr_in *)&addr_inbound_client)->sin_addr), 0);
+					addrbundle_inbound_client.address = net_ntop(AF_INET, &(((struct sockaddr_in *)&addr_inbound_client)->sin_addr), true);
+					addrbundle_inbound_client.address_clean = net_ntop(AF_INET, &(((struct sockaddr_in *)&addr_inbound_client)->sin_addr), false);
 					addrbundle_inbound_client.port = ntohs(((struct sockaddr_in *)&addr_inbound_client)->sin_port);
 					break;
 				case AF_INET6:
-					addr_inbound_client_addroffset = (unsigned char *)&(((struct sockaddr_in6 *)&addr_inbound_client)->sin6_addr);
+					addr_inbound_client_addroffset = &(((struct sockaddr_in6 *)&addr_inbound_client)->sin6_addr);
 					if (memcmp(addr_inbound_client_addroffset, "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\xFF\xFF", 12) == 0) {
 						addrbundle_inbound_client.family = AF_INET;
 						addr_inbound_client_addroffset = (uint8_t *)addr_inbound_client_addroffset + 12;
 					}
-					addrbundle_inbound_client.address = net_ntop(addrbundle_inbound_client.family, addr_inbound_client_addroffset, 1);
-					addrbundle_inbound_client.address_clean = net_ntop(addrbundle_inbound_client.family, addr_inbound_client_addroffset, 0);
+					addrbundle_inbound_client.address = net_ntop(addrbundle_inbound_client.family, addr_inbound_client_addroffset, true);
+					addrbundle_inbound_client.address_clean = net_ntop(addrbundle_inbound_client.family, addr_inbound_client_addroffset, false);
 					addrbundle_inbound_client.port = ntohs(((struct sockaddr_in6 *)&addr_inbound_client)->sin6_port);
 					break;
 			}

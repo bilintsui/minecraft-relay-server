@@ -48,7 +48,7 @@ size_t base64_encode(void *dst, size_t dst_cap, const void *src, size_t src_len)
 	return total_blocks * 4;
 }
 
-size_t freadall(const char *filename, char **dst) {
+size_t freadall(const char *filename, void **dst) {
 	if ((filename == NULL) || (dst == NULL)) {
 		errno = FREADALL_EINVAL;
 		return 0;
@@ -66,14 +66,13 @@ size_t freadall(const char *filename, char **dst) {
 		errno = FREADALL_ELARGE;
 		return 0;
 	}
-	char *result = (char *)malloc(filesize + 1);
+	void *result = malloc(filesize);
 	if (result == NULL) {
 		fclose(srcfd);
 		errno = FREADALL_ENOMEM;
 		return 0;
 	}
 	fread(result, filesize, 1, srcfd);
-	result[filesize] = '\0';
 	fclose(srcfd);
 	*dst = result;
 	return filesize;
@@ -83,8 +82,8 @@ void *int2varint(varint_t src, void *dst) {
 	if (dst == NULL) {
 		return NULL;
 	}
-	unsigned char *base = dst;
-	int i = 0;
+	uint8_t *base = dst;
+	size_t i = 0;
 	do {
 		base[i] = (src & 0x7F) | 0x80;
 		src = src >> 7;
@@ -94,34 +93,36 @@ void *int2varint(varint_t src, void *dst) {
 	return base + i;
 }
 
-size_t memcat(void *dst, size_t dst_size, void *src, size_t src_size) {
+size_t memcat(void *dst, size_t dst_size, const void *src, size_t src_size) {
 	memcpy((uint8_t *)dst + dst_size, src, src_size);
 	return dst_size + src_size;
 }
 
-int packetexpand(unsigned char *source, int source_length, unsigned char *target) {
-	int size, recidx;
-	unsigned char *ptr_target = target;
+size_t packetexpand(const void *source, size_t source_length, void *target) {
+	size_t size, recidx;
+	const uint8_t *ptr_source = source;
+	uint8_t *ptr_target = target;
 	for (recidx = 0; recidx < source_length; recidx++) {
 		*ptr_target = 0;
 		ptr_target++;
-		*ptr_target = source[recidx];
+		*ptr_target = ptr_source[recidx];
 		ptr_target++;
 	}
-	size = ptr_target - target;
+	size = ptr_target - (uint8_t *)target;
 	return size;
 }
 
-int packetshrink(unsigned char *source, int source_length, unsigned char *target) {
-	int size, recidx;
-	unsigned char *ptr_target = target;
+size_t packetshrink(const void *source, size_t source_length, void *target) {
+	size_t size, recidx;
+	const uint8_t *ptr_source = source;
+	uint8_t *ptr_target = target;
 	for (recidx = 0; recidx < source_length; recidx++) {
-		if (source[recidx] != 0) {
-			*ptr_target = source[recidx];
+		if (ptr_source[recidx] != 0) {
+			*ptr_target = ptr_source[recidx];
 			ptr_target++;
 		}
 	}
-	size = ptr_target - target;
+	size = ptr_target - (uint8_t *)target;
 	return size;
 }
 
@@ -139,7 +140,7 @@ size_t strlen_notail(const char *src, char exemptchr) {
 	return result;
 }
 
-int strcmp_notail(const char *str1, const char *str2, char exemptchr, short case_insensitive) {
+int strcmp_notail(const char *str1, const char *str2, char exemptchr, bool case_insensitive) {
 	size_t str1_length = strlen(str1);
 	size_t str2_length = strlen_notail(str2, exemptchr);
 	if (str1_length < str2_length) {
@@ -183,22 +184,22 @@ char *strtok_head(char *dst, size_t dst_size, char *src, char delim) {
 	return ptr_delim + 1;
 }
 
-size_t strtok_tail(char *dst, size_t dst_size, char *src, char delim, size_t length) {
+size_t strtok_tail(char *dst, size_t dst_size, const char *src, size_t src_size, char delim) {
 	if (src == NULL) {
 		return 0;
 	}
-	if (length == 0) {
+	if (src_size == 0) {
 		if (dst != NULL) {
 			*dst = '\0';
 		}
 		return 0;
 	}
-	char *buffer = (char *)malloc(length + 1);
+	char *buffer = (char *)malloc(src_size + 1);
 	if (buffer == NULL) {
-		return length;
+		return src_size;
 	}
-	memcpy(buffer, src, length);
-	buffer[length] = '\0';
+	memcpy(buffer, src, src_size);
+	buffer[src_size] = '\0';
 	char *ptr_delim = strrchr(buffer, delim);
 	if (ptr_delim == NULL) {
 		if (dst != NULL) {
@@ -219,7 +220,7 @@ void *varint2int(void *src, varint_t *dst) {
 	if (src == NULL) {
 		return NULL;
 	}
-	unsigned char *base = src;
+	uint8_t *base = src;
 	varint_t result = 0;
 	varint_t result_single = 0;
 	for (size_t i = 0; i <= VARINT_T_MAXIDX; i++) {

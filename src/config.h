@@ -11,6 +11,8 @@
 
 #include <cjson/cJSON.h>
 #include <netinet/in.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <sys/socket.h>
 
 #define CONF_ADDRESSMAXLEN	ADDRESS_MAXLEN
@@ -34,12 +36,13 @@
 
 typedef struct {
 	struct {
-		short enabled;
+		bool enabled;
 		sa_family_t protocol;
 	} netpriority;
 	struct {
 		char *filename;
-		short level, binary;
+		uint8_t level;
+		bool binary;
 	} log;
 	struct {
 		char *address;
@@ -51,17 +54,17 @@ typedef struct {
 typedef struct {
 	char *address;
 	in_port_t port;
-	short valid, srvenabled, rewrite, pheader;
+	bool valid, srvenabled, rewrite, pheader;
 } conf_proxy;
 
 extern char config_duperr[CONF_ADDRESSMAXLEN];
-void config_destroy(conf * target);
-short config_jsonbool(cJSON * src, short defaultvalue);
-void config_dumper(conf * src);
-void config_icon_load(conf *cfg, char *logfile, unsigned short runmode, unsigned short loglevel);
-cJSON *config_proxy_parse(cJSON * src);
-conf_proxy config_proxy_search(conf * src, const char *targetvhost);
-void config_proxy_search_destroy(conf_proxy * target);
+void config_destroy(conf *target);
+bool config_jsonbool(cJSON *src, bool defaultvalue);
+void config_dumper(conf *src);
+void config_icon_load(conf *cfg, const char *logfile, uint8_t runmode, uint8_t loglevel);
+cJSON *config_proxy_parse(cJSON *src);
+conf_proxy config_proxy_search(conf *src, const char *targetvhost);
+void config_proxy_search_destroy(conf_proxy *target);
 conf *config_read(char *filename);
 
 #endif

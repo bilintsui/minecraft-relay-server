@@ -10,6 +10,8 @@
 #define _MRS_NETWORK_H_INCLUDED_
 
 #include <netinet/in.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 #define NETSOCK_BIND	0
 #define NETSOCK_CONN	1
@@ -30,7 +32,7 @@ typedef struct {
 	int err;
 	union {
 		uint32_t v4;
-		unsigned char v6[16];
+		uint8_t v6[16];
 	} addr;
 } net_addr;
 typedef union {
@@ -44,16 +46,16 @@ typedef struct {
 } net_addrbundle;
 typedef struct {
 	char target[128];
-	unsigned short port;
+	in_port_t port;
 } net_srvrecord;
 
 size_t net_getaddrsize(sa_family_t family);
 sa_family_t net_getaltfamily(sa_family_t family);
-net_addrp net_ntop(sa_family_t family, void *src, short v6addition);
+net_addrp net_ntop(sa_family_t family, const void *src, bool v6addition);
 int net_relay(int socket_in, int socket_out);
-void *net_resolve(char *hostname, sa_family_t family);
-net_addr net_resolve_dual(char *hostname, sa_family_t primary_family, short dual);
-int net_socket(short action, sa_family_t family, void *address, in_port_t port, short reuseaddr);
-int net_srvresolve(char *query_name, net_srvrecord * target);
+void *net_resolve(const char *hostname, sa_family_t family);
+net_addr net_resolve_dual(const char *hostname, sa_family_t primary_family, bool dual);
+int net_socket(short action, sa_family_t family, const void *address, in_port_t port, bool reuseaddr);
+int net_srvresolve(char *query_name, net_srvrecord *target);
 
 #endif

@@ -35,7 +35,7 @@ size_t make_kickreason(void *dst, const void *src) {
 	void *input;
 	size_t payload_length;
 	input = calloc(1, BUFSIZ);
-	sprintf(input, "{\"extra\":[{\"text\":\"%s\"}],\"text\":\"\"}", (char *)src);
+	sprintf(input, "{\"extra\":[{\"text\":\"%s\"}],\"text\":\"\"}", (const char *)src);
 	payload_length = make_message(dst, input);
 	free(input);
 	return payload_length;
@@ -48,7 +48,7 @@ size_t make_motd(void *dst, const void *src, varint_t ver, const char *favicon_b
 	input = calloc(1, BUFSIZ);
 	sprintf(input,
 		"{\"version\":{\"name\":\"\",\"protocol\":%u},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},\"description\":{\"text\":\"%s\"},\"favicon\":\"data:image/png;base64,%s\"}",
-		ver, (char *)src, icon
+		ver, (const char *)src, icon
 	);
 	payload_length = make_message(dst, input);
 	free(input);

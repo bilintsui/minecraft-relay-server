@@ -14,7 +14,7 @@
 #include "define/global.h"
 #include "log.h"
 
-void gettime(unsigned char *target) {
+void gettime(char *target) {
 	time_t timestamp = time(NULL);
 	struct tm tm_local;
 	localtime_r(&timestamp, &tm_local);
@@ -31,7 +31,7 @@ void gettime(unsigned char *target) {
 	);
 }
 
-int mksysmsg(unsigned short noprefix, char *logfile, unsigned short runmode, unsigned short maxlevel, unsigned short msglevel, const char *format, ...) {
+int mksysmsg(bool noprefix, const char *logfile, uint8_t runmode, uint8_t maxlevel, uint8_t msglevel, const char *format, ...) {
 	char level_str[8];
 	int status;
 	va_list varlist;
@@ -62,7 +62,7 @@ int mksysmsg(unsigned short noprefix, char *logfile, unsigned short runmode, uns
 			}
 			char format_output[BUFSIZ];
 			memset(format_output, 0, BUFSIZ);
-			for (int recidx = 0; recidx < strlen(format); recidx++) {
+			for (size_t recidx = 0; recidx < strlen(format); recidx++) {
 				format_output[recidx] = format[recidx];
 				if (format[recidx] == '\n') {
 					break;

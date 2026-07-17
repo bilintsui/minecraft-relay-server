@@ -14,12 +14,15 @@
 #define MKSYS_LEVEL_INFORMATION	2
 #define MKSYS_LEVEL_ALL	255
 
-#define MKSYS_PREFIX_ON	0
-#define MKSYS_PREFIX_OFF	1
+#define MKSYS_PREFIX_ON	false
+#define MKSYS_PREFIX_OFF	true
 
 #define MKSYS_NOLOGFILE	""
 
-void gettime(unsigned char *target);
-int mksysmsg(unsigned short noprefix, char *logfile, unsigned short runmode, unsigned short maxlevel, unsigned short msglevel, const char *format, ...);
+#include <stdbool.h>
+#include <stdint.h>
+
+void gettime(char *target);
+int mksysmsg(bool noprefix, const char *logfile, uint8_t runmode, uint8_t maxlevel, uint8_t msglevel, const char *format, ...);
 
 #endif

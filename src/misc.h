@@ -17,9 +17,12 @@
 #define BACKBONE_ENOCONNECT	5
 #define BACKBONE_EOLDCLIENT	6
 
+#include <stdbool.h>
+#include <stdint.h>
+
 #include "config.h"
 #include "network.h"
 
-int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmode, conf * conf_in, net_addrbundle addrinfo_in, short netpriority_enabled);
+int backbone(int socket_in, int *socket_out, const char *logfile, uint8_t runmode, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled);
 
 #endif

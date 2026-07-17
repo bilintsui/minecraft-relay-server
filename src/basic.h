@@ -9,6 +9,7 @@
 
 #define _MRS_BASIC_H_INCLUDED_
 
+#include <stdbool.h>
 #include <stddef.h>
 
 #include "define/global.h"
@@ -20,15 +21,15 @@
 #define FREADALL_ENOMEM	4
 
 size_t base64_encode(void *dst, size_t dst_cap, const void *src, size_t src_len);
-size_t freadall(const char *filename, char **dst);
+size_t freadall(const char *filename, void **dst);
 void *int2varint(varint_t src, void *dst);
-size_t memcat(void *dst, size_t dst_size, void *src, size_t src_size);
-int packetexpand(unsigned char *source, int source_length, unsigned char *target);
-int packetshrink(unsigned char *source, int source_length, unsigned char *target);
+size_t memcat(void *dst, size_t dst_size, const void *src, size_t src_size);
+size_t packetexpand(const void *source, size_t source_length, void *target);
+size_t packetshrink(const void *source, size_t source_length, void *target);
 size_t strlen_notail(const char *src, char exemptchr);
-int strcmp_notail(const char *str1, const char *str2, char exemptchr, short case_insensitive);
+int strcmp_notail(const char *str1, const char *str2, char exemptchr, bool case_insensitive);
 char *strtok_head(char *dst, size_t dst_size, char *src, char delim);
-size_t strtok_tail(char *dst, size_t dst_size, char *src, char delim, size_t length);
+size_t strtok_tail(char *dst, size_t dst_size, const char *src, size_t src_size, char delim);
 void *varint2int(void *src, varint_t *dst);
 
 #endif

@@ -15,10 +15,10 @@
 
 #include "handshake_legacy.h"
 
-size_t make_message_legacy(void *dst, void *src, size_t n) {
+size_t make_message_legacy(void *dst, const void *src, size_t n) {
 	void *tmp = malloc(BUFSIZ);
-	u_int8_t *ptr_src = src;
-	u_int16_t *ptr_tmp = tmp;
+	const uint8_t *ptr_src = src;
+	uint16_t *ptr_tmp = tmp;
 	for (size_t i = 0; i < n; i++) {
 		*ptr_tmp = htons(*ptr_src);
 		ptr_src++;
@@ -35,11 +35,11 @@ size_t make_message_legacy(void *dst, void *src, size_t n) {
 	return dst_length;
 }
 
-size_t make_kickreason_legacy(void *dst, void *src) {
+size_t make_kickreason_legacy(void *dst, const void *src) {
 	return make_message_legacy(dst, src, strlen(src));
 }
 
-size_t make_motd_legacy(void *dst, void *src, int motd_version, unsigned int version) {
+size_t make_motd_legacy(void *dst, const void *src, uint8_t motd_version, uint8_t version) {
 	void *tmp = malloc(BUFSIZ);
 	size_t tmp_length = 0;
 	switch (motd_version) {
@@ -68,22 +68,22 @@ size_t make_motd_legacy(void *dst, void *src, int motd_version, unsigned int ver
 	return dst_length;
 }
 
-p_login_legacy packet_read_legacy_login(unsigned char *sourcepacket, int sourcepacket_length, int login_version) {
+p_login_legacy packet_read_legacy_login(const void *sourcepacket, size_t sourcepacket_length, uint8_t login_version) {
 	p_login_legacy result;
-	unsigned char source[BUFSIZ];
-	unsigned char *ptr_source = source;
-	int recidx, source_length;
+	uint8_t source[BUFSIZ];
+	uint8_t *ptr_source = source;
+	size_t recidx, source_length;
 	result.proto_ver = login_version;
 	memset(source, 0, BUFSIZ);
 	memset(result.username, 0, 128);
 	memset(result.address, 0, 128);
 	source_length = packetshrink(sourcepacket, sourcepacket_length, source);
 	if (login_version == PVER_LEGACYL2) {
-		unsigned char login_field[512];
-		unsigned char *ptr_login_field = login_field;
+		char login_field[512];
+		char *ptr_login_field = login_field;
 		memset(login_field, 0, 512);
 		for (recidx = 0; recidx < source[1]; recidx++) {
-			login_field[recidx] = source[2 + recidx];
+			login_field[recidx] = (char)source[2 + recidx];
 		}
 		login_field[sizeof(result.username) - 1] = '\0';
 		ptr_login_field = strtok_head(result.username, sizeof(result.username), ptr_login_field, ';');
@@ -91,12 +91,12 @@ p_login_legacy packet_read_legacy_login(unsigned char *sourcepacket, int sourcep
 			memset(&result, 0, sizeof(result));
 			return result;
 		}
-		size_t fieldsize_address = strtok_tail(NULL, 0, ptr_login_field, ':', strlen(ptr_login_field));
+		size_t fieldsize_address = strtok_tail(NULL, 0, ptr_login_field, strlen(ptr_login_field), ':');
 		snprintf(result.address, sizeof(result.address), "%.*s", (int)fieldsize_address, ptr_login_field);
 		ptr_login_field = ptr_login_field + fieldsize_address + 1;
 		result.port = atoi(ptr_login_field);
 	} else {
-		unsigned int username_length, address_length;
+		size_t username_length, address_length;
 		if (login_version == PVER_LEGACYL1) {
 			ptr_source = ptr_source + 1;
 		} else {
@@ -110,7 +110,7 @@ p_login_legacy packet_read_legacy_login(unsigned char *sourcepacket, int sourcep
 		}
 		ptr_source++;
 		for (recidx = 0; recidx < username_length; recidx++) {
-			result.username[recidx] = *ptr_source;
+			result.username[recidx] = (char)*ptr_source;
 			ptr_source++;
 		}
 		if (login_version == PVER_LEGACYL4) {
@@ -121,7 +121,7 @@ p_login_legacy packet_read_legacy_login(unsigned char *sourcepacket, int sourcep
 			}
 			ptr_source++;
 			for (recidx = 0; recidx < address_length; recidx++) {
-				result.address[recidx] = *ptr_source;
+				result.address[recidx] = (char)*ptr_source;
 				ptr_source++;
 			}
 			result.port = ptr_source[0] * 256 + ptr_source[1];
@@ -130,61 +130,63 @@ p_login_legacy packet_read_legacy_login(unsigned char *sourcepacket, int sourcep
 	return result;
 }
 
-p_motd_legacy packet_read_legacy_motd(void *src) {
+p_motd_legacy packet_read_legacy_motd(const void *src) {
 	p_motd_legacy result;
-	result.version = *((uint8_t *)src + 0x1D);
-	uint16_t *ptr_src = (uint16_t *)((uint8_t *)src + 0x1E);
+	result.version = *((const uint8_t *)src + 0x1D);
+	const uint16_t *ptr_src = (const uint16_t *)((const uint8_t *)src + 0x1E);
 	size_t address_length = ntohs(*ptr_src);
 	ptr_src++;
 	result.address = calloc(1, address_length + 1);
-	u_int8_t *ptr_address = result.address;
+	uint8_t *ptr_address = result.address;
 	for (size_t i = 0; i < address_length; i++) {
 		*ptr_address = ntohs(*ptr_src);
 		ptr_src++;
 		ptr_address++;
 	}
-	result.port = ntohl(*((u_int32_t *)ptr_src));
+	result.port = ntohl(*((const uint32_t *)ptr_src));
 	return result;
 }
 
-int packet_write_legacy_login(p_login_legacy source, unsigned char *target) {
-	unsigned char tmp[BUFSIZ];
-	unsigned int tmp_length, size;
+size_t packet_write_legacy_login(p_login_legacy source, void *target) {
+	uint8_t tmp[BUFSIZ];
+	size_t tmp_length, size;
 	memset(tmp, 0, BUFSIZ);
-	target[0] = 2;
+	uint8_t *ptr_target = target;
+	ptr_target[0] = 2;
 	size = 1;
 	if (source.proto_ver == PVER_LEGACYL2) {
-		unsigned char login_field[512], login_field_full[512];
+		char login_field[512];
+		uint8_t login_field_full[512];
 		memset(login_field, 0, 512);
 		memset(login_field_full, 0, 512);
 		sprintf(login_field, "%s;%s:%d", source.username, source.address, source.port);
-		unsigned int login_field_length = strlen(login_field);
+		size_t login_field_length = strlen(login_field);
 		login_field_full[0] = login_field_length;
-		unsigned int login_field_full_length = memcat(login_field_full, 1, login_field, login_field_length);
+		size_t login_field_full_length = memcat(login_field_full, 1, login_field, login_field_length);
 		tmp_length = packetexpand(login_field_full, login_field_full_length, tmp);
-		size = memcat(target, size, tmp, tmp_length);
+		size = memcat(ptr_target, size, tmp, tmp_length);
 	} else {
 		if (source.proto_ver != PVER_LEGACYL1) {
-			target[1] = source.version;
+			ptr_target[1] = source.version;
 			size = 2;
 		}
-		unsigned char username[128];
-		unsigned int username_length = strlen(source.username);
+		uint8_t username[128];
+		size_t username_length = strlen(source.username);
 		username[0] = username_length;
 		username_length = memcat(username, 1, source.username, username_length);
 		tmp_length = packetexpand(username, username_length, tmp);
-		size = memcat(target, size, tmp, tmp_length);
+		size = memcat(ptr_target, size, tmp, tmp_length);
 		if (source.proto_ver == PVER_LEGACYL4) {
-			unsigned char address[128];
-			unsigned int address_length = strlen(source.address);
+			uint8_t address[128];
+			size_t address_length = strlen(source.address);
 			address[0] = address_length;
 			address_length = memcat(address, 1, source.address, address_length);
 			tmp_length = packetexpand(address, address_length, tmp);
-			size = memcat(target, size, tmp, tmp_length);
-			target[size] = 0;
-			target[size + 1] = 0;
-			target[size + 2] = source.port / 256;
-			target[size + 3] = source.port - target[size + 2] * 256;
+			size = memcat(ptr_target, size, tmp, tmp_length);
+			ptr_target[size] = 0;
+			ptr_target[size + 1] = 0;
+			ptr_target[size + 2] = source.port / 256;
+			ptr_target[size + 3] = source.port - ptr_target[size + 2] * 256;
 			size = size + 4;
 		}
 	}
@@ -201,8 +203,8 @@ size_t packet_write_legacy_motd(void *dst, p_motd_legacy src) {
 	ptr_dst = (uint16_t *)((uint8_t *)ptr_dst + 1);
 	*ptr_dst = htons(address_length);
 	ptr_dst++;
-	u_int8_t *ptr_address = src.address;
-	u_int16_t tmp_data;
+	uint8_t *ptr_address = src.address;
+	uint16_t tmp_data;
 	for (size_t i = 0; i < address_length; i++) {
 		tmp_data = *ptr_address;
 		*ptr_dst = htons(tmp_data);

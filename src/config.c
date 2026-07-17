@@ -30,7 +30,7 @@ void config_destroy(conf *target) {
 	}
 }
 
-short config_jsonbool(cJSON *src, short defaultvalue) {
+bool config_jsonbool(cJSON *src, bool defaultvalue) {
 	if (src == NULL) {
 		return defaultvalue;
 	}
@@ -93,12 +93,12 @@ void config_dumper(conf *src) {
 		} else {
 			printf("Port\t\t%d\n", single_port->valueint);
 		}
-		if (config_jsonbool(cJSON_GetObjectItemCaseSensitive(single, "rewrite"), 0)) {
+		if (config_jsonbool(cJSON_GetObjectItemCaseSensitive(single, "rewrite"), false)) {
 			printf("Rewrite\t\ttrue\n");
 		} else {
 			printf("Rewrite\t\tfalse\n");
 		}
-		if (config_jsonbool(cJSON_GetObjectItemCaseSensitive(single, "pheader"), 0)) {
+		if (config_jsonbool(cJSON_GetObjectItemCaseSensitive(single, "pheader"), false)) {
 			printf("PHeader\t\ttrue\n");
 		} else {
 			printf("PHeader\t\tfalse\n");
@@ -112,11 +112,11 @@ void config_dumper(conf *src) {
  * If the encoded result exceeds CONF_ICON_B64MAX or any step fails,
  * cfg->icon_b64 stays NULL (caller falls back to FAVICON_BASE64).
  */
-void config_icon_load(conf *cfg, char *logfile, unsigned short runmode, unsigned short loglevel) {
+void config_icon_load(conf *cfg, const char *logfile, uint8_t runmode, uint8_t loglevel) {
 	if (cfg->icon_path == NULL) {
 		return;
 	}
-	char *icon_raw = NULL;
+	void *icon_raw = NULL;
 	size_t icon_size = freadall(cfg->icon_path, &icon_raw);
 	if (icon_size > 0) {
 		size_t blocks = icon_size / 3;
@@ -312,21 +312,21 @@ conf_proxy config_proxy_search(conf *src, const char *targetvhost) {
 		cJSON *rec_vhostname = NULL;
 		cJSON_ArrayForEach(rec_vhostname, vhostnames) {
 			if (cJSON_IsString(rec_vhostname)) {
-				if (strcmp_notail(rec_vhostname->valuestring, targetvhost, '.', 1) == 0) {
+				if (strcmp_notail(rec_vhostname->valuestring, targetvhost, '.', true) == 0) {
 					result.address = (char *)malloc(strlen(cJSON_GetObjectItemCaseSensitive(rec_proxylist, "address")->valuestring) + 1);
 					if (result.address == NULL) {
 						return result;
 					}
-					result.valid = 1;
+					result.valid = true;
 					strcpy(result.address, cJSON_GetObjectItemCaseSensitive(rec_proxylist, "address")->valuestring);
 					cJSON *target_port = cJSON_GetObjectItemCaseSensitive(rec_proxylist, "port");
 					if (target_port == NULL) {
-						result.srvenabled = 1;
+						result.srvenabled = true;
 					} else {
 						result.port = target_port->valueint;
 					}
-					result.rewrite = config_jsonbool(cJSON_GetObjectItemCaseSensitive(rec_proxylist, "rewrite"), 0);
-					result.pheader = config_jsonbool(cJSON_GetObjectItemCaseSensitive(rec_proxylist, "pheader"), 0);
+					result.rewrite = config_jsonbool(cJSON_GetObjectItemCaseSensitive(rec_proxylist, "rewrite"), false);
+					result.pheader = config_jsonbool(cJSON_GetObjectItemCaseSensitive(rec_proxylist, "pheader"), false);
 					return result;
 				}
 			}
@@ -348,8 +348,9 @@ conf *config_read(char *filename) {
 		errno = CONF_EARGNULL;
 		return NULL;
 	}
-	char *config_raw = NULL;
-	if (freadall(filename, &config_raw) == 0) {
+	void *config_raw = NULL;
+	size_t config_size = freadall(filename, &config_raw);
+	if (config_size == 0) {
 		switch (errno) {
 			case FREADALL_ERFAIL:
 				errno = CONF_EROPENFAIL;
@@ -363,7 +364,7 @@ conf *config_read(char *filename) {
 		}
 		return NULL;
 	}
-	cJSON *config_json = cJSON_Parse(config_raw);
+	cJSON *config_json = cJSON_ParseWithLength(config_raw, config_size);
 	free(config_raw);
 	if (config_json == NULL) {
 		errno = CONF_ERPARSE;
@@ -375,11 +376,11 @@ conf *config_read(char *filename) {
 		errno = CONF_ECMEMORY;
 		return NULL;
 	}
-	result->netpriority.enabled = 1;
+	result->netpriority.enabled = true;
 	result->netpriority.protocol = AF_INET6;
 	cJSON *config_json_netpriority = cJSON_GetObjectItemCaseSensitive(config_json, "netpriority");
 	if (config_json_netpriority != NULL) {
-		result->netpriority.enabled = config_jsonbool(cJSON_GetObjectItemCaseSensitive(config_json_netpriority, "enabled"), 1);
+		result->netpriority.enabled = config_jsonbool(cJSON_GetObjectItemCaseSensitive(config_json_netpriority, "enabled"), true);
 		cJSON *config_json_netpriority_protocol = cJSON_GetObjectItemCaseSensitive(config_json_netpriority, "protocol");
 		if (cJSON_IsString(config_json_netpriority_protocol)) {
 			if (strcmp(config_json_netpriority_protocol->valuestring, "IPv4") == 0) {
@@ -394,7 +395,7 @@ conf *config_read(char *filename) {
 			}
 		}
 	}
-	char *config_default_log_filename = "/var/log/mcrelay/access.log";
+	const char *config_default_log_filename = "/var/log/mcrelay/access.log";
 	result->log.filename = (char *)malloc(strlen(config_default_log_filename) + 1);
 	if (result->log.filename == NULL) {
 		cJSON_Delete(config_json);
@@ -404,7 +405,7 @@ conf *config_read(char *filename) {
 	}
 	strcpy(result->log.filename, config_default_log_filename);
 	result->log.level = MKSYS_LEVEL_INFORMATION;
-	result->log.binary = 0;
+	result->log.binary = false;
 	cJSON *config_json_log = cJSON_GetObjectItemCaseSensitive(config_json, "log");
 	if (config_json_log != NULL) {
 		cJSON *config_json_log_filename = cJSON_GetObjectItemCaseSensitive(config_json_log, "filename");
@@ -429,9 +430,9 @@ conf *config_read(char *filename) {
 				result->log.level = config_json_log_level->valueint;
 			}
 		}
-		result->log.binary = config_jsonbool(cJSON_GetObjectItemCaseSensitive(config_json_log, "binary"), 0);
+		result->log.binary = config_jsonbool(cJSON_GetObjectItemCaseSensitive(config_json_log, "binary"), false);
 	}
-	char *config_default_listen_address = "::";
+	const char *config_default_listen_address = "::";
 	result->listen.address = (char *)malloc(strlen(config_default_listen_address) + 1);
 	if (result->listen.address == NULL) {
 		cJSON_Delete(config_json);

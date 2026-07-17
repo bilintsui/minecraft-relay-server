@@ -10,6 +10,7 @@
 #define _MRS_PROTOCOLS_HANDSHAKE_H_INCLUDED_
 
 #include <netinet/in.h>
+#include <stdint.h>
 
 #include "../define/global.h"
 
@@ -26,7 +27,7 @@ typedef struct {
 	varint_t id_part1, id_part2, nextstate, version;
 	void *address, *signature_data, *username;
 	size_t signature_data_length;
-	unsigned short version_fml;
+	uint8_t version_fml;
 	in_port_t port;
 } p_handshake;
 

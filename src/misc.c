@@ -5,9 +5,11 @@
  * Copyright (C) 2020-2026 Bilin Tsui
  */
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include "basic.h"
@@ -19,9 +21,12 @@
 
 #include "misc.h"
 
-int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmode, conf *conf_in, net_addrbundle addrinfo_in, short netpriority_enabled) {
-	unsigned char inbound[BUFSIZ], outbound[BUFSIZ], rewrited[BUFSIZ], pheader[PROTOPROXY_PACKETMAXLEN + 1];
-	int packlen_inbound, packlen_outbound, packlen_rewrited, packlen_pheader;
+int backbone(int socket_in, int *socket_out, const char *logfile, uint8_t runmode, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled) {
+	uint8_t inbound[BUFSIZ], outbound[BUFSIZ], rewrited[BUFSIZ];
+	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
+	ssize_t packlen_inbound;
+	size_t packlen_rewrited;
+	int packlen_pheader;
 	struct sockaddr_in addr_outbound;
 	memset(inbound, 0, BUFSIZ);
 	memset(outbound, 0, BUFSIZ);
@@ -94,11 +99,11 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 		return BACKBONE_EUNIDENT;
 	}
 	if (inbound[0] == 0xFE) {
-		int motd_version = protocol_identify(inbound);
+		uint8_t motd_version = protocol_identify(inbound);
 		if (motd_version == PVER_LEGACYM3) {
 			p_motd_legacy inbound_info = packet_read_legacy_motd(inbound);
 			conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
-			if (proxyinfo.valid == 0) {
+			if (!proxyinfo.valid) {
 				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 					"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n",
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address
@@ -110,7 +115,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 				return BACKBONE_ENOVHOST;
 			}
 			int mkoutbound_status, outmsg_level;
-			if (proxyinfo.srvenabled == 1) {
+			if (proxyinfo.srvenabled) {
 				net_srvrecord srvrecords[128];
 				if (net_srvresolve(proxyinfo.address, srvrecords) > 0) {
 					char *proxyaddr_new = (char *)realloc(proxyinfo.address, strlen(srvrecords[0].target) + 1);
@@ -118,7 +123,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 						proxyinfo.address = proxyaddr_new;
 						strcpy(proxyinfo.address, srvrecords[0].target);
 						proxyinfo.port = srvrecords[0].port;
-						proxyinfo.srvenabled = 0;
+						proxyinfo.srvenabled = false;
 					}
 				}
 			}
@@ -127,7 +132,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			if (connaddr.family == 0) {
 				mkoutbound_status = NET_ENORECORD;
 			}
-			*socket_out = net_socket(NETSOCK_CONN, connaddr.family, &(connaddr.addr), proxyinfo.port, 0);
+			*socket_out = net_socket(NETSOCK_CONN, connaddr.family, &(connaddr.addr), proxyinfo.port, false);
 			if (*socket_out == -1) {
 				mkoutbound_status = NET_ECONNECT;
 			}
@@ -142,9 +147,9 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 						"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: accept\n",
 						(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 					);
-					if (proxyinfo.pheader == 1) {
+					if (proxyinfo.pheader) {
 						if (connaddr.family == addrinfo_in.family) {
-							net_addrp addrinfo_out = net_ntop(connaddr.family, &(connaddr.addr), 0);
+							net_addrp addrinfo_out = net_ntop(connaddr.family, &(connaddr.addr), false);
 							if (addrinfo_in.family == AF_INET) {
 								packlen_pheader = snprintf(pheader, sizeof(pheader),
 									"PROXY TCP4 %s %s %d %d\r\n",
@@ -160,7 +165,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 							}
 						}
 					}
-					if (proxyinfo.rewrite == 1) {
+					if (proxyinfo.rewrite) {
 						void *inbound_addr_new = realloc(inbound_info.address, strlen(proxyinfo.address) + 1);
 						if (inbound_addr_new != NULL) {
 							inbound_info.address = inbound_addr_new;
@@ -208,7 +213,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			return BACKBONE_EOLDCLIENT;
 		}
 	} else if (inbound[0] == 2) {
-		int login_version = protocol_identify(inbound);
+		uint8_t login_version = protocol_identify(inbound);
 		if (login_version == PVER_LEGACYL1) {
 			mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 				"src: %s:%d, type: game, status: reject_gamerelay_oldclient\n",
@@ -230,7 +235,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 		} else if ((login_version == PVER_LEGACYL2) || (login_version == PVER_LEGACYL4)) {
 			p_login_legacy inbound_info = packet_read_legacy_login(inbound, packlen_inbound, login_version);
 			conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
-			if (proxyinfo.valid == 0) {
+			if (!proxyinfo.valid) {
 				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 					"src: %s:%d, type: game, vhost: %s, status: reject_vhostinvalid, username: %s\n",
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, inbound_info.username
@@ -241,7 +246,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 				return BACKBONE_ENOVHOST;
 			}
 			int mkoutbound_status, outmsg_level;
-			if (proxyinfo.srvenabled == 1) {
+			if (proxyinfo.srvenabled) {
 				net_srvrecord srvrecords[128];
 				if (net_srvresolve(proxyinfo.address, srvrecords) > 0) {
 					char *proxyaddr_new = (char *)realloc(proxyinfo.address, strlen(srvrecords[0].target) + 1);
@@ -249,7 +254,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 						proxyinfo.address = proxyaddr_new;
 						strcpy(proxyinfo.address, srvrecords[0].target);
 						proxyinfo.port = srvrecords[0].port;
-						proxyinfo.srvenabled = 0;
+						proxyinfo.srvenabled = false;
 					}
 				}
 			}
@@ -258,7 +263,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			if (connaddr.family == 0) {
 				mkoutbound_status = NET_ENORECORD;
 			}
-			*socket_out = net_socket(NETSOCK_CONN, connaddr.family, &(connaddr.addr), proxyinfo.port, 0);
+			*socket_out = net_socket(NETSOCK_CONN, connaddr.family, &(connaddr.addr), proxyinfo.port, false);
 			if (*socket_out == -1) {
 				mkoutbound_status = NET_ECONNECT;
 			}
@@ -273,9 +278,9 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 						"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: accept, username: %s\n",
 						(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 					);
-					if (proxyinfo.pheader == 1) {
+					if (proxyinfo.pheader) {
 						if (connaddr.family == addrinfo_in.family) {
-							net_addrp addrinfo_out = net_ntop(connaddr.family, &(connaddr.addr), 0);
+							net_addrp addrinfo_out = net_ntop(connaddr.family, &(connaddr.addr), false);
 							if (addrinfo_in.family == AF_INET) {
 								packlen_pheader = snprintf(pheader, sizeof(pheader),
 									"PROXY TCP4 %s %s %d %d\r\n",
@@ -291,7 +296,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 							}
 						}
 					}
-					if (proxyinfo.rewrite == 1) {
+					if (proxyinfo.rewrite) {
 						snprintf(inbound_info.address, sizeof(inbound_info.address), "%s", proxyinfo.address);
 						inbound_info.port = proxyinfo.port;
 						packlen_rewrited = packet_write_legacy_login(inbound_info, rewrited);
@@ -345,7 +350,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 		}
 		const char *typestr = (inbound_info.nextstate == CLIENT_INTENT_TRANSFER) ? "transfer" : "game";
 		conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
-		if (proxyinfo.valid == 0) {
+		if (!proxyinfo.valid) {
 			if (inbound_info.nextstate == CLIENT_INTENT_STATUS) {
 				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 					"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n",
@@ -365,7 +370,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 			return BACKBONE_ENOVHOST;
 		}
 		int mkoutbound_status, outmsg_level;
-		if (proxyinfo.srvenabled == 1) {
+		if (proxyinfo.srvenabled) {
 			net_srvrecord srvrecords[128];
 			if (net_srvresolve(proxyinfo.address, srvrecords) > 0) {
 				char *proxyaddr_new = (char *)realloc(proxyinfo.address, strlen(srvrecords[0].target) + 1);
@@ -373,7 +378,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 					proxyinfo.address = proxyaddr_new;
 					strcpy(proxyinfo.address, srvrecords[0].target);
 					proxyinfo.port = srvrecords[0].port;
-					proxyinfo.srvenabled = 0;
+					proxyinfo.srvenabled = false;
 				}
 			}
 		}
@@ -382,7 +387,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 		if (connaddr.family == 0) {
 			mkoutbound_status = NET_ENORECORD;
 		}
-		*socket_out = net_socket(NETSOCK_CONN, connaddr.family, &(connaddr.addr), proxyinfo.port, 0);
+		*socket_out = net_socket(NETSOCK_CONN, connaddr.family, &(connaddr.addr), proxyinfo.port, false);
 		if (*socket_out == -1) {
 			mkoutbound_status = NET_ECONNECT;
 		}
@@ -408,9 +413,9 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 						(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 					);
 				}
-				if (proxyinfo.pheader == 1) {
+				if (proxyinfo.pheader) {
 					if (connaddr.family == addrinfo_in.family) {
-						net_addrp addrinfo_out = net_ntop(connaddr.family, &(connaddr.addr), 0);
+						net_addrp addrinfo_out = net_ntop(connaddr.family, &(connaddr.addr), false);
 						if (addrinfo_in.family == AF_INET) {
 							packlen_pheader = snprintf(pheader, sizeof(pheader),
 								"PROXY TCP4 %s %s %d %d\r\n",
@@ -426,7 +431,7 @@ int backbone(int socket_in, int *socket_out, char *logfile, unsigned short runmo
 						}
 					}
 				}
-				if (proxyinfo.rewrite == 1) {
+				if (proxyinfo.rewrite) {
 					void *inbound_addr_new = realloc(inbound_info.address, strlen(proxyinfo.address) + 1);
 					if (inbound_addr_new != NULL) {
 						inbound_info.address = inbound_addr_new;
