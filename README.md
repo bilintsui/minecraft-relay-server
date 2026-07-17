@@ -39,13 +39,8 @@ Before compiling, you need to install cJSON at first.
 
 For example, you can install it on Debian-like systems by <code>apt install libcjson-dev</code>.
 
-Then you can use CMake to compile it, by following:
-<pre>
-mkdir build
-cd build
-cmake ..
-make
-</pre>
+Then you can use CMake to compile it by <code>cmake -B build && cmake --build build</code>, the executable file is <code>build/mcrelay</code>.
+
 Additionally, if you want cross-compiling, the following CMake properties will be helpful:
 * <code>-DCMAKE_C_COMPILER</code>: Specify an alternative compiler, CMake uses <code>cc</code> by default.
 * <code>-DEXEC_SUFFIX</code>: Add a suffix to the final binary file, the file will be generated called <code>mcrelay</code>.
