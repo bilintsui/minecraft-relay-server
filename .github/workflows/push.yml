@@ -1,0 +1,31 @@
+name: push-build
+
+on:
+  push:
+
+jobs:
+  build_mcrelay:
+    name: Build Minecraft Relay Server (amd64)
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc cmake libcjson-dev
+      - name: Build release
+        run: |
+          cmake -B build-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=OFF
+          cmake --build build-release
+      - name: Build debug
+        run: |
+          cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=ON
+          cmake --build build-debug
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcrelay-amd64
+          path: |
+            build-release/mcrelay
+            build-debug/mcrelay
