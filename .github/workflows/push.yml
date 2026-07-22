@@ -23,7 +23,7 @@ jobs:
           cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=ON
           cmake --build build-debug
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: mcrelay-amd64
           path: |
