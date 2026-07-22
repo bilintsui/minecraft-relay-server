@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 
 #include "basic.h"
 #include "log.h"
@@ -117,7 +118,7 @@ void config_icon_load(conf *cfg, const char *logfile, uint8_t runmode, uint8_t l
 		return;
 	}
 	void *icon_raw = NULL;
-	size_t icon_size = freadall(cfg->icon_path, &icon_raw);
+	ssize_t icon_size = freadall(cfg->icon_path, &icon_raw, false);
 	if (icon_size > 0) {
 		size_t blocks = icon_size / 3;
 		size_t b64_size = (blocks + (icon_size % 3 > 0)) * 4;
@@ -142,31 +143,38 @@ void config_icon_load(conf *cfg, const char *logfile, uint8_t runmode, uint8_t l
 		if (icon_raw != NULL) {
 			free(icon_raw);
 		}
-		switch (errno) {
-			case FREADALL_ERFAIL:
-				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
-					"Cannot open icon file %s, using default.\n",
-					cfg->icon_path
-				);
-				break;
-			case FREADALL_ELARGE:
-				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
-					"Icon file %s too large, using default.\n",
-					cfg->icon_path
-				);
-				break;
-			case FREADALL_ENOMEM:
-				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
-					"No memory to read icon file %s, using default.\n",
-					cfg->icon_path
-				);
-				break;
-			default:
-				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
-					"Cannot read icon file %s, using default.\n",
-					cfg->icon_path
-				);
-				break;
+		if (icon_size == 0) {
+			mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+				"Icon file %s is empty, using default.\n",
+				cfg->icon_path
+			);
+		} else if (icon_size == -1) {
+			switch (errno) {
+				case FREADALL_ERFAIL:
+					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+						"Cannot open icon file %s, using default.\n",
+						cfg->icon_path
+					);
+					break;
+				case FREADALL_ELARGE:
+					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+						"Icon file %s too large, using default.\n",
+						cfg->icon_path
+					);
+					break;
+				case FREADALL_ENOMEM:
+					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+						"No memory to read icon file %s, using default.\n",
+						cfg->icon_path
+					);
+					break;
+				default:
+					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+						"Cannot read icon file %s, using default.\n",
+						cfg->icon_path
+					);
+					break;
+			}
 		}
 	}
 }
@@ -349,18 +357,22 @@ conf *config_read(char *filename) {
 		return NULL;
 	}
 	void *config_raw = NULL;
-	size_t config_size = freadall(filename, &config_raw);
-	if (config_size == 0) {
-		switch (errno) {
-			case FREADALL_ERFAIL:
-				errno = CONF_EROPENFAIL;
-				break;
-			case FREADALL_ELARGE:
-				errno = CONF_EROPENLARGE;
-				break;
-			case FREADALL_ENOMEM:
-				errno = CONF_ERMEMORY;
-				break;
+	ssize_t config_size = freadall(filename, &config_raw, DEBUG_MODE);
+	if (config_size <= 0) {
+		if (config_size == 0) {
+			errno = CONF_EROPENEMPTY;
+		} else if (config_size == -1) {
+			switch (errno) {
+				case FREADALL_ERFAIL:
+					errno = CONF_EROPENFAIL;
+					break;
+				case FREADALL_ELARGE:
+					errno = CONF_EROPENLARGE;
+					break;
+				case FREADALL_ENOMEM:
+					errno = CONF_ERMEMORY;
+					break;
+			}
 		}
 		return NULL;
 	}

@@ -6,10 +6,12 @@
  */
 
 #include <errno.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "basic.h"
 
@@ -48,34 +50,77 @@ size_t base64_encode(void *dst, size_t dst_cap, const void *src, size_t src_len)
 	return total_blocks * 4;
 }
 
-size_t freadall(const char *filename, void **dst) {
+ssize_t freadall(const char *filename, void **dst, bool allow_fifo) {
+	int error_code = 0;
+	FILE *srcfd = NULL;
+	void *result = NULL;
 	if ((filename == NULL) || (dst == NULL)) {
-		errno = FREADALL_EINVAL;
-		return 0;
+		error_code = FREADALL_EINVAL;
+		goto cleanup;
 	}
-	FILE *srcfd = fopen(filename, "rb");
+	struct stat st;
+	if ((stat(filename, &st) != 0) || !(S_ISREG(st.st_mode) || (allow_fifo && S_ISFIFO(st.st_mode)))) {
+		error_code = FREADALL_ERFAIL;
+		goto cleanup;
+	}
+	srcfd = fopen(filename, "rb");
 	if (srcfd == NULL) {
-		errno = FREADALL_ERFAIL;
-		return 0;
+		error_code = FREADALL_ERFAIL;
+		goto cleanup;
 	}
-	fseek(srcfd, 0, SEEK_END);
-	size_t filesize = ftell(srcfd);
-	fseek(srcfd, 0, SEEK_SET);
-	if (filesize > FREADALL_SLIMIT) {
-		fclose(srcfd);
-		errno = FREADALL_ELARGE;
-		return 0;
+	if ((fstat(fileno(srcfd), &st) != 0) || !(S_ISREG(st.st_mode) || (allow_fifo && S_ISFIFO(st.st_mode)))) {
+		error_code = FREADALL_ERFAIL;
+		goto cleanup;
 	}
-	void *result = malloc(filesize);
+	result = malloc(FREADALL_SLIMIT);
 	if (result == NULL) {
-		fclose(srcfd);
-		errno = FREADALL_ENOMEM;
-		return 0;
+		error_code = FREADALL_ENOMEM;
+		goto cleanup;
 	}
-	fread(result, filesize, 1, srcfd);
+	size_t bytes_read = 0, bytes_total = 0;
+	while (bytes_total < FREADALL_SLIMIT) {
+		bytes_read = fread((uint8_t *)result + bytes_total, 1, FREADALL_SLIMIT - bytes_total, srcfd);
+		if (bytes_read == 0) {
+			break;
+		}
+		bytes_total += bytes_read;
+	}
+	if (bytes_total == FREADALL_SLIMIT) {
+		uint8_t extrabyte;
+		if (fread(&extrabyte, 1, sizeof(extrabyte), srcfd)) {
+			error_code = FREADALL_ELARGE;
+			goto cleanup;
+		}
+	}
+	if (ferror(srcfd)) {
+		error_code = FREADALL_ERFAIL;
+		goto cleanup;
+	}
 	fclose(srcfd);
+	srcfd = NULL;
+	if (bytes_total > 0) {
+		void *result_final = realloc(result, bytes_total);
+		if (result_final != NULL) {
+			result = result_final;
+		}
+	} else {
+		free(result);
+		result = NULL;
+	}
 	*dst = result;
-	return filesize;
+	errno = 0;
+	return bytes_total;
+cleanup:
+	if (srcfd != NULL) {
+		fclose(srcfd);
+		srcfd = NULL;
+	}
+	if (result != NULL) {
+		free(result);
+		result = NULL;
+	}
+	errno = error_code;
+	return -1;
 }
 
 void *int2varint(varint_t src, void *dst) {

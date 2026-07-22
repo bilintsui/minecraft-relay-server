@@ -22,6 +22,10 @@
 #define VARINT_T_MAXIDX	(sizeof(varint_t) * 8 / 7)
 #define VARINT_T_LAST_MASK	((varint_t)((1u << ((sizeof(varint_t) * 8) % 7)) - 1))
 
+#ifndef DEBUG_MODE
+#define DEBUG_MODE	false
+#endif
+
 #define ADDRESS_MAXLEN	1024
 
 #define RUNMODE_CONSOLE	0

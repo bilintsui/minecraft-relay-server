@@ -10,18 +10,19 @@
 #define _MRS_BASIC_H_INCLUDED_
 
 #include <stdbool.h>
-#include <stddef.h>
+#include <sys/types.h>
 
 #include "define/global.h"
 
 #define FREADALL_SLIMIT	5242880
+
 #define FREADALL_EINVAL	1
 #define FREADALL_ERFAIL	2
 #define FREADALL_ELARGE	3
 #define FREADALL_ENOMEM	4
 
 size_t base64_encode(void *dst, size_t dst_cap, const void *src, size_t src_len);
-size_t freadall(const char *filename, void **dst);
+ssize_t freadall(const char *filename, void **dst, bool allow_fifo);
 void *int2varint(varint_t src, void *dst);
 size_t memcat(void *dst, size_t dst_size, const void *src, size_t src_size);
 size_t packetexpand(const void *source, size_t source_length, void *target);

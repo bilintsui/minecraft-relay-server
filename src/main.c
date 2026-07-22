@@ -72,6 +72,12 @@ static void do_reload(void) {
 				configfile
 			);
 			break;
+		case CONF_EROPENEMPTY:
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING,
+				"Empty config file: %s\n",
+				configfile
+			);
+			break;
 		case CONF_EROPENLARGE:
 			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING,
 				"Error in configurations: File too large (5MB), will keep your old configurations.\n"
@@ -289,6 +295,12 @@ int main(int argc, char **argv) {
 		case CONF_EROPENFAIL:
 			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
 				"Cannot read config file: %s\n",
+				configfile
+			);
+			return EXITCODE_NOCONFFILE;
+		case CONF_EROPENEMPTY:
+			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+				"Empty config file: %s\n",
 				configfile
 			);
 			return EXITCODE_NOCONFFILE;

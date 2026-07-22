@@ -42,56 +42,56 @@ jobs:
         run: |
           mkdir build-amd64
           cd build-amd64
-          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which gcc` -DCMAKE_C_FLAGS="-march=x86-64" -DEXEC_SUFFIX="-amd64" ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which gcc` -DCMAKE_C_FLAGS="-march=x86-64" -DEXEC_SUFFIX="-amd64" -DDEBUG_MODE=OFF ..
           make
           cd ..
       - name: Build amd64v3
         run: |
           mkdir build-amd64v3
           cd build-amd64v3
-          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which gcc` -DCMAKE_C_FLAGS="-march=x86-64-v3" -DEXEC_SUFFIX="-amd64v3" ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which gcc` -DCMAKE_C_FLAGS="-march=x86-64-v3" -DEXEC_SUFFIX="-amd64v3" -DDEBUG_MODE=OFF ..
           make
           cd ..
       - name: Build arm64
         run: |
           mkdir build-arm64
           cd build-arm64
-          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which aarch64-linux-gnu-gcc` -DEXEC_SUFFIX="-arm64" ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which aarch64-linux-gnu-gcc` -DEXEC_SUFFIX="-arm64" -DDEBUG_MODE=OFF ..
           make
           cd ..
       - name: Build armhf
         run: |
           mkdir build-armhf
           cd build-armhf
-          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which arm-linux-gnueabihf-gcc` -DEXEC_SUFFIX="-armhf" ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which arm-linux-gnueabihf-gcc` -DEXEC_SUFFIX="-armhf" -DDEBUG_MODE=OFF ..
           make
           cd ..
       - name: Build ppc64el
         run: |
           mkdir build-ppc64el
           cd build-ppc64el
-          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which powerpc64le-linux-gnu-gcc` -DEXEC_SUFFIX="-ppc64el" ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which powerpc64le-linux-gnu-gcc` -DEXEC_SUFFIX="-ppc64el" -DDEBUG_MODE=OFF ..
           make
           cd ..
       - name: Build riscv64
         run: |
           mkdir build-riscv64
           cd build-riscv64
-          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which riscv64-linux-gnu-gcc` -DEXEC_SUFFIX="-riscv64" ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which riscv64-linux-gnu-gcc` -DEXEC_SUFFIX="-riscv64" -DDEBUG_MODE=OFF ..
           make
           cd ..
       - name: Build s390x
         run: |
           mkdir build-s390x
           cd build-s390x
-          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which s390x-linux-gnu-gcc` -DEXEC_SUFFIX="-s390x" ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which s390x-linux-gnu-gcc` -DEXEC_SUFFIX="-s390x" -DDEBUG_MODE=OFF ..
           make
           cd ..
       - name: Build i386
         run: |
           mkdir build-i386
           cd build-i386
-          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which i686-linux-gnu-gcc` -DEXEC_SUFFIX="-i386" ..
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which i686-linux-gnu-gcc` -DEXEC_SUFFIX="-i386" -DDEBUG_MODE=OFF ..
           make
           cd ..
       - name: Post build
