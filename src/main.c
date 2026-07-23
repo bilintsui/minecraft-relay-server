@@ -16,10 +16,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "connsetup.h"
 #include "define/exitcode.h"
 #include "define/global.h"
 #include "log.h"
-#include "misc.h"
 
 char cwd[PATH_MAX];
 char *argoffset_configfile = NULL;
@@ -506,7 +506,7 @@ int main(int argc, char **argv) {
 					break;
 			}
 			int socket_outbound;
-			if (backbone(socket_inbound_client, &socket_outbound, config_logfull, config_runmode, config, addrbundle_inbound_client, config_netpriority_enabled)) {
+			if (connsetup(socket_inbound_client, &socket_outbound, config_logfull, config_runmode, config, addrbundle_inbound_client, config_netpriority_enabled)) {
 				return EXITCODE_OK;
 			}
 			net_relay(socket_inbound_client, socket_outbound);

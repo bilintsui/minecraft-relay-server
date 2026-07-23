@@ -15,6 +15,8 @@
 #include <stdint.h>
 #include <sys/socket.h>
 
+#include "define/global.h"
+
 #define CONF_ADDRESSMAXLEN	ADDRESS_MAXLEN
 
 /*

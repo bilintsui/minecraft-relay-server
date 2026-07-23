@@ -1,5 +1,5 @@
 /*
- * misc.c: Functions for initial connection setup
+ * connsetup.c: Functions for initial connection setup
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui
@@ -19,9 +19,9 @@
 #include "protocol/handshake_legacy.h"
 #include "protocol/proxy.h"
 
-#include "misc.h"
+#include "connsetup.h"
 
-static void proxyinfo_resolve_srv(conf_proxy *proxyinfo) {
+static void connsetup_proxyinfo_resolve_srv(conf_proxy *proxyinfo) {
 	if (!proxyinfo->srvenabled) {
 		return;
 	}
@@ -37,9 +37,9 @@ static void proxyinfo_resolve_srv(conf_proxy *proxyinfo) {
 	}
 }
 
-static int backbone_connect_outbound(int *socket_out, net_addr *connaddr_out, conf_proxy *proxyinfo, sa_family_t family, bool netpriority_enabled) {
+static int connsetup_connect_outbound(int *socket_out, net_addr *connaddr_out, conf_proxy *proxyinfo, sa_family_t family, bool netpriority_enabled) {
 	int mkoutbound_status;
-	proxyinfo_resolve_srv(proxyinfo);
+	connsetup_proxyinfo_resolve_srv(proxyinfo);
 	mkoutbound_status = 0;
 	*connaddr_out = net_resolve_dual(proxyinfo->address, family, netpriority_enabled);
 	if (connaddr_out->family == 0) {
@@ -52,7 +52,7 @@ static int backbone_connect_outbound(int *socket_out, net_addr *connaddr_out, co
 	return mkoutbound_status;
 }
 
-static void backbone_send_proxy_header(int socket_out, char *pheader, int *packlen_pheader, const net_addr *connaddr, const net_addrbundle *addrinfo_in, const conf_proxy *proxyinfo) {
+static void connsetup_send_proxy_header(int socket_out, char *pheader, int *packlen_pheader, const net_addr *connaddr, const net_addrbundle *addrinfo_in, const conf_proxy *proxyinfo) {
 	if (connaddr->family != addrinfo_in->family) {
 		return;
 	}
@@ -72,7 +72,7 @@ static void backbone_send_proxy_header(int socket_out, char *pheader, int *packl
 	}
 }
 
-static bool backbone_read_more(int socket_in, uint8_t *inbound, ssize_t *packlen_inbound, const char *logfile, uint8_t runmode, uint8_t loglevel, const net_addrbundle *addrinfo_in) {
+static bool connsetup_read_more(int socket_in, uint8_t *inbound, ssize_t *packlen_inbound, const char *logfile, uint8_t runmode, uint8_t loglevel, const net_addrbundle *addrinfo_in) {
 	ssize_t n;
 	n = recv(socket_in, inbound + *packlen_inbound, BUFSIZ - *packlen_inbound, 0);
 	if (n <= 0) {
@@ -84,7 +84,7 @@ static bool backbone_read_more(int socket_in, uint8_t *inbound, ssize_t *packlen
 	return true;
 }
 
-static int handle_legacy_motd(int socket_in, int *socket_out, const char *logfile, uint8_t runmode, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled, uint8_t *inbound, ssize_t packlen_inbound) {
+static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const char *logfile, uint8_t runmode, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled, uint8_t *inbound, ssize_t packlen_inbound) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
@@ -104,11 +104,11 @@ static int handle_legacy_motd(int socket_in, int *socket_out, const char *logfil
 			send(socket_in, rewrited, packlen_rewrited, 0);
 			packet_destroy_legacy_motd(inbound_info);
 			close(socket_in);
-			return BACKBONE_ENOVHOST;
+			return CONNSETUP_ENOVHOST;
 		}
 		int mkoutbound_status, outmsg_level;
 		net_addr connaddr;
-		mkoutbound_status = backbone_connect_outbound(socket_out, &connaddr, &proxyinfo, addrinfo_in.family, netpriority_enabled);
+		mkoutbound_status = connsetup_connect_outbound(socket_out, &connaddr, &proxyinfo, addrinfo_in.family, netpriority_enabled);
 		if (mkoutbound_status != 0) {
 			outmsg_level = MKSYS_LEVEL_WARNING;
 		} else {
@@ -121,7 +121,7 @@ static int handle_legacy_motd(int socket_in, int *socket_out, const char *logfil
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 				);
 				if (proxyinfo.pheader) {
-					backbone_send_proxy_header(*socket_out, pheader, &packlen_pheader, &connaddr, &addrinfo_in, &proxyinfo);
+					connsetup_send_proxy_header(*socket_out, pheader, &packlen_pheader, &connaddr, &addrinfo_in, &proxyinfo);
 				}
 				if (proxyinfo.rewrite) {
 					void *inbound_addr_new = realloc(inbound_info.address, strlen(proxyinfo.address) + 1);
@@ -158,7 +158,7 @@ static int handle_legacy_motd(int socket_in, int *socket_out, const char *logfil
 				close(socket_in);
 				packet_destroy_legacy_motd(inbound_info);
 				config_proxy_search_destroy(&proxyinfo);
-				return (mkoutbound_status == NET_ENORECORD) ? BACKBONE_ENORECORD : BACKBONE_ENOCONNECT;
+				return (mkoutbound_status == NET_ENORECORD) ? CONNSETUP_ENORECORD : CONNSETUP_ENOCONNECT;
 		}
 	} else {
 		mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
@@ -168,13 +168,13 @@ static int handle_legacy_motd(int socket_in, int *socket_out, const char *logfil
 		packlen_rewrited = make_motd_legacy(rewrited, "Proxy: Please use direct connect.", protocol_identify(inbound), 0);
 		send(socket_in, rewrited, packlen_rewrited, 0);
 		close(socket_in);
-		return BACKBONE_EOLDCLIENT;
+		return CONNSETUP_EOLDCLIENT;
 	}
 	close(socket_in);
-	return BACKBONE_EABORT;
+	return CONNSETUP_EABORT;
 }
 
-static int handle_legacy_login(int socket_in, int *socket_out, const char *logfile, uint8_t runmode, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled, uint8_t *inbound, ssize_t packlen_inbound) {
+static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const char *logfile, uint8_t runmode, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled, uint8_t *inbound, ssize_t packlen_inbound) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
@@ -190,7 +190,7 @@ static int handle_legacy_login(int socket_in, int *socket_out, const char *logfi
 		packlen_rewrited = make_kickreason_legacy(rewrited, "Proxy: Unsupported client, use 12w04a or later!");
 		send(socket_in, rewrited, packlen_rewrited, 0);
 		close(socket_in);
-		return BACKBONE_EOLDCLIENT;
+		return CONNSETUP_EOLDCLIENT;
 	} else if (login_version == PVER_LEGACYL3) {
 		mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, type: game, status: reject_gamerelay_12w17a\n",
@@ -199,7 +199,7 @@ static int handle_legacy_login(int socket_in, int *socket_out, const char *logfi
 		packlen_rewrited = make_kickreason_legacy(rewrited, "Proxy: Unsupported client, use 12w18a or later!");
 		send(socket_in, rewrited, packlen_rewrited, 0);
 		close(socket_in);
-		return BACKBONE_EOLDCLIENT;
+		return CONNSETUP_EOLDCLIENT;
 	} else if ((login_version == PVER_LEGACYL2) || (login_version == PVER_LEGACYL4)) {
 		p_login_legacy inbound_info = packet_read_legacy_login(inbound, packlen_inbound, login_version);
 		conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
@@ -211,11 +211,11 @@ static int handle_legacy_login(int socket_in, int *socket_out, const char *logfi
 			packlen_rewrited = make_kickreason_legacy(rewrited, "Proxy: Please use a legit name to connect!");
 			send(socket_in, rewrited, packlen_rewrited, 0);
 			close(socket_in);
-			return BACKBONE_ENOVHOST;
+			return CONNSETUP_ENOVHOST;
 		}
 		int mkoutbound_status, outmsg_level;
 		net_addr connaddr;
-		mkoutbound_status = backbone_connect_outbound(socket_out, &connaddr, &proxyinfo, addrinfo_in.family, netpriority_enabled);
+		mkoutbound_status = connsetup_connect_outbound(socket_out, &connaddr, &proxyinfo, addrinfo_in.family, netpriority_enabled);
 		if (mkoutbound_status != 0) {
 			outmsg_level = MKSYS_LEVEL_WARNING;
 		} else {
@@ -228,7 +228,7 @@ static int handle_legacy_login(int socket_in, int *socket_out, const char *logfi
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 				);
 				if (proxyinfo.pheader) {
-					backbone_send_proxy_header(*socket_out, pheader, &packlen_pheader, &connaddr, &addrinfo_in, &proxyinfo);
+					connsetup_send_proxy_header(*socket_out, pheader, &packlen_pheader, &connaddr, &addrinfo_in, &proxyinfo);
 				}
 				if (proxyinfo.rewrite) {
 					snprintf(inbound_info.address, sizeof(inbound_info.address), "%s", proxyinfo.address);
@@ -258,14 +258,14 @@ static int handle_legacy_login(int socket_in, int *socket_out, const char *logfi
 				send(socket_in, rewrited, packlen_rewrited, 0);
 				close(socket_in);
 				config_proxy_search_destroy(&proxyinfo);
-				return (mkoutbound_status == NET_ENORECORD) ? BACKBONE_ENORECORD : BACKBONE_ENOCONNECT;
+				return (mkoutbound_status == NET_ENORECORD) ? CONNSETUP_ENORECORD : CONNSETUP_ENOCONNECT;
 		}
 	}
 	close(socket_in);
-	return BACKBONE_EABORT;
+	return CONNSETUP_EABORT;
 }
 
-static int handle_modern_handshake(int socket_in, int *socket_out, const char *logfile, uint8_t runmode, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled, uint8_t *inbound, ssize_t packlen_inbound) {
+static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, const char *logfile, uint8_t runmode, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled, uint8_t *inbound, ssize_t packlen_inbound) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
@@ -290,7 +290,7 @@ static int handle_modern_handshake(int socket_in, int *socket_out, const char *l
 		send(socket_in, rewrited, packlen_rewrited, 0);
 		packet_destroy(inbound_info);
 		close(socket_in);
-		return BACKBONE_EOLDCLIENT;
+		return CONNSETUP_EOLDCLIENT;
 	}
 	const char *typestr = (inbound_info.nextstate == CLIENT_INTENT_TRANSFER) ? "transfer" : "game";
 	conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
@@ -311,11 +311,11 @@ static int handle_modern_handshake(int socket_in, int *socket_out, const char *l
 		send(socket_in, rewrited, packlen_rewrited, 0);
 		packet_destroy(inbound_info);
 		close(socket_in);
-		return BACKBONE_ENOVHOST;
+		return CONNSETUP_ENOVHOST;
 	}
 	int mkoutbound_status, outmsg_level;
 	net_addr connaddr;
-	mkoutbound_status = backbone_connect_outbound(socket_out, &connaddr, &proxyinfo, addrinfo_in.family, netpriority_enabled);
+	mkoutbound_status = connsetup_connect_outbound(socket_out, &connaddr, &proxyinfo, addrinfo_in.family, netpriority_enabled);
 	if (mkoutbound_status != 0) {
 		outmsg_level = MKSYS_LEVEL_WARNING;
 	} else {
@@ -339,7 +339,7 @@ static int handle_modern_handshake(int socket_in, int *socket_out, const char *l
 				);
 			}
 			if (proxyinfo.pheader) {
-				backbone_send_proxy_header(*socket_out, pheader, &packlen_pheader, &connaddr, &addrinfo_in, &proxyinfo);
+				connsetup_send_proxy_header(*socket_out, pheader, &packlen_pheader, &connaddr, &addrinfo_in, &proxyinfo);
 			}
 			if (proxyinfo.rewrite) {
 				void *inbound_addr_new = realloc(inbound_info.address, strlen(proxyinfo.address) + 1);
@@ -392,13 +392,13 @@ static int handle_modern_handshake(int socket_in, int *socket_out, const char *l
 			close(socket_in);
 			config_proxy_search_destroy(&proxyinfo);
 			packet_destroy(inbound_info);
-			return (mkoutbound_status == NET_ENORECORD) ? BACKBONE_ENORECORD : BACKBONE_ENOCONNECT;
+			return (mkoutbound_status == NET_ENORECORD) ? CONNSETUP_ENORECORD : CONNSETUP_ENOCONNECT;
 	}
 	close(socket_in);
-	return BACKBONE_EABORT;
+	return CONNSETUP_EABORT;
 }
 
-int backbone(int socket_in, int *socket_out, const char *logfile, uint8_t runmode, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled) {
+int connsetup(int socket_in, int *socket_out, const char *logfile, uint8_t runmode, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled) {
 	uint8_t inbound[BUFSIZ];
 	ssize_t packlen_inbound;
 	memset(inbound, 0, BUFSIZ);
@@ -409,19 +409,19 @@ int backbone(int socket_in, int *socket_out, const char *logfile, uint8_t runmod
 			(char *)&(addrinfo_in.address), addrinfo_in.port
 		);
 		close(socket_in);
-		return BACKBONE_EABORT;
+		return CONNSETUP_EABORT;
 	}
 	switch (inbound[0]) {
 		case 0xFE:
 			if (packlen_inbound > 2) {
 				while (packlen_inbound < 0x20) {
-					if (!backbone_read_more(socket_in, inbound, &packlen_inbound, logfile, runmode, conf_in->log.level, &addrinfo_in)) {
-						return BACKBONE_EABORT;
+					if (!connsetup_read_more(socket_in, inbound, &packlen_inbound, logfile, runmode, conf_in->log.level, &addrinfo_in)) {
+						return CONNSETUP_EABORT;
 					}
 				}
 				while (packlen_inbound < (0x20 + inbound[0x1F] * 2 + 4)) {
-					if (!backbone_read_more(socket_in, inbound, &packlen_inbound, logfile, runmode, conf_in->log.level, &addrinfo_in)) {
-						return BACKBONE_EABORT;
+					if (!connsetup_read_more(socket_in, inbound, &packlen_inbound, logfile, runmode, conf_in->log.level, &addrinfo_in)) {
+						return CONNSETUP_EABORT;
 					}
 				}
 			}
@@ -431,8 +431,8 @@ int backbone(int socket_in, int *socket_out, const char *logfile, uint8_t runmod
 		default: {
 			intent_t intent = inbound[packlen_inbound - 1];
 			if ((intent == CLIENT_INTENT_STATUS) || (intent == CLIENT_INTENT_LOGIN) || (intent == CLIENT_INTENT_TRANSFER)) {
-				if (!backbone_read_more(socket_in, inbound, &packlen_inbound, logfile, runmode, conf_in->log.level, &addrinfo_in)) {
-					return BACKBONE_EABORT;
+				if (!connsetup_read_more(socket_in, inbound, &packlen_inbound, logfile, runmode, conf_in->log.level, &addrinfo_in)) {
+					return CONNSETUP_EABORT;
 				}
 			}
 			break;
@@ -444,13 +444,13 @@ int backbone(int socket_in, int *socket_out, const char *logfile, uint8_t runmod
 			(char *)&(addrinfo_in.address), addrinfo_in.port
 		);
 		close(socket_in);
-		return BACKBONE_EUNIDENT;
+		return CONNSETUP_EUNIDENT;
 	}
 	if (inbound[0] == 0xFE) {
-		return handle_legacy_motd(socket_in, socket_out, logfile, runmode, conf_in, addrinfo_in, netpriority_enabled, inbound, packlen_inbound);
+		return connsetup_handle_legacy_motd(socket_in, socket_out, logfile, runmode, conf_in, addrinfo_in, netpriority_enabled, inbound, packlen_inbound);
 	} else if (inbound[0] == 2) {
-		return handle_legacy_login(socket_in, socket_out, logfile, runmode, conf_in, addrinfo_in, netpriority_enabled, inbound, packlen_inbound);
+		return connsetup_handle_legacy_login(socket_in, socket_out, logfile, runmode, conf_in, addrinfo_in, netpriority_enabled, inbound, packlen_inbound);
 	} else {
-		return handle_modern_handshake(socket_in, socket_out, logfile, runmode, conf_in, addrinfo_in, netpriority_enabled, inbound, packlen_inbound);
+		return connsetup_handle_modern_handshake(socket_in, socket_out, logfile, runmode, conf_in, addrinfo_in, netpriority_enabled, inbound, packlen_inbound);
 	}
 }
