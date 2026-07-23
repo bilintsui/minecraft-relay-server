@@ -44,10 +44,12 @@ static int connsetup_connect_outbound(int *socket_out, net_addr *connaddr_out, c
 	*connaddr_out = net_resolve_dual(proxyinfo->address, family, netpriority_enabled);
 	if (connaddr_out->family == 0) {
 		mkoutbound_status = NET_ENORECORD;
-	}
-	*socket_out = net_socket(NETSOCK_CONN, connaddr_out->family, &(connaddr_out->addr), proxyinfo->port, false);
-	if (*socket_out == -1) {
-		mkoutbound_status = NET_ECONNECT;
+		*socket_out = -1;
+	} else {
+		*socket_out = net_socket(NETSOCK_CONN, connaddr_out->family, &(connaddr_out->addr), proxyinfo->port, false);
+		if (*socket_out == -1) {
+			mkoutbound_status = NET_ECONNECT;
+		}
 	}
 	return mkoutbound_status;
 }
