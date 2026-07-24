@@ -33,4 +33,6 @@ char *strtok_head(char *dst, size_t dst_size, char *src, char delim);
 size_t strtok_tail(char *dst, size_t dst_size, const char *src, size_t src_size, char delim);
 void *varint2int(void *src, varint_t *dst);
 
+void resolve_path(const char *path, const char *cwd, char *out, size_t out_size);
+
 #endif

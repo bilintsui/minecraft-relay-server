@@ -69,5 +69,6 @@ cJSON *config_proxy_parse(cJSON *src);
 conf_proxy config_proxy_search(conf *src, const char *targetvhost);
 void config_proxy_search_destroy(conf_proxy *target);
 conf *config_read(char *filename);
+const char *config_errmsg(int err);
 
 #endif

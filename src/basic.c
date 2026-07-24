@@ -285,3 +285,11 @@ void *varint2int(void *src, varint_t *dst) {
 	}
 	return NULL;
 }
+
+void resolve_path(const char *path, const char *cwd, char *out, size_t out_size) {
+	if (path[0] != '/') {
+		snprintf(out, out_size, "%s/%s", cwd, path);
+	} else {
+		snprintf(out, out_size, "%s", path);
+	}
+}

@@ -531,3 +531,30 @@ conf *config_read(char *filename) {
 	errno = 0;
 	return result;
 }
+
+const char *config_errmsg(int err) {
+	switch (err) {
+		case CONF_EROPENFAIL:
+			return "Cannot read config file: ";
+		case CONF_EROPENEMPTY:
+			return "Empty config file: ";
+		case CONF_EROPENLARGE:
+			return "Error in configurations: File too large (5MB)";
+		case CONF_ERMEMORY:
+			return "Error in configurations: Failed to allocate memory when reading file";
+		case CONF_ERPARSE:
+			return "Error in configurations: Not a valid JSON format";
+		case CONF_ECMEMORY:
+			return "Error in processing configurations: Failed to allocate memory during internal processing";
+		case CONF_ECNETPRIORITYPROTOCOL:
+			return "Error in configurations: Entry \"netpriority.protocol\" must be IPv4 or IPv6 (case sensitive)";
+		case CONF_ECLISTENPORT:
+			return "Error in configurations: Entry \"listen.port\" must be an unsigned short integer (0-65535)";
+		case CONF_ECPROXY:
+			return "Error in configurations: Entry \"proxy\" is missing";
+		case CONF_ECPROXYDUP:
+			return "Error in configurations: Duplication found in proxy virtual hostnames";
+		default:
+			return NULL;
+	}
+}
