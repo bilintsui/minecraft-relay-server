@@ -122,6 +122,11 @@ const char *config_errmsg(int err) {
 	}
 }
 
+/*
+ * Load and base64-encode the icon file specified in cfg->icon_path.
+ * If the encoded result exceeds CONF_ICON_B64MAX or any step fails,
+ * cfg->icon_b64 stays NULL (caller falls back to FAVICON_BASE64).
+ */
 void config_icon_load(conf *cfg, const char *logfile, uint8_t runmode, uint8_t loglevel) {
 	if (cfg->icon_path == NULL) {
 		return;

@@ -65,13 +65,18 @@ static int config_exitcode(int err) {
 	}
 }
 
-static void detach_process(void) {
-	setsid();
+static int detach_process(void) {
+	if (setsid() < 0) {
+		return -1;
+	}
 	fclose(stdin);
 	fclose(stdout);
 	fclose(stderr);
-	chdir("/");
+	if (chdir("/") < 0) {
+		return -1;
+	}
 	umask(0);
+	return 0;
 }
 
 static void deal_signal(int signum) {
@@ -358,7 +363,9 @@ int main(int argc, char **argv) {
 		} else if (pid < 0) {
 			return EXITCODE_FORKFAIL;
 		}
-		detach_process();
+		if (detach_process() != 0) {
+			return EXITCODE_FORKFAIL;
+		}
 	} else {
 		pid = getpid();
 		if (pidfile_write(pid) != 0) {
