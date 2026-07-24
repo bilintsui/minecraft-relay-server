@@ -172,6 +172,9 @@ size_t packetshrink(const void *source, size_t source_length, void *target) {
 }
 
 void resolve_path(const char *path, const char *cwd, char *out, size_t out_size) {
+	if ((path == NULL) || (cwd == NULL) || (out == NULL) || (out_size == 0)) {
+		return;
+	}
 	if (path[0] != '/') {
 		snprintf(out, out_size, "%s/%s", cwd, path);
 	} else {

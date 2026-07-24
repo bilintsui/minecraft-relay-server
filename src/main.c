@@ -145,6 +145,7 @@ static void do_reload(void) {
 
 static net_addrbundle parse_client_address(void *addr) {
 	net_addrbundle result;
+	memset(&result, 0, sizeof(result));
 	result.family = *((sa_family_t *)addr);
 	void *addroffset = NULL;
 	switch (result.family) {
@@ -163,6 +164,9 @@ static net_addrbundle parse_client_address(void *addr) {
 			result.address_clean = net_ntop(result.family, addroffset, false);
 			result.port = ntohs(((struct sockaddr_in6 *)addr)->sin6_port);
 			break;
+		default:
+			result.family = 0;
+			break;
 	}
 	return result;
 }
@@ -172,7 +176,10 @@ static int pidfile_read(int *pid_out) {
 	if (f == NULL) {
 		return -1;
 	}
-	fscanf(f, "%d", pid_out);
+	if (fscanf(f, "%d", pid_out) != 1) {
+		fclose(f);
+		return -1;
+	}
 	fclose(f);
 	return 0;
 }
@@ -282,7 +289,7 @@ int main(int argc, char **argv) {
 	}
 	LOG_NOPFX(MKSYS_LEVEL_INFORMATION, headmsg);
 	if (argoffset_configfile == NULL) {
-		LOG(MKSYS_LEVEL_CRITICAL, "Config filename cannot be empty!\n", configfile);
+		LOG(MKSYS_LEVEL_CRITICAL, "Config filename cannot be empty!\n");
 		return EXITCODE_BADARG;
 	}
 	snprintf(configfile, sizeof(configfile), "%s", argoffset_configfile);
