@@ -40,6 +40,40 @@ sa_family_t config_netpriority_protocol = AF_INET6;
 uint8_t config_runmode = RUNMODE_SIMPLE;
 volatile sig_atomic_t reload_flag = 0;
 
+
+static void bind_success_msg(void) {
+	LOG_FILE(MKSYS_LEVEL_INFORMATION, "Bind Successful.\n\n");
+	LOG_CFG(MKSYS_LEVEL_INFORMATION, "For more information, see log file: %s\n\n", config->log.filename);
+}
+
+static int config_exitcode(int err) {
+	switch (err) {
+		case CONF_EROPENLARGE:
+			return EXITCODE_FILELARGE;
+		case CONF_ERMEMORY:
+		case CONF_ECMEMORY:
+			return EXITCODE_NOMEM;
+		case CONF_ERPARSE:
+			return EXITCODE_BADJSON;
+		case CONF_ECNETPRIORITYPROTOCOL:
+		case CONF_ECLISTENPORT:
+		case CONF_ECPROXY:
+		case CONF_ECPROXYDUP:
+			return EXITCODE_BADARG;
+		default:
+			return EXITCODE_INTERNAL;
+	}
+}
+
+static void detach_process(void) {
+	setsid();
+	fclose(stdin);
+	fclose(stdout);
+	fclose(stderr);
+	chdir("/");
+	umask(0);
+}
+
 static void deal_signal(int signum) {
 	switch (signum) {
 		case SIGTERM:
@@ -107,39 +141,6 @@ static void do_reload(void) {
 			break;
 	}
 	return;
-}
-
-static void bind_success_msg(void) {
-	LOG_FILE(MKSYS_LEVEL_INFORMATION, "Bind Successful.\n\n");
-	LOG_CFG(MKSYS_LEVEL_INFORMATION, "For more information, see log file: %s\n\n", config->log.filename);
-}
-
-static int config_exitcode(int err) {
-	switch (err) {
-		case CONF_EROPENLARGE:
-			return EXITCODE_FILELARGE;
-		case CONF_ERMEMORY:
-		case CONF_ECMEMORY:
-			return EXITCODE_NOMEM;
-		case CONF_ERPARSE:
-			return EXITCODE_BADJSON;
-		case CONF_ECNETPRIORITYPROTOCOL:
-		case CONF_ECLISTENPORT:
-		case CONF_ECPROXY:
-		case CONF_ECPROXYDUP:
-			return EXITCODE_BADARG;
-		default:
-			return EXITCODE_INTERNAL;
-	}
-}
-
-static void detach_process(void) {
-	setsid();
-	fclose(stdin);
-	fclose(stdout);
-	fclose(stderr);
-	chdir("/");
-	umask(0);
 }
 
 static net_addrbundle parse_client_address(void *addr) {

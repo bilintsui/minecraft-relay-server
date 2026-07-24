@@ -171,18 +171,12 @@ size_t packetshrink(const void *source, size_t source_length, void *target) {
 	return size;
 }
 
-size_t strlen_notail(const char *src, char exemptchr) {
-	if (src == NULL) {
-		return 0;
+void resolve_path(const char *path, const char *cwd, char *out, size_t out_size) {
+	if (path[0] != '/') {
+		snprintf(out, out_size, "%s/%s", cwd, path);
+	} else {
+		snprintf(out, out_size, "%s", path);
 	}
-	size_t result = strlen(src);
-	while (result > 0) {
-		if (src[result - 1] != exemptchr) {
-			break;
-		}
-		result--;
-	}
-	return result;
 }
 
 int strcmp_notail(const char *str1, const char *str2, char exemptchr, bool case_insensitive) {
@@ -199,6 +193,20 @@ int strcmp_notail(const char *str1, const char *str2, char exemptchr, bool case_
 			return strncmp(str1, str2, str2_length);
 		}
 	}
+}
+
+size_t strlen_notail(const char *src, char exemptchr) {
+	if (src == NULL) {
+		return 0;
+	}
+	size_t result = strlen(src);
+	while (result > 0) {
+		if (src[result - 1] != exemptchr) {
+			break;
+		}
+		result--;
+	}
+	return result;
 }
 
 char *strtok_head(char *dst, size_t dst_size, char *src, char delim) {
@@ -284,12 +292,4 @@ void *varint2int(void *src, varint_t *dst) {
 		}
 	}
 	return NULL;
-}
-
-void resolve_path(const char *path, const char *cwd, char *out, size_t out_size) {
-	if (path[0] != '/') {
-		snprintf(out, out_size, "%s/%s", cwd, path);
-	} else {
-		snprintf(out, out_size, "%s", path);
-	}
 }

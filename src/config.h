@@ -62,13 +62,13 @@ typedef struct {
 
 extern char config_duperr[CONF_ADDRESSMAXLEN];
 void config_destroy(conf *target);
-bool config_jsonbool(cJSON *src, bool defaultvalue);
 void config_dumper(conf *src);
+const char *config_errmsg(int err);
 void config_icon_load(conf *cfg, const char *logfile, uint8_t runmode, uint8_t loglevel);
+bool config_jsonbool(cJSON *src, bool defaultvalue);
 cJSON *config_proxy_parse(cJSON *src);
 conf_proxy config_proxy_search(conf *src, const char *targetvhost);
 void config_proxy_search_destroy(conf_proxy *target);
 conf *config_read(char *filename);
-const char *config_errmsg(int err);
 
 #endif
