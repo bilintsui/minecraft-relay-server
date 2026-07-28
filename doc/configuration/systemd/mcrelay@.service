@@ -1,0 +1,15 @@
+[Unit]
+Description=Minecraft Relay Server (%i)
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nobody
+Restart=on-failure
+RestartSec=5s
+ExecStart=/usr/local/bin/mcrelay /usr/local/etc/mcrelay/%i.json
+ExecReload=/bin/kill -USR1 $MAINPID
+
+[Install]
+WantedBy=multi-user.target
