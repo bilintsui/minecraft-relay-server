@@ -6,12 +6,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=nobody
-RuntimeDirectory=mcrelay
 Restart=on-failure
 RestartSec=5s
 ExecStart=/usr/local/bin/mcrelay /usr/local/etc/mcrelay/config.json
-ExecStop=/usr/local/bin/mcrelay -t
-ExecReload=/usr/local/bin/mcrelay -r
+ExecReload=/bin/kill -USR1 $MAINPID
 
 [Install]
 WantedBy=multi-user.target

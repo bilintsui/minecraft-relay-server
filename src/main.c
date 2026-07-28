@@ -21,15 +21,12 @@
 #include "define/global.h"
 #include "log.h"
 
-#define PIDFILE_PATH "/run/mcrelay/mcrelay.pid"
-
 #define LOG(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, lvl, __VA_ARGS__)
 #define LOG_CFG(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, config->log.level, lvl, __VA_ARGS__)
 #define LOG_NOPFX(lvl, ...)	mksysmsg(MKSYS_PREFIX_OFF, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, lvl, __VA_ARGS__)
 #define LOG_FILE(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, config_logfull, config->log.level, lvl, __VA_ARGS__)
 
 char cwd[PATH_MAX];
-char *argoffset_configfile = NULL;
 char configfile[PATH_MAX];
 char configfile_full[PATH_MAX];
 char config_logfull[PATH_MAX];
@@ -67,7 +64,6 @@ static void deal_signal(int signum) {
 	switch (signum) {
 		case SIGTERM:
 		case SIGINT:
-			unlink(PIDFILE_PATH);
 			exit(0);
 		case SIGUSR1:
 			reload_flag = 1;
@@ -160,30 +156,6 @@ static net_addrbundle parse_client_address(void *addr) {
 	return result;
 }
 
-static int pidfile_read(int *pid_out) {
-	FILE *f = fopen(PIDFILE_PATH, "r");
-	if (f == NULL) {
-		return -1;
-	}
-	if (fscanf(f, "%d", pid_out) != 1) {
-		fclose(f);
-		return -1;
-	}
-	fclose(f);
-	return 0;
-}
-
-static int pidfile_write(pid_t pid) {
-	FILE *f = fopen(PIDFILE_PATH, "w");
-	if (f == NULL) {
-		mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, config->log.level, MKSYS_LEVEL_CRITICAL, "Cannot write PID file " PIDFILE_PATH "\n");
-		return -1;
-	}
-	fprintf(f, "%d", pid);
-	fclose(f);
-	return 0;
-}
-
 static void setup_signals(void) {
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
@@ -199,12 +171,12 @@ static const char *headmsg =
 	"Minecraft Relay Server [Version " MCRELAY_VERSION_DISPLAY "/"
 	MCRELAY_VERSION_INTERNAL "]\n"
 	"(c) " MCRELAY_COPYYEAR " Bilin Tsui\n\n";
+
 static const char *helpmsg =
-	"<arguments|config_file>\n\n"
-	"Arguments\n\t-r / --reload:\tReload config on the running instance\n"
-	"\t-t / --stop:\tTerminate the running instance\n"
-	"\t-v / --version:\tShow current mcrelay version\n\n"
-	"See more: https://github.com/bilintsui/minecraft-relay-server";
+	"Usage:\n"
+	"\t%s <config_file>\n"
+	"\t%s (-v | --version)\n\n"
+	"See more: https://github.com/bilintsui/minecraft-relay-server\n";
 
 int main(int argc, char **argv) {
 	int socket_inbound_server, socket_inbound_client;
@@ -215,69 +187,27 @@ int main(int argc, char **argv) {
 	socklen_t strulen = sizeof(addr_inbound_client);
 	getcwd(cwd, PATH_MAX);
 	const char *progname = strrchr(argv[0], '/') ? strrchr(argv[0], '/') + 1 : argv[0];
-	if (argc < 2) {
+	if (argc != 2) {
 		LOG_NOPFX(MKSYS_LEVEL_CRITICAL, headmsg);
-		fprintf(stderr, "Usage: %s %s\n", progname, helpmsg);
+		fprintf(stderr, helpmsg, progname, progname);
 		return EXITCODE_BADARG;
 	}
-	argoffset_configfile = argv[1];
-	int prevpid = 0;
-	char *ptr_argv1 = argv[1];
-	if (*ptr_argv1 == '-') {
-		ptr_argv1++;
-		if ((strcmp(ptr_argv1, "r") == 0) || (strcmp(ptr_argv1, "-reload") == 0)) {
-			if (pidfile_read(&prevpid) != 0) {
-				LOG_NOPFX(MKSYS_LEVEL_CRITICAL, headmsg);
-				LOG(MKSYS_LEVEL_CRITICAL, "Cannot read " PIDFILE_PATH ".\n");
-				return EXITCODE_NOPIDFILE;
-			}
-			if (kill(prevpid, SIGUSR1) == 0) {
-				LOG_NOPFX(MKSYS_LEVEL_INFORMATION, headmsg);
-				LOG(MKSYS_LEVEL_INFORMATION, "Successfully sent reload signal to currently running process.\n");
-				return EXITCODE_OK;
-			} else {
-				LOG_NOPFX(MKSYS_LEVEL_CRITICAL, headmsg);
-				LOG(MKSYS_LEVEL_CRITICAL, "Failed to send reload signal to currently running process.\n");
-				return EXITCODE_NOSIGNAL;
-			}
-		} else if ((strcmp(ptr_argv1, "t") == 0) || (strcmp(ptr_argv1, "-stop") == 0)) {
-			if (pidfile_read(&prevpid) != 0) {
-				LOG_NOPFX(MKSYS_LEVEL_CRITICAL, headmsg);
-				LOG(MKSYS_LEVEL_CRITICAL, "Cannot read " PIDFILE_PATH ".\n");
-				return EXITCODE_NOPIDFILE;
-			}
-			if (kill(prevpid, SIGTERM) == 0) {
-				LOG_NOPFX(MKSYS_LEVEL_INFORMATION, headmsg);
-				LOG(MKSYS_LEVEL_INFORMATION, "Successfully sent terminate signal to currently running process.\n");
-				return EXITCODE_OK;
-			} else {
-				LOG_NOPFX(MKSYS_LEVEL_CRITICAL, headmsg);
-				LOG(MKSYS_LEVEL_CRITICAL, "Failed to send terminate signal to currently running process.\n");
-				return EXITCODE_NOSIGNAL;
-			}
-		} else if ((strcmp(ptr_argv1, "v") == 0) || (strcmp(ptr_argv1, "-version") == 0)) {
-			fprintf(stdout, "v%s(%s)\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_INTERNAL);
-			return EXITCODE_OK;
-		} else {
-			LOG_NOPFX(MKSYS_LEVEL_CRITICAL, headmsg);
-			fprintf(stderr, "Error: Invalid option \"-%s\"\n\nUsage: %s %s\n", ptr_argv1, progname, helpmsg);
-			return EXITCODE_BADARG;
-		}
-	} else {
-		if (pidfile_read(&prevpid) == 0) {
-			if (kill(prevpid, 0) == 0) {
-				LOG_NOPFX(MKSYS_LEVEL_CRITICAL, headmsg);
-				LOG(MKSYS_LEVEL_CRITICAL, "You cannot run multiple instances at a time. Previous running process PID: %d.\n", prevpid);
-				return EXITCODE_MULTIINSTANCE;
-			}
-		}
+	if ((strcmp(argv[1], "-v") == 0) || (strcmp(argv[1], "--version") == 0)) {
+		fprintf(stdout, "v%s(%s)\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_INTERNAL);
+		return EXITCODE_OK;
+	}
+	if (argv[1][0] == '-') {
+		LOG_NOPFX(MKSYS_LEVEL_CRITICAL, headmsg);
+		fprintf(stderr, "Error: Invalid option \"%s\"\n\n", argv[1]);
+		fprintf(stderr, helpmsg, progname, progname);
+		return EXITCODE_BADARG;
 	}
 	LOG_NOPFX(MKSYS_LEVEL_INFORMATION, headmsg);
-	if (argoffset_configfile == NULL) {
+	if (argv[1][0] == '\0') {
 		LOG(MKSYS_LEVEL_CRITICAL, "Config filename cannot be empty!\n");
 		return EXITCODE_BADARG;
 	}
-	snprintf(configfile, sizeof(configfile), "%s", argoffset_configfile);
+	snprintf(configfile, sizeof(configfile), "%s", argv[1]);
 	resolve_path(configfile, cwd, configfile_full, sizeof(configfile_full));
 	LOG(MKSYS_LEVEL_INFORMATION, "Loading configurations from file: %s\n\n", configfile);
 	config = config_read(configfile_full);
@@ -329,9 +259,6 @@ int main(int argc, char **argv) {
 	if (socket_inbound_server == -1) {
 		LOG_FILE(MKSYS_LEVEL_CRITICAL, "Bind Failed!\n");
 		return EXITCODE_BINDFAIL;
-	}
-	if (pidfile_write(getpid()) != 0) {
-		return EXITCODE_CANTCREAT;
 	}
 	bind_success_msg();
 	setup_signals();

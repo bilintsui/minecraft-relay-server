@@ -15,8 +15,6 @@
 #define EXITCODE_OK		EX_OK	/* successful termination */
 
 /* errno aliases */
-#define EXITCODE_NOPIDFILE	ENOENT	/* PID file not found */
-#define EXITCODE_NOSIGNAL	ESRCH	/* target process not running */
 #define EXITCODE_NOMEM		ENOMEM	/* memory allocation failed */
 #define EXITCODE_BADARG		EINVAL	/* invalid arguments or config */
 #define EXITCODE_FILELARGE	EFBIG	/* configuration file too large */
@@ -30,6 +28,5 @@
 #define EXITCODE_BADJSON	(EX__MAX + 1)	/* JSON parse error */
 #define EXITCODE_BINDFAIL	(EX__MAX + 2)	/* socket bind failed */
 #define EXITCODE_NOCONFFILE	(EX__MAX + 3)	/* config file not found */
-#define EXITCODE_MULTIINSTANCE	(EX__MAX + 4)	/* another instance is already running */
 
 #endif

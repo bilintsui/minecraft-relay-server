@@ -47,15 +47,13 @@ Additionally, if you want cross-compiling, the following CMake properties will b
 
 ## Usage
 <pre>
-mcrelay &lt;arguments|config_file&gt;
-
-Arguments
-	-r / --reload:	Reload config on the running instance.
-	-t / --stop:	Terminate the running instance.
-	-v / --version:	Show current mcrelay version.
+mcrelay &lt;config_file&gt;
+mcrelay (-v | --version)
 </pre>
 
-The program runs in the foreground and stores its PID in <code>/run/mcrelay/mcrelay.pid</code>. Use a service manager such as systemd when it should run as a background service.
+The program runs in the foreground. Use a service manager such as systemd when it should run as a background service.
+
+Multiple instances can run with separate configuration files as long as their listening addresses do not conflict.
 
 ## Config
 See [<code>doc/configuration/mcrelay/config.jsonc</code>](doc/configuration/mcrelay/config.jsonc) for instructions.
