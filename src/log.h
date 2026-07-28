@@ -23,6 +23,6 @@
 #include <stdint.h>
 
 void gettime(char *target);
-int mksysmsg(bool noprefix, const char *logfile, uint8_t runmode, uint8_t maxlevel, uint8_t msglevel, const char *format, ...);
+int mksysmsg(bool noprefix, const char *logfile, uint8_t maxlevel, uint8_t msglevel, const char *format, ...);
 
 #endif

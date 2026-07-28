@@ -127,7 +127,7 @@ const char *config_errmsg(int err) {
  * If the encoded result exceeds CONF_ICON_B64MAX or any step fails,
  * cfg->icon_b64 stays NULL (caller falls back to FAVICON_BASE64).
  */
-void config_icon_load(conf *cfg, const char *logfile, uint8_t runmode, uint8_t loglevel) {
+void config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel) {
 	if (cfg->icon_path == NULL) {
 		return;
 	}
@@ -137,7 +137,7 @@ void config_icon_load(conf *cfg, const char *logfile, uint8_t runmode, uint8_t l
 		size_t blocks = icon_size / 3;
 		size_t b64_size = (blocks + (icon_size % 3 > 0)) * 4;
 		if (b64_size > CONF_ICON_B64MAX) {
-			mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+			mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
 				"Icon too large (base64: %zu > %u bytes), using default.\n",
 				b64_size, CONF_ICON_B64MAX
 			);
@@ -147,7 +147,7 @@ void config_icon_load(conf *cfg, const char *logfile, uint8_t runmode, uint8_t l
 				base64_encode(cfg->icon_b64, b64_size, icon_raw, icon_size);
 				cfg->icon_b64[b64_size] = '\0';
 			} else {
-				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+				mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
 					"No memory for icon, using default.\n"
 				);
 			}
@@ -158,32 +158,32 @@ void config_icon_load(conf *cfg, const char *logfile, uint8_t runmode, uint8_t l
 			free(icon_raw);
 		}
 		if (icon_size == 0) {
-			mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+			mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
 				"Icon file %s is empty, using default.\n",
 				cfg->icon_path
 			);
 		} else if (icon_size == -1) {
 			switch (errno) {
 				case FREADALL_ERFAIL:
-					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
 						"Cannot open icon file %s, using default.\n",
 						cfg->icon_path
 					);
 					break;
 				case FREADALL_ELARGE:
-					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
 						"Icon file %s too large, using default.\n",
 						cfg->icon_path
 					);
 					break;
 				case FREADALL_ENOMEM:
-					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
 						"No memory to read icon file %s, using default.\n",
 						cfg->icon_path
 					);
 					break;
 				default:
-					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
 						"Cannot read icon file %s, using default.\n",
 						cfg->icon_path
 					);

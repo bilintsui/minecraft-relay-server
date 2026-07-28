@@ -64,7 +64,7 @@ extern char config_duperr[CONF_ADDRESSMAXLEN];
 void config_destroy(conf *target);
 void config_dumper(conf *src);
 const char *config_errmsg(int err);
-void config_icon_load(conf *cfg, const char *logfile, uint8_t runmode, uint8_t loglevel);
+void config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel);
 bool config_jsonbool(cJSON *src, bool defaultvalue);
 cJSON *config_proxy_parse(cJSON *src);
 conf_proxy config_proxy_search(conf *src, const char *targetvhost);

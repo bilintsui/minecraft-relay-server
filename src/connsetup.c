@@ -74,7 +74,7 @@ static void connsetup_send_proxy_header(int socket_out, char *pheader, int *pack
 	}
 }
 
-static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const char *logfile, uint8_t runmode, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled, uint8_t *inbound, ssize_t packlen_inbound) {
+static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled, uint8_t *inbound, ssize_t packlen_inbound) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
@@ -83,7 +83,7 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 	memset(pheader, 0, PROTOPROXY_PACKETMAXLEN + 1);
 	uint8_t login_version = protocol_identify(inbound);
 	if (login_version == PVER_LEGACYL1) {
-		mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
+		mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, type: game, status: reject_gamerelay_oldclient\n",
 			(char *)&(addrinfo_in.address), addrinfo_in.port
 		);
@@ -92,7 +92,7 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 		close(socket_in);
 		return CONNSETUP_EOLDCLIENT;
 	} else if (login_version == PVER_LEGACYL3) {
-		mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
+		mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, type: game, status: reject_gamerelay_12w17a\n",
 			(char *)&(addrinfo_in.address), addrinfo_in.port
 		);
@@ -104,7 +104,7 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 		p_login_legacy inbound_info = packet_read_legacy_login(inbound, packlen_inbound, login_version);
 		conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
 		if (!proxyinfo.valid) {
-			mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
+			mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 				"src: %s:%d, type: game, vhost: %s, status: reject_vhostinvalid, username: %s\n",
 				(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, inbound_info.username
 			);
@@ -123,7 +123,7 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 		}
 		switch (mkoutbound_status) {
 			case 0:
-				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
+				mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, outmsg_level,
 					"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: accept, username: %s\n",
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 				);
@@ -143,13 +143,13 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 			case NET_ENORECORD:
 			case NET_ECONNECT:
 				if (mkoutbound_status == NET_ENORECORD) {
-					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, outmsg_level,
 						"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s\n",
 						(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 					);
 					packlen_rewrited = make_kickreason_legacy(rewrited, "Proxy(Internal): Temporarily failed to resolve the address for the target server, please try again later.");
 				} else if (mkoutbound_status == NET_ECONNECT) {
-					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, outmsg_level,
 						"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s\n",
 						(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 					);
@@ -165,7 +165,7 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 	return CONNSETUP_EABORT;
 }
 
-static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const char *logfile, uint8_t runmode, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled, uint8_t *inbound, ssize_t packlen_inbound) {
+static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled, uint8_t *inbound, ssize_t packlen_inbound) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
@@ -177,7 +177,7 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 		p_motd_legacy inbound_info = packet_read_legacy_motd(inbound);
 		conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
 		if (!proxyinfo.valid) {
-			mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
+			mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 				"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n",
 				(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address
 			);
@@ -197,7 +197,7 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 		}
 		switch (mkoutbound_status) {
 			case 0:
-				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
+				mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, outmsg_level,
 					"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: accept\n",
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 				);
@@ -224,12 +224,12 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 			case NET_ENORECORD:
 			case NET_ECONNECT:
 				if (mkoutbound_status == NET_ENORECORD) {
-					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, outmsg_level,
 						"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoresolve\n",
 						(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 					);
 				} else if (mkoutbound_status == NET_ECONNECT) {
-					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, outmsg_level,
 						"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoconnect\n",
 						(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 					);
@@ -242,7 +242,7 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 				return (mkoutbound_status == NET_ENORECORD) ? CONNSETUP_ENORECORD : CONNSETUP_ENOCONNECT;
 		}
 	} else {
-		mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
+		mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, type: motd, status: reject_motdrelay_oldclient\n",
 			(char *)&(addrinfo_in.address), addrinfo_in.port
 		);
@@ -255,7 +255,7 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 	return CONNSETUP_EABORT;
 }
 
-static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, const char *logfile, uint8_t runmode, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled, uint8_t *inbound, ssize_t packlen_inbound) {
+static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled, uint8_t *inbound, ssize_t packlen_inbound) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
@@ -265,13 +265,13 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 	p_handshake inbound_info = packet_read(inbound, inbound + packlen_inbound);
 	if (inbound_info.version == 0) {
 		if (inbound[inbound[0]] == 1) {
-			mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
+			mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 				"src: %s:%d, type: motd, status: reject_motdrelay_13w41*\n",
 				(char *)&(addrinfo_in.address), addrinfo_in.port
 			);
 			packlen_rewrited = make_motd(rewrited, "[Proxy] Use 13w42a or later to play!", inbound_info.version, conf_in->icon_b64);
 		} else if (inbound[inbound[0]] == 2) {
-			mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
+			mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 				"src: %s:%d, type: game, status: reject_gamerelay_13w41*\n",
 				(char *)&(addrinfo_in.address), addrinfo_in.port
 			);
@@ -286,13 +286,13 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 	conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
 	if (!proxyinfo.valid) {
 		if (inbound_info.nextstate == CLIENT_INTENT_STATUS) {
-			mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
+			mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 				"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n",
 				(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address
 			);
 			packlen_rewrited = make_motd(rewrited, "[Proxy] Use a legit address to play!", inbound_info.version, conf_in->icon_b64);
 		} else if ((inbound_info.nextstate == CLIENT_INTENT_LOGIN) || (inbound_info.nextstate == CLIENT_INTENT_TRANSFER)) {
-			mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
+			mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 				"src: %s:%d, type: %s, vhost: %s, status: reject_vhostinvalid, username: %s\n",
 				(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, inbound_info.address, inbound_info.username
 			);
@@ -318,12 +318,12 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 	switch (mkoutbound_status) {
 		case 0:
 			if (inbound_info.nextstate == CLIENT_INTENT_STATUS) {
-				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
+				mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, outmsg_level,
 					"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: accept\n",
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 				);
 			} else if ((inbound_info.nextstate == CLIENT_INTENT_LOGIN) || (inbound_info.nextstate == CLIENT_INTENT_TRANSFER)) {
-				mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
+				mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, outmsg_level,
 					"src: %s:%d, type: %s, vhost: %s, dst: %s:%d, status: accept, username: %s\n",
 					(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 				);
@@ -353,25 +353,25 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 			if (inbound_info.nextstate == CLIENT_INTENT_STATUS) {
 				packlen_rewrited = make_motd(rewrited, "[Proxy] Server Temporarily Unavailable.", inbound_info.version, conf_in->icon_b64);
 				if (mkoutbound_status == NET_ENORECORD) {
-					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, outmsg_level,
 						"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoresolve\n",
 						(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 					);
 				} else if (mkoutbound_status == NET_ECONNECT) {
-					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, outmsg_level,
 						"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: reject_dstnoconnect\n",
 						(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 					);
 				}
 			} else if ((inbound_info.nextstate == CLIENT_INTENT_LOGIN) || (inbound_info.nextstate == CLIENT_INTENT_TRANSFER)) {
 				if (mkoutbound_status == NET_ENORECORD) {
-					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, outmsg_level,
 						"src: %s:%d, type: %s, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s\n",
 						(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 					);
 					packlen_rewrited = make_kickreason(rewrited, "Proxy(Internal): Temporarily failed to resolve the address for the target server, please try again later.");
 				} else if (mkoutbound_status == NET_ECONNECT) {
-					mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, outmsg_level,
+					mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, outmsg_level,
 						"src: %s:%d, type: %s, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s\n",
 						(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 					);
@@ -388,24 +388,24 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 	return CONNSETUP_EABORT;
 }
 
-static bool connsetup_read_more(int socket_in, uint8_t *inbound, ssize_t *packlen_inbound, const char *logfile, uint8_t runmode, uint8_t loglevel, const net_addrbundle *addrinfo_in) {
+static bool connsetup_read_more(int socket_in, uint8_t *inbound, ssize_t *packlen_inbound, const char *logfile, uint8_t loglevel, const net_addrbundle *addrinfo_in) {
 	ssize_t n;
 	n = recv(socket_in, inbound + *packlen_inbound, BUFSIZ - *packlen_inbound, 0);
 	if (n <= 0) {
-		mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, loglevel, MKSYS_LEVEL_WARNING, "src: %s:%d, status: abort_init\n", (char *)&(addrinfo_in->address), addrinfo_in->port);
+		mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING, "src: %s:%d, status: abort_init\n", (char *)&(addrinfo_in->address), addrinfo_in->port);
 		close(socket_in);
 		return false;
 	}
 	*packlen_inbound += n;
 	return true;
 }
-int connsetup(int socket_in, int *socket_out, const char *logfile, uint8_t runmode, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled) {
+int connsetup(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled) {
 	uint8_t inbound[BUFSIZ];
 	ssize_t packlen_inbound;
 	memset(inbound, 0, BUFSIZ);
 	packlen_inbound = recv(socket_in, inbound, BUFSIZ, 0);
 	if (packlen_inbound == 0) {
-		mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
+		mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, status: abort_init\n",
 			(char *)&(addrinfo_in.address), addrinfo_in.port
 		);
@@ -416,12 +416,12 @@ int connsetup(int socket_in, int *socket_out, const char *logfile, uint8_t runmo
 		case 0xFE:
 			if (packlen_inbound > 2) {
 				while (packlen_inbound < 0x20) {
-					if (!connsetup_read_more(socket_in, inbound, &packlen_inbound, logfile, runmode, conf_in->log.level, &addrinfo_in)) {
+					if (!connsetup_read_more(socket_in, inbound, &packlen_inbound, logfile, conf_in->log.level, &addrinfo_in)) {
 						return CONNSETUP_EABORT;
 					}
 				}
 				while (packlen_inbound < (0x20 + inbound[0x1F] * 2 + 4)) {
-					if (!connsetup_read_more(socket_in, inbound, &packlen_inbound, logfile, runmode, conf_in->log.level, &addrinfo_in)) {
+					if (!connsetup_read_more(socket_in, inbound, &packlen_inbound, logfile, conf_in->log.level, &addrinfo_in)) {
 						return CONNSETUP_EABORT;
 					}
 				}
@@ -432,7 +432,7 @@ int connsetup(int socket_in, int *socket_out, const char *logfile, uint8_t runmo
 		default: {
 			intent_t intent = inbound[packlen_inbound - 1];
 			if ((intent == CLIENT_INTENT_STATUS) || (intent == CLIENT_INTENT_LOGIN) || (intent == CLIENT_INTENT_TRANSFER)) {
-				if (!connsetup_read_more(socket_in, inbound, &packlen_inbound, logfile, runmode, conf_in->log.level, &addrinfo_in)) {
+				if (!connsetup_read_more(socket_in, inbound, &packlen_inbound, logfile, conf_in->log.level, &addrinfo_in)) {
 					return CONNSETUP_EABORT;
 				}
 			}
@@ -440,7 +440,7 @@ int connsetup(int socket_in, int *socket_out, const char *logfile, uint8_t runmo
 		}
 	}
 	if (protocol_identify(inbound) == PVER_UNIDENT) {
-		mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, conf_in->log.level, MKSYS_LEVEL_WARNING,
+		mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, status: reject_unidentproto\n",
 			(char *)&(addrinfo_in.address), addrinfo_in.port
 		);
@@ -448,10 +448,10 @@ int connsetup(int socket_in, int *socket_out, const char *logfile, uint8_t runmo
 		return CONNSETUP_EUNIDENT;
 	}
 	if (inbound[0] == 0xFE) {
-		return connsetup_handle_legacy_motd(socket_in, socket_out, logfile, runmode, conf_in, addrinfo_in, netpriority_enabled, inbound, packlen_inbound);
+		return connsetup_handle_legacy_motd(socket_in, socket_out, logfile, conf_in, addrinfo_in, netpriority_enabled, inbound, packlen_inbound);
 	} else if (inbound[0] == 2) {
-		return connsetup_handle_legacy_login(socket_in, socket_out, logfile, runmode, conf_in, addrinfo_in, netpriority_enabled, inbound, packlen_inbound);
+		return connsetup_handle_legacy_login(socket_in, socket_out, logfile, conf_in, addrinfo_in, netpriority_enabled, inbound, packlen_inbound);
 	} else {
-		return connsetup_handle_modern_handshake(socket_in, socket_out, logfile, runmode, conf_in, addrinfo_in, netpriority_enabled, inbound, packlen_inbound);
+		return connsetup_handle_modern_handshake(socket_in, socket_out, logfile, conf_in, addrinfo_in, netpriority_enabled, inbound, packlen_inbound);
 	}
 }

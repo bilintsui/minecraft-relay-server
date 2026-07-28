@@ -52,13 +52,10 @@ mcrelay &lt;arguments|config_file&gt;
 Arguments
 	-r / --reload:	Reload config on the running instance.
 	-t / --stop:	Terminate the running instance.
-	-f / --forking:	Makes the process become daemonized.
 	-v / --version:	Show current mcrelay version.
 </pre>
 
-The program will run as a non-exit-style program by default.
-
-When using the <code>-f</code> or <code>--forking</code> option, the program will become daemonized, and store its main process's PID into <code>/run/mcrelay/mcrelay.pid</code>.
+The program runs in the foreground and stores its PID in <code>/run/mcrelay/mcrelay.pid</code>. Use a service manager such as systemd when it should run as a background service.
 
 ## Config
 See [<code>doc/configuration/mcrelay/config.jsonc</code>](doc/configuration/mcrelay/config.jsonc) for instructions.

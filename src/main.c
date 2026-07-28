@@ -13,7 +13,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include "basic.h"
@@ -24,10 +23,10 @@
 
 #define PIDFILE_PATH "/run/mcrelay/mcrelay.pid"
 
-#define LOG(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, lvl, __VA_ARGS__)
-#define LOG_CFG(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, config_runmode, config->log.level, lvl, __VA_ARGS__)
-#define LOG_NOPFX(lvl, ...)	mksysmsg(MKSYS_PREFIX_OFF, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, lvl, __VA_ARGS__)
-#define LOG_FILE(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, config_logfull, config_runmode, config->log.level, lvl, __VA_ARGS__)
+#define LOG(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, lvl, __VA_ARGS__)
+#define LOG_CFG(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, config->log.level, lvl, __VA_ARGS__)
+#define LOG_NOPFX(lvl, ...)	mksysmsg(MKSYS_PREFIX_OFF, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, lvl, __VA_ARGS__)
+#define LOG_FILE(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, config_logfull, config->log.level, lvl, __VA_ARGS__)
 
 char cwd[PATH_MAX];
 char *argoffset_configfile = NULL;
@@ -37,7 +36,6 @@ char config_logfull[PATH_MAX];
 conf *config = NULL;
 bool config_netpriority_enabled = true;
 sa_family_t config_netpriority_protocol = AF_INET6;
-uint8_t config_runmode = RUNMODE_SIMPLE;
 volatile sig_atomic_t reload_flag = 0;
 
 
@@ -65,20 +63,6 @@ static int config_exitcode(int err) {
 	}
 }
 
-static int detach_process(void) {
-	if (setsid() < 0) {
-		return -1;
-	}
-	fclose(stdin);
-	fclose(stdout);
-	fclose(stderr);
-	if (chdir("/") < 0) {
-		return -1;
-	}
-	umask(0);
-	return 0;
-}
-
 static void deal_signal(int signum) {
 	switch (signum) {
 		case SIGTERM:
@@ -90,13 +74,13 @@ static void deal_signal(int signum) {
 	}
 }
 
-static void log_config_duperr(const char *logfile, uint8_t runmode, uint8_t maxlevel, uint8_t msglevel, const char *suffix) {
+static void log_config_duperr(const char *logfile, uint8_t maxlevel, uint8_t msglevel, const char *suffix) {
 	const char *base = config_errmsg(CONF_ECPROXYDUP);
 	if (config_duperr[0] != '\0') {
-		mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, maxlevel, msglevel, "%s. Affected: \"%s\"%s\n", base, config_duperr, suffix);
+		mksysmsg(MKSYS_PREFIX_ON, logfile, maxlevel, msglevel, "%s. Affected: \"%s\"%s\n", base, config_duperr, suffix);
 		config_duperr[0] = '\0';
 	} else {
-		mksysmsg(MKSYS_PREFIX_ON, logfile, runmode, maxlevel, msglevel, "%s%s\n", base, suffix);
+		mksysmsg(MKSYS_PREFIX_ON, logfile, maxlevel, msglevel, "%s%s\n", base, suffix);
 	}
 }
 
@@ -104,7 +88,7 @@ static void do_reload(void) {
 	uint8_t config_maxlevel = config->log.level;
 	char config_logfull_old[PATH_MAX];
 	snprintf(config_logfull_old, sizeof(config_logfull_old), "%s", config_logfull);
-	mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_INFORMATION,
+	mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
 		"Reloading config from file: %s\n",
 		configfile
 	);
@@ -113,9 +97,9 @@ static void do_reload(void) {
 		case 0:
 			config_destroy(config);
 			config = config_new;
-			config_icon_load(config, config_logfull, config_runmode, config_maxlevel);
+			config_icon_load(config, config_logfull, config_maxlevel);
 			resolve_path(config->log.filename, cwd, config_logfull, sizeof(config_logfull));
-			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_INFORMATION,
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
 				"Configuration reloaded.\n"
 			);
 			break;
@@ -128,7 +112,7 @@ static void do_reload(void) {
 		case CONF_ECNETPRIORITYPROTOCOL:
 		case CONF_ECLISTENPORT:
 		case CONF_ECPROXY:
-			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING,
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
 				"%s%s%s\n",
 				config_errmsg(errno),
 				(errno == CONF_EROPENFAIL || errno == CONF_EROPENEMPTY) ? configfile : "",
@@ -136,10 +120,10 @@ static void do_reload(void) {
 			);
 			break;
 		case CONF_ECPROXYDUP:
-			log_config_duperr(config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING, ", will keep your old configurations");
+			log_config_duperr(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING, ", will keep your old configurations");
 			break;
 		default:
-			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_runmode, config_maxlevel, MKSYS_LEVEL_WARNING,
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
 				"Error in processing configurations: Unknown error occurred, code: %d, will keep your old configurations\n",
 				errno
 			);
@@ -192,7 +176,7 @@ static int pidfile_read(int *pid_out) {
 static int pidfile_write(pid_t pid) {
 	FILE *f = fopen(PIDFILE_PATH, "w");
 	if (f == NULL) {
-		mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, config->log.level, MKSYS_LEVEL_CRITICAL, "Cannot write PID file " PIDFILE_PATH "\n");
+		mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, config->log.level, MKSYS_LEVEL_CRITICAL, "Cannot write PID file " PIDFILE_PATH "\n");
 		return -1;
 	}
 	fprintf(f, "%d", pid);
@@ -219,7 +203,6 @@ static const char *helpmsg =
 	"<arguments|config_file>\n\n"
 	"Arguments\n\t-r / --reload:\tReload config on the running instance\n"
 	"\t-t / --stop:\tTerminate the running instance\n"
-	"\t-f / --forking:\tMakes the process become daemonized\n"
 	"\t-v / --version:\tShow current mcrelay version\n\n"
 	"See more: https://github.com/bilintsui/minecraft-relay-server";
 
@@ -272,9 +255,6 @@ int main(int argc, char **argv) {
 				LOG(MKSYS_LEVEL_CRITICAL, "Failed to send terminate signal to currently running process.\n");
 				return EXITCODE_NOSIGNAL;
 			}
-		} else if ((strcmp(ptr_argv1, "f") == 0) || (strcmp(ptr_argv1, "-forking") == 0)) {
-			config_runmode = RUNMODE_FORKING;
-			argoffset_configfile = argv[2];
 		} else if ((strcmp(ptr_argv1, "v") == 0) || (strcmp(ptr_argv1, "-version") == 0)) {
 			fprintf(stdout, "v%s(%s)\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_INTERNAL);
 			return EXITCODE_OK;
@@ -306,7 +286,7 @@ int main(int argc, char **argv) {
 			resolve_path(config->log.filename, cwd, config_logfull, sizeof(config_logfull));
 			config_netpriority_enabled = config->netpriority.enabled;
 			config_netpriority_protocol = config->netpriority.protocol;
-			config_icon_load(config, config_logfull, config_runmode, config->log.level);
+			config_icon_load(config, config_logfull, config->log.level);
 			break;
 		case CONF_EROPENFAIL:
 		case CONF_EROPENEMPTY:
@@ -322,7 +302,7 @@ int main(int argc, char **argv) {
 			LOG(MKSYS_LEVEL_CRITICAL, "%s\n", config_errmsg(errno));
 			return config_exitcode(errno);
 		case CONF_ECPROXYDUP:
-			log_config_duperr(MKSYS_NOLOGFILE, RUNMODE_CONSOLE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "");
+			log_config_duperr(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "");
 			return config_exitcode(errno);
 		default:
 			LOG(MKSYS_LEVEL_CRITICAL, "Error in processing configurations: Unknown error occurred, code: %d\n", errno);
@@ -350,33 +330,12 @@ int main(int argc, char **argv) {
 		LOG_FILE(MKSYS_LEVEL_CRITICAL, "Bind Failed!\n");
 		return EXITCODE_BINDFAIL;
 	}
-	int pid;
-	if (config_runmode == RUNMODE_FORKING) {
-		pid = fork();
-		if (pid > 0) {
-			if (pidfile_write(pid) != 0) {
-				return EXITCODE_CANTCREAT;
-			}
-			bind_success_msg();
-			mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, RUNMODE_CONSOLE, config->log.level, MKSYS_LEVEL_INFORMATION, "Server running on PID: %d\n", pid);
-			return EXITCODE_OK;
-		} else if (pid < 0) {
-			return EXITCODE_FORKFAIL;
-		}
-		if (detach_process() != 0) {
-			return EXITCODE_FORKFAIL;
-		}
-	} else {
-		pid = getpid();
-		if (pidfile_write(pid) != 0) {
-			return EXITCODE_CANTCREAT;
-		}
+	if (pidfile_write(getpid()) != 0) {
+		return EXITCODE_CANTCREAT;
 	}
-	if (config_runmode != RUNMODE_FORKING) {
-		bind_success_msg();
-	}
+	bind_success_msg();
 	setup_signals();
-	if (config_runmode != RUNMODE_FORKING && !isatty(STDOUT_FILENO)) {
+	if (!isatty(STDOUT_FILENO)) {
 		fclose(stdout);
 		fclose(stderr);
 	}
@@ -397,7 +356,7 @@ int main(int argc, char **argv) {
 			}
 			break;
 		}
-		pid = fork();
+		pid_t pid = fork();
 		if (pid > 0) {
 			close(socket_inbound_client);
 		} else if (pid < 0) {
@@ -407,7 +366,7 @@ int main(int argc, char **argv) {
 			close(socket_inbound_server);
 			net_addrbundle addrbundle_inbound_client = parse_client_address(&addr_inbound_client);
 			int socket_outbound;
-			if (connsetup(socket_inbound_client, &socket_outbound, config_logfull, config_runmode, config, addrbundle_inbound_client, config_netpriority_enabled)) {
+			if (connsetup(socket_inbound_client, &socket_outbound, config_logfull, config, addrbundle_inbound_client, config_netpriority_enabled)) {
 				return EXITCODE_OK;
 			}
 			net_relay(socket_inbound_client, socket_outbound);

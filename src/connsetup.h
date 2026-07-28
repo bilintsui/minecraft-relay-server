@@ -23,6 +23,6 @@
 #include "config.h"
 #include "network.h"
 
-int connsetup(int socket_in, int *socket_out, const char *logfile, uint8_t runmode, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled);
+int connsetup(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled);
 
 #endif

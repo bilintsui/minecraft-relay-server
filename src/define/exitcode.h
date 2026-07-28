@@ -22,7 +22,6 @@
 #define EXITCODE_FILELARGE	EFBIG	/* configuration file too large */
 
 /* sysexits aliases */
-#define EXITCODE_FORKFAIL	EX_OSERR	/* fork() system call failed */
 #define EXITCODE_CANTCREAT	EX_CANTCREAT	/* cannot create output file */
 #define EXITCODE_BADPORT	EX_CONFIG	/* invalid bind port */
 #define EXITCODE_INTERNAL	EX_SOFTWARE	/* unknown internal error */

@@ -31,7 +31,7 @@ void gettime(char *target) {
 	);
 }
 
-int mksysmsg(bool noprefix, const char *logfile, uint8_t runmode, uint8_t maxlevel, uint8_t msglevel, const char *format, ...) {
+int mksysmsg(bool noprefix, const char *logfile, uint8_t maxlevel, uint8_t msglevel, const char *format, ...) {
 	char level_str[8];
 	int status;
 	va_list varlist;
@@ -74,20 +74,18 @@ int mksysmsg(bool noprefix, const char *logfile, uint8_t runmode, uint8_t maxlev
 	}
 	va_end(varlist);
 	va_start(varlist, format);
-	if (runmode != RUNMODE_FORKING) {
-		if (noprefix == MKSYS_PREFIX_OFF && !isatty(STDOUT_FILENO)) {
-			status = 0;
-		} else if (msglevel == MKSYS_LEVEL_CRITICAL) {
-			if (noprefix == MKSYS_PREFIX_ON) {
-				fprintf(stderr, "[%s] ", level_str);
-			}
-			status = vfprintf(stderr, format, varlist);
-		} else {
-			if (noprefix == MKSYS_PREFIX_ON) {
-				fprintf(stdout, "[%s] ", level_str);
-			}
-			status = vfprintf(stdout, format, varlist);
+	if (noprefix == MKSYS_PREFIX_OFF && !isatty(STDOUT_FILENO)) {
+		status = 0;
+	} else if (msglevel == MKSYS_LEVEL_CRITICAL) {
+		if (noprefix == MKSYS_PREFIX_ON) {
+			fprintf(stderr, "[%s] ", level_str);
 		}
+		status = vfprintf(stderr, format, varlist);
+	} else {
+		if (noprefix == MKSYS_PREFIX_ON) {
+			fprintf(stdout, "[%s] ", level_str);
+		}
+		status = vfprintf(stdout, format, varlist);
 	}
 	va_end(varlist);
 	if (status < 0) {
