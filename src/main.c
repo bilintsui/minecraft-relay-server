@@ -41,10 +41,22 @@ enum help_topic {
 	HELP_VERSION
 };
 
+enum arg_error {
+	ARG_OK,
+	ARG_ERR_UNKNOWN_COMMAND,
+	ARG_ERR_UNKNOWN_HELP_TOPIC,
+	ARG_ERR_EMPTY_CONFIG,
+	ARG_ERR_MISSING_VALUE,
+	ARG_ERR_INVALID_ARGUMENT,
+	ARG_ERR_INVALID
+};
+
 typedef struct {
 	enum command command;
 	const char *configfile;
 	enum help_topic help_topic;
+	enum arg_error error;
+	const char *error_arg;
 } arguments;
 
 char cwd[PATH_MAX];
@@ -152,11 +164,17 @@ static arguments parse_arguments(int argc, char **argv) {
 	arguments result = {
 		.command = COMMAND_INVALID,
 		.configfile = NULL,
-		.help_topic = HELP_GENERAL
+		.help_topic = HELP_GENERAL,
+		.error = ARG_ERR_INVALID,
+		.error_arg = NULL
 	};
-	if (argc >= 2 && strcmp(argv[1], "help") == 0) {
+	if (argc < 2) {
+		return result;
+	}
+	if (strcmp(argv[1], "help") == 0) {
 		if (argc == 2) {
 			result.command = COMMAND_HELP;
+			result.error = ARG_OK;
 		} else if (argc == 3) {
 			if (strcmp(argv[2], "help") == 0) {
 				result.help_topic = HELP_HELP;
@@ -165,20 +183,54 @@ static arguments parse_arguments(int argc, char **argv) {
 			} else if (strcmp(argv[2], "version") == 0) {
 				result.help_topic = HELP_VERSION;
 			} else {
+				result.error = ARG_ERR_UNKNOWN_HELP_TOPIC;
+				result.error_arg = argv[2];
 				return result;
 			}
 			result.command = COMMAND_HELP;
+			result.error = ARG_OK;
+		} else {
+			result.error = ARG_ERR_INVALID_ARGUMENT;
+			result.error_arg = argv[3];
 		}
-	} else if (argc == 2 && strcmp(argv[1], "version") == 0) {
-		result.command = COMMAND_VERSION;
-	} else if (argc == 2 && strcmp(argv[1], "run") == 0) {
-		result.command = COMMAND_RUN;
-		result.configfile = DEFAULT_CONFIG_FILE;
-	} else if (argc == 4 && strcmp(argv[1], "run") == 0
-		&& (strcmp(argv[2], "-c") == 0 || strcmp(argv[2], "--config") == 0)
-		&& argv[3][0] != '\0') {
-		result.command = COMMAND_RUN;
-		result.configfile = argv[3];
+	} else if (strcmp(argv[1], "version") == 0) {
+		if (argc == 2) {
+			result.command = COMMAND_VERSION;
+			result.error = ARG_OK;
+		} else {
+			result.error = ARG_ERR_INVALID_ARGUMENT;
+			result.error_arg = argv[2];
+		}
+	} else if (strcmp(argv[1], "run") == 0) {
+		if (argc == 2) {
+			result.command = COMMAND_RUN;
+			result.configfile = DEFAULT_CONFIG_FILE;
+			result.error = ARG_OK;
+		} else if (strcmp(argv[2], "-c") == 0 || strcmp(argv[2], "--config") == 0) {
+			if (argc == 3) {
+				result.error = ARG_ERR_MISSING_VALUE;
+				result.error_arg = argv[2];
+				return result;
+			}
+			if (argc == 4) {
+				if (argv[3][0] == '\0') {
+					result.error = ARG_ERR_EMPTY_CONFIG;
+					return result;
+				}
+				result.command = COMMAND_RUN;
+				result.configfile = argv[3];
+				result.error = ARG_OK;
+			} else {
+				result.error = ARG_ERR_INVALID_ARGUMENT;
+				result.error_arg = argv[4];
+			}
+		} else {
+			result.error = ARG_ERR_INVALID_ARGUMENT;
+			result.error_arg = argv[2];
+		}
+	} else {
+		result.error = ARG_ERR_UNKNOWN_COMMAND;
+		result.error_arg = argv[1];
 	}
 	return result;
 }
@@ -285,7 +337,27 @@ int main(int argc, char **argv) {
 		case COMMAND_INVALID:
 		default:
 			if (argc > 1) {
-				fprintf(stderr, "Error: Invalid arguments.\n");
+				switch (args.error) {
+					case ARG_ERR_UNKNOWN_COMMAND:
+						fprintf(stderr, "Error: Unknown command \"%s\".\n", args.error_arg);
+						break;
+					case ARG_ERR_UNKNOWN_HELP_TOPIC:
+						fprintf(stderr, "Error: Unknown help topic \"%s\".\n", args.error_arg);
+						break;
+					case ARG_ERR_EMPTY_CONFIG:
+						fprintf(stderr, "Error: Configuration file path cannot be empty.\n");
+						break;
+					case ARG_ERR_MISSING_VALUE:
+						fprintf(stderr, "Error: Option %s requires a value.\n", args.error_arg);
+						break;
+					case ARG_ERR_INVALID_ARGUMENT:
+						fprintf(stderr, "Error: Invalid argument \"%s\".\n", args.error_arg);
+						break;
+					case ARG_ERR_INVALID:
+					default:
+						fprintf(stderr, "Error: Invalid arguments.\n");
+						break;
+				}
 			}
 			fprintf(stderr, "Try '%s help' for more information.\n", progname);
 			return EXITCODE_BADARG;
