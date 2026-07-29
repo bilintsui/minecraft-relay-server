@@ -56,35 +56,6 @@ bool config_netpriority_enabled = true;
 sa_family_t config_netpriority_protocol = AF_INET6;
 volatile sig_atomic_t reload_flag = 0;
 
-static const char *bannermsg =
-	"Minecraft Relay Server [Version " MCRELAY_VERSION_DISPLAY "/"
-	MCRELAY_VERSION_INTERNAL "]\n"
-	"(c) " MCRELAY_COPYYEAR " Bilin Tsui\n\n";
-
-static const char *helpmsg =
-	"Usage: %s <command> ...\n\n"
-	"\trun\tCreate a server instance\n"
-	"\tversion\tGet version in single line\n\n"
-	"Use \"%s help <command>\" to get help for specific command.\n";
-
-static const char *helpmsg_help =
-	"Get help for specific command\n\n"
-	"Usage: %s help [<command>]\n";
-
-static const char *helpmsg_run =
-	"Create a server instance\n\n"
-	"Usage: %s run [options]\n\n"
-	"\t-c, --config <config_file>\n"
-	"\t\tOptional, specify a configuration to read. Default: " DEFAULT_CONFIG_FILE "\n";
-
-static const char *helpmsg_version =
-	"Get version in single line\n\n"
-	"Usage: %s version\n";
-
-static const char *moremsg =
-	"\n"
-	"See more: https://github.com/bilintsui/minecraft-relay-server\n";
-
 static void bind_success_msg(void) {
 	LOG_FILE(MKSYS_LEVEL_INFORMATION, "Bind Successful.\n\n");
 	LOG_CFG(MKSYS_LEVEL_INFORMATION, "For more information, see log file: %s\n\n", config->log.filename);
@@ -240,6 +211,54 @@ static net_addrbundle parse_client_address(void *addr) {
 	return result;
 }
 
+static void print_help(enum help_topic topic, const char *progname) {
+	fputs(
+		"Minecraft Relay Server [Version " MCRELAY_VERSION_DISPLAY "/"
+		MCRELAY_VERSION_INTERNAL "]\n"
+		"(c) " MCRELAY_COPYYEAR " Bilin Tsui\n\n",
+		stdout
+	);
+	switch (topic) {
+		case HELP_HELP:
+			fprintf(stdout,
+				"Get help for specific command\n\n"
+				"Usage: %s help [<command>]\n",
+				progname
+			);
+			break;
+		case HELP_RUN:
+			fprintf(stdout,
+				"Create a server instance\n\n"
+				"Usage: %s run [options]\n\n"
+				"\t-c, --config <config_file>\n"
+				"\t\tOptional, specify a configuration to read. Default: " DEFAULT_CONFIG_FILE "\n",
+				progname
+			);
+			break;
+		case HELP_VERSION:
+			fprintf(stdout,
+				"Get version in single line\n\n"
+				"Usage: %s version\n",
+				progname
+			);
+			break;
+		case HELP_GENERAL:
+		default:
+			fprintf(stdout,
+				"Usage: %s <command> ...\n\n"
+				"\trun\tCreate a server instance\n"
+				"\tversion\tGet version in single line\n\n"
+				"Use \"%s help <command>\" to get help for specific command.\n",
+				progname, progname
+			);
+			break;
+	}
+	fputs(
+		"\nSee more: https://github.com/bilintsui/minecraft-relay-server\n",
+		stdout
+	);
+}
+
 static void setup_signals(void) {
 	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
@@ -256,23 +275,7 @@ int main(int argc, char **argv) {
 	arguments args = parse_arguments(argc, argv);
 	switch (args.command) {
 		case COMMAND_HELP:
-			fputs(bannermsg, stdout);
-			switch (args.help_topic) {
-				case HELP_HELP:
-					fprintf(stdout, helpmsg_help, progname);
-					break;
-				case HELP_RUN:
-					fprintf(stdout, helpmsg_run, progname);
-					break;
-				case HELP_VERSION:
-					fprintf(stdout, helpmsg_version, progname);
-					break;
-				case HELP_GENERAL:
-				default:
-					fprintf(stdout, helpmsg, progname, progname);
-					break;
-			}
-			fputs(moremsg, stdout);
+			print_help(args.help_topic, progname);
 			return EXITCODE_OK;
 		case COMMAND_VERSION:
 			fprintf(stdout, "v%s(%s)\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_INTERNAL);
