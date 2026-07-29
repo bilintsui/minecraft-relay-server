@@ -5,16 +5,21 @@
  * Copyright (C) 2020-2026 Bilin Tsui
  */
 
+/* section: headers (library) */
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 
+/* section: headers (project) */
 #include "define/global.h"
+
+/* section: headers (self) */
 #include "log.h"
 
-void gettime(char *target) {
+/* section: functions (local) */
+static void gettime(char *target) {
 	time_t timestamp = time(NULL);
 	struct tm tm_local;
 	localtime_r(&timestamp, &tm_local);
@@ -31,6 +36,7 @@ void gettime(char *target) {
 	);
 }
 
+/* section: functions (exported) */
 int mksysmsg(bool noprefix, const char *logfile, uint8_t maxlevel, uint8_t msglevel, const char *format, ...) {
 	char level_str[8];
 	int status;

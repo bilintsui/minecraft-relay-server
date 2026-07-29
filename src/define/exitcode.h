@@ -9,9 +9,11 @@
 
 #define _MRS_EXITCODE_H_INCLUDED_
 
+/* section: headers (library) */
 #include <errno.h>
 #include <sysexits.h>
 
+/* section: defines */
 #define EXITCODE_OK		EX_OK	/* successful termination */
 
 /* errno aliases */

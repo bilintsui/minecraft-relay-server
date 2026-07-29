@@ -9,22 +9,26 @@
 
 #define _MRS_CONFIG_H_INCLUDED_
 
+/* section: headers (library) */
 #include <cjson/cJSON.h>
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <sys/socket.h>
 
+/* section: headers (project) */
 #include "define/global.h"
 
+/* section: defines */
+/* limit */
 #define CONF_ADDRESSMAXLEN	ADDRESS_MAXLEN
-
 /*
  * Max base64-encoded icon length: 7000 bytes leaves ≥1192 for JSON
  * framework + motd text + varint overhead within BUFSIZ (8192).
  */
 #define CONF_ICON_B64MAX	7000
 
+/* error code */
 #define CONF_EARGNULL	1
 #define CONF_EROPENFAIL	2
 #define CONF_EROPENEMPTY	3
@@ -37,6 +41,7 @@
 #define CONF_ECPROXY	10
 #define CONF_ECPROXYDUP	11
 
+/* section: types */
 typedef struct {
 	struct {
 		bool enabled;
@@ -60,13 +65,14 @@ typedef struct {
 	bool valid, srvenabled, rewrite, pheader;
 } conf_proxy;
 
+/* section: global variables */
 extern char config_duperr[CONF_ADDRESSMAXLEN];
+
+/* section: functions (exported) */
 void config_destroy(conf *target);
 void config_dumper(conf *src);
 const char *config_errmsg(int err);
 void config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel);
-bool config_jsonbool(cJSON *src, bool defaultvalue);
-cJSON *config_proxy_parse(cJSON *src);
 conf_proxy config_proxy_search(conf *src, const char *targetvhost);
 void config_proxy_search_destroy(conf_proxy *target);
 conf *config_read(char *filename);

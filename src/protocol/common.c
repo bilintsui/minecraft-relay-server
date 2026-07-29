@@ -5,13 +5,17 @@
  * Copyright (C) 2020-2026 Bilin Tsui
  */
 
+/* section: headers (library) */
 #include <stdint.h>
 #include <string.h>
 
+/* section: headers (project) */
 #include "handshake.h"
 
+/* section: headers (self) */
 #include "common.h"
 
+/* section: functions (exported) */
 uint8_t protocol_identify(const void *src) {
 	if (src == NULL) {
 		return PVER_UNIDENT;

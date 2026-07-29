@@ -5,19 +5,160 @@
  * Copyright (C) 2020-2026 Bilin Tsui
  */
 
+/* section: headers (library) */
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 
+/* section: headers (project) */
 #include "basic.h"
 #include "log.h"
 
+/* section: headers (self) */
 #include "config.h"
 
+/* section: global variables */
 char config_duperr[CONF_ADDRESSMAXLEN] = { 0 };
 
+/* section: functions (local) */
+static bool config_jsonbool(cJSON *src, bool defaultvalue) {
+	if (src == NULL) {
+		return defaultvalue;
+	}
+	if (cJSON_IsBool(src)) {
+		return cJSON_IsTrue(src);
+	} else if (cJSON_IsNumber(src)) {
+		return (src->valueint != 0);
+	} else {
+		return defaultvalue;
+	}
+}
+
+static cJSON *config_proxy_parse(cJSON *src) {
+	cJSON *single = NULL;
+	cJSON_ArrayForEach(single, src) {
+		cJSON *single_vhost = cJSON_GetObjectItemCaseSensitive(single, "vhost");
+		if (single_vhost == NULL) {
+			cJSON_DetachItemViaPointer(src, single);
+			continue;
+		}
+		if (!cJSON_IsArray(single_vhost)) {
+			if (!cJSON_IsString(single_vhost)) {
+				cJSON_DetachItemViaPointer(src, single);
+				continue;
+			}
+			char *vhost = (char *)malloc(strlen(single_vhost->valuestring) + 1);
+			if (vhost == NULL) {
+				errno = CONF_ECMEMORY;
+				return NULL;
+			}
+			strcpy(vhost, single_vhost->valuestring);
+			cJSON_DeleteItemFromObjectCaseSensitive(single, "vhost");
+			single_vhost = cJSON_AddArrayToObject(single, "vhost");
+			cJSON *item_vhost = cJSON_CreateString(vhost);
+			free(vhost);
+			cJSON_AddItemToArray(single_vhost, item_vhost);
+		}
+		cJSON *single_address = cJSON_GetObjectItemCaseSensitive(single, "address");
+		if (single_address == NULL) {
+			cJSON_DetachItemViaPointer(src, single);
+			continue;
+		}
+		if (!cJSON_IsString(single_address)) {
+			cJSON_DetachItemViaPointer(src, single);
+			continue;
+		}
+		cJSON *single_port = cJSON_GetObjectItemCaseSensitive(single, "port");
+		if (single_port != NULL) {
+			if (!cJSON_IsNumber(single_port)) {
+				cJSON_DetachItemViaPointer(src, single);
+				continue;
+			}
+			int port = single_port->valueint;
+			if ((port < 0) || (port > 65535)) {
+				cJSON_DetachItemViaPointer(src, single);
+				continue;
+			}
+		}
+	}
+	cJSON *result = cJSON_Duplicate(src, 1);
+	int dupdet_count = 0;
+	char **vhost_namelist = NULL;
+	cJSON *rec_result = NULL;
+	cJSON_ArrayForEach(rec_result, result) {
+		cJSON *result_vhostname = cJSON_GetObjectItemCaseSensitive(rec_result, "vhost");
+		cJSON *rec_result_vhostname = NULL;
+		cJSON_ArrayForEach(rec_result_vhostname, result_vhostname) {
+			if (dupdet_count == 0) {
+				vhost_namelist = (char **)calloc(1, sizeof(char **));
+				if (vhost_namelist == NULL) {
+					cJSON_Delete(result);
+					errno = CONF_ECMEMORY;
+					return NULL;
+				}
+				vhost_namelist[dupdet_count] = (char *)malloc(strlen(rec_result_vhostname->valuestring) + 1);
+				if (vhost_namelist[dupdet_count] == NULL) {
+					free(vhost_namelist);
+					cJSON_Delete(result);
+					errno = CONF_ECMEMORY;
+					return NULL;
+				}
+				strcpy(vhost_namelist[dupdet_count], rec_result_vhostname->valuestring);
+				dupdet_count++;
+				continue;
+			}
+			for (int i = 0; i < dupdet_count; i++) {
+				if (strcasecmp(vhost_namelist[i], rec_result_vhostname->valuestring) == 0) {
+					snprintf(config_duperr, sizeof(config_duperr), "%s", rec_result_vhostname->valuestring);
+					for (int j = 0; j < dupdet_count; j++) {
+						free(vhost_namelist[j]);
+					}
+					free(vhost_namelist);
+					cJSON_Delete(result);
+					errno = CONF_ECPROXYDUP;
+					return NULL;
+				}
+				if (i == (dupdet_count - 1)) {
+					char **vhost_namelist_new = (char **)realloc(vhost_namelist, (dupdet_count + 1) * sizeof(char **));
+					if (vhost_namelist_new == NULL) {
+						for (int j = 0; j < dupdet_count; j++) {
+							free(vhost_namelist[j]);
+						}
+						free(vhost_namelist);
+						cJSON_Delete(result);
+						errno = CONF_ECMEMORY;
+						return NULL;
+					}
+					vhost_namelist = vhost_namelist_new;
+					vhost_namelist[dupdet_count] = (char *)malloc(strlen(rec_result_vhostname->valuestring) + 1);
+					if (vhost_namelist[dupdet_count] == NULL) {
+						for (int j = 0; j < dupdet_count; j++) {
+							free(vhost_namelist[j]);
+						}
+						free(vhost_namelist);
+						cJSON_Delete(result);
+						errno = CONF_ECMEMORY;
+						return NULL;
+					}
+					strcpy(vhost_namelist[dupdet_count], rec_result_vhostname->valuestring);
+					dupdet_count++;
+					break;
+				}
+			}
+		}
+	}
+	for (int i = 0; i < dupdet_count; i++) {
+		free(vhost_namelist[i]);
+	}
+	free(vhost_namelist);
+	cJSON_Delete(src);
+	errno = 0;
+	return result;
+}
+
+/* section: functions (exported) */
 void config_destroy(conf *target) {
 	if (target != NULL) {
 		free(target->log.filename);
@@ -191,141 +332,6 @@ void config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel) {
 			}
 		}
 	}
-}
-
-bool config_jsonbool(cJSON *src, bool defaultvalue) {
-	if (src == NULL) {
-		return defaultvalue;
-	}
-	if (cJSON_IsBool(src)) {
-		return cJSON_IsTrue(src);
-	} else if (cJSON_IsNumber(src)) {
-		return (src->valueint != 0);
-	} else {
-		return defaultvalue;
-	}
-}
-
-cJSON *config_proxy_parse(cJSON *src) {
-	cJSON *single = NULL;
-	cJSON_ArrayForEach(single, src) {
-		cJSON *single_vhost = cJSON_GetObjectItemCaseSensitive(single, "vhost");
-		if (single_vhost == NULL) {
-			cJSON_DetachItemViaPointer(src, single);
-			continue;
-		}
-		if (!cJSON_IsArray(single_vhost)) {
-			if (!cJSON_IsString(single_vhost)) {
-				cJSON_DetachItemViaPointer(src, single);
-				continue;
-			}
-			char *vhost = (char *)malloc(strlen(single_vhost->valuestring) + 1);
-			if (vhost == NULL) {
-				errno = CONF_ECMEMORY;
-				return NULL;
-			}
-			strcpy(vhost, single_vhost->valuestring);
-			cJSON_DeleteItemFromObjectCaseSensitive(single, "vhost");
-			single_vhost = cJSON_AddArrayToObject(single, "vhost");
-			cJSON *item_vhost = cJSON_CreateString(vhost);
-			free(vhost);
-			cJSON_AddItemToArray(single_vhost, item_vhost);
-		}
-		cJSON *single_address = cJSON_GetObjectItemCaseSensitive(single, "address");
-		if (single_address == NULL) {
-			cJSON_DetachItemViaPointer(src, single);
-			continue;
-		}
-		if (!cJSON_IsString(single_address)) {
-			cJSON_DetachItemViaPointer(src, single);
-			continue;
-		}
-		cJSON *single_port = cJSON_GetObjectItemCaseSensitive(single, "port");
-		if (single_port != NULL) {
-			if (!cJSON_IsNumber(single_port)) {
-				cJSON_DetachItemViaPointer(src, single);
-				continue;
-			}
-			int port = single_port->valueint;
-			if ((port < 0) || (port > 65535)) {
-				cJSON_DetachItemViaPointer(src, single);
-				continue;
-			}
-		}
-	}
-	cJSON *result = cJSON_Duplicate(src, 1);
-	int dupdet_count = 0;
-	char **vhost_namelist = NULL;
-	cJSON *rec_result = NULL;
-	cJSON_ArrayForEach(rec_result, result) {
-		cJSON *result_vhostname = cJSON_GetObjectItemCaseSensitive(rec_result, "vhost");
-		cJSON *rec_result_vhostname = NULL;
-		cJSON_ArrayForEach(rec_result_vhostname, result_vhostname) {
-			if (dupdet_count == 0) {
-				vhost_namelist = (char **)calloc(1, sizeof(char **));
-				if (vhost_namelist == NULL) {
-					cJSON_Delete(result);
-					errno = CONF_ECMEMORY;
-					return NULL;
-				}
-				vhost_namelist[dupdet_count] = (char *)malloc(strlen(rec_result_vhostname->valuestring) + 1);
-				if (vhost_namelist[dupdet_count] == NULL) {
-					free(vhost_namelist);
-					cJSON_Delete(result);
-					errno = CONF_ECMEMORY;
-					return NULL;
-				}
-				strcpy(vhost_namelist[dupdet_count], rec_result_vhostname->valuestring);
-				dupdet_count++;
-				continue;
-			}
-			for (int i = 0; i < dupdet_count; i++) {
-				if (strcasecmp(vhost_namelist[i], rec_result_vhostname->valuestring) == 0) {
-					snprintf(config_duperr, sizeof(config_duperr), "%s", rec_result_vhostname->valuestring);
-					for (int j = 0; j < dupdet_count; j++) {
-						free(vhost_namelist[j]);
-					}
-					free(vhost_namelist);
-					cJSON_Delete(result);
-					errno = CONF_ECPROXYDUP;
-					return NULL;
-				}
-				if (i == (dupdet_count - 1)) {
-					char **vhost_namelist_new = (char **)realloc(vhost_namelist, (dupdet_count + 1) * sizeof(char **));
-					if (vhost_namelist_new == NULL) {
-						for (int j = 0; j < dupdet_count; j++) {
-							free(vhost_namelist[j]);
-						}
-						free(vhost_namelist);
-						cJSON_Delete(result);
-						errno = CONF_ECMEMORY;
-						return NULL;
-					}
-					vhost_namelist = vhost_namelist_new;
-					vhost_namelist[dupdet_count] = (char *)malloc(strlen(rec_result_vhostname->valuestring) + 1);
-					if (vhost_namelist[dupdet_count] == NULL) {
-						for (int j = 0; j < dupdet_count; j++) {
-							free(vhost_namelist[j]);
-						}
-						free(vhost_namelist);
-						cJSON_Delete(result);
-						errno = CONF_ECMEMORY;
-						return NULL;
-					}
-					strcpy(vhost_namelist[dupdet_count], rec_result_vhostname->valuestring);
-					dupdet_count++;
-					break;
-				}
-			}
-		}
-	}
-	for (int i = 0; i < dupdet_count; i++) {
-		free(vhost_namelist[i]);
-	}
-	free(vhost_namelist);
-	cJSON_Delete(src);
-	errno = 0;
-	return result;
 }
 
 conf_proxy config_proxy_search(conf *src, const char *targetvhost) {

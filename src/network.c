@@ -5,6 +5,7 @@
  * Copyright (C) 2020-2026 Bilin Tsui
  */
 
+/* section: headers (library) */
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -16,9 +17,11 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+/* section: headers (self) */
 #include "network.h"
 
-size_t net_getaddrsize(sa_family_t family) {
+/* section: functions (local) */
+static size_t net_getaddrsize(sa_family_t family) {
 	switch (family) {
 		case AF_INET:
 			return sizeof(uint32_t);
@@ -29,7 +32,7 @@ size_t net_getaddrsize(sa_family_t family) {
 	}
 }
 
-sa_family_t net_getaltfamily(sa_family_t family) {
+static sa_family_t net_getaltfamily(sa_family_t family) {
 	switch (family) {
 		case AF_INET:
 			return AF_INET6;
@@ -40,6 +43,30 @@ sa_family_t net_getaltfamily(sa_family_t family) {
 	}
 }
 
+static void *net_resolve(const char *hostname, sa_family_t family) {
+	if ((family != AF_INET) && (family != AF_INET6)) {
+		errno = NET_EARGFAMILY;
+		return NULL;
+	}
+	void *result = malloc(net_getaddrsize(family));
+	if (result == NULL) {
+		errno = NET_EMALLOC;
+		return NULL;
+	}
+	if (inet_pton(family, hostname, result) == 1) {
+		return result;
+	}
+	struct hostent *response = gethostbyname2(hostname, family);
+	if (response == NULL) {
+		errno = NET_ENORECORD;
+		free(result);
+		return NULL;
+	}
+	memcpy(result, response->h_addr_list[0], net_getaddrsize(family));
+	return result;
+}
+
+/* section: functions (exported) */
 net_addrp net_ntop(sa_family_t family, const void *src, bool v6addition) {
 	net_addrp pre_result;
 	memset(&pre_result, 0, sizeof(pre_result));
@@ -143,29 +170,6 @@ cleanup:
 		close(epfd);
 	}
 	return ret;
-}
-
-void *net_resolve(const char *hostname, sa_family_t family) {
-	if ((family != AF_INET) && (family != AF_INET6)) {
-		errno = NET_EARGFAMILY;
-		return NULL;
-	}
-	void *result = malloc(net_getaddrsize(family));
-	if (result == NULL) {
-		errno = NET_EMALLOC;
-		return NULL;
-	}
-	if (inet_pton(family, hostname, result) == 1) {
-		return result;
-	}
-	struct hostent *response = gethostbyname2(hostname, family);
-	if (response == NULL) {
-		errno = NET_ENORECORD;
-		free(result);
-		return NULL;
-	}
-	memcpy(result, response->h_addr_list[0], net_getaddrsize(family));
-	return result;
 }
 
 net_addr net_resolve_dual(const char *hostname, sa_family_t primary_family, bool dual) {

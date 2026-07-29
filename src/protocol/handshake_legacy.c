@@ -5,17 +5,21 @@
  * Copyright (C) 2020-2026 Bilin Tsui
  */
 
+/* section: headers (library) */
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+/* section: headers (project) */
 #include "../basic.h"
 #include "common.h"
 
+/* section: headers (self) */
 #include "handshake_legacy.h"
 
-size_t make_message_legacy(void *dst, const void *src, size_t n) {
+/* section: functions (local) */
+static size_t make_message_legacy(void *dst, const void *src, size_t n) {
 	void *tmp = malloc(BUFSIZ);
 	const uint8_t *ptr_src = src;
 	uint16_t *ptr_tmp = tmp;
@@ -35,6 +39,7 @@ size_t make_message_legacy(void *dst, const void *src, size_t n) {
 	return dst_length;
 }
 
+/* section: functions (exported) */
 size_t make_kickreason_legacy(void *dst, const void *src) {
 	return make_message_legacy(dst, src, strlen(src));
 }
@@ -66,6 +71,12 @@ size_t make_motd_legacy(void *dst, const void *src, uint8_t motd_version, uint8_
 	size_t dst_length = make_message_legacy(dst, tmp, tmp_length);
 	free(tmp);
 	return dst_length;
+}
+
+void packet_destroy_legacy_motd(p_motd_legacy object) {
+	if (object.address != NULL) {
+		free(object.address);
+	}
 }
 
 p_login_legacy packet_read_legacy_login(const void *sourcepacket, size_t sourcepacket_length, uint8_t login_version) {
@@ -215,10 +226,4 @@ size_t packet_write_legacy_motd(void *dst, p_motd_legacy src) {
 	ptr_dst = (uint16_t *)(((uint32_t *)ptr_dst) + 1);
 	size_t size = (uint8_t *)ptr_dst - (uint8_t *)dst;
 	return size;
-}
-
-void packet_destroy_legacy_motd(p_motd_legacy object) {
-	if (object.address != NULL) {
-		free(object.address);
-	}
 }

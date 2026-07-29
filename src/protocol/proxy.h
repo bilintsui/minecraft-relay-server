@@ -9,16 +9,21 @@
 
 #define _MRS_PROTOCOLS_PROXY_H_INCLUDED_
 
-#define PROTOPROXY_PACKETMAXLEN	128
-
+/* section: headers (project) */
 #include "../network.h"
 
+/* section: defines */
+/* limit */
+#define PROTOPROXY_PACKETMAXLEN	128
+
+/* section: types */
 typedef struct {
 	sa_family_t family;
 	net_addr srcaddr, dstaddr;
 	in_port_t srcport, dstport;
 } p_proxy;
 
+/* section: functions (exported) */
 sa_family_t protocol_proxy_getfamily(const void *src, size_t n);
 p_proxy protocol_proxy_read(const void *src, size_t n);
 size_t protocol_proxy_write(void *dst, p_proxy src);

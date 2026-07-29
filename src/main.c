@@ -5,6 +5,7 @@
  * Copyright (C) 2020-2026 Bilin Tsui
  */
 
+/* section: headers (library) */
 #include <errno.h>
 #include <limits.h>
 #include <signal.h>
@@ -15,32 +16,23 @@
 #include <string.h>
 #include <unistd.h>
 
+/* section: headers (project) */
 #include "basic.h"
 #include "connsetup.h"
 #include "define/exitcode.h"
 #include "define/global.h"
 #include "log.h"
 
+/* section: defines */
+/* default */
 #define DEFAULT_CONFIG_FILE	"/etc/mcrelay/config.json"
 
+/* logging macro */
 #define LOG(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, lvl, __VA_ARGS__)
 #define LOG_CFG(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, config->log.level, lvl, __VA_ARGS__)
 #define LOG_FILE(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, config_logfull, config->log.level, lvl, __VA_ARGS__)
 
-enum command {
-	COMMAND_INVALID,
-	COMMAND_HELP,
-	COMMAND_RUN,
-	COMMAND_VERSION
-};
-
-enum help_topic {
-	HELP_GENERAL,
-	HELP_HELP,
-	HELP_RUN,
-	HELP_VERSION
-};
-
+/* section: types */
 enum arg_error {
 	ARG_OK,
 	ARG_ERR_UNKNOWN_COMMAND,
@@ -50,7 +42,18 @@ enum arg_error {
 	ARG_ERR_INVALID_ARGUMENT,
 	ARG_ERR_INVALID
 };
-
+enum command {
+	COMMAND_INVALID,
+	COMMAND_HELP,
+	COMMAND_RUN,
+	COMMAND_VERSION
+};
+enum help_topic {
+	HELP_GENERAL,
+	HELP_HELP,
+	HELP_RUN,
+	HELP_VERSION
+};
 typedef struct {
 	enum command command;
 	const char *configfile;
@@ -59,15 +62,17 @@ typedef struct {
 	const char *error_arg;
 } arguments;
 
-char cwd[PATH_MAX];
-char configfile[PATH_MAX];
-char configfile_full[PATH_MAX];
-char config_logfull[PATH_MAX];
+/* section: global variables */
 conf *config = NULL;
+char config_logfull[PATH_MAX];
 bool config_netpriority_enabled = true;
 sa_family_t config_netpriority_protocol = AF_INET6;
+char configfile[PATH_MAX];
+char configfile_full[PATH_MAX];
+char cwd[PATH_MAX];
 volatile sig_atomic_t reload_flag = 0;
 
+/* section: functions (local) */
 static void bind_success_msg(void) {
 	LOG_FILE(MKSYS_LEVEL_INFORMATION, "Bind Successful.\n\n");
 	LOG_CFG(MKSYS_LEVEL_INFORMATION, "For more information, see log file: %s\n\n", config->log.filename);
@@ -322,6 +327,7 @@ static void setup_signals(void) {
 	signal(SIGCHLD, SIG_IGN);
 }
 
+/* section: functions (entry point) */
 int main(int argc, char **argv) {
 	const char *progname = strrchr(argv[0], '/') ? strrchr(argv[0], '/') + 1 : argv[0];
 	arguments args = parse_arguments(argc, argv);

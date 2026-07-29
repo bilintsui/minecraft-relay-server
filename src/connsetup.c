@@ -5,6 +5,7 @@
  * Copyright (C) 2020-2026 Bilin Tsui
  */
 
+/* section: headers (library) */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +13,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+/* section: headers (project) */
 #include "basic.h"
 #include "log.h"
 #include "protocol/common.h"
@@ -19,8 +21,10 @@
 #include "protocol/handshake_legacy.h"
 #include "protocol/proxy.h"
 
+/* section: headers (self) */
 #include "connsetup.h"
 
+/* section: functions (local) */
 static void connsetup_proxyinfo_resolve_srv(conf_proxy *proxyinfo) {
 	if (!proxyinfo->srvenabled) {
 		return;
@@ -255,7 +259,8 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 	return CONNSETUP_EABORT;
 }
 
-static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled, uint8_t *inbound, ssize_t packlen_inbound) {
+static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled,
+	uint8_t *inbound, ssize_t packlen_inbound) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
@@ -399,6 +404,8 @@ static bool connsetup_read_more(int socket_in, uint8_t *inbound, ssize_t *packle
 	*packlen_inbound += n;
 	return true;
 }
+
+/* section: functions (exported) */
 int connsetup(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled) {
 	uint8_t inbound[BUFSIZ];
 	ssize_t packlen_inbound;

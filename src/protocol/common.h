@@ -9,6 +9,11 @@
 
 #define _MRS_PROTOCOLS_COMMON_H_INCLUDED_
 
+/* section: headers (library) */
+#include <stdint.h>
+
+/* section: defines */
+/* protocol type */
 #define PVER_UNIDENT	0
 #define PVER_ORIGPRO	1
 #define PVER_LEGACYL1	2
@@ -21,6 +26,7 @@
 #define PVER_MODERN1	9
 #define PVER_MODERN2	10
 
+/* section: functions (exported) */
 uint8_t protocol_identify(const void *src);
 
 #endif

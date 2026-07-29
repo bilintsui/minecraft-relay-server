@@ -5,11 +5,14 @@
  * Copyright (C) 2020-2026 Bilin Tsui
  */
 
+/* section: headers (library) */
 #include <stdio.h>
 #include <string.h>
 
+/* section: headers (self) */
 #include "proxy.h"
 
+/* section: functions (exported) */
 sa_family_t protocol_proxy_getfamily(const void *src, size_t n) {
 	if (src == NULL) {
 		return AF_UNSPEC;

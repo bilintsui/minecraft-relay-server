@@ -5,15 +5,19 @@
  * Copyright (C) 2020-2026 Bilin Tsui
  */
 
+/* section: headers (library) */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+/* section: headers (project) */
 #include "../basic.h"
 
+/* section: headers (self) */
 #include "handshake.h"
 
-size_t make_message(void *dst, const void *src) {
+/* section: functions (local) */
+static size_t make_message(void *dst, const void *src) {
 	uint8_t *tmp, *ptr_dst, *ptr_tmp;
 	size_t dst_length, payload_length, src_length;
 	tmp = calloc(1, BUFSIZ);
@@ -31,6 +35,7 @@ size_t make_message(void *dst, const void *src) {
 	return payload_length;
 }
 
+/* section: functions (exported) */
 size_t make_kickreason(void *dst, const void *src) {
 	void *input;
 	size_t payload_length;
@@ -53,6 +58,21 @@ size_t make_motd(void *dst, const void *src, varint_t ver, const char *favicon_b
 	payload_length = make_message(dst, input);
 	free(input);
 	return payload_length;
+}
+
+void packet_destroy(p_handshake object) {
+	if (object.address != NULL) {
+		free(object.address);
+		object.address = NULL;
+	}
+	if (object.signature_data != NULL) {
+		free(object.signature_data);
+		object.signature_data = NULL;
+	}
+	if (object.username != NULL) {
+		free(object.username);
+		object.username = NULL;
+	}
 }
 
 p_handshake packet_read(void *src, void *end) {
@@ -222,19 +242,4 @@ size_t packet_write(void *dst, const p_handshake src) {
 	free(part1);
 	free(part2);
 	return size;
-}
-
-void packet_destroy(p_handshake object) {
-	if (object.address != NULL) {
-		free(object.address);
-		object.address = NULL;
-	}
-	if (object.signature_data != NULL) {
-		free(object.signature_data);
-		object.signature_data = NULL;
-	}
-	if (object.username != NULL) {
-		free(object.username);
-		object.username = NULL;
-	}
 }
