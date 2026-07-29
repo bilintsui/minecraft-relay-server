@@ -13,3 +13,14 @@ else()
 	target_compile_definitions(mcrelay${EXEC_SUFFIX} PRIVATE _GNU_SOURCE DEBUG_MODE=false)
 endif()
 target_link_libraries(mcrelay${EXEC_SUFFIX} -lresolv -lcjson)
+
+include(CTest)
+if(BUILD_TESTING)
+	add_test(
+		NAME cli
+		COMMAND ${CMAKE_COMMAND}
+			"-DMCRELAY=$<TARGET_FILE:mcrelay${EXEC_SUFFIX}>"
+			"-DTEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}"
+			-P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli.cmake"
+	)
+endif()
