@@ -21,10 +21,31 @@
 #include "define/global.h"
 #include "log.h"
 
+#define DEFAULT_CONFIG_FILE	"/etc/mcrelay/config.json"
+
 #define LOG(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, lvl, __VA_ARGS__)
 #define LOG_CFG(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, config->log.level, lvl, __VA_ARGS__)
-#define LOG_NOPFX(lvl, ...)	mksysmsg(MKSYS_PREFIX_OFF, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, lvl, __VA_ARGS__)
 #define LOG_FILE(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, config_logfull, config->log.level, lvl, __VA_ARGS__)
+
+enum command {
+	COMMAND_INVALID,
+	COMMAND_HELP,
+	COMMAND_RUN,
+	COMMAND_VERSION
+};
+
+enum help_topic {
+	HELP_GENERAL,
+	HELP_HELP,
+	HELP_RUN,
+	HELP_VERSION
+};
+
+typedef struct {
+	enum command command;
+	const char *configfile;
+	enum help_topic help_topic;
+} arguments;
 
 char cwd[PATH_MAX];
 char configfile[PATH_MAX];
@@ -35,6 +56,34 @@ bool config_netpriority_enabled = true;
 sa_family_t config_netpriority_protocol = AF_INET6;
 volatile sig_atomic_t reload_flag = 0;
 
+static const char *bannermsg =
+	"Minecraft Relay Server [Version " MCRELAY_VERSION_DISPLAY "/"
+	MCRELAY_VERSION_INTERNAL "]\n"
+	"(c) " MCRELAY_COPYYEAR " Bilin Tsui\n\n";
+
+static const char *helpmsg =
+	"Usage: %s <command> ...\n\n"
+	"\trun\tCreate a server instance\n"
+	"\tversion\tGet version in single line\n\n"
+	"Use \"%s help <command>\" to get help for specific command.\n";
+
+static const char *helpmsg_help =
+	"Get help for specific command\n\n"
+	"Usage: %s help [<command>]\n";
+
+static const char *helpmsg_run =
+	"Create a server instance\n\n"
+	"Usage: %s run [options]\n\n"
+	"\t-c, --config <config_file>\n"
+	"\t\tOptional, specify a configuration to read. Default: " DEFAULT_CONFIG_FILE "\n";
+
+static const char *helpmsg_version =
+	"Get version in single line\n\n"
+	"Usage: %s version\n";
+
+static const char *moremsg =
+	"\n"
+	"See more: https://github.com/bilintsui/minecraft-relay-server\n";
 
 static void bind_success_msg(void) {
 	LOG_FILE(MKSYS_LEVEL_INFORMATION, "Bind Successful.\n\n");
@@ -128,6 +177,41 @@ static void do_reload(void) {
 	return;
 }
 
+static arguments parse_arguments(int argc, char **argv) {
+	arguments result = {
+		.command = COMMAND_INVALID,
+		.configfile = NULL,
+		.help_topic = HELP_GENERAL
+	};
+	if (argc >= 2 && strcmp(argv[1], "help") == 0) {
+		if (argc == 2) {
+			result.command = COMMAND_HELP;
+		} else if (argc == 3) {
+			if (strcmp(argv[2], "help") == 0) {
+				result.help_topic = HELP_HELP;
+			} else if (strcmp(argv[2], "run") == 0) {
+				result.help_topic = HELP_RUN;
+			} else if (strcmp(argv[2], "version") == 0) {
+				result.help_topic = HELP_VERSION;
+			} else {
+				return result;
+			}
+			result.command = COMMAND_HELP;
+		}
+	} else if (argc == 2 && strcmp(argv[1], "version") == 0) {
+		result.command = COMMAND_VERSION;
+	} else if (argc == 2 && strcmp(argv[1], "run") == 0) {
+		result.command = COMMAND_RUN;
+		result.configfile = DEFAULT_CONFIG_FILE;
+	} else if (argc == 4 && strcmp(argv[1], "run") == 0
+		&& (strcmp(argv[2], "-c") == 0 || strcmp(argv[2], "--config") == 0)
+		&& argv[3][0] != '\0') {
+		result.command = COMMAND_RUN;
+		result.configfile = argv[3];
+	}
+	return result;
+}
+
 static net_addrbundle parse_client_address(void *addr) {
 	net_addrbundle result;
 	memset(&result, 0, sizeof(result));
@@ -167,18 +251,42 @@ static void setup_signals(void) {
 	signal(SIGCHLD, SIG_IGN);
 }
 
-static const char *headmsg =
-	"Minecraft Relay Server [Version " MCRELAY_VERSION_DISPLAY "/"
-	MCRELAY_VERSION_INTERNAL "]\n"
-	"(c) " MCRELAY_COPYYEAR " Bilin Tsui\n\n";
-
-static const char *helpmsg =
-	"Usage:\n"
-	"\t%s <config_file>\n"
-	"\t%s (-v | --version)\n\n"
-	"See more: https://github.com/bilintsui/minecraft-relay-server\n";
-
 int main(int argc, char **argv) {
+	const char *progname = strrchr(argv[0], '/') ? strrchr(argv[0], '/') + 1 : argv[0];
+	arguments args = parse_arguments(argc, argv);
+	switch (args.command) {
+		case COMMAND_HELP:
+			fputs(bannermsg, stdout);
+			switch (args.help_topic) {
+				case HELP_HELP:
+					fprintf(stdout, helpmsg_help, progname);
+					break;
+				case HELP_RUN:
+					fprintf(stdout, helpmsg_run, progname);
+					break;
+				case HELP_VERSION:
+					fprintf(stdout, helpmsg_version, progname);
+					break;
+				case HELP_GENERAL:
+				default:
+					fprintf(stdout, helpmsg, progname, progname);
+					break;
+			}
+			fputs(moremsg, stdout);
+			return EXITCODE_OK;
+		case COMMAND_VERSION:
+			fprintf(stdout, "v%s(%s)\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_INTERNAL);
+			return EXITCODE_OK;
+		case COMMAND_RUN:
+			break;
+		case COMMAND_INVALID:
+		default:
+			if (argc > 1) {
+				fprintf(stderr, "Error: Invalid arguments.\n");
+			}
+			fprintf(stderr, "Try '%s help' for more information.\n", progname);
+			return EXITCODE_BADARG;
+	}
 	int socket_inbound_server, socket_inbound_client;
 	union {
 		struct sockaddr_in v4;
@@ -186,30 +294,9 @@ int main(int argc, char **argv) {
 	} addr_inbound_client;
 	socklen_t strulen = sizeof(addr_inbound_client);
 	getcwd(cwd, PATH_MAX);
-	const char *progname = strrchr(argv[0], '/') ? strrchr(argv[0], '/') + 1 : argv[0];
-	if (argc != 2) {
-		LOG_NOPFX(MKSYS_LEVEL_CRITICAL, headmsg);
-		fprintf(stderr, helpmsg, progname, progname);
-		return EXITCODE_BADARG;
-	}
-	if ((strcmp(argv[1], "-v") == 0) || (strcmp(argv[1], "--version") == 0)) {
-		fprintf(stdout, "v%s(%s)\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_INTERNAL);
-		return EXITCODE_OK;
-	}
-	if (argv[1][0] == '-') {
-		LOG_NOPFX(MKSYS_LEVEL_CRITICAL, headmsg);
-		fprintf(stderr, "Error: Invalid option \"%s\"\n\n", argv[1]);
-		fprintf(stderr, helpmsg, progname, progname);
-		return EXITCODE_BADARG;
-	}
-	LOG_NOPFX(MKSYS_LEVEL_INFORMATION, headmsg);
-	if (argv[1][0] == '\0') {
-		LOG(MKSYS_LEVEL_CRITICAL, "Config filename cannot be empty!\n");
-		return EXITCODE_BADARG;
-	}
-	snprintf(configfile, sizeof(configfile), "%s", argv[1]);
+	snprintf(configfile, sizeof(configfile), "%s", args.configfile);
 	resolve_path(configfile, cwd, configfile_full, sizeof(configfile_full));
-	LOG(MKSYS_LEVEL_INFORMATION, "Loading configurations from file: %s\n\n", configfile);
+	LOG(MKSYS_LEVEL_INFORMATION, "Loading configurations from file: %s\n", configfile);
 	config = config_read(configfile_full);
 	switch (errno) {
 		case 0:

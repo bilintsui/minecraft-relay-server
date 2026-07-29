@@ -47,9 +47,12 @@ Additionally, if you want cross-compiling, the following CMake properties will b
 
 ## Usage
 <pre>
-mcrelay &lt;config_file&gt;
-mcrelay (-v | --version)
+mcrelay run [-c &lt;config_file&gt; | --config &lt;config_file&gt;]
+mcrelay version
+mcrelay help [&lt;command&gt;]
 </pre>
+
+The default configuration file is <code>/etc/mcrelay/config.json</code>.
 
 The program runs in the foreground. Use a service manager such as systemd when it should run as a background service.
 

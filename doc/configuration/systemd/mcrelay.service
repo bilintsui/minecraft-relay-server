@@ -8,7 +8,7 @@ Type=simple
 User=nobody
 Restart=on-failure
 RestartSec=5s
-ExecStart=/usr/local/bin/mcrelay /usr/local/etc/mcrelay/config.json
+ExecStart=/usr/local/bin/mcrelay run --config /usr/local/etc/mcrelay/config.json
 ExecReload=/bin/kill -USR1 $MAINPID
 
 [Install]
