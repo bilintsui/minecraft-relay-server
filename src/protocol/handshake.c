@@ -6,12 +6,17 @@
  */
 
 /* section: headers (library) */
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* section: headers (project) */
 #include "../basic.h"
+#include "../define/global.h"
 
 /* section: headers (self) */
 #include "handshake.h"

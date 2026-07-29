@@ -6,22 +6,29 @@
  */
 
 /* section: headers (library) */
+#include <arpa/inet.h>
 #include <errno.h>
 #include <limits.h>
+#include <netinet/in.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 /* section: headers (project) */
 #include "basic.h"
+#include "config.h"
 #include "connsetup.h"
 #include "define/exitcode.h"
 #include "define/global.h"
 #include "log.h"
+#include "network.h"
 
 /* section: defines */
 /* default */

@@ -7,13 +7,13 @@
 
 /* section: headers (library) */
 #include <stdarg.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-
-/* section: headers (project) */
-#include "define/global.h"
 
 /* section: headers (self) */
 #include "log.h"

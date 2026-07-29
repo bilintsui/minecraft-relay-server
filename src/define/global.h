@@ -10,6 +10,7 @@
 #define _MRS_DEFINES_H_INCLUDED_
 
 /* section: headers (library) */
+#include <stdbool.h>
 #include <stdint.h>
 
 /* section: defines */

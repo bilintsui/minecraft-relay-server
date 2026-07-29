@@ -11,7 +11,6 @@
 
 /* section: headers (library) */
 #include <stdbool.h>
-#include <stdint.h>
 
 /* section: headers (project) */
 #include "config.h"

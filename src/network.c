@@ -7,13 +7,21 @@
 
 /* section: headers (library) */
 #include <arpa/inet.h>
+#include <arpa/nameser.h>
+#include <arpa/nameser_compat.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <resolv.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
 

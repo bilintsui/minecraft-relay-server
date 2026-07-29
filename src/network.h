@@ -13,6 +13,7 @@
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <sys/socket.h>
 
 /* section: defines */
 /* socket create mode */

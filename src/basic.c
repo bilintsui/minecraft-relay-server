@@ -7,12 +7,18 @@
 
 /* section: headers (library) */
 #include <errno.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+
+/* section: headers (project) */
+#include "define/global.h"
 
 /* section: headers (self) */
 #include "basic.h"

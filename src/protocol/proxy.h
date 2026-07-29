@@ -9,6 +9,11 @@
 
 #define _MRS_PROTOCOLS_PROXY_H_INCLUDED_
 
+/* section: headers (library) */
+#include <netinet/in.h>
+#include <stddef.h>
+#include <sys/socket.h>
+
 /* section: headers (project) */
 #include "../network.h"
 

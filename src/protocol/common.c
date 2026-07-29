@@ -6,10 +6,12 @@
  */
 
 /* section: headers (library) */
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
 /* section: headers (project) */
+#include "../define/global.h"
 #include "handshake.h"
 
 /* section: headers (self) */

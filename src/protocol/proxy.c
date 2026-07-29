@@ -6,8 +6,16 @@
  */
 
 /* section: headers (library) */
+#include <netinet/in.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
+
+/* section: headers (project) */
+#include "../network.h"
 
 /* section: headers (self) */
 #include "proxy.h"

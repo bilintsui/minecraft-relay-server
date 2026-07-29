@@ -11,6 +11,7 @@
 
 /* section: headers (library) */
 #include <netinet/in.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /* section: headers (project) */
