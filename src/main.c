@@ -64,6 +64,7 @@ typedef struct {
 
 /* section: global variables */
 conf *config = NULL;
+static conf_cache config_cache_state = { 0 };
 char config_logfull[PATH_MAX];
 bool config_netpriority_enabled = true;
 sa_family_t config_netpriority_protocol = AF_INET6;
@@ -125,9 +126,10 @@ static void do_reload(void) {
 		"Reloading config from file: %s\n",
 		configfile
 	);
-	conf *config_new = config_read(configfile_full);
-	switch (errno) {
-		case 0:
+	conf *config_new = NULL;
+	conf_read_status read_status = config_read(configfile_full, &config_cache_state, &config_new);
+	switch (read_status) {
+		case CONF_READ_CHANGED:
 			config_destroy(config);
 			config = config_new;
 			config_icon_load(config, config_logfull, config_maxlevel);
@@ -136,31 +138,40 @@ static void do_reload(void) {
 				"Configuration reloaded.\n"
 			);
 			break;
-		case CONF_EROPENFAIL:
-		case CONF_EROPENEMPTY:
-		case CONF_EROPENLARGE:
-		case CONF_ERMEMORY:
-		case CONF_ERPARSE:
-		case CONF_ECMEMORY:
-		case CONF_ECNETPRIORITYPROTOCOL:
-		case CONF_ECLISTENPORT:
-		case CONF_ECPROXY:
-			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-				"%s%s%s\n",
-				config_errmsg(errno),
-				(errno == CONF_EROPENFAIL || errno == CONF_EROPENEMPTY) ? configfile : "",
-				", will keep your old configurations"
+		case CONF_READ_UNCHANGED:
+			config_icon_load(config, config_logfull_old, config_maxlevel);
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
+				"Configuration file unchanged.\n"
 			);
 			break;
-		case CONF_ECPROXYDUP:
-			log_config_duperr(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING, ", will keep your old configurations");
-			break;
-		default:
-			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-				"Error in processing configurations: Unknown error occurred, code: %d, will keep your old configurations\n",
-				errno
-			);
-			break;
+		case CONF_READ_ERROR:
+			switch (errno) {
+				case CONF_EROPENFAIL:
+				case CONF_EROPENEMPTY:
+				case CONF_EROPENLARGE:
+				case CONF_ERMEMORY:
+				case CONF_ERPARSE:
+				case CONF_ECMEMORY:
+				case CONF_ECNETPRIORITYPROTOCOL:
+				case CONF_ECLISTENPORT:
+				case CONF_ECPROXY:
+					mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+						"%s%s%s\n",
+						config_errmsg(errno),
+						(errno == CONF_EROPENFAIL || errno == CONF_EROPENEMPTY) ? configfile : "",
+						", will keep your old configurations"
+					);
+					break;
+				case CONF_ECPROXYDUP:
+					log_config_duperr(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING, ", will keep your old configurations");
+					break;
+				default:
+					mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+						"Error in processing configurations: Unknown error occurred, code: %d, will keep your old configurations\n",
+						errno
+					);
+					break;
+			}
 	}
 	return;
 }
@@ -378,33 +389,39 @@ int main(int argc, char **argv) {
 	snprintf(configfile, sizeof(configfile), "%s", args.configfile);
 	resolve_path(configfile, cwd, configfile_full, sizeof(configfile_full));
 	LOG(MKSYS_LEVEL_INFORMATION, "Loading configurations from file: %s\n", configfile);
-	config = config_read(configfile_full);
-	switch (errno) {
-		case 0:
+	conf_read_status read_status = config_read(configfile_full, &config_cache_state, &config);
+	switch (read_status) {
+		case CONF_READ_CHANGED:
 			resolve_path(config->log.filename, cwd, config_logfull, sizeof(config_logfull));
 			config_netpriority_enabled = config->netpriority.enabled;
 			config_netpriority_protocol = config->netpriority.protocol;
 			config_icon_load(config, config_logfull, config->log.level);
 			break;
-		case CONF_EROPENFAIL:
-		case CONF_EROPENEMPTY:
-			LOG(MKSYS_LEVEL_CRITICAL, "%s%s\n", config_errmsg(errno), configfile);
-			return EXITCODE_NOCONFFILE;
-		case CONF_EROPENLARGE:
-		case CONF_ERMEMORY:
-		case CONF_ECMEMORY:
-		case CONF_ERPARSE:
-		case CONF_ECNETPRIORITYPROTOCOL:
-		case CONF_ECLISTENPORT:
-		case CONF_ECPROXY:
-			LOG(MKSYS_LEVEL_CRITICAL, "%s\n", config_errmsg(errno));
-			return config_exitcode(errno);
-		case CONF_ECPROXYDUP:
-			log_config_duperr(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "");
-			return config_exitcode(errno);
-		default:
-			LOG(MKSYS_LEVEL_CRITICAL, "Error in processing configurations: Unknown error occurred, code: %d\n", errno);
+		case CONF_READ_UNCHANGED:
+			LOG(MKSYS_LEVEL_CRITICAL, "Error in processing configurations: Initial config load unexpectedly reported no change.\n");
 			return EXITCODE_INTERNAL;
+		case CONF_READ_ERROR:
+			switch (errno) {
+				case CONF_EROPENFAIL:
+				case CONF_EROPENEMPTY:
+					LOG(MKSYS_LEVEL_CRITICAL, "%s%s\n", config_errmsg(errno), configfile);
+					return EXITCODE_NOCONFFILE;
+				case CONF_EROPENLARGE:
+				case CONF_ERMEMORY:
+				case CONF_ECMEMORY:
+				case CONF_ERPARSE:
+				case CONF_ECNETPRIORITYPROTOCOL:
+				case CONF_ECLISTENPORT:
+				case CONF_ECPROXY:
+					LOG(MKSYS_LEVEL_CRITICAL, "%s\n", config_errmsg(errno));
+					return config_exitcode(errno);
+				case CONF_ECPROXYDUP:
+					log_config_duperr(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "");
+					return config_exitcode(errno);
+				default:
+					LOG(MKSYS_LEVEL_CRITICAL, "Error in processing configurations: Unknown error occurred, code: %d\n", errno);
+					return EXITCODE_INTERNAL;
+			}
 	}
 	FILE *tmpfd = fopen(config_logfull, "a");
 	if (tmpfd == NULL) {

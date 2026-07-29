@@ -13,6 +13,7 @@
 #include <cjson/cJSON.h>
 #include <netinet/in.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <sys/socket.h>
 
@@ -43,6 +44,10 @@
 
 /* section: types */
 typedef struct {
+	void *data;
+	size_t size;
+} conf_cache;
+typedef struct {
 	struct {
 		bool enabled;
 		sa_family_t protocol;
@@ -57,6 +62,7 @@ typedef struct {
 		in_port_t port;
 	} listen;
 	char *icon_path, *icon_b64;
+	conf_cache icon_cache;
 	cJSON *proxy;
 } conf;
 typedef struct {
@@ -64,17 +70,23 @@ typedef struct {
 	in_port_t port;
 	bool valid, srvenabled, rewrite, pheader;
 } conf_proxy;
+typedef enum {
+	CONF_READ_ERROR = -1,
+	CONF_READ_UNCHANGED,
+	CONF_READ_CHANGED
+} conf_read_status;
 
 /* section: global variables */
 extern char config_duperr[CONF_ADDRESSMAXLEN];
 
 /* section: functions (exported) */
+void config_cache_destroy(conf_cache *target);
 void config_destroy(conf *target);
 void config_dumper(conf *src);
 const char *config_errmsg(int err);
 void config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel);
 conf_proxy config_proxy_search(conf *src, const char *targetvhost);
 void config_proxy_search_destroy(conf_proxy *target);
-conf *config_read(char *filename);
+conf_read_status config_read(const char *filename, conf_cache *cache, conf **result);
 
 #endif

@@ -5,7 +5,8 @@ project(mcrelay${EXEC_SUFFIX}
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
-add_executable(mcrelay${EXEC_SUFFIX} src/basic.c src/config.c src/log.c src/main.c src/connsetup.c src/network.c src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c)
+add_executable(mcrelay${EXEC_SUFFIX}
+	src/basic.c src/config.c src/log.c src/main.c src/connsetup.c src/network.c src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c)
 option(DEBUG_MODE "Allow FIFO as config input (debug)" OFF)
 if(DEBUG_MODE)
 	target_compile_definitions(mcrelay${EXEC_SUFFIX} PRIVATE _GNU_SOURCE DEBUG_MODE=true)
@@ -16,6 +17,12 @@ target_link_libraries(mcrelay${EXEC_SUFFIX} -lresolv -lcjson)
 
 include(CTest)
 if(BUILD_TESTING)
+	add_executable(config_cache_test tests/config_cache.c src/basic.c src/config.c src/log.c)
+	target_include_directories(config_cache_test PRIVATE src)
+	target_compile_definitions(config_cache_test PRIVATE _GNU_SOURCE DEBUG_MODE=false)
+	target_link_libraries(config_cache_test -lcjson)
+	add_test(NAME config_cache COMMAND config_cache_test)
+
 	add_test(
 		NAME cli
 		COMMAND ${CMAKE_COMMAND}
