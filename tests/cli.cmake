@@ -48,10 +48,40 @@ endfunction()
 
 function(expect_invalid)
 	run_cli(22 ${ARGN})
+	string(REPLACE ";" " " args_desc "${ARGN}")
 	assert_contains(
 		"${CLI_STDERR}"
 		"Try '${program_name} help' for more information."
-		"invalid command hint"
+		"${args_desc}: invalid command hint"
+	)
+endfunction()
+
+function(expect_invalid_message expected_message description)
+	run_cli(22 ${ARGN})
+	assert_contains(
+		"${CLI_STDERR}"
+		"${expected_message}"
+		"${description}"
+	)
+	assert_contains(
+		"${CLI_STDERR}"
+		"Try '${program_name} help' for more information."
+		"${description} hint"
+	)
+endfunction()
+
+function(expect_invalid_argument expected_token)
+	run_cli(22 ${ARGN})
+	string(REPLACE ";" " " args_desc "${ARGN}")
+	assert_contains(
+		"${CLI_STDERR}"
+		"Error: Invalid argument \"${expected_token}\"."
+		"${args_desc}: invalid argument message"
+	)
+	assert_contains(
+		"${CLI_STDERR}"
+		"Try '${program_name} help' for more information."
+		"${args_desc}: invalid argument hint"
 	)
 endfunction()
 
@@ -107,35 +137,49 @@ if(NOT EXISTS "/etc/mcrelay/config.json")
 endif()
 
 expect_invalid()
-expect_invalid(help unknown)
-expect_invalid(help run extra)
-expect_invalid(--version)
-expect_invalid(-v)
-expect_invalid("${missing_config}")
-expect_invalid(run extra)
-expect_invalid(run "--config=${missing_config}")
-expect_invalid(run "-c${missing_config}")
-expect_invalid(run -c)
-expect_invalid(run --config)
-expect_invalid(run --config "${missing_config}" extra)
-expect_invalid(version extra)
+expect_invalid_argument("extra" help run extra)
+expect_invalid_argument("extra" run extra)
+expect_invalid_argument("--config=${missing_config}" run "--config=${missing_config}")
+expect_invalid_argument("-c${missing_config}" run "-c${missing_config}")
+expect_invalid_argument("extra" run --config "${missing_config}" extra)
+expect_invalid_argument("extra" version extra)
 
-execute_process(
-	COMMAND "${MCRELAY}" run -c ""
-	RESULT_VARIABLE empty_config_result
-	OUTPUT_VARIABLE empty_config_output
-	ERROR_VARIABLE empty_config_error
-	TIMEOUT 5
-)
-if(NOT "${empty_config_result}" STREQUAL "22")
-	message(FATAL_ERROR
-		"empty config path: expected exit 22, got ${empty_config_result}\n"
-		"stdout:\n${empty_config_output}\n"
-		"stderr:\n${empty_config_error}"
+expect_invalid_message("Error: Unknown help topic \"unknown\"." "unknown help topic" help unknown)
+expect_invalid_message("Error: Unknown command \"--version\"." "unknown command --version" --version)
+expect_invalid_message("Error: Unknown command \"-v\"." "unknown command -v" -v)
+expect_invalid_message("Error: Unknown command \"reload\"." "unknown command reload" reload)
+expect_invalid_message("Error: Unknown command \"${missing_config}\"." "unknown command path" "${missing_config}")
+expect_invalid_message("Error: Option -c requires a value." "missing value -c" run -c)
+expect_invalid_message("Error: Option --config requires a value." "missing value --config" run --config)
+expect_invalid_argument("/etc/mcrelay/config.json" version /etc/mcrelay/config.json)
+expect_invalid_argument("--verbose" run --verbose)
+
+function(expect_empty_config flag)
+	execute_process(
+		COMMAND "${MCRELAY}" run ${flag} ""
+		RESULT_VARIABLE result
+		OUTPUT_VARIABLE output
+		ERROR_VARIABLE stderr
+		TIMEOUT 5
 	)
-endif()
-assert_contains(
-	"${empty_config_error}"
-	"Try '${program_name} help' for more information."
-	"empty config path hint"
-)
+	if(NOT "${result}" STREQUAL "22")
+		message(FATAL_ERROR
+			"empty config path (${flag}): expected exit 22, got ${result}\n"
+			"stdout:\n${output}\n"
+			"stderr:\n${stderr}"
+		)
+	endif()
+	assert_contains(
+		"${stderr}"
+		"Error: Configuration file path cannot be empty."
+		"empty config path (${flag}) message"
+	)
+	assert_contains(
+		"${stderr}"
+		"Try '${program_name} help' for more information."
+		"empty config path (${flag}) hint"
+	)
+endfunction()
+
+expect_empty_config(-c)
+expect_empty_config(--config)
