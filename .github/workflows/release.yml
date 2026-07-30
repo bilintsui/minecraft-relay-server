@@ -8,7 +8,7 @@ on:
 jobs:
   build_mcrelay:
     name: Build Minecraft Relay Server
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6
@@ -18,38 +18,30 @@ jobs:
           sudo apt-get upgrade -y
       - name: Install toolchain
         run: |
-          sudo apt-get install -y gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf gcc-powerpc64le-linux-gnu gcc-riscv64-linux-gnu gcc-s390x-linux-gnu gcc-i686-linux-gnu
+          sudo apt-get install -y gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf gcc-powerpc64le-linux-gnu gcc-riscv64-linux-gnu gcc-s390x-linux-gnu
           CODENAME=$(lsb_release -cs)
           sudo rm -f /etc/apt/sources.list
           sudo rm -f /etc/apt/sources.list.d/*
-          echo "deb [arch=amd64,amd64v3,arm64,i386] http://archive.ubuntu.com/ubuntu ${CODENAME} main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/main.list
-          echo "deb [arch=amd64,amd64v3,arm64,i386] http://archive.ubuntu.com/ubuntu ${CODENAME}-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/main.list
-          echo "deb [arch=amd64,amd64v3,arm64,i386] http://archive.ubuntu.com/ubuntu ${CODENAME}-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/main.list
-          echo "deb [arch=amd64,amd64v3,arm64,i386] http://security.ubuntu.com/ubuntu ${CODENAME}-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/main.list
-          echo "deb [arch=armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports ${CODENAME} main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/port.list
-          echo "deb [arch=armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/port.list
-          echo "deb [arch=armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/port.list
-          echo "deb [arch=armhf,ppc64el,riscv64,s390x] http://security.ports.ubuntu.com/ubuntu-ports ${CODENAME}-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/port.list
+          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${CODENAME} main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/main.list
+          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${CODENAME}-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/main.list
+          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${CODENAME}-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/main.list
+          echo "deb [arch=amd64] http://security.ubuntu.com/ubuntu ${CODENAME}-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/main.list
+          echo "deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports ${CODENAME} main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/port.list
+          echo "deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/port.list
+          echo "deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/port.list
+          echo "deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/port.list
           sudo dpkg --add-architecture arm64
           sudo dpkg --add-architecture armhf
           sudo dpkg --add-architecture ppc64el
           sudo dpkg --add-architecture riscv64
           sudo dpkg --add-architecture s390x
-          sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y libcjson-dev:amd64 libcjson-dev:arm64 libcjson-dev:armhf libcjson-dev:ppc64el libcjson-dev:riscv64 libcjson-dev:s390x libcjson-dev:i386
+          sudo apt-get install -y libcjson-dev:amd64 libcjson-dev:arm64 libcjson-dev:armhf libcjson-dev:ppc64el libcjson-dev:riscv64 libcjson-dev:s390x
       - name: Build amd64
         run: |
           mkdir build-amd64
           cd build-amd64
           cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which gcc` -DCMAKE_C_FLAGS="-march=x86-64" -DEXEC_SUFFIX="-amd64" -DDEBUG_MODE=OFF ..
-          make
-          cd ..
-      - name: Build amd64v3
-        run: |
-          mkdir build-amd64v3
-          cd build-amd64v3
-          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which gcc` -DCMAKE_C_FLAGS="-march=x86-64-v3" -DEXEC_SUFFIX="-amd64v3" -DDEBUG_MODE=OFF ..
           make
           cd ..
       - name: Build arm64
@@ -87,25 +79,16 @@ jobs:
           cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which s390x-linux-gnu-gcc` -DEXEC_SUFFIX="-s390x" -DDEBUG_MODE=OFF ..
           make
           cd ..
-      - name: Build i386
-        run: |
-          mkdir build-i386
-          cd build-i386
-          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=`which i686-linux-gnu-gcc` -DEXEC_SUFFIX="-i386" -DDEBUG_MODE=OFF ..
-          make
-          cd ..
       - name: Post build
         run: |
           mkdir build
           cd build
           cp ../build-amd64/mcrelay-amd64 .
-          cp ../build-amd64v3/mcrelay-amd64v3 .
           cp ../build-arm64/mcrelay-arm64 .
           cp ../build-armhf/mcrelay-armhf .
           cp ../build-ppc64el/mcrelay-ppc64el .
           cp ../build-riscv64/mcrelay-riscv64 .
           cp ../build-s390x/mcrelay-s390x .
-          cp ../build-i386/mcrelay-i386 .
       - name: Upload artifacts
         uses: AButler/upload-release-assets@v4.0.0
         with:

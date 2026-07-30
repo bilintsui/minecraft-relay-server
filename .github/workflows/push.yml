@@ -6,7 +6,7 @@ on:
 jobs:
   build_mcrelay:
     name: Build Minecraft Relay Server (amd64)
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6
