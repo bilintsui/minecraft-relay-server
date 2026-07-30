@@ -85,12 +85,12 @@ p_login_legacy packet_read_legacy_login(const void *sourcepacket, size_t sourcep
 	p_login_legacy result;
 	uint8_t source[BUFSIZ];
 	uint8_t *ptr_source = source;
-	size_t recidx, source_length;
+	size_t recidx;
 	result.proto_ver = login_version;
 	memset(source, 0, BUFSIZ);
 	memset(result.username, 0, 128);
 	memset(result.address, 0, 128);
-	source_length = packetshrink(sourcepacket, sourcepacket_length, source);
+	packetshrink(sourcepacket, sourcepacket_length, source);
 	if (login_version == PVER_LEGACYL2) {
 		char login_field[512];
 		char *ptr_login_field = login_field;

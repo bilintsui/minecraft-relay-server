@@ -35,7 +35,7 @@ sa_family_t protocol_proxy_getfamily(const void *src, size_t n) {
 	if (src_endptr == NULL) {
 		return AF_UNSPEC;
 	}
-	if (n != (const uint8_t *)src_endptr - (const uint8_t *)src + 2) {
+	if (n != (size_t)((const uint8_t *)src_endptr - (const uint8_t *)src) + 2) {
 		return AF_UNSPEC;
 	}
 	if (memcmp(src_endptr, "\r\n", 2)) {

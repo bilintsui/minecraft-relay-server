@@ -300,7 +300,7 @@ int net_srvresolve(char *query_name, net_srvrecord *target) {
 		uint16_t priority, weight;
 		in_port_t port;
 		char target[128];
-	} records[128], records_minpriority[128], records_maxweight[128];
+	} records[128], records_minpriority[128];
 	memset(records, 0, sizeof(records));
 	res_init();
 	unsigned char query_buffer[1024];
