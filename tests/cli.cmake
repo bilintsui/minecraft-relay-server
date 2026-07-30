@@ -40,6 +40,16 @@ function(assert_contains actual expected description)
 	endif()
 endfunction()
 
+function(assert_not_contains actual unexpected description)
+	string(FIND "${actual}" "${unexpected}" position)
+	if(NOT position EQUAL -1)
+		message(FATAL_ERROR
+			"${description}: did not expect to find:\n${unexpected}\n"
+			"actual output:\n${actual}"
+		)
+	endif()
+endfunction()
+
 function(assert_empty actual description)
 	if(NOT "${actual}" STREQUAL "")
 		message(FATAL_ERROR "${description}: expected empty output, got:\n${actual}")
@@ -94,6 +104,13 @@ assert_contains(
 	"Use \"${program_name} help <command>\" to get help for specific command."
 	"general help hint"
 )
+assert_contains("${CLI_STDOUT}" "dumpconfig" "general help dumpconfig command")
+
+run_cli(0 help dumpconfig)
+assert_empty("${CLI_STDERR}" "dumpconfig help stderr")
+assert_contains("${CLI_STDOUT}" "Usage: ${program_name} dumpconfig [options]" "dumpconfig help usage")
+assert_contains("${CLI_STDOUT}" "-c, --config <config_file>" "dumpconfig help option")
+assert_contains("${CLI_STDOUT}" "Default: /etc/mcrelay/config.json" "dumpconfig help default")
 
 run_cli(0 help run)
 assert_empty("${CLI_STDERR}" "run help stderr")
@@ -116,10 +133,67 @@ assert_contains("${CLI_STDOUT}" "(" "version internal opening delimiter")
 assert_contains("${CLI_STDOUT}" ")" "version internal closing delimiter")
 
 string(RANDOM LENGTH 16 ALPHABET 0123456789abcdef random_suffix)
+set(invalid_config "${TEST_DIRECTORY}/mcrelay-cli-invalid-${random_suffix}.json")
 set(missing_config "${TEST_DIRECTORY}/mcrelay-cli-missing-${random_suffix}.json")
+set(valid_config "${TEST_DIRECTORY}/mcrelay-cli-valid-${random_suffix}.json")
 if(EXISTS "${missing_config}")
 	message(FATAL_ERROR "generated missing config path exists: ${missing_config}")
 endif()
+
+file(WRITE "${invalid_config}" "not valid JSON")
+file(WRITE "${valid_config}" [=[
+{
+  "netpriority": {
+    "enabled": false,
+    "protocol": "IPv4"
+  },
+  "log": {
+    "filename": "/tmp/mcrelay-dump.log",
+    "level": 1,
+    "binary": true
+  },
+  "listen": {
+    "address": "127.0.0.1",
+    "port": 25566
+  },
+  "icon": "/tmp/mcrelay-icon.png",
+  "proxy": [
+    {
+      "vhost": [
+        "dump.example.com",
+        "dump-alt.example.com"
+      ],
+      "address": "backend.example.com",
+      "rewrite": true,
+      "pheader": true
+    }
+  ]
+}
+]=])
+
+run_cli(0 dumpconfig -c "${valid_config}")
+assert_empty("${CLI_STDERR}" "dumpconfig stderr")
+assert_contains("${CLI_STDOUT}" "Config Detail:" "dumpconfig heading")
+assert_contains("${CLI_STDOUT}" "dump.example.com" "dumpconfig virtual host")
+assert_contains("${CLI_STDOUT}" "backend.example.com" "dumpconfig backend")
+assert_contains("${CLI_STDOUT}" "/tmp/mcrelay-icon.png" "dumpconfig icon")
+assert_not_contains("${CLI_STDOUT}" "[INFO]" "dumpconfig informational log")
+assert_not_contains("${CLI_STDOUT}" "[WARN]" "dumpconfig warning log")
+
+run_cli(0 dumpconfig --config "${valid_config}")
+assert_empty("${CLI_STDERR}" "dumpconfig long option stderr")
+assert_contains("${CLI_STDOUT}" "Config Detail:" "dumpconfig long option output")
+
+run_cli(81 dumpconfig -c "${missing_config}")
+assert_contains("${CLI_STDOUT}${CLI_STDERR}" "${missing_config}" "dumpconfig short config option")
+
+run_cli(81 dumpconfig --config "${missing_config}")
+assert_contains("${CLI_STDOUT}${CLI_STDERR}" "${missing_config}" "dumpconfig long config option")
+
+foreach(config_command dumpconfig run)
+	run_cli(79 ${config_command} -c "${invalid_config}")
+	assert_contains("${CLI_STDERR}" "Not a valid JSON format" "${config_command} invalid JSON error")
+endforeach()
 
 run_cli(81 run -c "${missing_config}")
 assert_contains("${CLI_STDOUT}${CLI_STDERR}" "${missing_config}" "short config option")
@@ -128,6 +202,12 @@ run_cli(81 run --config "${missing_config}")
 assert_contains("${CLI_STDOUT}${CLI_STDERR}" "${missing_config}" "long config option")
 
 if(NOT EXISTS "/etc/mcrelay/config.json")
+	run_cli(81 dumpconfig)
+	assert_contains(
+		"${CLI_STDOUT}${CLI_STDERR}"
+		"/etc/mcrelay/config.json"
+		"dumpconfig default config path"
+	)
 	run_cli(81 run)
 	assert_contains(
 		"${CLI_STDOUT}${CLI_STDERR}"
@@ -138,6 +218,10 @@ endif()
 
 expect_invalid()
 expect_invalid_argument("extra" help run extra)
+expect_invalid_argument("extra" dumpconfig extra)
+expect_invalid_argument("--config=${missing_config}" dumpconfig "--config=${missing_config}")
+expect_invalid_argument("-c${missing_config}" dumpconfig "-c${missing_config}")
+expect_invalid_argument("extra" dumpconfig --config "${missing_config}" extra)
 expect_invalid_argument("extra" run extra)
 expect_invalid_argument("--config=${missing_config}" run "--config=${missing_config}")
 expect_invalid_argument("-c${missing_config}" run "-c${missing_config}")
@@ -149,14 +233,16 @@ expect_invalid_message("Error: Unknown command \"--version\"." "unknown command 
 expect_invalid_message("Error: Unknown command \"-v\"." "unknown command -v" -v)
 expect_invalid_message("Error: Unknown command \"reload\"." "unknown command reload" reload)
 expect_invalid_message("Error: Unknown command \"${missing_config}\"." "unknown command path" "${missing_config}")
+expect_invalid_message("Error: Option -c requires a value." "dumpconfig missing value -c" dumpconfig -c)
+expect_invalid_message("Error: Option --config requires a value." "dumpconfig missing value --config" dumpconfig --config)
 expect_invalid_message("Error: Option -c requires a value." "missing value -c" run -c)
 expect_invalid_message("Error: Option --config requires a value." "missing value --config" run --config)
 expect_invalid_argument("/etc/mcrelay/config.json" version /etc/mcrelay/config.json)
 expect_invalid_argument("--verbose" run --verbose)
 
-function(expect_empty_config flag)
+function(expect_empty_config command flag)
 	execute_process(
-		COMMAND "${MCRELAY}" run ${flag} ""
+		COMMAND "${MCRELAY}" ${command} ${flag} ""
 		RESULT_VARIABLE result
 		OUTPUT_VARIABLE output
 		ERROR_VARIABLE stderr
@@ -164,7 +250,7 @@ function(expect_empty_config flag)
 	)
 	if(NOT "${result}" STREQUAL "22")
 		message(FATAL_ERROR
-			"empty config path (${flag}): expected exit 22, got ${result}\n"
+			"empty config path (${command} ${flag}): expected exit 22, got ${result}\n"
 			"stdout:\n${output}\n"
 			"stderr:\n${stderr}"
 		)
@@ -172,14 +258,18 @@ function(expect_empty_config flag)
 	assert_contains(
 		"${stderr}"
 		"Error: Configuration file path cannot be empty."
-		"empty config path (${flag}) message"
+		"empty config path (${command} ${flag}) message"
 	)
 	assert_contains(
 		"${stderr}"
 		"Try '${program_name} help' for more information."
-		"empty config path (${flag}) hint"
+		"empty config path (${command} ${flag}) hint"
 	)
 endfunction()
 
-expect_empty_config(-c)
-expect_empty_config(--config)
+expect_empty_config(dumpconfig -c)
+expect_empty_config(dumpconfig --config)
+expect_empty_config(run -c)
+expect_empty_config(run --config)
+
+file(REMOVE "${invalid_config}" "${valid_config}")

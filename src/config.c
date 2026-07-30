@@ -371,10 +371,11 @@ void config_dumper(conf *src) {
 	printf("\n[LISTEN]\n");
 	printf("Address\t\t%s\n", src->listen.address);
 	printf("Port\t\t%d\n", src->listen.port);
+	printf("\n[ICON]\t\t");
 	if (src->icon_path != NULL && src->icon_path[0] != '\0') {
-		printf("Icon\t\t%s\n", src->icon_path);
+		printf("%s\n", src->icon_path);
 	} else {
-		printf("Icon\t\t<default>\n");
+		printf("<default>\n");
 	}
 	cJSON *proxy = src->proxy;
 	cJSON *single = NULL;

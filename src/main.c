@@ -51,12 +51,14 @@ enum arg_error {
 };
 enum command {
 	COMMAND_INVALID,
+	COMMAND_DUMPCONFIG,
 	COMMAND_HELP,
 	COMMAND_RUN,
 	COMMAND_VERSION
 };
 enum help_topic {
 	HELP_GENERAL,
+	HELP_DUMPCONFIG,
 	HELP_HELP,
 	HELP_RUN,
 	HELP_VERSION
@@ -183,6 +185,60 @@ static void do_reload(void) {
 	return;
 }
 
+static int load_config(const char *filename, const char *filename_full, conf_cache *cache, conf **target) {
+	conf_read_status read_status = config_read(filename_full, cache, target);
+	switch (read_status) {
+		case CONF_READ_CHANGED:
+			return EXITCODE_OK;
+		case CONF_READ_UNCHANGED:
+			LOG(MKSYS_LEVEL_CRITICAL, "Error in processing configurations: Initial config load unexpectedly reported no change.\n");
+			return EXITCODE_INTERNAL;
+		case CONF_READ_ERROR:
+			break;
+	}
+	int config_error = errno;
+	switch (config_error) {
+		case CONF_EROPENFAIL:
+		case CONF_EROPENEMPTY:
+			LOG(MKSYS_LEVEL_CRITICAL, "%s%s\n", config_errmsg(config_error), filename);
+			return EXITCODE_NOCONFFILE;
+		case CONF_EROPENLARGE:
+		case CONF_ERMEMORY:
+		case CONF_ECMEMORY:
+		case CONF_ERPARSE:
+		case CONF_ECNETPRIORITYPROTOCOL:
+		case CONF_ECLISTENPORT:
+		case CONF_ECPROXY:
+			LOG(MKSYS_LEVEL_CRITICAL, "%s\n", config_errmsg(config_error));
+			return config_exitcode(config_error);
+		case CONF_ECPROXYDUP:
+			log_config_duperr(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "");
+			return config_exitcode(config_error);
+		default:
+			LOG(MKSYS_LEVEL_CRITICAL, "Error in processing configurations: Unknown error occurred, code: %d\n", config_error);
+			return EXITCODE_INTERNAL;
+	}
+}
+
+static int dump_config(const char *filename) {
+	char current_directory[PATH_MAX];
+	char filename_full[PATH_MAX];
+	conf_cache cache = { 0 };
+	conf *parsed = NULL;
+	if (getcwd(current_directory, sizeof(current_directory)) == NULL) {
+		LOG(MKSYS_LEVEL_CRITICAL, "Error: Cannot determine current working directory.\n");
+		return EXITCODE_INTERNAL;
+	}
+	resolve_path(filename, current_directory, filename_full, sizeof(filename_full));
+	int exitcode = load_config(filename, filename_full, &cache, &parsed);
+	if (exitcode == EXITCODE_OK) {
+		config_dumper(parsed);
+	}
+	config_destroy(parsed);
+	config_cache_destroy(&cache);
+	return exitcode;
+}
+
 static arguments parse_arguments(int argc, char **argv) {
 	arguments result = {
 		.command = COMMAND_INVALID,
@@ -199,7 +255,9 @@ static arguments parse_arguments(int argc, char **argv) {
 			result.command = COMMAND_HELP;
 			result.error = ARG_OK;
 		} else if (argc == 3) {
-			if (strcmp(argv[2], "help") == 0) {
+			if (strcmp(argv[2], "dumpconfig") == 0) {
+				result.help_topic = HELP_DUMPCONFIG;
+			} else if (strcmp(argv[2], "help") == 0) {
 				result.help_topic = HELP_HELP;
 			} else if (strcmp(argv[2], "run") == 0) {
 				result.help_topic = HELP_RUN;
@@ -224,9 +282,10 @@ static arguments parse_arguments(int argc, char **argv) {
 			result.error = ARG_ERR_INVALID_ARGUMENT;
 			result.error_arg = argv[2];
 		}
-	} else if (strcmp(argv[1], "run") == 0) {
+	} else if (strcmp(argv[1], "dumpconfig") == 0 || strcmp(argv[1], "run") == 0) {
+		enum command config_command = strcmp(argv[1], "dumpconfig") == 0 ? COMMAND_DUMPCONFIG : COMMAND_RUN;
 		if (argc == 2) {
-			result.command = COMMAND_RUN;
+			result.command = config_command;
 			result.configfile = DEFAULT_CONFIG_FILE;
 			result.error = ARG_OK;
 		} else if (strcmp(argv[2], "-c") == 0 || strcmp(argv[2], "--config") == 0) {
@@ -240,7 +299,7 @@ static arguments parse_arguments(int argc, char **argv) {
 					result.error = ARG_ERR_EMPTY_CONFIG;
 					return result;
 				}
-				result.command = COMMAND_RUN;
+				result.command = config_command;
 				result.configfile = argv[3];
 				result.error = ARG_OK;
 			} else {
@@ -294,6 +353,15 @@ static void print_help(enum help_topic topic, const char *progname) {
 		stdout
 	);
 	switch (topic) {
+		case HELP_DUMPCONFIG:
+			fprintf(stdout,
+				"Display parsed configuration\n\n"
+				"Usage: %s dumpconfig [options]\n\n"
+				"\t-c, --config <config_file>\n"
+				"\t\tOptional, specify a configuration to read. Default: " DEFAULT_CONFIG_FILE "\n",
+				progname
+			);
+			break;
 		case HELP_HELP:
 			fprintf(stdout,
 				"Get help for specific command\n\n"
@@ -321,8 +389,9 @@ static void print_help(enum help_topic topic, const char *progname) {
 		default:
 			fprintf(stdout,
 				"Usage: %s <command> ...\n\n"
-				"\trun\tCreate a server instance\n"
-				"\tversion\tGet version in single line\n\n"
+				"\tdumpconfig\tDisplay parsed configuration\n"
+				"\trun\t\tCreate a server instance\n"
+				"\tversion\t\tGet version in single line\n\n"
 				"Use \"%s help <command>\" to get help for specific command.\n",
 				progname, progname
 			);
@@ -350,6 +419,8 @@ int main(int argc, char **argv) {
 	const char *progname = strrchr(argv[0], '/') ? strrchr(argv[0], '/') + 1 : argv[0];
 	arguments args = parse_arguments(argc, argv);
 	switch (args.command) {
+		case COMMAND_DUMPCONFIG:
+			return dump_config(args.configfile);
 		case COMMAND_HELP:
 			print_help(args.help_topic, progname);
 			return EXITCODE_OK;
@@ -396,40 +467,14 @@ int main(int argc, char **argv) {
 	snprintf(configfile, sizeof(configfile), "%s", args.configfile);
 	resolve_path(configfile, cwd, configfile_full, sizeof(configfile_full));
 	LOG(MKSYS_LEVEL_INFORMATION, "Loading configurations from file: %s\n", configfile);
-	conf_read_status read_status = config_read(configfile_full, &config_cache_state, &config);
-	switch (read_status) {
-		case CONF_READ_CHANGED:
-			resolve_path(config->log.filename, cwd, config_logfull, sizeof(config_logfull));
-			config_netpriority_enabled = config->netpriority.enabled;
-			config_netpriority_protocol = config->netpriority.protocol;
-			config_icon_load(config, config_logfull, config->log.level);
-			break;
-		case CONF_READ_UNCHANGED:
-			LOG(MKSYS_LEVEL_CRITICAL, "Error in processing configurations: Initial config load unexpectedly reported no change.\n");
-			return EXITCODE_INTERNAL;
-		case CONF_READ_ERROR:
-			switch (errno) {
-				case CONF_EROPENFAIL:
-				case CONF_EROPENEMPTY:
-					LOG(MKSYS_LEVEL_CRITICAL, "%s%s\n", config_errmsg(errno), configfile);
-					return EXITCODE_NOCONFFILE;
-				case CONF_EROPENLARGE:
-				case CONF_ERMEMORY:
-				case CONF_ECMEMORY:
-				case CONF_ERPARSE:
-				case CONF_ECNETPRIORITYPROTOCOL:
-				case CONF_ECLISTENPORT:
-				case CONF_ECPROXY:
-					LOG(MKSYS_LEVEL_CRITICAL, "%s\n", config_errmsg(errno));
-					return config_exitcode(errno);
-				case CONF_ECPROXYDUP:
-					log_config_duperr(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "");
-					return config_exitcode(errno);
-				default:
-					LOG(MKSYS_LEVEL_CRITICAL, "Error in processing configurations: Unknown error occurred, code: %d\n", errno);
-					return EXITCODE_INTERNAL;
-			}
+	int config_load_status = load_config(configfile, configfile_full, &config_cache_state, &config);
+	if (config_load_status != EXITCODE_OK) {
+		return config_load_status;
 	}
+	resolve_path(config->log.filename, cwd, config_logfull, sizeof(config_logfull));
+	config_netpriority_enabled = config->netpriority.enabled;
+	config_netpriority_protocol = config->netpriority.protocol;
+	config_icon_load(config, config_logfull, config->log.level);
 	FILE *tmpfd = fopen(config_logfull, "a");
 	if (tmpfd == NULL) {
 		LOG(MKSYS_LEVEL_CRITICAL, "Error: Cannot write log to \"%s\".\n", config->log.filename);

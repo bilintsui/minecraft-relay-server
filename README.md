@@ -47,12 +47,15 @@ Additionally, if you want cross-compiling, the following CMake properties will b
 
 ## Usage
 <pre>
+mcrelay dumpconfig [-c &lt;config_file&gt; | --config &lt;config_file&gt;]
 mcrelay run [-c &lt;config_file&gt; | --config &lt;config_file&gt;]
 mcrelay version
 mcrelay help [&lt;command&gt;]
 </pre>
 
 The default configuration file is <code>/etc/mcrelay/config.json</code>.
+
+Use <code>mcrelay dumpconfig</code> to parse a configuration file and display its parsed values without starting a server instance.
 
 The program runs in the foreground. Use a service manager such as systemd when it should run as a background service.
 
