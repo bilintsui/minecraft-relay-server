@@ -5,8 +5,7 @@
   },
   "log": {
     "filename": "/var/log/mcrelay/access.log",
-    "level": 2,
-    "binary": false
+    "level": 2
   },
   "listen": {
     "address": "::",

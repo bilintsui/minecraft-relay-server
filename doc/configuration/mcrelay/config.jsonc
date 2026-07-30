@@ -32,15 +32,7 @@
      *
      * The maximum log level you want to be logged
      */
-    "level": 2,
-
-    /*
-     * Optional, boolean or integer (default: false)
-     *
-     * When set to true, the server will use the binary format instead of plain text
-     */
-    "binary": false
-
+    "level": 2
   },
   // Optional, bind settings
   "listen": {

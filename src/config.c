@@ -211,7 +211,6 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 	}
 	strcpy(result->log.filename, config_default_log_filename);
 	result->log.level = MKSYS_LEVEL_INFORMATION;
-	result->log.binary = false;
 	cJSON *config_json_log = cJSON_GetObjectItemCaseSensitive(config_json, "log");
 	if (config_json_log != NULL) {
 		cJSON *config_json_log_filename = cJSON_GetObjectItemCaseSensitive(config_json_log, "filename");
@@ -236,7 +235,6 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 				result->log.level = config_json_log_level->valueint;
 			}
 		}
-		result->log.binary = config_jsonbool(cJSON_GetObjectItemCaseSensitive(config_json_log, "binary"), false);
 	}
 	const char *config_default_listen_address = "::";
 	result->listen.address = (char *)malloc(strlen(config_default_listen_address) + 1);
@@ -363,11 +361,6 @@ void config_dumper(conf *src) {
 	printf("\n[LOG]\n");
 	printf("Filename\t%s\n", src->log.filename);
 	printf("Level\t\t%d\n", src->log.level);
-	if (src->log.binary) {
-		printf("Binary\t\ttrue\n");
-	} else {
-		printf("Binary\t\tfalse\n");
-	}
 	printf("\n[LISTEN]\n");
 	printf("Address\t\t%s\n", src->listen.address);
 	printf("Port\t\t%d\n", src->listen.port);

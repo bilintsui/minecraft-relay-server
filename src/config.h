@@ -55,7 +55,6 @@ typedef struct {
 	struct {
 		char *filename;
 		uint8_t level;
-		bool binary;
 	} log;
 	struct {
 		char *address;

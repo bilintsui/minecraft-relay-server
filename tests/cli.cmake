@@ -149,8 +149,7 @@ file(WRITE "${valid_config}" [=[
   },
   "log": {
     "filename": "/tmp/mcrelay-dump.log",
-    "level": 1,
-    "binary": true
+    "level": 1
   },
   "listen": {
     "address": "127.0.0.1",
@@ -179,6 +178,7 @@ assert_contains("${CLI_STDOUT}" "backend.example.com" "dumpconfig backend")
 assert_contains("${CLI_STDOUT}" "/tmp/mcrelay-icon.png" "dumpconfig icon")
 assert_not_contains("${CLI_STDOUT}" "[INFO]" "dumpconfig informational log")
 assert_not_contains("${CLI_STDOUT}" "[WARN]" "dumpconfig warning log")
+assert_not_contains("${CLI_STDOUT}" "Binary" "dumpconfig removed binary setting")
 
 run_cli(0 dumpconfig --config "${valid_config}")
 assert_empty("${CLI_STDERR}" "dumpconfig long option stderr")
