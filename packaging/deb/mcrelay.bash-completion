@@ -1,0 +1,45 @@
+# bash completion for mcrelay                              -*- shell-script -*-
+
+_mcrelay()
+{
+	local cur prev cmd
+	COMPREPLY=()
+	cur="${COMP_WORDS[COMP_CWORD]}"
+	prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+	# First positional argument: a subcommand.
+	if [ "$COMP_CWORD" -eq 1 ]; then
+		COMPREPLY=($(compgen -W "dumpconfig run version help" -- "$cur"))
+		return
+	fi
+
+	cmd="${COMP_WORDS[1]}"
+
+	case "$cmd" in
+		dumpconfig|run)
+			# Complete the argument of -c / --config with a file path.
+			case "$prev" in
+				-c|--config)
+					if declare -F _filedir >/dev/null 2>&1; then
+						_filedir
+					else
+						COMPREPLY=($(compgen -f -- "$cur"))
+					fi
+					return
+					;;
+			esac
+			# Otherwise complete the options themselves.
+			COMPREPLY=($(compgen -W "-c --config" -- "$cur"))
+			;;
+		help)
+			# Complete the help topic with a subcommand name.
+			COMPREPLY=($(compgen -W "dumpconfig run version help" -- "$cur"))
+			;;
+		version)
+			# Takes no further arguments.
+			;;
+	esac
+} &&
+complete -F _mcrelay mcrelay
+
+# ex: filetype=sh

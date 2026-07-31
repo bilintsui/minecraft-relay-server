@@ -1,16 +1,17 @@
 [Unit]
-Description=Minecraft Relay Server
+Description=Minecraft Relay Server (%i)
 Documentation=man:mcrelay(1) https://github.com/bilintsui/minecraft-relay-server
 After=network.target network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=nobody
+User=mcrelay
+Group=mcrelay
 KillMode=control-group
 Restart=on-failure
 RestartSec=5s
-ExecStart=/usr/local/bin/mcrelay run --config /usr/local/etc/mcrelay/config.json
+ExecStart=/usr/bin/mcrelay run --config /etc/mcrelay/%i.json
 ExecReload=/bin/kill -USR1 $MAINPID
 
 [Install]

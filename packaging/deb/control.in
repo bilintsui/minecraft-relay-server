@@ -1,0 +1,14 @@
+Package: mcrelay
+Version: @VERSION@
+Section: net
+Priority: optional
+Architecture: @ARCH@
+Depends: adduser, init-system-helpers (>= 1.18~), libc6, libcjson1, libsystemd0
+Maintainer: Bilin Tsui <bilintsui@users.noreply.github.com>
+Installed-Size: @INSTALLED_SIZE@
+Description: Minecraft reverse proxy server with server address rewrite
+ mcrelay is a reverse proxy for Minecraft servers that routes client
+ connections to upstream servers based on the server address sent in the
+ Minecraft handshake packet. It can rewrite the address/port to disguise a
+ connection as one to an official server, and forward the real client address
+ and port to the backend using HAProxy's Proxy Protocol.

@@ -1,0 +1,13 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: mcrelay
+Source: https://github.com/bilintsui/minecraft-relay-server
+
+Files: *
+Copyright: 2020-2026 Bilin Tsui
+License: GPL-3.0-only
+ This program is free software: you can redistribute it and/or modify it
+ under the terms of the GNU General Public License version 3 as published
+ by the Free Software Foundation.
+ .
+ The full text of the GPL-3.0 license is available in
+ /usr/share/common-licenses/GPL-3.

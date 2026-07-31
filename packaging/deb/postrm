@@ -1,0 +1,34 @@
+#!/bin/sh
+set -e
+
+STATE_DIRECTORY=/var/lib/mcrelay
+GROUP_MARKER="$STATE_DIRECTORY/group-created"
+USER_MARKER="$STATE_DIRECTORY/user-created"
+
+case "$1" in
+	remove)
+		if [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
+			systemctl --system daemon-reload >/dev/null || true
+		fi
+		;;
+	purge)
+		if command -v deb-systemd-helper >/dev/null 2>&1; then
+			deb-systemd-helper purge 'mcrelay.service' 'mcrelay@.service' >/dev/null || true
+		fi
+
+		if [ -f "$USER_MARKER" ] && [ "$(getent passwd mcrelay | cut -d: -f3)" = "$(cat "$USER_MARKER")" ]; then
+			deluser --quiet --system mcrelay
+		fi
+		rm -f "$USER_MARKER"
+		if [ -f "$GROUP_MARKER" ] && [ "$(getent group mcrelay | cut -d: -f3)" = "$(cat "$GROUP_MARKER")" ]; then
+			delgroup --quiet --system mcrelay
+		fi
+		rm -f "$GROUP_MARKER"
+		rmdir "$STATE_DIRECTORY" 2>/dev/null || true
+
+		rm -rf /var/log/mcrelay
+		rmdir /etc/mcrelay 2>/dev/null || true
+		;;
+esac
+
+exit 0

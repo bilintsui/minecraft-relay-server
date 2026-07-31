@@ -1,0 +1,47 @@
+#!/bin/sh
+set -e
+
+STATE_DIRECTORY=/var/lib/mcrelay
+GROUP_MARKER="$STATE_DIRECTORY/group-created"
+USER_MARKER="$STATE_DIRECTORY/user-created"
+
+case "$1" in
+	configure)
+		install -d -m 0755 "$STATE_DIRECTORY"
+
+		if ! getent group mcrelay >/dev/null; then
+			addgroup --quiet --system mcrelay
+			getent group mcrelay | cut -d: -f3 > "$GROUP_MARKER"
+		fi
+		if ! getent passwd mcrelay >/dev/null; then
+			adduser --quiet --system --ingroup mcrelay --home /nonexistent --no-create-home mcrelay
+			getent passwd mcrelay | cut -d: -f3 > "$USER_MARKER"
+		fi
+
+		install -d -o mcrelay -g mcrelay -m 0755 /var/log/mcrelay
+
+		deb-systemd-helper update-state 'mcrelay.service' 'mcrelay@.service' >/dev/null || true
+		if [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
+			systemctl --system daemon-reload >/dev/null || true
+			if [ -n "$2" ]; then
+				deb-systemd-invoke try-restart 'mcrelay.service' 'mcrelay@*.service' >/dev/null || true
+			fi
+		fi
+
+		echo "mcrelay has been installed."
+		echo "Edit /etc/mcrelay/config.json, then enable and start the service:"
+		echo "  systemctl enable --now mcrelay"
+		echo "For multiple instances, use the template unit with a config named"
+		echo "/etc/mcrelay/<name>.json:  systemctl enable --now mcrelay@<name>"
+		echo
+		echo "Shell completion is installed at"
+		echo "  /usr/share/bash-completion/completions/mcrelay"
+		echo "It is picked up automatically by new bash sessions when bash-completion"
+		echo "is enabled (the default on Debian/Ubuntu).  Completion in shells that"
+		echo "were already running will not change; open a new terminal, or run"
+		echo "  source /usr/share/bash-completion/completions/mcrelay"
+		echo "to enable it in the current session."
+		;;
+esac
+
+exit 0
