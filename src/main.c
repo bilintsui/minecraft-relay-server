@@ -8,6 +8,7 @@
 /* section: headers (library) */
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <netinet/in.h>
 #include <signal.h>
@@ -17,8 +18,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
+#include <sys/prctl.h>
+#include <sys/signalfd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 /* section: headers (project) */
@@ -38,6 +43,9 @@
 #define LOG(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, lvl, __VA_ARGS__)
 #define LOG_CFG(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, config->log.level, lvl, __VA_ARGS__)
 #define LOG_FILE(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, config_logfull, config->log.level, lvl, __VA_ARGS__)
+
+/* listener */
+#define LISTENER_ACCEPT_BATCH	128
 
 /* section: types */
 enum arg_error {
@@ -70,6 +78,17 @@ typedef struct {
 	enum arg_error error;
 	const char *error_arg;
 } arguments;
+typedef struct {
+	int epoll_fd;
+	bool mask_blocked;
+	sigset_t previous_signal_mask;
+	int signal_fd;
+} listener_events;
+typedef struct {
+	bool accept_ready;
+	bool reload;
+	bool stop;
+} listener_requests;
 
 /* section: global variables */
 conf *config = NULL;
@@ -80,7 +99,6 @@ sa_family_t config_netpriority_protocol = AF_INET6;
 char configfile[PATH_MAX];
 char configfile_full[PATH_MAX];
 char cwd[PATH_MAX];
-volatile sig_atomic_t reload_flag = 0;
 
 /* section: functions (local) */
 static void bind_success_msg(void) {
@@ -104,16 +122,6 @@ static int config_exitcode(int err) {
 			return EXITCODE_BADARG;
 		default:
 			return EXITCODE_INTERNAL;
-	}
-}
-
-static void deal_signal(int signum) {
-	switch (signum) {
-		case SIGTERM:
-		case SIGINT:
-			exit(0);
-		case SIGUSR1:
-			reload_flag = 1;
 	}
 }
 
@@ -237,6 +245,158 @@ static int dump_config(const char *filename) {
 	config_destroy(parsed);
 	config_cache_destroy(&cache);
 	return exitcode;
+}
+
+static bool listener_accept_error_retryable(int error) {
+	switch (error) {
+		case ECONNABORTED:
+		case EHOSTDOWN:
+		case EHOSTUNREACH:
+		case ENETDOWN:
+		case ENETUNREACH:
+		case ENONET:
+		case ENOPROTOOPT:
+		case EOPNOTSUPP:
+		case EPROTO:
+			return true;
+		default:
+			return false;
+	}
+}
+
+static void listener_backoff(void) {
+	struct timespec backoff = { .tv_sec = 0, .tv_nsec = 100000000 };
+	nanosleep(&backoff, NULL);
+}
+
+static void listener_events_destroy(listener_events *events) {
+	if (events->epoll_fd != -1) {
+		close(events->epoll_fd);
+	}
+	if (events->signal_fd != -1) {
+		close(events->signal_fd);
+	}
+	if (events->mask_blocked) {
+		sigprocmask(SIG_SETMASK, &events->previous_signal_mask, NULL);
+	}
+}
+
+static int listener_events_init(int socket_fd, listener_events *events) {
+	int saved_errno;
+	memset(events, 0, sizeof(*events));
+	events->epoll_fd = -1;
+	events->signal_fd = -1;
+	struct sigaction child_action;
+	memset(&child_action, 0, sizeof(child_action));
+	sigemptyset(&child_action.sa_mask);
+	child_action.sa_handler = SIG_IGN;
+	if (sigaction(SIGCHLD, &child_action, NULL) == -1) {
+		return -1;
+	}
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	sigaddset(&signal_mask, SIGINT);
+	sigaddset(&signal_mask, SIGTERM);
+	sigaddset(&signal_mask, SIGUSR1);
+	if (sigprocmask(SIG_BLOCK, &signal_mask, &events->previous_signal_mask) == -1) {
+		return -1;
+	}
+	events->mask_blocked = true;
+	events->signal_fd = signalfd(-1, &signal_mask, SFD_NONBLOCK | SFD_CLOEXEC);
+	if (events->signal_fd == -1) {
+		goto fail;
+	}
+	events->epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+	if (events->epoll_fd == -1) {
+		goto fail;
+	}
+	int socket_flags = fcntl(socket_fd, F_GETFL);
+	if (socket_flags == -1 || fcntl(socket_fd, F_SETFL, socket_flags | O_NONBLOCK) == -1) {
+		goto fail;
+	}
+	struct epoll_event event;
+	memset(&event, 0, sizeof(event));
+	event.events = EPOLLIN;
+	event.data.fd = events->signal_fd;
+	if (epoll_ctl(events->epoll_fd, EPOLL_CTL_ADD, events->signal_fd, &event) == -1) {
+		goto fail;
+	}
+	event.data.fd = socket_fd;
+	if (epoll_ctl(events->epoll_fd, EPOLL_CTL_ADD, socket_fd, &event) == -1) {
+		goto fail;
+	}
+	return 0;
+fail:
+	saved_errno = errno;
+	listener_events_destroy(events);
+	errno = saved_errno;
+	return -1;
+}
+
+static int listener_signals_read(int signal_fd, listener_requests *requests) {
+	while (1) {
+		struct signalfd_siginfo signal_info;
+		ssize_t bytes = read(signal_fd, &signal_info, sizeof(signal_info));
+		if (bytes == (ssize_t)sizeof(signal_info)) {
+			switch (signal_info.ssi_signo) {
+				case SIGINT:
+				case SIGTERM:
+					requests->stop = true;
+					break;
+				case SIGUSR1:
+					requests->reload = true;
+					break;
+			}
+			continue;
+		}
+		if (bytes == -1 && errno == EINTR) {
+			continue;
+		}
+		if (bytes == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+			return 0;
+		}
+		if (bytes != -1) {
+			errno = EIO;
+		}
+		return -1;
+	}
+}
+
+static int listener_events_wait(int socket_fd, const listener_events *events, listener_requests *requests) {
+	struct epoll_event ready_events[2];
+	memset(requests, 0, sizeof(*requests));
+	int ready_count;
+	do {
+		ready_count = epoll_wait(events->epoll_fd, ready_events, 2, -1);
+	} while (ready_count == -1 && errno == EINTR);
+	if (ready_count == -1) {
+		return -1;
+	}
+	for (int i = 0; i < ready_count; i++) {
+		uint32_t event_flags = ready_events[i].events;
+		int event_fd = ready_events[i].data.fd;
+		if (event_fd == events->signal_fd) {
+			if ((event_flags & EPOLLIN) && listener_signals_read(events->signal_fd, requests) == -1) {
+				return -1;
+			}
+			if (event_flags & (EPOLLERR | EPOLLHUP)) {
+				errno = EIO;
+				return -1;
+			}
+		} else if (event_fd == socket_fd) {
+			if (event_flags & (EPOLLERR | EPOLLHUP)) {
+				errno = EIO;
+				return -1;
+			}
+			if (event_flags & EPOLLIN) {
+				requests->accept_ready = true;
+			}
+		} else {
+			errno = EIO;
+			return -1;
+		}
+	}
+	return 0;
 }
 
 static arguments parse_arguments(int argc, char **argv) {
@@ -403,15 +563,116 @@ static void print_help(enum help_topic topic, const char *progname) {
 	);
 }
 
-static void setup_signals(void) {
-	struct sigaction sa;
-	memset(&sa, 0, sizeof(sa));
-	sigemptyset(&sa.sa_mask);
-	sa.sa_handler = deal_signal;
-	sigaction(SIGTERM, &sa, NULL);
-	sigaction(SIGINT, &sa, NULL);
-	sigaction(SIGUSR1, &sa, NULL);
-	signal(SIGCHLD, SIG_IGN);
+static int restore_worker_signals(const sigset_t *signal_mask) {
+	struct sigaction action;
+	memset(&action, 0, sizeof(action));
+	sigemptyset(&action.sa_mask);
+	action.sa_handler = SIG_IGN;
+	if (sigaction(SIGUSR1, &action, NULL) == -1) {
+		return -1;
+	}
+	action.sa_handler = SIG_DFL;
+	if (sigaction(SIGINT, &action, NULL) == -1 || sigaction(SIGTERM, &action, NULL) == -1) {
+		return -1;
+	}
+	return sigprocmask(SIG_SETMASK, signal_mask, NULL);
+}
+
+static int run_listener(int socket_fd) {
+	listener_events events;
+	if (listener_events_init(socket_fd, &events) == -1) {
+		LOG_FILE(MKSYS_LEVEL_CRITICAL, "Cannot initialize listener event loop: %s\n", strerror(errno));
+		close(socket_fd);
+		return EXITCODE_INTERNAL;
+	}
+	bind_success_msg();
+	if (!isatty(STDOUT_FILENO)) {
+		fclose(stdout);
+		fclose(stderr);
+	}
+	int exitcode = EXITCODE_OK;
+	pid_t listener_pid = getpid();
+	while (1) {
+		listener_requests requests;
+		if (listener_events_wait(socket_fd, &events, &requests) == -1) {
+			LOG_FILE(MKSYS_LEVEL_CRITICAL, "Listener event loop failed: %s\n", strerror(errno));
+			exitcode = EXITCODE_INTERNAL;
+			break;
+		}
+		if (requests.stop) {
+			break;
+		}
+		if (requests.reload) {
+			do_reload();
+		}
+		if (!requests.accept_ready) {
+			continue;
+		}
+		for (size_t accept_attempt = 0; accept_attempt < LISTENER_ACCEPT_BATCH; accept_attempt++) {
+			union {
+				struct sockaddr_in v4;
+				struct sockaddr_in6 v6;
+			} client_address;
+			socklen_t address_length = sizeof(client_address);
+			/* On Linux, accepted sockets do not inherit O_NONBLOCK from the listening socket. */
+			int client_fd = accept(socket_fd, (struct sockaddr *)&client_address, &address_length);
+			if (client_fd == -1) {
+				if (errno == EINTR) {
+					continue;
+				}
+				if (errno == EAGAIN || errno == EWOULDBLOCK) {
+					break;
+				}
+				if (listener_accept_error_retryable(errno)) {
+					continue;
+				}
+				if (errno == EMFILE || errno == ENFILE) {
+					LOG_FILE(MKSYS_LEVEL_WARNING, "Cannot accept client connection: %s\n", strerror(errno));
+					listener_backoff();
+					break;
+				}
+				LOG_FILE(MKSYS_LEVEL_CRITICAL, "Cannot accept client connection: %s\n", strerror(errno));
+				exitcode = EXITCODE_INTERNAL;
+				goto cleanup;
+			}
+			pid_t worker_pid = fork();
+			if (worker_pid > 0) {
+				close(client_fd);
+				continue;
+			}
+			if (worker_pid < 0) {
+				int saved_errno = errno;
+				close(client_fd);
+				LOG_FILE(MKSYS_LEVEL_WARNING, "Cannot create worker process: %s\n", strerror(saved_errno));
+				listener_backoff();
+				break;
+			}
+			close(events.epoll_fd);
+			close(events.signal_fd);
+			close(socket_fd);
+			if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1) {
+				LOG_FILE(MKSYS_LEVEL_WARNING, "Cannot configure worker parent-death signal: %s\n", strerror(errno));
+				_exit(EXITCODE_INTERNAL);
+			}
+			if (getppid() != listener_pid) {
+				_exit(EXITCODE_OK);
+			}
+			if (restore_worker_signals(&events.previous_signal_mask) == -1) {
+				LOG_FILE(MKSYS_LEVEL_WARNING, "Cannot restore worker signal state: %s\n", strerror(errno));
+				_exit(EXITCODE_INTERNAL);
+			}
+			net_addrbundle addrbundle_inbound_client = parse_client_address(&client_address);
+			int socket_outbound;
+			if (!connsetup(client_fd, &socket_outbound, config_logfull, config, addrbundle_inbound_client, config_netpriority_enabled)) {
+				net_relay(client_fd, socket_outbound);
+			}
+			_exit(EXITCODE_OK);
+		}
+	}
+cleanup:
+	listener_events_destroy(&events);
+	close(socket_fd);
+	return exitcode;
 }
 
 /* section: functions (entry point) */
@@ -457,12 +718,7 @@ int main(int argc, char **argv) {
 			fprintf(stderr, "Try '%s help' for more information.\n", progname);
 			return EXITCODE_BADARG;
 	}
-	int socket_inbound_server, socket_inbound_client;
-	union {
-		struct sockaddr_in v4;
-		struct sockaddr_in6 v6;
-	} addr_inbound_client;
-	socklen_t strulen = sizeof(addr_inbound_client);
+	int socket_inbound_server;
 	getcwd(cwd, PATH_MAX);
 	snprintf(configfile, sizeof(configfile), "%s", args.configfile);
 	resolve_path(configfile, cwd, configfile_full, sizeof(configfile_full));
@@ -497,44 +753,5 @@ int main(int argc, char **argv) {
 		LOG_FILE(MKSYS_LEVEL_CRITICAL, "Bind Failed!\n");
 		return EXITCODE_BINDFAIL;
 	}
-	bind_success_msg();
-	setup_signals();
-	if (!isatty(STDOUT_FILENO)) {
-		fclose(stdout);
-		fclose(stderr);
-	}
-	while (1) {
-		if (reload_flag) {
-			/*
-			 * Clear before reloading: a SIGUSR1 arriving during
-			 * do_reload() must remain pending for the next loop
-			 * iteration instead of being clobbered here.
-			 */
-			reload_flag = 0;
-			do_reload();
-		}
-		socket_inbound_client = accept(socket_inbound_server, (struct sockaddr *)&addr_inbound_client, &strulen);
-		if (socket_inbound_client == -1) {
-			if (errno == EINTR) {
-				continue;
-			}
-			break;
-		}
-		pid_t pid = fork();
-		if (pid > 0) {
-			close(socket_inbound_client);
-		} else if (pid < 0) {
-			break;
-		} else {
-			signal(SIGUSR1, SIG_DFL);
-			close(socket_inbound_server);
-			net_addrbundle addrbundle_inbound_client = parse_client_address(&addr_inbound_client);
-			int socket_outbound;
-			if (connsetup(socket_inbound_client, &socket_outbound, config_logfull, config, addrbundle_inbound_client, config_netpriority_enabled)) {
-				return EXITCODE_OK;
-			}
-			net_relay(socket_inbound_client, socket_outbound);
-			return EXITCODE_OK;
-		}
-	}
+	return run_listener(socket_inbound_server);
 }

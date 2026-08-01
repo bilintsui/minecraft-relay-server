@@ -11,6 +11,7 @@
 #include <arpa/nameser_compat.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <resolv.h>
@@ -273,7 +274,8 @@ int net_socket(short action, sa_family_t family, const void *address, in_port_t 
 			errno = NET_EBIND;
 			return -1;
 		} else {
-			if (listen(result, 5) == -1) {
+			/* Linux caps INT_MAX to the current net.core.somaxconn value. */
+			if (listen(result, INT_MAX) == -1) {
 				free(serv_addr);
 				close(result);
 				errno = NET_ELISTEN;
