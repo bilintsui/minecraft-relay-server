@@ -30,7 +30,7 @@
 #define CONF_ICON_B64MAX	7000
 
 /* error code */
-#define CONF_EARGNULL	1
+#define CONF_EARGUMENT	1
 #define CONF_EROPENFAIL	2
 #define CONF_EROPENEMPTY	3
 #define CONF_EROPENLARGE	4
@@ -79,6 +79,7 @@ typedef enum {
 extern char config_duperr[CONF_ADDRESSMAXLEN];
 
 /* section: functions (exported) */
+void config_cache_commit(conf_cache *target, conf_cache *candidate);
 void config_cache_destroy(conf_cache *target);
 void config_destroy(conf *target);
 void config_dumper(conf *src);
@@ -86,6 +87,6 @@ const char *config_errmsg(int err);
 void config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel);
 conf_proxy config_proxy_search(conf *src, const char *targetvhost);
 void config_proxy_search_destroy(conf_proxy *target);
-conf_read_status config_read(const char *filename, conf_cache *cache, conf **result);
+conf_read_status config_read(const char *filename, const conf_cache *active_cache, conf_cache *candidate_cache, conf **result);
 
 #endif

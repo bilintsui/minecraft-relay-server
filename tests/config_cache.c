@@ -53,10 +53,12 @@ int main(void) {
 	char filename[] = "/tmp/mcrelay-config-cache-XXXXXX";
 	int fd = -1;
 	int result = EXIT_FAILURE;
-	conf_cache cache = { 0 };
+	conf_cache active_cache = { 0 };
+	conf_cache candidate_cache = { 0 };
 	conf *parsed = NULL;
 	conf icon_config = { 0 };
 	void *cached_data = NULL;
+	void *candidate_data = NULL;
 	char *cached_icon_b64 = NULL;
 	void *cached_icon_data = NULL;
 	size_t cached_size = 0;
@@ -64,33 +66,51 @@ int main(void) {
 	fd = mkstemp(filename);
 	CHECK(fd != -1, "cannot create temporary configuration file");
 	CHECK(write_config(fd, config_a) == 0, "cannot write initial configuration");
-	CHECK(config_read(filename, &cache, &parsed) == CONF_READ_CHANGED, "initial configuration was not parsed");
+	CHECK(config_read(filename, &active_cache, &candidate_cache, &parsed) == CONF_READ_CHANGED, "initial configuration was not parsed");
 	CHECK((errno == 0) && (parsed != NULL), "initial configuration returned an error");
+	CHECK(active_cache.data == NULL, "initial read modified the active cache before commit");
+	candidate_data = candidate_cache.data;
+	config_cache_commit(&active_cache, &candidate_cache);
+	CHECK(active_cache.data == candidate_data, "initial candidate cache was not committed");
+	CHECK((candidate_cache.data == NULL) && (candidate_cache.size == 0), "initial candidate cache retained ownership after commit");
 	config_destroy(parsed);
 	parsed = NULL;
 
-	cached_data = cache.data;
-	CHECK(config_read(filename, &cache, &parsed) == CONF_READ_UNCHANGED, "identical configuration was not detected");
+	cached_data = active_cache.data;
+	CHECK(config_read(filename, &active_cache, &candidate_cache, &parsed) == CONF_READ_UNCHANGED, "identical configuration was not detected");
 	CHECK((errno == 0) && (parsed == NULL), "unchanged configuration returned a parsed object");
-	CHECK(cache.data == cached_data, "unchanged configuration replaced the cache");
+	CHECK(active_cache.data == cached_data, "unchanged configuration replaced the active cache");
+	CHECK(candidate_cache.data == NULL, "unchanged configuration returned a candidate cache");
 
 	CHECK(write_config(fd, config_b) == 0, "cannot write changed configuration");
-	CHECK(config_read(filename, &cache, &parsed) == CONF_READ_CHANGED, "same-sized configuration change was not detected");
+	CHECK(config_read(filename, &active_cache, &candidate_cache, &parsed) == CONF_READ_CHANGED, "same-sized configuration change was not detected");
 	CHECK((errno == 0) && (parsed != NULL), "changed configuration returned an error");
+	CHECK(active_cache.data == cached_data, "changed configuration modified the active cache before commit");
+	CHECK(memcmp(active_cache.data, config_a, active_cache.size) == 0, "changed configuration altered active cache content before commit");
+	config_destroy(parsed);
+	parsed = NULL;
+	config_cache_destroy(&candidate_cache);
+	CHECK(config_read(filename, &active_cache, &candidate_cache, &parsed) == CONF_READ_CHANGED, "discarded candidate was not retried");
+	CHECK((errno == 0) && (parsed != NULL), "retried candidate returned an error");
+	candidate_data = candidate_cache.data;
+	config_cache_commit(&active_cache, &candidate_cache);
+	CHECK(active_cache.data == candidate_data, "changed candidate cache was not committed");
+	CHECK((candidate_cache.data == NULL) && (candidate_cache.size == 0), "changed candidate cache retained ownership after commit");
 	config_destroy(parsed);
 	parsed = NULL;
 
-	cached_data = cache.data;
-	cached_size = cache.size;
+	cached_data = active_cache.data;
+	cached_size = active_cache.size;
 	CHECK(write_config(fd, config_invalid) == 0, "cannot write invalid configuration");
-	CHECK(config_read(filename, &cache, &parsed) == CONF_READ_ERROR, "invalid configuration was accepted");
+	CHECK(config_read(filename, &active_cache, &candidate_cache, &parsed) == CONF_READ_ERROR, "invalid configuration was accepted");
 	CHECK(errno == CONF_ERPARSE, "invalid configuration returned the wrong error");
 	CHECK(parsed == NULL, "invalid configuration returned a parsed object");
-	CHECK((cache.data == cached_data) && (cache.size == cached_size), "invalid configuration replaced the cache");
-	CHECK(memcmp(cache.data, config_b, cache.size) == 0, "invalid configuration changed the cached content");
+	CHECK((active_cache.data == cached_data) && (active_cache.size == cached_size), "invalid configuration replaced the active cache");
+	CHECK(memcmp(active_cache.data, config_b, active_cache.size) == 0, "invalid configuration changed the active cached content");
+	CHECK(candidate_cache.data == NULL, "invalid configuration returned a candidate cache");
 
 	CHECK(write_config(fd, config_b) == 0, "cannot restore cached configuration");
-	CHECK(config_read(filename, &cache, &parsed) == CONF_READ_UNCHANGED, "restored cached configuration was not detected");
+	CHECK(config_read(filename, &active_cache, &candidate_cache, &parsed) == CONF_READ_UNCHANGED, "restored cached configuration was not detected");
 	CHECK((errno == 0) && (parsed == NULL), "restored configuration returned an error");
 
 	icon_config.icon_path = filename;
@@ -123,7 +143,8 @@ cleanup:
 	free(icon_config.icon_b64);
 	config_cache_destroy(&icon_config.icon_cache);
 	config_destroy(parsed);
-	config_cache_destroy(&cache);
+	config_cache_destroy(&active_cache);
+	config_cache_destroy(&candidate_cache);
 	if (fd != -1) {
 		close(fd);
 		unlink(filename);

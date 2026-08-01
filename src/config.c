@@ -324,6 +324,17 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 }
 
 /* section: functions (exported) */
+void config_cache_commit(conf_cache *target, conf_cache *candidate) {
+	if (target == NULL || candidate == NULL || target == candidate) {
+		return;
+	}
+	config_cache_destroy(target);
+	target->data = candidate->data;
+	target->size = candidate->size;
+	candidate->data = NULL;
+	candidate->size = 0;
+}
+
 void config_cache_destroy(conf_cache *target) {
 	if (target != NULL) {
 		free(target->data);
@@ -571,15 +582,18 @@ void config_proxy_search_destroy(conf_proxy *target) {
 }
 
 /*
- * Cache only successfully parsed content. A failed reload must remain
- * distinguishable from the active configuration on the next attempt.
+ * Successfully parsed raw content is returned through candidate_cache.
+ * The caller must explicitly commit or destroy it, so later preparation
+ * failures cannot make the active cache represent an inactive config.
  */
-conf_read_status config_read(const char *filename, conf_cache *cache, conf **result) {
-	if ((filename == NULL) || (cache == NULL) || (result == NULL)) {
-		errno = CONF_EARGNULL;
+conf_read_status config_read(const char *filename, const conf_cache *active_cache, conf_cache *candidate_cache, conf **result) {
+	if (result != NULL) {
+		*result = NULL;
+	}
+	if ((filename == NULL) || (active_cache == NULL) || (candidate_cache == NULL) || (result == NULL) || (active_cache == candidate_cache) || (candidate_cache->data != NULL) || (candidate_cache->size != 0)) {
+		errno = CONF_EARGUMENT;
 		return CONF_READ_ERROR;
 	}
-	*result = NULL;
 	void *config_raw = NULL;
 	ssize_t config_size = freadall(filename, &config_raw, DEBUG_MODE);
 	if (config_size <= 0) {
@@ -600,7 +614,7 @@ conf_read_status config_read(const char *filename, conf_cache *cache, conf **res
 		}
 		return CONF_READ_ERROR;
 	}
-	if ((cache->data != NULL) && (cache->size == (size_t)config_size) && (memcmp(cache->data, config_raw, cache->size) == 0)) {
+	if ((active_cache->data != NULL) && (active_cache->size == (size_t)config_size) && (memcmp(active_cache->data, config_raw, active_cache->size) == 0)) {
 		free(config_raw);
 		errno = 0;
 		return CONF_READ_UNCHANGED;
@@ -612,9 +626,8 @@ conf_read_status config_read(const char *filename, conf_cache *cache, conf **res
 		errno = error_code;
 		return CONF_READ_ERROR;
 	}
-	config_cache_destroy(cache);
-	cache->data = config_raw;
-	cache->size = (size_t)config_size;
+	candidate_cache->data = config_raw;
+	candidate_cache->size = (size_t)config_size;
 	*result = config_new;
 	errno = 0;
 	return CONF_READ_CHANGED;

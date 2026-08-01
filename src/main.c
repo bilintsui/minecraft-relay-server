@@ -143,14 +143,17 @@ static void do_reload(void) {
 		"Reloading config from file: %s\n",
 		configfile
 	);
+	conf_cache config_cache_new = { 0 };
 	conf *config_new = NULL;
-	conf_read_status read_status = config_read(configfile_full, &config_cache_state, &config_new);
+	conf_read_status read_status = config_read(configfile_full, &config_cache_state, &config_cache_new, &config_new);
 	switch (read_status) {
 		case CONF_READ_CHANGED:
 			config_destroy(config);
 			config = config_new;
+			config_new = NULL;
 			config_icon_load(config, config_logfull, config_maxlevel);
 			resolve_path(config->log.filename, cwd, config_logfull, sizeof(config_logfull));
+			config_cache_commit(&config_cache_state, &config_cache_new);
 			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
 				"Configuration reloaded.\n"
 			);
@@ -190,11 +193,13 @@ static void do_reload(void) {
 					break;
 			}
 	}
+	config_destroy(config_new);
+	config_cache_destroy(&config_cache_new);
 	return;
 }
 
-static int load_config(const char *filename, const char *filename_full, conf_cache *cache, conf **target) {
-	conf_read_status read_status = config_read(filename_full, cache, target);
+static int load_config(const char *filename, const char *filename_full, const conf_cache *active_cache, conf_cache *candidate_cache, conf **target) {
+	conf_read_status read_status = config_read(filename_full, active_cache, candidate_cache, target);
 	switch (read_status) {
 		case CONF_READ_CHANGED:
 			return EXITCODE_OK;
@@ -231,19 +236,21 @@ static int load_config(const char *filename, const char *filename_full, conf_cac
 static int dump_config(const char *filename) {
 	char current_directory[PATH_MAX];
 	char filename_full[PATH_MAX];
-	conf_cache cache = { 0 };
+	conf_cache active_cache = { 0 };
+	conf_cache candidate_cache = { 0 };
 	conf *parsed = NULL;
 	if (getcwd(current_directory, sizeof(current_directory)) == NULL) {
 		LOG(MKSYS_LEVEL_CRITICAL, "Error: Cannot determine current working directory.\n");
 		return EXITCODE_INTERNAL;
 	}
 	resolve_path(filename, current_directory, filename_full, sizeof(filename_full));
-	int exitcode = load_config(filename, filename_full, &cache, &parsed);
+	int exitcode = load_config(filename, filename_full, &active_cache, &candidate_cache, &parsed);
 	if (exitcode == EXITCODE_OK) {
 		config_dumper(parsed);
 	}
 	config_destroy(parsed);
-	config_cache_destroy(&cache);
+	config_cache_destroy(&active_cache);
+	config_cache_destroy(&candidate_cache);
 	return exitcode;
 }
 
@@ -723,10 +730,13 @@ int main(int argc, char **argv) {
 	snprintf(configfile, sizeof(configfile), "%s", args.configfile);
 	resolve_path(configfile, cwd, configfile_full, sizeof(configfile_full));
 	LOG(MKSYS_LEVEL_INFORMATION, "Loading configurations from file: %s\n", configfile);
-	int config_load_status = load_config(configfile, configfile_full, &config_cache_state, &config);
+	conf_cache config_cache_candidate = { 0 };
+	int config_load_status = load_config(configfile, configfile_full, &config_cache_state, &config_cache_candidate, &config);
 	if (config_load_status != EXITCODE_OK) {
+		config_cache_destroy(&config_cache_candidate);
 		return config_load_status;
 	}
+	config_cache_commit(&config_cache_state, &config_cache_candidate);
 	resolve_path(config->log.filename, cwd, config_logfull, sizeof(config_logfull));
 	config_netpriority_enabled = config->netpriority.enabled;
 	config_netpriority_protocol = config->netpriority.protocol;
