@@ -34,4 +34,8 @@ if(BUILD_TESTING)
 	add_executable(systemd_notify_test tests/systemd_notify.c)
 	target_compile_definitions(systemd_notify_test PRIVATE _GNU_SOURCE)
 	add_test(NAME systemd_notify COMMAND systemd_notify_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}>)
+
+	add_executable(worker_lifecycle_test tests/worker_lifecycle.c)
+	target_compile_definitions(worker_lifecycle_test PRIVATE _GNU_SOURCE)
+	add_test(NAME worker_lifecycle COMMAND worker_lifecycle_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}>)
 endif()
