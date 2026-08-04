@@ -31,6 +31,11 @@ if(BUILD_TESTING)
 			-P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli.cmake"
 	)
 
+	add_executable(protocol_packets_test tests/protocol_packets.c src/basic.c src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c)
+	target_compile_definitions(protocol_packets_test PRIVATE _GNU_SOURCE)
+	target_link_libraries(protocol_packets_test -lcjson)
+	add_test(NAME protocol_packets COMMAND protocol_packets_test "${CMAKE_CURRENT_SOURCE_DIR}/tests/rawpackets")
+
 	add_executable(systemd_notify_test tests/systemd_notify.c)
 	target_compile_definitions(systemd_notify_test PRIVATE _GNU_SOURCE)
 	add_test(NAME systemd_notify COMMAND systemd_notify_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}>)
