@@ -6,6 +6,7 @@
  */
 
 /* section: headers (library) */
+#include <arpa/inet.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -68,4 +69,26 @@ uint8_t protocol_identify(const void *src) {
 			}
 		}
 	}
+}
+
+uint16_t protocol_uint16_read(const void *src) {
+	uint16_t value;
+	memcpy(&value, src, sizeof(value));
+	return ntohs(value);
+}
+
+void protocol_uint16_write(void *dst, uint16_t value) {
+	value = htons(value);
+	memcpy(dst, &value, sizeof(value));
+}
+
+uint32_t protocol_uint32_read(const void *src) {
+	uint32_t value;
+	memcpy(&value, src, sizeof(value));
+	return ntohl(value);
+}
+
+void protocol_uint32_write(void *dst, uint32_t value) {
+	value = htonl(value);
+	memcpy(dst, &value, sizeof(value));
 }

@@ -6,7 +6,6 @@
  */
 
 /* section: headers (library) */
-#include <arpa/inet.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -24,19 +23,19 @@
 static size_t make_message_legacy(void *dst, const void *src, size_t n) {
 	void *tmp = malloc(BUFSIZ);
 	const uint8_t *ptr_src = src;
-	uint16_t *ptr_tmp = tmp;
+	uint8_t *ptr_tmp = tmp;
 	for (size_t i = 0; i < n; i++) {
-		*ptr_tmp = htons(*ptr_src);
+		protocol_uint16_write(ptr_tmp, *ptr_src);
 		ptr_src++;
-		ptr_tmp++;
+		ptr_tmp += sizeof(uint16_t);
 	}
-	memset(dst, 0xFF, 1);
-	uint16_t *ptr_dst = (uint16_t *)((uint8_t *)dst + 1);
-	*ptr_dst = htons(n);
-	ptr_dst++;
-	size_t tmp_length = (uint8_t *)ptr_tmp - (uint8_t *)tmp;
+	uint8_t *ptr_dst = dst;
+	*ptr_dst++ = 0xFF;
+	protocol_uint16_write(ptr_dst, (uint16_t)n);
+	ptr_dst += sizeof(uint16_t);
+	size_t tmp_length = ptr_tmp - (uint8_t *)tmp;
 	memcpy(ptr_dst, tmp, tmp_length);
-	size_t dst_length = ((uint8_t *)ptr_dst - (uint8_t *)dst) + tmp_length;
+	size_t dst_length = (size_t)(ptr_dst - (uint8_t *)dst) + tmp_length;
 	free(tmp);
 	return dst_length;
 }
@@ -146,17 +145,17 @@ p_login_legacy packet_read_legacy_login(const void *sourcepacket, size_t sourcep
 p_motd_legacy packet_read_legacy_motd(const void *src) {
 	p_motd_legacy result;
 	result.version = *((const uint8_t *)src + 0x1D);
-	const uint16_t *ptr_src = (const uint16_t *)((const uint8_t *)src + 0x1E);
-	size_t address_length = ntohs(*ptr_src);
-	ptr_src++;
+	const uint8_t *ptr_src = (const uint8_t *)src + 0x1E;
+	size_t address_length = protocol_uint16_read(ptr_src);
+	ptr_src += sizeof(uint16_t);
 	result.address = calloc(1, address_length + 1);
 	uint8_t *ptr_address = result.address;
 	for (size_t i = 0; i < address_length; i++) {
-		*ptr_address = ntohs(*ptr_src);
-		ptr_src++;
+		*ptr_address = (uint8_t)protocol_uint16_read(ptr_src);
+		ptr_src += sizeof(uint16_t);
 		ptr_address++;
 	}
-	result.port = ntohl(*((const uint32_t *)ptr_src));
+	result.port = (in_port_t)protocol_uint32_read(ptr_src);
 	return result;
 }
 
@@ -208,24 +207,21 @@ size_t packet_write_legacy_login(p_login_legacy source, void *target) {
 
 size_t packet_write_legacy_motd(void *dst, p_motd_legacy src) {
 	memcpy(dst, "\xFE\x01\xFA\0\x0B\0M\0C\0|\0P\0i\0n\0g\0H\0o\0s\0t", 0x1B);
-	uint16_t *ptr_dst = (uint16_t *)((uint8_t *)dst + 0x1B);
+	uint8_t *ptr_dst = (uint8_t *)dst + 0x1B;
 	size_t address_length = strlen(src.address);
-	*ptr_dst = htons(address_length * 2 + 7);
-	ptr_dst++;
-	*((uint8_t *)ptr_dst) = src.version;
-	ptr_dst = (uint16_t *)((uint8_t *)ptr_dst + 1);
-	*ptr_dst = htons(address_length);
-	ptr_dst++;
+	protocol_uint16_write(ptr_dst, (uint16_t)(address_length * 2 + 7));
+	ptr_dst += sizeof(uint16_t);
+	*ptr_dst++ = src.version;
+	protocol_uint16_write(ptr_dst, (uint16_t)address_length);
+	ptr_dst += sizeof(uint16_t);
 	uint8_t *ptr_address = src.address;
-	uint16_t tmp_data;
 	for (size_t i = 0; i < address_length; i++) {
-		tmp_data = *ptr_address;
-		*ptr_dst = htons(tmp_data);
+		protocol_uint16_write(ptr_dst, *ptr_address);
 		ptr_address++;
-		ptr_dst++;
+		ptr_dst += sizeof(uint16_t);
 	}
-	*((uint32_t *)ptr_dst) = htonl(src.port);
-	ptr_dst = (uint16_t *)(((uint32_t *)ptr_dst) + 1);
-	size_t size = (uint8_t *)ptr_dst - (uint8_t *)dst;
+	protocol_uint32_write(ptr_dst, src.port);
+	ptr_dst += sizeof(uint32_t);
+	size_t size = (size_t)(ptr_dst - (uint8_t *)dst);
 	return size;
 }

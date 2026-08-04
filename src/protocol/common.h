@@ -28,5 +28,9 @@
 
 /* section: functions (exported) */
 uint8_t protocol_identify(const void *src);
+uint16_t protocol_uint16_read(const void *src);
+void protocol_uint16_write(void *dst, uint16_t value);
+uint32_t protocol_uint32_read(const void *src);
+void protocol_uint32_write(void *dst, uint32_t value);
 
 #endif

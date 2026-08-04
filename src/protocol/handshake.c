@@ -6,8 +6,6 @@
  */
 
 /* section: headers (library) */
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -17,6 +15,7 @@
 /* section: headers (project) */
 #include "../basic.h"
 #include "../define/global.h"
+#include "common.h"
 
 /* section: headers (self) */
 #include "handshake.h"
@@ -136,8 +135,8 @@ p_handshake packet_read(void *src, void *end) {
 	if ((char *)src + sizeof(in_port_t) > (char *)end) {
 		goto cleanup;
 	}
-	result.port = ntohs(*((in_port_t *)src));
-	src = (void *)(((in_port_t *)src) + 1);
+	result.port = protocol_uint16_read(src);
+	src = (uint8_t *)src + sizeof(uint16_t);
 	src = varint2int(src, &result.nextstate);
 	if (src == NULL) {
 		goto cleanup;
@@ -218,8 +217,8 @@ size_t packet_write(void *dst, const p_handshake src) {
 		memcpy(ptr_part1 + address_length_pure, "\0FML2\0", 6);
 	}
 	ptr_part1 += address_length;
-	*((in_port_t *)ptr_part1) = htons(src.port);
-	ptr_part1 = (void *)(((in_port_t *)ptr_part1) + 1);
+	protocol_uint16_write(ptr_part1, src.port);
+	ptr_part1 += sizeof(uint16_t);
 	ptr_part1 = int2varint(src.nextstate, ptr_part1);
 	size_part1 = ptr_part1 - part1;
 	ptr_part2 = int2varint(src.id_part2, ptr_part2);
