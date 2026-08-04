@@ -90,7 +90,7 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 	int packlen_pheader;
 	memset(rewrited, 0, BUFSIZ);
 	memset(pheader, 0, PROTOPROXY_PACKETMAXLEN + 1);
-	uint8_t login_version = protocol_identify(inbound);
+	uint8_t login_version = protocol_identify(inbound, (size_t)packlen_inbound, NULL);
 	if (login_version == PVER_LEGACYL1) {
 		mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, type: game, status: reject_gamerelay_oldclient\n",
@@ -181,7 +181,7 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 	int packlen_pheader;
 	memset(rewrited, 0, BUFSIZ);
 	memset(pheader, 0, PROTOPROXY_PACKETMAXLEN + 1);
-	uint8_t motd_version = protocol_identify(inbound);
+	uint8_t motd_version = protocol_identify(inbound, (size_t)packlen_inbound, NULL);
 	if (motd_version == PVER_LEGACYM3) {
 		p_motd_legacy inbound_info = packet_read_legacy_motd(inbound);
 		conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
@@ -255,7 +255,7 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 			"src: %s:%d, type: motd, status: reject_motdrelay_oldclient\n",
 			(char *)&(addrinfo_in.address), addrinfo_in.port
 		);
-		packlen_rewrited = make_motd_legacy(rewrited, "Proxy: Please use direct connect.", protocol_identify(inbound), 0);
+		packlen_rewrited = make_motd_legacy(rewrited, "Proxy: Please use direct connect.", protocol_identify(inbound, (size_t)packlen_inbound, NULL), 0);
 		send(socket_in, rewrited, packlen_rewrited, 0);
 		close(socket_in);
 		return CONNSETUP_EOLDCLIENT;
@@ -274,13 +274,15 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 	memset(pheader, 0, PROTOPROXY_PACKETMAXLEN + 1);
 	p_handshake inbound_info = packet_read(inbound, inbound + packlen_inbound);
 	if (inbound_info.version == 0) {
-		if (inbound[inbound[0]] == 1) {
+		intent_t intent;
+		protocol_identify(inbound, (size_t)packlen_inbound, &intent);
+		if (intent == CLIENT_INTENT_STATUS) {
 			mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 				"src: %s:%d, type: motd, status: reject_motdrelay_13w41*\n",
 				(char *)&(addrinfo_in.address), addrinfo_in.port
 			);
 			packlen_rewrited = make_motd(rewrited, "[Proxy] Use 13w42a or later to play!", inbound_info.version, conf_in->icon_b64);
-		} else if (inbound[inbound[0]] == 2) {
+		} else if (intent == CLIENT_INTENT_LOGIN) {
 			mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 				"src: %s:%d, type: game, status: reject_gamerelay_13w41*\n",
 				(char *)&(addrinfo_in.address), addrinfo_in.port
@@ -451,7 +453,7 @@ int connsetup(int socket_in, int *socket_out, const char *logfile, conf *conf_in
 			break;
 		}
 	}
-	if (protocol_identify(inbound) == PVER_UNIDENT) {
+	if (protocol_identify(inbound, (size_t)packlen_inbound, NULL) == PVER_UNIDENT) {
 		mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, status: reject_unidentproto\n",
 			(char *)&(addrinfo_in.address), addrinfo_in.port

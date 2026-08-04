@@ -18,9 +18,36 @@
 /* section: headers (self) */
 #include "common.h"
 
+/* section: functions (local) */
+static const uint8_t *protocol_varint_read(const uint8_t *src, const uint8_t *end, varint_t *value) {
+	if (src == NULL || end == NULL || value == NULL) {
+		return NULL;
+	}
+	varint_t result = 0;
+	for (size_t index = 0; index <= VARINT_T_MAXIDX; index++) {
+		if (src == end) {
+			return NULL;
+		}
+		uint8_t byte = *src++;
+		varint_t result_single = byte & 0x7F;
+		if (index == VARINT_T_MAXIDX && ((byte & 0x80) || result_single > VARINT_T_LAST_MASK)) {
+			return NULL;
+		}
+		result |= result_single << (index * 7);
+		if (!(byte & 0x80)) {
+			*value = result;
+			return src;
+		}
+	}
+	return NULL;
+}
+
 /* section: functions (exported) */
-uint8_t protocol_identify(const void *src) {
-	if (src == NULL) {
+uint8_t protocol_identify(const void *src, size_t src_size, intent_t *intent) {
+	if (intent != NULL) {
+		*intent = 0;
+	}
+	if (src == NULL || src_size == 0) {
 		return PVER_UNIDENT;
 	}
 	const uint8_t *source = src;
@@ -28,9 +55,16 @@ uint8_t protocol_identify(const void *src) {
 		case 0x01:
 			return PVER_ORIGPRO;
 		case 0x02:
+			if (src_size < 2) {
+				return PVER_UNIDENT;
+			}
 			switch (source[1]) {
 				case 0x00:
-					if (memchr(source + 3, ';', source[2] * 2) && memchr(source + 3, ':', source[2] * 2)) {
+					if (src_size < 3) {
+						return PVER_UNIDENT;
+					}
+					size_t field_size = src_size - 3;
+					if (memchr(source + 3, ';', field_size) != NULL && memchr(source + 3, ':', field_size) != NULL) {
 						return PVER_LEGACYL2;
 					} else {
 						return PVER_LEGACYL1;
@@ -41,10 +75,16 @@ uint8_t protocol_identify(const void *src) {
 					return PVER_LEGACYL4;
 			}
 		case 0xFE:
+			if (src_size == 1) {
+				return PVER_LEGACYM1;
+			}
 			switch (source[1]) {
 				case 0x00:
 					return PVER_LEGACYM1;
 				case 0x01:
+					if (src_size == 2) {
+						return PVER_LEGACYM2;
+					}
 					switch (source[2]) {
 						case 0x00:
 							return PVER_LEGACYM2;
@@ -57,9 +97,27 @@ uint8_t protocol_identify(const void *src) {
 					return PVER_UNIDENT;
 			}
 		default: {
-			intent_t intent = source[source[0]];
-			if ((intent == CLIENT_INTENT_STATUS) || (intent == CLIENT_INTENT_LOGIN) || (intent == CLIENT_INTENT_TRANSFER)) {
-				if (source[2]) {
+			const uint8_t *end = source + src_size;
+			varint_t frame_size, packet_id, version;
+			const uint8_t *frame_start = protocol_varint_read(source, end, &frame_size);
+			if (frame_start == NULL || frame_size == 0 || (size_t)frame_size > (size_t)(end - frame_start)) {
+				return PVER_UNIDENT;
+			}
+			const uint8_t *frame_end = frame_start + frame_size;
+			const uint8_t *cursor = protocol_varint_read(frame_start, frame_end, &packet_id);
+			if (cursor == NULL || packet_id != 0) {
+				return PVER_UNIDENT;
+			}
+			cursor = protocol_varint_read(cursor, frame_end, &version);
+			if (cursor == NULL || cursor == frame_end) {
+				return PVER_UNIDENT;
+			}
+			intent_t frame_intent = frame_end[-1];
+			if ((frame_intent == CLIENT_INTENT_STATUS) || (frame_intent == CLIENT_INTENT_LOGIN) || (frame_intent == CLIENT_INTENT_TRANSFER)) {
+				if (intent != NULL) {
+					*intent = frame_intent;
+				}
+				if (version != 0) {
 					return PVER_MODERN2;
 				} else {
 					return PVER_MODERN1;

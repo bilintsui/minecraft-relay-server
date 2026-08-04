@@ -204,6 +204,7 @@ int main(int argc, char **argv) {
 	uint8_t target_storage[BUFSIZ + 1] = { 0 };
 	uint8_t *source = source_storage + 1;
 	uint8_t *target = target_storage + 1;
+	uint8_t modern_multibyte_frame[131] = { 0x81, 0x01, 0x00, 0x01, 0x7B };
 	char filename[BUFSIZ];
 	int result = EXIT_FAILURE;
 	CHECK(argc == 2, "raw packet directory is required");
@@ -214,11 +215,19 @@ int main(int argc, char **argv) {
 		CHECK(path_format(filename, sizeof(filename), argv[1], client_fixtures[index].filename) == 0, "cannot format client fixture filename");
 		ssize_t source_size = file_read(filename, source, BUFSIZ);
 		CHECK(source_size > 0, "cannot read client fixture");
-		CHECK(protocol_identify(source) == client_fixtures[index].protocol, "client fixture protocol was identified incorrectly");
+		CHECK(protocol_identify(source, (size_t)source_size, NULL) == client_fixtures[index].protocol, "client fixture protocol was identified incorrectly");
 		if (client_fixtures[index].roundtrip) {
 			CHECK(packet_roundtrip(client_fixtures[index].kind, client_fixtures[index].protocol, source, (size_t)source_size, target), "client fixture did not survive an exact round trip");
 		}
 	}
+	memset(modern_multibyte_frame + 5, 'a', 123);
+	modern_multibyte_frame[128] = 0x63;
+	modern_multibyte_frame[129] = 0xDD;
+	modern_multibyte_frame[130] = CLIENT_INTENT_STATUS;
+	intent_t modern_intent;
+	CHECK(protocol_identify(modern_multibyte_frame, sizeof(modern_multibyte_frame) - 1, &modern_intent) == PVER_UNIDENT, "truncated multi-byte modern frame was identified");
+	CHECK(protocol_identify(modern_multibyte_frame, sizeof(modern_multibyte_frame), &modern_intent) == PVER_MODERN2, "multi-byte modern frame was identified incorrectly");
+	CHECK(modern_intent == CLIENT_INTENT_STATUS, "multi-byte modern frame intent was identified incorrectly");
 
 	for (size_t index = 0; index < sizeof(legacy_login_responses) / sizeof(legacy_login_responses[0]); index++) {
 		memset(source, 0, BUFSIZ);

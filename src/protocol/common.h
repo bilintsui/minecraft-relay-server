@@ -10,7 +10,11 @@
 #define _MRS_PROTOCOLS_COMMON_H_INCLUDED_
 
 /* section: headers (library) */
+#include <stddef.h>
 #include <stdint.h>
+
+/* section: headers (project) */
+#include "../define/global.h"
 
 /* section: defines */
 /* protocol type */
@@ -27,7 +31,7 @@
 #define PVER_MODERN2	10
 
 /* section: functions (exported) */
-uint8_t protocol_identify(const void *src);
+uint8_t protocol_identify(const void *src, size_t src_size, intent_t *intent);
 uint16_t protocol_uint16_read(const void *src);
 void protocol_uint16_write(void *dst, uint16_t value);
 uint32_t protocol_uint32_read(const void *src);
