@@ -19,21 +19,21 @@
 #include "log.h"
 
 /* section: functions (local) */
-static void gettime(char *target) {
+static void gettime(char *target, size_t target_size) {
 	time_t timestamp = time(NULL);
 	struct tm tm_local;
-	localtime_r(&timestamp, &tm_local);
-	int tzdiff = -timezone + tm_local.tm_isdst * 3600;
-	short tzdiff_hour = tzdiff / 3600;
-	short tzdiff_min = tzdiff / 60 - tzdiff_hour * 60;
-	sprintf(target,
-		"%04d-%02d-%02d "	/* format: date */
-		"%02d:%02d:%02d "	/* format: time */
-		"UTC%+03d:%02d",	/* format: timezone */
-		tm_local.tm_year + 1900, tm_local.tm_mon + 1, tm_local.tm_mday,	/* data: date */
-		tm_local.tm_hour, tm_local.tm_min, tm_local.tm_sec,	/* data: time */
-		tzdiff_hour, tzdiff_min	/* data: timezone */
-	);
+	target[0] = '\0';
+	if (localtime_r(&timestamp, &tm_local) == NULL) {
+		return;
+	}
+	size_t target_length = strftime(target, target_size, "%Y-%m-%d %H:%M:%S UTC%z", &tm_local);
+	if (target_length < 5 || target_length + 1 >= target_size || (target[target_length - 5] != '+' && target[target_length - 5] != '-')) {
+		target[0] = '\0';
+		return;
+	}
+	/* strftime formats %z as +hhmm; insert the colon used by the log format. */
+	memmove(target + target_length - 1, target + target_length - 2, 3);
+	target[target_length - 2] = ':';
 }
 
 /* section: functions (exported) */
@@ -59,8 +59,7 @@ int mksysmsg(bool noprefix, const char *logfile, uint8_t maxlevel, uint8_t msgle
 	va_start(varlist, format);
 	if (strcmp(logfile, MKSYS_NOLOGFILE) != 0) {
 		char time_str[32];
-		memset(time_str, 0, 32);
-		gettime(time_str);
+		gettime(time_str, sizeof(time_str));
 		FILE *logfd = fopen(logfile, "a");
 		if (logfd != NULL) {
 			if (noprefix == MKSYS_PREFIX_ON) {
