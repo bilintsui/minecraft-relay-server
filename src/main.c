@@ -318,7 +318,10 @@ int main(int argc, char **argv) {
 	char config_filename_full[PATH_MAX] = { 0 };
 	char log_filename[PATH_MAX] = { 0 };
 	char working_directory[PATH_MAX] = { 0 };
-	getcwd(working_directory, sizeof(working_directory));
+	if (getcwd(working_directory, sizeof(working_directory)) == NULL) {
+		LOG(MKSYS_LEVEL_CRITICAL, "Error: Cannot determine current working directory.\n");
+		return EXITCODE_INTERNAL;
+	}
 	snprintf(config_filename, sizeof(config_filename), "%s", args.configfile);
 	resolve_path(config_filename, working_directory, config_filename_full, sizeof(config_filename_full));
 	LOG(MKSYS_LEVEL_INFORMATION, "Loading configurations from file: %s\n", config_filename);
