@@ -71,6 +71,22 @@ enum help_topic {
 	HELP_RUN,
 	HELP_VERSION
 };
+enum listener_endpoint_status {
+	LISTENER_ENDPOINT_OK,
+	LISTENER_ENDPOINT_BAD_ADDRESS,
+	LISTENER_ENDPOINT_BAD_PORT
+};
+enum listener_socket_open_status {
+	LISTENER_SOCKET_OPEN_OK,
+	LISTENER_SOCKET_OPEN_BIND_ERROR,
+	LISTENER_SOCKET_OPEN_EVENTS_ERROR
+};
+enum listener_socket_replace_status {
+	LISTENER_SOCKET_REPLACE_OK,
+	LISTENER_SOCKET_REPLACE_CANDIDATE_ERROR,
+	LISTENER_SOCKET_REPLACE_ACTIVE_ERROR,
+	LISTENER_SOCKET_REPLACE_ROLLBACK_ERROR
+};
 typedef struct {
 	enum command command;
 	const char *configfile;
@@ -78,6 +94,10 @@ typedef struct {
 	enum arg_error error;
 	const char *error_arg;
 } arguments;
+typedef struct {
+	net_addr address;
+	in_port_t port;
+} listener_endpoint;
 typedef struct {
 	int epoll_fd;
 	bool mask_blocked;
@@ -89,13 +109,15 @@ typedef struct {
 	bool reload;
 	bool stop;
 } listener_requests;
+typedef struct {
+	listener_endpoint endpoint;
+	int fd;
+} listener_socket;
 
 /* section: global variables */
 conf *config = NULL;
 static conf_cache config_cache_state = { 0 };
 char config_logfull[PATH_MAX];
-bool config_netpriority_enabled = true;
-sa_family_t config_netpriority_protocol = AF_INET6;
 char configfile[PATH_MAX];
 char configfile_full[PATH_MAX];
 char cwd[PATH_MAX];
@@ -135,29 +157,206 @@ static void log_config_duperr(const char *logfile, uint8_t maxlevel, uint8_t msg
 	}
 }
 
-static void do_reload(void) {
+static bool listener_endpoint_equal(const listener_endpoint *left, const listener_endpoint *right) {
+	if (left->address.family != right->address.family || left->port != right->port) {
+		return false;
+	}
+	switch (left->address.family) {
+		case AF_INET:
+			return left->address.addr.v4 == right->address.addr.v4;
+		case AF_INET6:
+			return memcmp(left->address.addr.v6, right->address.addr.v6, sizeof(left->address.addr.v6)) == 0;
+		default:
+			return false;
+	}
+}
+
+static bool listener_endpoint_is_wildcard(const listener_endpoint *target) {
+	switch (target->address.family) {
+		case AF_INET:
+			return target->address.addr.v4 == INADDR_ANY;
+		case AF_INET6:
+			return memcmp(target->address.addr.v6, &in6addr_any, sizeof(target->address.addr.v6)) == 0;
+		default:
+			return false;
+	}
+}
+
+static bool listener_endpoint_may_conflict(const listener_endpoint *left, const listener_endpoint *right) {
+	if (left->port != right->port) {
+		return false;
+	}
+	if (left->address.family != right->address.family) {
+		return true;
+	}
+	return listener_endpoint_is_wildcard(left) || listener_endpoint_is_wildcard(right);
+}
+
+static enum listener_endpoint_status listener_endpoint_prepare(const conf *source, listener_endpoint *target) {
+	target->address = net_resolve_dual(source->listen.address, source->netpriority.protocol, source->netpriority.enabled);
+	target->port = source->listen.port;
+	if (target->address.family == 0) {
+		return LISTENER_ENDPOINT_BAD_ADDRESS;
+	}
+	if (target->port == 0) {
+		return LISTENER_ENDPOINT_BAD_PORT;
+	}
+	return LISTENER_ENDPOINT_OK;
+}
+
+static int listener_events_socket_add(const listener_events *events, int socket_fd) {
+	int socket_flags = fcntl(socket_fd, F_GETFL);
+	if (socket_flags == -1 || fcntl(socket_fd, F_SETFL, socket_flags | O_NONBLOCK) == -1) {
+		return -1;
+	}
+	struct epoll_event event;
+	memset(&event, 0, sizeof(event));
+	event.events = EPOLLIN;
+	event.data.fd = socket_fd;
+	return epoll_ctl(events->epoll_fd, EPOLL_CTL_ADD, socket_fd, &event);
+}
+
+static int listener_events_socket_remove(const listener_events *events, int socket_fd) {
+	return epoll_ctl(events->epoll_fd, EPOLL_CTL_DEL, socket_fd, NULL);
+}
+
+static int listener_socket_bind(listener_socket *target) {
+	target->fd = net_socket(NETSOCK_BIND, target->endpoint.address.family, &(target->endpoint.address.addr), target->endpoint.port, true);
+	return target->fd;
+}
+
+static void listener_socket_close(listener_socket *target) {
+	if (target->fd != -1) {
+		close(target->fd);
+		target->fd = -1;
+	}
+}
+
+static enum listener_socket_open_status listener_socket_open(listener_socket *target, const listener_events *events) {
+	if (listener_socket_bind(target) == -1) {
+		return LISTENER_SOCKET_OPEN_BIND_ERROR;
+	}
+	if (listener_events_socket_add(events, target->fd) == -1) {
+		int saved_errno = errno;
+		listener_socket_close(target);
+		errno = saved_errno;
+		return LISTENER_SOCKET_OPEN_EVENTS_ERROR;
+	}
+	return LISTENER_SOCKET_OPEN_OK;
+}
+
+static enum listener_socket_replace_status listener_socket_replace_conflicting(listener_socket *target, listener_socket *candidate, const listener_events *events) {
+	if (listener_events_socket_remove(events, target->fd) == -1) {
+		return LISTENER_SOCKET_REPLACE_ACTIVE_ERROR;
+	}
+	listener_socket_close(target);
+	if (listener_socket_open(candidate, events) == LISTENER_SOCKET_OPEN_OK) {
+		*target = *candidate;
+		return LISTENER_SOCKET_REPLACE_OK;
+	}
+	int candidate_errno = errno;
+	if (listener_socket_open(target, events) != LISTENER_SOCKET_OPEN_OK) {
+		return LISTENER_SOCKET_REPLACE_ROLLBACK_ERROR;
+	}
+	errno = candidate_errno;
+	return LISTENER_SOCKET_REPLACE_CANDIDATE_ERROR;
+}
+
+static enum listener_socket_replace_status listener_socket_replace(listener_socket *target, const listener_endpoint *endpoint, const listener_events *events) {
+	listener_socket candidate = {
+		.endpoint = *endpoint,
+		.fd = -1
+	};
+	enum listener_socket_open_status open_status = listener_socket_open(&candidate, events);
+	if (open_status != LISTENER_SOCKET_OPEN_OK) {
+		/* Same-port address transitions may require closing the active socket before binding the candidate. */
+		if (open_status == LISTENER_SOCKET_OPEN_BIND_ERROR && listener_endpoint_may_conflict(&target->endpoint, &candidate.endpoint) && errno == NET_EBIND) {
+			return listener_socket_replace_conflicting(target, &candidate, events);
+		}
+		return LISTENER_SOCKET_REPLACE_CANDIDATE_ERROR;
+	}
+	if (listener_events_socket_remove(events, target->fd) == -1) {
+		int saved_errno = errno;
+		listener_events_socket_remove(events, candidate.fd);
+		listener_socket_close(&candidate);
+		errno = saved_errno;
+		return LISTENER_SOCKET_REPLACE_ACTIVE_ERROR;
+	}
+	listener_socket_close(target);
+	*target = candidate;
+	return LISTENER_SOCKET_REPLACE_OK;
+}
+
+static int do_reload(listener_socket *listener, const listener_events *events) {
 	uint8_t config_maxlevel = config->log.level;
+	int result = 0;
 	char config_logfull_old[PATH_MAX];
 	snprintf(config_logfull_old, sizeof(config_logfull_old), "%s", config_logfull);
 	mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
 		"Reloading config from file: %s\n",
 		configfile
 	);
-	conf_cache config_cache_new = { 0 };
-	conf *config_new = NULL;
-	conf_read_status read_status = config_read(configfile_full, &config_cache_state, &config_cache_new, &config_new);
+	conf_cache config_cache_candidate = { 0 };
+	conf *config_candidate = NULL;
+	conf_read_status read_status = config_read(configfile_full, &config_cache_state, &config_cache_candidate, &config_candidate);
 	switch (read_status) {
-		case CONF_READ_CHANGED:
+		case CONF_READ_CHANGED: {
+			listener_endpoint candidate_endpoint;
+			enum listener_endpoint_status endpoint_status = listener_endpoint_prepare(config_candidate, &candidate_endpoint);
+			if (endpoint_status == LISTENER_ENDPOINT_BAD_ADDRESS) {
+				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+					"Error in configurations: Invalid candidate bind address, will keep your old configurations.\n"
+				);
+				break;
+			}
+			if (endpoint_status == LISTENER_ENDPOINT_BAD_PORT) {
+				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+					"Error in configurations: Invalid candidate bind port, will keep your old configurations.\n"
+				);
+				break;
+			}
+			if (!listener_endpoint_equal(&listener->endpoint, &candidate_endpoint)) {
+				net_addrp candidate_address = net_ntop(candidate_endpoint.address.family, &(candidate_endpoint.address.addr), true);
+				enum listener_socket_replace_status replace_status = listener_socket_replace(listener, &candidate_endpoint, events);
+				if (replace_status == LISTENER_SOCKET_REPLACE_CANDIDATE_ERROR) {
+					mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+						"Cannot activate candidate listening endpoint %s:%d, will keep your old configurations.\n",
+						(char *)&candidate_address, candidate_endpoint.port
+					);
+					break;
+				}
+				if (replace_status == LISTENER_SOCKET_REPLACE_ACTIVE_ERROR) {
+					mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
+						"Cannot replace active listening socket: %s\n",
+						strerror(errno)
+					);
+					result = -1;
+					break;
+				}
+				if (replace_status == LISTENER_SOCKET_REPLACE_ROLLBACK_ERROR) {
+					mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
+						"Cannot activate candidate listening endpoint %s:%d or restore the active listening socket.\n",
+						(char *)&candidate_address, candidate_endpoint.port
+					);
+					result = -1;
+					break;
+				}
+				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
+					"Listening endpoint changed to %s:%d.\n",
+					(char *)&candidate_address, candidate_endpoint.port
+				);
+			}
 			config_destroy(config);
-			config = config_new;
-			config_new = NULL;
+			config = config_candidate;
+			config_candidate = NULL;
 			config_icon_load(config, config_logfull, config_maxlevel);
 			resolve_path(config->log.filename, cwd, config_logfull, sizeof(config_logfull));
-			config_cache_commit(&config_cache_state, &config_cache_new);
+			config_cache_commit(&config_cache_state, &config_cache_candidate);
 			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
 				"Configuration reloaded.\n"
 			);
 			break;
+		}
 		case CONF_READ_UNCHANGED:
 			config_icon_load(config, config_logfull_old, config_maxlevel);
 			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
@@ -193,9 +392,9 @@ static void do_reload(void) {
 					break;
 			}
 	}
-	config_destroy(config_new);
-	config_cache_destroy(&config_cache_new);
-	return;
+	config_destroy(config_candidate);
+	config_cache_destroy(&config_cache_candidate);
+	return result;
 }
 
 static int load_config(const char *filename, const char *filename_full, const conf_cache *active_cache, conf_cache *candidate_cache, conf **target) {
@@ -317,10 +516,6 @@ static int listener_events_init(int socket_fd, listener_events *events) {
 	if (events->epoll_fd == -1) {
 		goto fail;
 	}
-	int socket_flags = fcntl(socket_fd, F_GETFL);
-	if (socket_flags == -1 || fcntl(socket_fd, F_SETFL, socket_flags | O_NONBLOCK) == -1) {
-		goto fail;
-	}
 	struct epoll_event event;
 	memset(&event, 0, sizeof(event));
 	event.events = EPOLLIN;
@@ -328,8 +523,7 @@ static int listener_events_init(int socket_fd, listener_events *events) {
 	if (epoll_ctl(events->epoll_fd, EPOLL_CTL_ADD, events->signal_fd, &event) == -1) {
 		goto fail;
 	}
-	event.data.fd = socket_fd;
-	if (epoll_ctl(events->epoll_fd, EPOLL_CTL_ADD, socket_fd, &event) == -1) {
+	if (listener_events_socket_add(events, socket_fd) == -1) {
 		goto fail;
 	}
 	return 0;
@@ -585,11 +779,11 @@ static int restore_worker_signals(const sigset_t *signal_mask) {
 	return sigprocmask(SIG_SETMASK, signal_mask, NULL);
 }
 
-static int run_listener(int socket_fd) {
+static int run_listener(listener_socket *listener) {
 	listener_events events;
-	if (listener_events_init(socket_fd, &events) == -1) {
+	if (listener_events_init(listener->fd, &events) == -1) {
 		LOG_FILE(MKSYS_LEVEL_CRITICAL, "Cannot initialize listener event loop: %s\n", strerror(errno));
-		close(socket_fd);
+		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
 	}
 	bind_success_msg();
@@ -601,7 +795,7 @@ static int run_listener(int socket_fd) {
 	pid_t listener_pid = getpid();
 	while (1) {
 		listener_requests requests;
-		if (listener_events_wait(socket_fd, &events, &requests) == -1) {
+		if (listener_events_wait(listener->fd, &events, &requests) == -1) {
 			LOG_FILE(MKSYS_LEVEL_CRITICAL, "Listener event loop failed: %s\n", strerror(errno));
 			exitcode = EXITCODE_INTERNAL;
 			break;
@@ -609,8 +803,9 @@ static int run_listener(int socket_fd) {
 		if (requests.stop) {
 			break;
 		}
-		if (requests.reload) {
-			do_reload();
+		if (requests.reload && do_reload(listener, &events) == -1) {
+			exitcode = EXITCODE_INTERNAL;
+			break;
 		}
 		if (!requests.accept_ready) {
 			continue;
@@ -622,7 +817,7 @@ static int run_listener(int socket_fd) {
 			} client_address;
 			socklen_t address_length = sizeof(client_address);
 			/* On Linux, accepted sockets do not inherit O_NONBLOCK from the listening socket. */
-			int client_fd = accept(socket_fd, (struct sockaddr *)&client_address, &address_length);
+			int client_fd = accept(listener->fd, (struct sockaddr *)&client_address, &address_length);
 			if (client_fd == -1) {
 				if (errno == EINTR) {
 					continue;
@@ -656,7 +851,7 @@ static int run_listener(int socket_fd) {
 			}
 			close(events.epoll_fd);
 			close(events.signal_fd);
-			close(socket_fd);
+			listener_socket_close(listener);
 			if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1) {
 				LOG_FILE(MKSYS_LEVEL_WARNING, "Cannot configure worker parent-death signal: %s\n", strerror(errno));
 				_exit(EXITCODE_INTERNAL);
@@ -670,7 +865,7 @@ static int run_listener(int socket_fd) {
 			}
 			net_addrbundle addrbundle_inbound_client = parse_client_address(&client_address);
 			int socket_outbound;
-			if (!connsetup(client_fd, &socket_outbound, config_logfull, config, addrbundle_inbound_client, config_netpriority_enabled)) {
+			if (!connsetup(client_fd, &socket_outbound, config_logfull, config, addrbundle_inbound_client, config->netpriority.enabled)) {
 				net_relay(client_fd, socket_outbound);
 			}
 			_exit(EXITCODE_OK);
@@ -678,7 +873,7 @@ static int run_listener(int socket_fd) {
 	}
 cleanup:
 	listener_events_destroy(&events);
-	close(socket_fd);
+	listener_socket_close(listener);
 	return exitcode;
 }
 
@@ -725,7 +920,6 @@ int main(int argc, char **argv) {
 			fprintf(stderr, "Try '%s help' for more information.\n", progname);
 			return EXITCODE_BADARG;
 	}
-	int socket_inbound_server;
 	getcwd(cwd, PATH_MAX);
 	snprintf(configfile, sizeof(configfile), "%s", args.configfile);
 	resolve_path(configfile, cwd, configfile_full, sizeof(configfile_full));
@@ -738,8 +932,6 @@ int main(int argc, char **argv) {
 	}
 	config_cache_commit(&config_cache_state, &config_cache_candidate);
 	resolve_path(config->log.filename, cwd, config_logfull, sizeof(config_logfull));
-	config_netpriority_enabled = config->netpriority.enabled;
-	config_netpriority_protocol = config->netpriority.protocol;
 	config_icon_load(config, config_logfull, config->log.level);
 	FILE *tmpfd = fopen(config_logfull, "a");
 	if (tmpfd == NULL) {
@@ -748,20 +940,21 @@ int main(int argc, char **argv) {
 	} else {
 		fclose(tmpfd);
 	}
-	net_addr bindaddr = net_resolve_dual(config->listen.address, config_netpriority_protocol, config_netpriority_enabled);
-	if (bindaddr.family == 0) {
+	listener_socket listener = { .fd = -1 };
+	enum listener_endpoint_status endpoint_status = listener_endpoint_prepare(config, &listener.endpoint);
+	if (endpoint_status == LISTENER_ENDPOINT_BAD_ADDRESS) {
 		LOG_FILE(MKSYS_LEVEL_CRITICAL, "Error: Invalid bind address!\n");
+		return EXITCODE_BINDFAIL;
 	}
-	if (config->listen.port == 0) {
+	if (endpoint_status == LISTENER_ENDPOINT_BAD_PORT) {
 		LOG_FILE(MKSYS_LEVEL_CRITICAL, "Error: Invalid bind port!\n");
 		return EXITCODE_BADPORT;
 	}
-	net_addrp bindaddrp = net_ntop(bindaddr.family, &(bindaddr.addr), true);
-	LOG_FILE(MKSYS_LEVEL_INFORMATION, "Binding on %s:%d...\n", (char *)&bindaddrp, config->listen.port);
-	socket_inbound_server = net_socket(NETSOCK_BIND, bindaddr.family, &(bindaddr.addr), config->listen.port, true);
-	if (socket_inbound_server == -1) {
+	net_addrp bindaddrp = net_ntop(listener.endpoint.address.family, &(listener.endpoint.address.addr), true);
+	LOG_FILE(MKSYS_LEVEL_INFORMATION, "Binding on %s:%d...\n", (char *)&bindaddrp, listener.endpoint.port);
+	if (listener_socket_bind(&listener) == -1) {
 		LOG_FILE(MKSYS_LEVEL_CRITICAL, "Bind Failed!\n");
 		return EXITCODE_BINDFAIL;
 	}
-	return run_listener(socket_inbound_server);
+	return run_listener(&listener);
 }
