@@ -26,7 +26,7 @@
 #include "config.h"
 
 /* section: global variables */
-char config_duperr[CONF_ADDRESSMAXLEN] = { 0 };
+static char config_duperr[CONF_ADDRESSMAXLEN] = { 0 };
 
 /* section: functions (local) */
 static void config_icon_clear(conf *cfg) {
@@ -531,6 +531,16 @@ bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const ch
 		}
 	}
 	return false;
+}
+
+void config_log_duplicate_error(const char *logfile, uint8_t maxlevel, uint8_t msglevel, const char *suffix) {
+	const char *base = config_errmsg(CONF_ECPROXYDUP);
+	if (config_duperr[0] != '\0') {
+		mksysmsg(MKSYS_PREFIX_ON, logfile, maxlevel, msglevel, "%s. Affected: \"%s\"%s\n", base, config_duperr, suffix);
+		config_duperr[0] = '\0';
+	} else {
+		mksysmsg(MKSYS_PREFIX_ON, logfile, maxlevel, msglevel, "%s%s\n", base, suffix);
+	}
 }
 
 conf_proxy config_proxy_search(conf *src, const char *targetvhost) {

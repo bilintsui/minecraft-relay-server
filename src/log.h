@@ -28,6 +28,7 @@
 #define MKSYS_PREFIX_OFF	true
 
 /* section: functions (exported) */
+int log_file_validate(const char *filename);
 int mksysmsg(bool noprefix, const char *logfile, uint8_t maxlevel, uint8_t msglevel, const char *format, ...);
 
 #endif

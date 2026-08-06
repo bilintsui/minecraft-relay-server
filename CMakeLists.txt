@@ -6,7 +6,7 @@ set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 add_executable(mcrelay${EXEC_SUFFIX}
-	src/basic.c src/config.c src/log.c src/main.c src/connsetup.c src/network.c src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c)
+	src/basic.c src/config.c src/listener.c src/log.c src/main.c src/connsetup.c src/network.c src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c)
 option(DEBUG_MODE "Allow FIFO as config input (debug)" OFF)
 option(UBSAN_TEST "Build the undefined-behavior sanitizer test" OFF)
 if(DEBUG_MODE)

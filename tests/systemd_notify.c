@@ -253,7 +253,7 @@ int main(int argc, char **argv) {
 	}
 	CHECK(expect_reloading && reload_count > 0, "repeated reload notifications are not paired");
 
-	/* The FIFO blocks candidate log validation until its read side is opened, pinning do_reload() after RELOADING=1 while reload messages keep using the active log. */
+	/* The FIFO blocks candidate log validation until its read side is opened, pinning listener_reload() after RELOADING=1 while reload messages keep using the active log. */
 	CHECK(mkfifo(reload_fifo_filename, 0600) == 0, "cannot create reload FIFO");
 	CHECK(write_config(config_filename, reload_fifo_filename, port) == 0, "cannot write blocking reload configuration");
 	CHECK(monotonic_usec(&earliest_usec) == 0 && kill(child, SIGUSR1) == 0, "cannot request blocking reload");

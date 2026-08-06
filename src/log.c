@@ -6,6 +6,8 @@
  */
 
 /* section: headers (library) */
+#include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -37,6 +39,29 @@ static void gettime(char *target, size_t target_size) {
 }
 
 /* section: functions (exported) */
+int log_file_validate(const char *filename) {
+	bool created = false;
+	int fd = open(filename, O_WRONLY | O_APPEND);
+	if (fd == -1 && errno == ENOENT) {
+		fd = open(filename, O_WRONLY | O_APPEND | O_CREAT | O_EXCL, 0666);
+		if (fd != -1) {
+			created = true;
+		} else if (errno == EEXIST) {
+			fd = open(filename, O_WRONLY | O_APPEND);
+		}
+	}
+	if (fd == -1) {
+		return -1;
+	}
+	if (created && unlink(filename) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	return close(fd);
+}
+
 int mksysmsg(bool noprefix, const char *logfile, uint8_t maxlevel, uint8_t msglevel, const char *format, ...) {
 	char level_str[8];
 	int status;
