@@ -253,7 +253,7 @@ static pid_t process_wait(pid_t process, int *status, int timeout_ms) {
 	return -1;
 }
 
-static bool worker_descriptors_clean(pid_t worker) {
+static bool worker_descriptors_valid(pid_t worker) {
 	char directory_name[64];
 	int directory_length = snprintf(directory_name, sizeof(directory_name), "/proc/%ld/fd", (long)worker);
 	if (directory_length < 0 || (size_t)directory_length >= sizeof(directory_name)) {
@@ -263,6 +263,7 @@ static bool worker_descriptors_clean(pid_t worker) {
 	if (directory == NULL) {
 		return false;
 	}
+	size_t eventpoll_count = 0;
 	bool result = true;
 	struct dirent *entry;
 	while ((entry = readdir(directory)) != NULL) {
@@ -282,13 +283,15 @@ static bool worker_descriptors_clean(pid_t worker) {
 			break;
 		}
 		target[target_length] = '\0';
-		if (strcmp(target, "anon_inode:[eventpoll]") == 0 || strcmp(target, "anon_inode:[signalfd]") == 0) {
+		if (strcmp(target, "anon_inode:[eventpoll]") == 0) {
+			eventpoll_count++;
+		} else if (strcmp(target, "anon_inode:[signalfd]") == 0) {
 			result = false;
 			break;
 		}
 	}
 	closedir(directory);
-	return result;
+	return result && eventpoll_count == 1;
 }
 
 static pid_t worker_find(pid_t listener, int timeout_ms) {
@@ -343,15 +346,15 @@ static int worker_ready_wait(pid_t worker, int timeout_ms) {
 	const struct timespec interval = { .tv_nsec = WAIT_INTERVAL_NS };
 	for (int elapsed_ms = 0; elapsed_ms < timeout_ms; elapsed_ms += WAIT_INTERVAL_MS) {
 		process_signal_state signal_state;
-		if (process_signals_read(worker, &signal_state) == 0 && (signal_state.blocked & relevant_mask) == 0 && worker_descriptors_clean(worker)) {
+		if (process_signals_read(worker, &signal_state) == 0 && (signal_state.blocked & relevant_mask) == 0 && worker_descriptors_valid(worker)) {
 			return 0;
 		}
 		nanosleep(&interval, NULL);
 	}
 	process_signal_state signal_state;
 	if (process_signals_read(worker, &signal_state) == 0) {
-		fprintf(stderr, "worker state: SigBlk=%016" PRIx64 " SigCgt=%016" PRIx64 " SigIgn=%016" PRIx64 " descriptors_clean=%d\n",
-			signal_state.blocked, signal_state.caught, signal_state.ignored, worker_descriptors_clean(worker)
+		fprintf(stderr, "worker state: SigBlk=%016" PRIx64 " SigCgt=%016" PRIx64 " SigIgn=%016" PRIx64 " descriptors_valid=%d\n",
+			signal_state.blocked, signal_state.caught, signal_state.ignored, worker_descriptors_valid(worker)
 		);
 	}
 	errno = ETIMEDOUT;
@@ -445,7 +448,7 @@ int main(int argc, char **argv) {
 	CHECK((signal_state.blocked & relevant_mask) == 0, "worker retained blocked listener signals");
 	CHECK((signal_state.caught & relevant_mask) == 0, "worker retained caught listener signals");
 	CHECK((signal_state.ignored & (sigint_mask | sigterm_mask)) == 0, "worker ignores a termination signal");
-	CHECK(worker_descriptors_clean(worker), "worker retained listener event descriptors");
+	CHECK(worker_descriptors_valid(worker), "worker event descriptors are invalid");
 	/* WSL1 reports SigIgn as zero, so verify the SIGUSR1 disposition behaviorally. */
 	CHECK(kill(worker, SIGUSR1) == 0, "cannot send SIGUSR1 to worker");
 	const struct timespec signal_delivery = { .tv_nsec = 100000000 };

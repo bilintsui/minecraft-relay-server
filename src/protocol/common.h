@@ -30,8 +30,17 @@
 #define PVER_MODERN1	9
 #define PVER_MODERN2	10
 
+/* section: types */
+enum protocol_packet_status {
+	PROTOCOL_PACKET_AMBIGUOUS,
+	PROTOCOL_PACKET_COMPLETE,
+	PROTOCOL_PACKET_INCOMPLETE,
+	PROTOCOL_PACKET_INVALID
+};
+
 /* section: functions (exported) */
 uint8_t protocol_identify(const void *src, size_t src_size, intent_t *intent);
+enum protocol_packet_status protocol_packet_length(const void *src, size_t src_size, size_t *packet_size);
 uint16_t protocol_uint16_read(const void *src);
 void protocol_uint16_write(void *dst, uint16_t value);
 uint32_t protocol_uint32_read(const void *src);

@@ -6,14 +6,18 @@
  */
 
 /* section: headers (library) */
+#include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/timerfd.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 /* section: headers (project) */
@@ -28,6 +32,20 @@
 
 /* section: headers (self) */
 #include "connsetup.h"
+
+/* section: defines */
+/* initial packet */
+#define CONNSETUP_INITIAL_TIMEOUT_SEC	10
+#define CONNSETUP_LEGACY_PING_GRACE_MS	100
+
+/* section: types */
+enum connsetup_receive_status {
+	CONNSETUP_RECEIVE_DATA,
+	CONNSETUP_RECEIVE_END,
+	CONNSETUP_RECEIVE_ERROR,
+	CONNSETUP_RECEIVE_GRACE_TIMEOUT,
+	CONNSETUP_RECEIVE_TIMEOUT
+};
 
 /* section: functions (local) */
 static void connsetup_proxyinfo_resolve_srv(conf_proxy *proxyinfo) {
@@ -400,16 +418,97 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 	return CONNSETUP_EABORT;
 }
 
-static bool connsetup_read_more(int socket_in, uint8_t *inbound, ssize_t *packlen_inbound, const char *logfile, uint8_t loglevel, const net_addrbundle *addrinfo_in) {
-	ssize_t n;
-	n = recv(socket_in, inbound + *packlen_inbound, BUFSIZ - *packlen_inbound, 0);
-	if (n <= 0) {
+static enum connsetup_receive_status connsetup_receive_more(int event_fd, int socket_in, int timeout_fd, uint8_t *inbound, ssize_t *packlen_inbound, int timeout_ms) {
+	struct epoll_event events[2];
+	int event_count;
+	do {
+		event_count = epoll_wait(event_fd, events, 2, timeout_ms);
+	} while (event_count == -1 && errno == EINTR);
+	if (event_count == 0) {
+		return CONNSETUP_RECEIVE_GRACE_TIMEOUT;
+	}
+	if (event_count == -1) {
+		return CONNSETUP_RECEIVE_ERROR;
+	}
+	const struct epoll_event *socket_event = NULL;
+	for (int event_index = 0; event_index < event_count; event_index++) {
+		if (events[event_index].data.fd == timeout_fd) {
+			return (events[event_index].events & EPOLLIN) ? CONNSETUP_RECEIVE_TIMEOUT : CONNSETUP_RECEIVE_ERROR;
+		}
+		if (events[event_index].data.fd != socket_in) {
+			return CONNSETUP_RECEIVE_ERROR;
+		}
+		socket_event = &events[event_index];
+	}
+	if (socket_event == NULL || !(socket_event->events & (EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP)) || *packlen_inbound >= BUFSIZ) {
+		return CONNSETUP_RECEIVE_ERROR;
+	}
+	ssize_t receive_size;
+	do {
+		receive_size = recv(socket_in, inbound + *packlen_inbound, BUFSIZ - (size_t)*packlen_inbound, 0);
+	} while (receive_size == -1 && errno == EINTR);
+	if (receive_size == 0) {
+		return CONNSETUP_RECEIVE_END;
+	}
+	if (receive_size == -1) {
+		return CONNSETUP_RECEIVE_ERROR;
+	}
+	*packlen_inbound += receive_size;
+	return CONNSETUP_RECEIVE_DATA;
+}
+
+static bool connsetup_receive_initial(int socket_in, uint8_t *inbound, ssize_t *packlen_inbound, const char *logfile, uint8_t loglevel, const net_addrbundle *addrinfo_in) {
+	bool result = false;
+	int event_fd = epoll_create1(EPOLL_CLOEXEC);
+	struct epoll_event socket_event = {
+		.events = EPOLLIN | EPOLLRDHUP,
+		.data.fd = socket_in
+	};
+	int timeout_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+	struct epoll_event timeout_event = {
+		.events = EPOLLIN,
+		.data.fd = timeout_fd
+	};
+	const struct itimerspec timeout = {
+		.it_value.tv_sec = CONNSETUP_INITIAL_TIMEOUT_SEC
+	};
+	*packlen_inbound = 0;
+	if (event_fd == -1 || timeout_fd == -1 || timerfd_settime(timeout_fd, 0, &timeout, NULL) == -1 || epoll_ctl(event_fd, EPOLL_CTL_ADD, socket_in, &socket_event) == -1
+		|| epoll_ctl(event_fd, EPOLL_CTL_ADD, timeout_fd, &timeout_event) == -1) {
+		goto cleanup;
+	}
+	while (1) {
+		size_t packet_size;
+		enum protocol_packet_status packet_status = protocol_packet_length(inbound, (size_t)*packlen_inbound, &packet_size);
+		if (packet_status == PROTOCOL_PACKET_COMPLETE || packet_status == PROTOCOL_PACKET_INVALID) {
+			result = true;
+			break;
+		}
+		if (packet_size > BUFSIZ) {
+			break;
+		}
+		int timeout_ms = (packet_status == PROTOCOL_PACKET_AMBIGUOUS) ? CONNSETUP_LEGACY_PING_GRACE_MS : -1;
+		enum connsetup_receive_status receive_status = connsetup_receive_more(event_fd, socket_in, timeout_fd, inbound, packlen_inbound, timeout_ms);
+		if (receive_status == CONNSETUP_RECEIVE_DATA) {
+			continue;
+		}
+		if (packet_status == PROTOCOL_PACKET_AMBIGUOUS && (receive_status == CONNSETUP_RECEIVE_END || receive_status == CONNSETUP_RECEIVE_GRACE_TIMEOUT)) {
+			result = true;
+		}
+		break;
+	}
+cleanup:
+	if (timeout_fd != -1) {
+		close(timeout_fd);
+	}
+	if (event_fd != -1) {
+		close(event_fd);
+	}
+	if (!result) {
 		mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING, "src: %s:%d, status: abort_init\n", (char *)&(addrinfo_in->address), addrinfo_in->port);
 		close(socket_in);
-		return false;
 	}
-	*packlen_inbound += n;
-	return true;
+	return result;
 }
 
 /* section: functions (exported) */
@@ -417,41 +516,8 @@ int connsetup(int socket_in, int *socket_out, const char *logfile, conf *conf_in
 	uint8_t inbound[BUFSIZ];
 	ssize_t packlen_inbound;
 	memset(inbound, 0, BUFSIZ);
-	packlen_inbound = recv(socket_in, inbound, BUFSIZ, 0);
-	if (packlen_inbound == 0) {
-		mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
-			"src: %s:%d, status: abort_init\n",
-			(char *)&(addrinfo_in.address), addrinfo_in.port
-		);
-		close(socket_in);
+	if (!connsetup_receive_initial(socket_in, inbound, &packlen_inbound, logfile, conf_in->log.level, &addrinfo_in)) {
 		return CONNSETUP_EABORT;
-	}
-	switch (inbound[0]) {
-		case 0xFE:
-			if (packlen_inbound > 2) {
-				while (packlen_inbound < 0x20) {
-					if (!connsetup_read_more(socket_in, inbound, &packlen_inbound, logfile, conf_in->log.level, &addrinfo_in)) {
-						return CONNSETUP_EABORT;
-					}
-				}
-				while (packlen_inbound < (0x20 + inbound[0x1F] * 2 + 4)) {
-					if (!connsetup_read_more(socket_in, inbound, &packlen_inbound, logfile, conf_in->log.level, &addrinfo_in)) {
-						return CONNSETUP_EABORT;
-					}
-				}
-			}
-			break;
-		case 0x02:
-			break;
-		default: {
-			intent_t intent = inbound[packlen_inbound - 1];
-			if ((intent == CLIENT_INTENT_STATUS) || (intent == CLIENT_INTENT_LOGIN) || (intent == CLIENT_INTENT_TRANSFER)) {
-				if (!connsetup_read_more(socket_in, inbound, &packlen_inbound, logfile, conf_in->log.level, &addrinfo_in)) {
-					return CONNSETUP_EABORT;
-				}
-			}
-			break;
-		}
 	}
 	if (protocol_identify(inbound, (size_t)packlen_inbound, NULL) == PVER_UNIDENT) {
 		mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
