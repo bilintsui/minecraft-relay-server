@@ -1,3 +1,10 @@
+mcrelay (1.2~beta8-1) unstable; urgency=high
+
+  * New upstream release: event-driven listener, transactional reloads,
+    systemd lifecycle integration, and hardened protocol handling.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Thu, 06 Aug 2026 14:59:54 +0800
+
 mcrelay (1.2~beta7-1) unstable; urgency=high
 
   * New upstream release: breaking change to command-line interface and
