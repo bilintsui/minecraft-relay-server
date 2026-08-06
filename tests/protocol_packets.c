@@ -45,6 +45,11 @@ typedef struct {
 	bool roundtrip;
 } client_fixture;
 
+typedef union {
+	uint32_t alignment;
+	uint8_t bytes[BUFSIZ + 1];
+} packet_storage;
+
 /* section: functions (local) */
 static ssize_t file_read(const char *filename, void *data, size_t capacity) {
 	FILE *file = fopen(filename, "rb");
@@ -200,10 +205,11 @@ int main(int argc, char **argv) {
 		{ "status/status_3-1.6.1.bin2", 73 },
 		{ "status/status_3-13w39b.bin2", 80 }
 	};
-	uint8_t source_storage[BUFSIZ + 1] = { 0 };
-	uint8_t target_storage[BUFSIZ + 1] = { 0 };
-	uint8_t *source = source_storage + 1;
-	uint8_t *target = target_storage + 1;
+	packet_storage source_storage = { 0 };
+	packet_storage target_storage = { 0 };
+	uint8_t *source = source_storage.bytes + 1;
+	uint8_t *target = target_storage.bytes + 1;
+	uint8_t legacy_m3_long_address[548] = { 0xFE, 0x01, 0xFA };
 	uint8_t modern_multibyte_frame[131] = { 0x81, 0x01, 0x00, 0x01, 0x7B };
 	char filename[BUFSIZ];
 	int result = EXIT_FAILURE;
@@ -225,9 +231,30 @@ int main(int argc, char **argv) {
 	modern_multibyte_frame[129] = 0xDD;
 	modern_multibyte_frame[130] = CLIENT_INTENT_STATUS;
 	intent_t modern_intent;
-	CHECK(protocol_identify(modern_multibyte_frame, sizeof(modern_multibyte_frame) - 1, &modern_intent) == PVER_UNIDENT, "truncated multi-byte modern frame was identified");
+	for (size_t prefix_size = 1; prefix_size < sizeof(modern_multibyte_frame); prefix_size++) {
+		size_t packet_size;
+		CHECK(protocol_packet_length(modern_multibyte_frame, prefix_size, &packet_size) == PROTOCOL_PACKET_INCOMPLETE, "truncated multi-byte modern frame was considered complete");
+		CHECK(packet_size > prefix_size, "truncated multi-byte modern frame did not request more data");
+		CHECK(protocol_identify(modern_multibyte_frame, prefix_size, &modern_intent) == PVER_UNIDENT, "truncated multi-byte modern frame was identified");
+	}
+	size_t packet_size;
+	CHECK(protocol_packet_length(modern_multibyte_frame, sizeof(modern_multibyte_frame), &packet_size) == PROTOCOL_PACKET_COMPLETE, "complete multi-byte modern frame was considered incomplete");
+	CHECK(packet_size == sizeof(modern_multibyte_frame), "multi-byte modern frame length was decoded incorrectly");
 	CHECK(protocol_identify(modern_multibyte_frame, sizeof(modern_multibyte_frame), &modern_intent) == PVER_MODERN2, "multi-byte modern frame was identified incorrectly");
 	CHECK(modern_intent == CLIENT_INTENT_STATUS, "multi-byte modern frame intent was identified incorrectly");
+	legacy_m3_long_address[0x1E] = 0x01;
+	legacy_m3_long_address[0x1F] = 0x00;
+	for (size_t prefix_size = 1; prefix_size < sizeof(legacy_m3_long_address); prefix_size++) {
+		enum protocol_packet_status packet_status = protocol_packet_length(legacy_m3_long_address, prefix_size, &packet_size);
+		if (prefix_size < 3) {
+			CHECK(packet_status == PROTOCOL_PACKET_AMBIGUOUS, "ambiguous legacy M3 prefix was classified incorrectly");
+		} else {
+			CHECK(packet_status == PROTOCOL_PACKET_INCOMPLETE, "truncated legacy M3 packet was considered complete");
+		}
+		CHECK(packet_size > prefix_size, "truncated legacy M3 packet did not request more data");
+	}
+	CHECK(protocol_packet_length(legacy_m3_long_address, sizeof(legacy_m3_long_address), &packet_size) == PROTOCOL_PACKET_COMPLETE, "complete legacy M3 packet was considered incomplete");
+	CHECK(packet_size == sizeof(legacy_m3_long_address), "legacy M3 packet length was decoded incorrectly");
 
 	for (size_t index = 0; index < sizeof(legacy_login_responses) / sizeof(legacy_login_responses[0]); index++) {
 		memset(source, 0, BUFSIZ);

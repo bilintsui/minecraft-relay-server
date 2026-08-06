@@ -35,10 +35,20 @@
 	} while (0)
 
 /* timeout */
+#define INITIAL_PACKET_CLOSE_TIMEOUT_MS	12000
+#define INITIAL_PACKET_REFRESH_DELAY_SEC	5
+#define INITIAL_PACKET_TIMEOUT_WAIT_MS	7000
 #define QUIET_TIMEOUT_MS	100
+#define SPLIT_DELAY_NS	10000000
 #define TEST_TIMEOUT_MS	5000
 
 /* section: types */
+typedef struct {
+	const char *filename;
+	size_t required_size;
+	bool update_modern_version;
+} worker_fragment_fixture;
+
 typedef struct {
 	const char *filename;
 	bool forwarded;
@@ -225,6 +235,145 @@ static int socket_send_all(int socket_fd, const void *data, size_t size) {
 	return 0;
 }
 
+static int worker_packet_forward_split(in_port_t listener_port, int upstream_server_fd, const uint8_t *packet, size_t packet_size, size_t split_size) {
+	int client_fd = -1;
+	int result = -1;
+	int upstream_client_fd = -1;
+	if (packet == NULL || packet_size > BUFSIZ || split_size == 0 || split_size >= packet_size) {
+		errno = EINVAL;
+		return -1;
+	}
+	client_fd = client_connect(listener_port);
+	if (client_fd == -1 || socket_send_all(client_fd, packet, split_size) == -1) {
+		goto cleanup;
+	}
+	struct timespec delay = { .tv_nsec = SPLIT_DELAY_NS };
+	while (nanosleep(&delay, &delay) == -1) {
+		if (errno != EINTR) {
+			goto cleanup;
+		}
+	}
+	if (socket_send_all(client_fd, packet + split_size, packet_size - split_size) == -1 || shutdown(client_fd, SHUT_WR) == -1) {
+		goto cleanup;
+	}
+	upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
+	if (upstream_client_fd == -1) {
+		goto cleanup;
+	}
+	uint8_t received[BUFSIZ];
+	size_t received_size = 0;
+	while (received_size < packet_size) {
+		ssize_t receive_size = message_receive(upstream_client_fd, received + received_size, packet_size - received_size, TEST_TIMEOUT_MS);
+		if (receive_size <= 0) {
+			goto cleanup;
+		}
+		received_size += (size_t)receive_size;
+	}
+	if (memcmp(received, packet, packet_size) != 0) {
+		errno = EPROTO;
+		goto cleanup;
+	}
+	result = 0;
+cleanup: {
+		int saved_errno = errno;
+		if (upstream_client_fd != -1) {
+			close(upstream_client_fd);
+		}
+		if (client_fd != -1) {
+			close(client_fd);
+		}
+		errno = saved_errno;
+		return result;
+	}
+}
+
+static int worker_packet_timeout(in_port_t listener_port, int upstream_server_fd) {
+	static const uint8_t incomplete_packet[] = { 0x7F, 0x00 };
+	int client_fd = -1;
+	int result = -1;
+	int upstream_client_fd = -1;
+	client_fd = client_connect(listener_port);
+	if (client_fd == -1 || socket_send_all(client_fd, incomplete_packet, 1) == -1) {
+		goto cleanup;
+	}
+	uint8_t response;
+	ssize_t receive_result = message_receive(client_fd, &response, sizeof(response), QUIET_TIMEOUT_MS);
+	if (receive_result != -1 || errno != ETIMEDOUT) {
+		errno = EPROTO;
+		goto cleanup;
+	}
+	/* Refresh an incomplete packet midway through the assembly window; the absolute deadline must not move. */
+	struct timespec refresh_delay = { .tv_sec = INITIAL_PACKET_REFRESH_DELAY_SEC };
+	while (nanosleep(&refresh_delay, &refresh_delay) == -1) {
+		if (errno != EINTR) {
+			goto cleanup;
+		}
+	}
+	if (socket_send_all(client_fd, incomplete_packet + 1, 1) == -1) {
+		goto cleanup;
+	}
+	receive_result = message_receive(client_fd, &response, sizeof(response), INITIAL_PACKET_TIMEOUT_WAIT_MS);
+	if (receive_result != 0) {
+		if (receive_result > 0) {
+			errno = EPROTO;
+		}
+		goto cleanup;
+	}
+	upstream_client_fd = server_accept(upstream_server_fd, 0);
+	if (upstream_client_fd != -1 || errno != ETIMEDOUT) {
+		errno = EPROTO;
+		goto cleanup;
+	}
+	result = 0;
+cleanup: {
+		int saved_errno = errno;
+		if (upstream_client_fd != -1) {
+			close(upstream_client_fd);
+		}
+		if (client_fd != -1) {
+			close(client_fd);
+		}
+		errno = saved_errno;
+		return result;
+	}
+}
+
+static int worker_packet_truncate(in_port_t listener_port, int upstream_server_fd, const uint8_t *packet, size_t prefix_size) {
+	int client_fd = -1;
+	int result = -1;
+	int upstream_client_fd = -1;
+	if (packet == NULL || prefix_size == 0 || prefix_size >= BUFSIZ) {
+		errno = EINVAL;
+		return -1;
+	}
+	client_fd = client_connect(listener_port);
+	if (client_fd == -1 || socket_send_all(client_fd, packet, prefix_size) == -1 || shutdown(client_fd, SHUT_WR) == -1) {
+		goto cleanup;
+	}
+	uint8_t response[BUFSIZ];
+	/* Allow the production assembly deadline and a two-second processing margin to close a permanently truncated connection. */
+	if (socket_receive_all(client_fd, response, sizeof(response), INITIAL_PACKET_CLOSE_TIMEOUT_MS) == -1) {
+		goto cleanup;
+	}
+	upstream_client_fd = server_accept(upstream_server_fd, 0);
+	if (upstream_client_fd != -1 || errno != ETIMEDOUT) {
+		errno = EPROTO;
+		goto cleanup;
+	}
+	result = 0;
+cleanup: {
+		int saved_errno = errno;
+		if (upstream_client_fd != -1) {
+			close(upstream_client_fd);
+		}
+		if (client_fd != -1) {
+			close(client_fd);
+		}
+		errno = saved_errno;
+		return result;
+	}
+}
+
 static int write_config(const char *filename, const char *log_filename, in_port_t listener_port, in_port_t upstream_port) {
 	char content[PATH_MAX + 512];
 	int content_length = snprintf(content, sizeof(content),
@@ -256,6 +405,13 @@ static int write_config(const char *filename, const char *log_filename, in_port_
 
 /* section: functions (entry point) */
 int main(int argc, char **argv) {
+	static const worker_fragment_fixture fragment_fixtures[] = {
+		{ "login/login_3-12w04a.bin", 0, false },
+		{ "login/login_5-13w39b.bin", 0, false },
+		{ "modern/login_2-13w41b.bin", 0, true },
+		{ "modern/status_2-13w41b.bin", 16, true },
+		{ "status/status_3-1.6.1.bin", 0, false }
+	};
 	/* Forward only versions with a routable virtual host that are included in the documented support policy. */
 	static const worker_packet_fixture packet_fixtures[] = {
 		{ "login/login_1-a1.0.15.bin", false, false },
@@ -366,6 +522,8 @@ int main(int argc, char **argv) {
 	upstream_client_fd = -1;
 	CHECK(close(client_fd) == 0, "cannot close valid test client");
 	client_fd = -1;
+	CHECK(worker_packet_timeout(listener_port, upstream_server_fd) == 0, "incomplete packet did not observe the absolute assembly timeout");
+	CHECK(kill(listener, 0) == 0, "incomplete packet timeout terminated listener");
 
 	for (size_t fixture_index = 0; fixture_index < sizeof(packet_fixtures) / sizeof(packet_fixtures[0]); fixture_index++) {
 		filename_length = snprintf(fixture_filename, sizeof(fixture_filename), "%s/%s", argv[2], packet_fixtures[fixture_index].filename);
@@ -400,6 +558,36 @@ int main(int argc, char **argv) {
 		CHECK(close(client_fd) == 0, "cannot close raw packet test client");
 		client_fd = -1;
 		CHECK(kill(listener, 0) == 0, "raw packet fixture terminated listener");
+	}
+
+	for (size_t fixture_index = 0; fixture_index < sizeof(fragment_fixtures) / sizeof(fragment_fixtures[0]); fixture_index++) {
+		filename_length = snprintf(fixture_filename, sizeof(fixture_filename), "%s/%s", argv[2], fragment_fixtures[fixture_index].filename);
+		CHECK(filename_length > 0 && (size_t)filename_length < sizeof(fixture_filename), "cannot format fragmented packet fixture filename");
+		uint8_t fixture[BUFSIZ];
+		ssize_t fixture_size = file_read(fixture_filename, fixture, sizeof(fixture));
+		CHECK(fixture_size > 1, "cannot read fragmented packet fixture");
+		if (fragment_fixtures[fixture_index].update_modern_version) {
+			CHECK(fixture_size > 2, "modern fragmented packet fixture is too short");
+			fixture[2] = 1;
+		}
+		for (size_t split_size = 1; split_size < (size_t)fixture_size; split_size++) {
+			int fragment_result = worker_packet_forward_split(listener_port, upstream_server_fd, fixture, (size_t)fixture_size, split_size);
+			if (fragment_result == -1) {
+				fprintf(stderr, "fragmented fixture %s failed at split %zu\n", fragment_fixtures[fixture_index].filename, split_size);
+			}
+			CHECK(fragment_result == 0, "fragmented packet was not forwarded intact");
+			CHECK(kill(listener, 0) == 0, "fragmented packet terminated listener");
+		}
+		size_t required_size = fragment_fixtures[fixture_index].required_size ? fragment_fixtures[fixture_index].required_size : (size_t)fixture_size;
+		CHECK(required_size <= (size_t)fixture_size, "fragmented packet required size is invalid");
+		for (size_t prefix_size = 1; prefix_size < required_size; prefix_size++) {
+			int truncate_result = worker_packet_truncate(listener_port, upstream_server_fd, fixture, prefix_size);
+			if (truncate_result == -1) {
+				fprintf(stderr, "truncated fixture %s failed at prefix %zu\n", fragment_fixtures[fixture_index].filename, prefix_size);
+			}
+			CHECK(truncate_result == 0, "permanently truncated packet reached upstream");
+			CHECK(kill(listener, 0) == 0, "permanently truncated packet terminated listener");
+		}
 	}
 
 	CHECK(kill(listener, SIGTERM) == 0, "cannot stop listener");

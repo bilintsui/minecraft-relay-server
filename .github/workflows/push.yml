@@ -20,7 +20,7 @@ jobs:
           cmake --build build-release
       - name: Build debug
         run: |
-          cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=ON
+          cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=ON -DUBSAN_TEST=ON
           cmake --build build-debug
           ctest --test-dir build-debug --output-on-failure
       - name: Upload artifacts
