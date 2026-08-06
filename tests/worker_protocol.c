@@ -1,0 +1,436 @@
+/*
+ * worker_protocol.c: Tests for worker protocol input handling
+ *
+ * SPDX-License-Identifier: GPL-3.0-only
+ * Copyright (C) 2020-2026 Bilin Tsui
+ */
+
+/* section: headers (library) */
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <signal.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+
+/* section: defines */
+/* assertion */
+#define CHECK(condition, message) \
+	do { \
+		if (!(condition)) { \
+			fprintf(stderr, "%s (errno=%d)\n", message, errno); \
+			goto cleanup; \
+		} \
+	} while (0)
+
+/* timeout */
+#define QUIET_TIMEOUT_MS	100
+#define TEST_TIMEOUT_MS	5000
+
+/* section: types */
+typedef struct {
+	const char *filename;
+	bool forwarded;
+	bool response;
+} worker_packet_fixture;
+
+/* section: functions (local) */
+static pid_t child_start(const char *binary, const char *config_filename, const char *notify_socket) {
+	pid_t child = fork();
+	if (child != 0) {
+		return child;
+	}
+	int devnull_fd = open("/dev/null", O_WRONLY);
+	if (devnull_fd == -1 || dup2(devnull_fd, STDOUT_FILENO) == -1 || dup2(devnull_fd, STDERR_FILENO) == -1 || setenv("NOTIFY_SOCKET", notify_socket, 1) == -1) {
+		_exit(EXIT_FAILURE);
+	}
+	close(devnull_fd);
+	execl(binary, binary, "run", "-c", config_filename, (char *)NULL);
+	_exit(EXIT_FAILURE);
+}
+
+static int child_wait(pid_t child, int timeout_ms) {
+	const struct timespec interval = { .tv_nsec = 10000000 };
+	for (int elapsed_ms = 0; elapsed_ms < timeout_ms; elapsed_ms += 10) {
+		int status;
+		pid_t wait_result = waitpid(child, &status, WNOHANG);
+		if (wait_result == child) {
+			return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+		}
+		if (wait_result == -1) {
+			return -1;
+		}
+		nanosleep(&interval, NULL);
+	}
+	errno = ETIMEDOUT;
+	return -1;
+}
+
+static int client_connect(in_port_t port) {
+	int fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd == -1) {
+		return -1;
+	}
+	struct sockaddr_in address = {
+		.sin_family = AF_INET,
+		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
+		.sin_port = htons(port)
+	};
+	if (connect(fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	return fd;
+}
+
+static ssize_t file_read(const char *filename, void *data, size_t capacity) {
+	FILE *file = fopen(filename, "rb");
+	if (file == NULL) {
+		return -1;
+	}
+	size_t size = fread(data, 1, capacity, file);
+	if (ferror(file)) {
+		int saved_errno = errno;
+		fclose(file);
+		errno = saved_errno;
+		return -1;
+	}
+	if (fclose(file) != 0) {
+		return -1;
+	}
+	return (ssize_t)size;
+}
+
+static ssize_t message_receive(int socket_fd, void *message, size_t message_size, int timeout_ms) {
+	struct pollfd poll_fd = {
+		.fd = socket_fd,
+		.events = POLLIN
+	};
+	int poll_result;
+	do {
+		poll_result = poll(&poll_fd, 1, timeout_ms);
+	} while (poll_result == -1 && errno == EINTR);
+	if (poll_result == 0) {
+		errno = ETIMEDOUT;
+		return -1;
+	}
+	if (poll_result == -1) {
+		return poll_result;
+	}
+	if (!(poll_fd.revents & (POLLIN | POLLHUP))) {
+		errno = EIO;
+		return -1;
+	}
+	return recv(socket_fd, message, message_size, 0);
+}
+
+static int server_accept(int server_fd, int timeout_ms) {
+	struct pollfd poll_fd = {
+		.fd = server_fd,
+		.events = POLLIN
+	};
+	int poll_result;
+	do {
+		poll_result = poll(&poll_fd, 1, timeout_ms);
+	} while (poll_result == -1 && errno == EINTR);
+	if (poll_result == 0) {
+		errno = ETIMEDOUT;
+		return -1;
+	}
+	if (poll_result == -1) {
+		return -1;
+	}
+	if (!(poll_fd.revents & POLLIN)) {
+		errno = EIO;
+		return -1;
+	}
+	return accept(server_fd, NULL, NULL);
+}
+
+static int server_open(in_port_t *port) {
+	int fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd == -1) {
+		return -1;
+	}
+	int reuse_address = 1;
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(reuse_address)) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	struct sockaddr_in address = {
+		.sin_family = AF_INET,
+		.sin_addr.s_addr = htonl(INADDR_LOOPBACK)
+	};
+	if (bind(fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	socklen_t address_length = sizeof(address);
+	if (getsockname(fd, (struct sockaddr *)&address, &address_length) == -1 || listen(fd, 1) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	*port = ntohs(address.sin_port);
+	return fd;
+}
+
+static ssize_t socket_receive_all(int socket_fd, void *data, size_t capacity, int timeout_ms) {
+	size_t size = 0;
+	while (size < capacity) {
+		ssize_t receive_result = message_receive(socket_fd, (uint8_t *)data + size, capacity - size, timeout_ms);
+		if (receive_result == 0) {
+			return (ssize_t)size;
+		}
+		if (receive_result == -1) {
+			return -1;
+		}
+		size += (size_t)receive_result;
+	}
+	errno = EMSGSIZE;
+	return -1;
+}
+
+static int socket_send_all(int socket_fd, const void *data, size_t size) {
+	const uint8_t *bytes = data;
+	size_t sent = 0;
+	while (sent < size) {
+		ssize_t send_result = send(socket_fd, bytes + sent, size - sent, MSG_NOSIGNAL);
+		if (send_result == -1 && errno == EINTR) {
+			continue;
+		}
+		if (send_result <= 0) {
+			return -1;
+		}
+		sent += (size_t)send_result;
+	}
+	return 0;
+}
+
+static int write_config(const char *filename, const char *log_filename, in_port_t listener_port, in_port_t upstream_port) {
+	char content[PATH_MAX + 512];
+	int content_length = snprintf(content, sizeof(content),
+		"{\"log\":{\"filename\":\"%s\",\"level\":4},\"listen\":{\"address\":\"127.0.0.1\",\"port\":%u},\"icon\":\"\",\"proxy\":["
+		"{\"vhost\":[\"localhost\",\"test.example\"],\"address\":\"127.0.0.1\",\"port\":%u}]}\n",
+		log_filename, (unsigned int)listener_port, (unsigned int)upstream_port
+	);
+	if (content_length < 0 || (size_t)content_length >= sizeof(content)) {
+		errno = EOVERFLOW;
+		return -1;
+	}
+	int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd == -1) {
+		return -1;
+	}
+	size_t written = 0;
+	while (written < (size_t)content_length) {
+		ssize_t write_result = write(fd, content + written, (size_t)content_length - written);
+		if (write_result <= 0) {
+			int saved_errno = errno;
+			close(fd);
+			errno = saved_errno;
+			return -1;
+		}
+		written += (size_t)write_result;
+	}
+	return close(fd);
+}
+
+/* section: functions (entry point) */
+int main(int argc, char **argv) {
+	/* Forward only versions with a routable virtual host that are included in the documented support policy. */
+	static const worker_packet_fixture packet_fixtures[] = {
+		{ "login/login_1-a1.0.15.bin", false, false },
+		{ "login/login_2-12w03a.bin", false, true },
+		{ "login/login_2-a1.0.16.bin", false, true },
+		{ "login/login_2-b1.4_01.bin", false, true },
+		{ "login/login_2-b1.5.bin", false, true },
+		{ "login/login_3-12w04a.bin", true, false },
+		{ "login/login_3-12w16a.bin", true, false },
+		{ "login/login_4-12w17a.bin", false, true },
+		{ "login/login_5-12w18a.bin", true, false },
+		{ "login/login_5-13w39b.bin", true, false },
+		{ "modern/login_1-13w41a.bin", false, true },
+		{ "modern/login_2-13w41b.bin", false, true },
+		{ "modern/status_1-13w41a.bin", false, true },
+		{ "modern/status_2-13w41b.bin", false, true },
+		{ "status/status_1-12w42a.bin", false, true },
+		{ "status/status_1-b1.8-pre1.bin", false, true },
+		{ "status/status_2-1.6.bin", false, true },
+		{ "status/status_2-12w42b.bin", false, true },
+		{ "status/status_3-1.6.1.bin", true, false },
+		{ "status/status_3-13w39b.bin", true, false }
+	};
+	/* Modern status handshake declaring a 12-byte address while only three bytes remain. */
+	static const uint8_t malformed_handshake[] = { 0x05, 0x00, 0x2F, 0x0C, 't', 0x01, 0xFF };
+	/* Modern status handshake for test.example followed by an empty status request packet. */
+	static const uint8_t valid_request[] = {
+		0x12, 0x00, 0x2F, 0x0C,
+		't', 'e', 's', 't', '.', 'e', 'x', 'a', 'm', 'p', 'l', 'e',
+		0x63, 0xDD, 0x01,
+		0x01, 0x00
+	};
+	char temp_directory[] = "/tmp/mcrelay-worker-protocol-XXXXXX";
+	char config_filename[PATH_MAX] = { 0 };
+	char fixture_filename[PATH_MAX] = { 0 };
+	char log_filename[PATH_MAX] = { 0 };
+	char notify_filename[PATH_MAX] = { 0 };
+	uint8_t received[BUFSIZ];
+	int client_fd = -1;
+	pid_t listener = -1;
+	int listener_reservation_fd = -1;
+	int notify_fd = -1;
+	int result = EXIT_FAILURE;
+	int upstream_client_fd = -1;
+	int upstream_server_fd = -1;
+	CHECK(argc == 3, "mcrelay executable path and raw packet directory are required");
+	CHECK(mkdtemp(temp_directory) != NULL, "cannot create temporary directory");
+	int filename_length = snprintf(config_filename, sizeof(config_filename), "%s/config.json", temp_directory);
+	CHECK(filename_length > 0 && (size_t)filename_length < sizeof(config_filename), "cannot format configuration filename");
+	filename_length = snprintf(log_filename, sizeof(log_filename), "%s/access.log", temp_directory);
+	CHECK(filename_length > 0 && (size_t)filename_length < sizeof(log_filename), "cannot format log filename");
+	filename_length = snprintf(notify_filename, sizeof(notify_filename), "%s/notify.sock", temp_directory);
+	CHECK(filename_length > 0 && (size_t)filename_length < sizeof(notify_filename), "cannot format notification socket filename");
+	in_port_t listener_port, upstream_port;
+	upstream_server_fd = server_open(&upstream_port);
+	CHECK(upstream_server_fd != -1, "cannot open fake upstream server");
+	listener_reservation_fd = server_open(&listener_port);
+	CHECK(listener_reservation_fd != -1, "cannot reserve listener port");
+	CHECK(close(listener_reservation_fd) == 0, "cannot release listener port reservation");
+	listener_reservation_fd = -1;
+	CHECK(write_config(config_filename, log_filename, listener_port, upstream_port) == 0, "cannot write configuration");
+
+	notify_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+	CHECK(notify_fd != -1, "cannot create notification socket");
+	struct sockaddr_un notify_address;
+	memset(&notify_address, 0, sizeof(notify_address));
+	notify_address.sun_family = AF_UNIX;
+	CHECK(strlen(notify_filename) < sizeof(notify_address.sun_path), "notification socket filename is too long");
+	strcpy(notify_address.sun_path, notify_filename);
+	CHECK(bind(notify_fd, (struct sockaddr *)&notify_address, sizeof(notify_address)) == 0, "cannot bind notification socket");
+
+	listener = child_start(argv[1], config_filename, notify_filename);
+	CHECK(listener > 0, "cannot start mcrelay listener");
+	char ready_message[64];
+	ssize_t ready_length = message_receive(notify_fd, ready_message, sizeof(ready_message) - 1, TEST_TIMEOUT_MS);
+	CHECK(ready_length > 0, "listener READY notification is missing");
+	ready_message[ready_length] = '\0';
+	CHECK(strcmp(ready_message, "READY=1") == 0, "listener READY notification is invalid");
+
+	client_fd = client_connect(listener_port);
+	CHECK(client_fd != -1, "cannot connect malformed test client");
+	CHECK(socket_send_all(client_fd, malformed_handshake, sizeof(malformed_handshake)) == 0, "cannot send malformed handshake");
+	CHECK(shutdown(client_fd, SHUT_WR) == 0, "cannot finish malformed handshake");
+	uint8_t rejection[4096];
+	CHECK(message_receive(client_fd, rejection, sizeof(rejection), TEST_TIMEOUT_MS) > 0, "malformed handshake was not rejected");
+	CHECK(message_receive(client_fd, rejection, sizeof(rejection), TEST_TIMEOUT_MS) == 0, "malformed connection remained open");
+	CHECK(close(client_fd) == 0, "cannot close malformed test client");
+	client_fd = -1;
+	upstream_client_fd = server_accept(upstream_server_fd, QUIET_TIMEOUT_MS);
+	CHECK(upstream_client_fd == -1 && errno == ETIMEDOUT, "malformed handshake reached upstream server");
+	CHECK(kill(listener, 0) == 0, "malformed handshake terminated listener");
+
+	client_fd = client_connect(listener_port);
+	CHECK(client_fd != -1, "cannot connect valid test client");
+	CHECK(socket_send_all(client_fd, valid_request, sizeof(valid_request)) == 0, "cannot send valid handshake");
+	upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
+	CHECK(upstream_client_fd >= 0, "valid handshake did not reach upstream server");
+	size_t received_size = 0;
+	while (received_size < sizeof(valid_request)) {
+		ssize_t receive_result = message_receive(upstream_client_fd, received + received_size, sizeof(valid_request) - received_size, TEST_TIMEOUT_MS);
+		CHECK(receive_result > 0, "cannot receive forwarded handshake");
+		received_size += (size_t)receive_result;
+	}
+	CHECK(memcmp(received, valid_request, sizeof(valid_request)) == 0, "forwarded handshake differs from client input");
+	CHECK(kill(listener, 0) == 0, "valid handshake terminated listener");
+
+	CHECK(close(upstream_client_fd) == 0, "cannot close upstream connection");
+	upstream_client_fd = -1;
+	CHECK(close(client_fd) == 0, "cannot close valid test client");
+	client_fd = -1;
+
+	for (size_t fixture_index = 0; fixture_index < sizeof(packet_fixtures) / sizeof(packet_fixtures[0]); fixture_index++) {
+		filename_length = snprintf(fixture_filename, sizeof(fixture_filename), "%s/%s", argv[2], packet_fixtures[fixture_index].filename);
+		CHECK(filename_length > 0 && (size_t)filename_length < sizeof(fixture_filename), "cannot format raw packet fixture filename");
+		uint8_t fixture[BUFSIZ];
+		ssize_t fixture_size = file_read(fixture_filename, fixture, sizeof(fixture));
+		CHECK(fixture_size > 0, "cannot read raw packet fixture");
+		client_fd = client_connect(listener_port);
+		CHECK(client_fd != -1, "cannot connect raw packet test client");
+		CHECK(socket_send_all(client_fd, fixture, (size_t)fixture_size) == 0, "cannot send raw packet fixture");
+		CHECK(shutdown(client_fd, SHUT_WR) == 0, "cannot finish raw packet fixture");
+		if (packet_fixtures[fixture_index].forwarded) {
+			upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
+			CHECK(upstream_client_fd >= 0, "supported raw packet did not reach upstream server");
+			size_t fixture_received = 0;
+			while (fixture_received < (size_t)fixture_size) {
+				ssize_t receive_result = message_receive(upstream_client_fd, received + fixture_received, (size_t)fixture_size - fixture_received, TEST_TIMEOUT_MS);
+				CHECK(receive_result > 0, "cannot receive forwarded raw packet");
+				fixture_received += (size_t)receive_result;
+			}
+			CHECK(memcmp(received, fixture, (size_t)fixture_size) == 0, "forwarded raw packet differs from capture");
+			CHECK(close(upstream_client_fd) == 0, "cannot close raw packet upstream connection");
+			upstream_client_fd = -1;
+		} else {
+			uint8_t response[BUFSIZ];
+			ssize_t response_size = socket_receive_all(client_fd, response, sizeof(response), TEST_TIMEOUT_MS);
+			CHECK(response_size >= 0, "cannot receive raw packet rejection");
+			CHECK((response_size > 0) == packet_fixtures[fixture_index].response, "raw packet rejection response does not match version policy");
+			upstream_client_fd = server_accept(upstream_server_fd, QUIET_TIMEOUT_MS);
+			CHECK(upstream_client_fd == -1 && errno == ETIMEDOUT, "unsupported raw packet reached upstream server");
+		}
+		CHECK(close(client_fd) == 0, "cannot close raw packet test client");
+		client_fd = -1;
+		CHECK(kill(listener, 0) == 0, "raw packet fixture terminated listener");
+	}
+
+	CHECK(kill(listener, SIGTERM) == 0, "cannot stop listener");
+	CHECK(child_wait(listener, TEST_TIMEOUT_MS) == 0, "listener did not exit successfully");
+	listener = -1;
+
+	result = EXIT_SUCCESS;
+
+cleanup:
+	if (listener > 0) {
+		kill(listener, SIGKILL);
+		waitpid(listener, NULL, 0);
+	}
+	if (client_fd != -1) {
+		close(client_fd);
+	}
+	if (listener_reservation_fd != -1) {
+		close(listener_reservation_fd);
+	}
+	if (notify_fd != -1) {
+		close(notify_fd);
+	}
+	if (upstream_client_fd != -1) {
+		close(upstream_client_fd);
+	}
+	if (upstream_server_fd != -1) {
+		close(upstream_server_fd);
+	}
+	unlink(config_filename);
+	unlink(log_filename);
+	unlink(notify_filename);
+	rmdir(temp_directory);
+	return result;
+}

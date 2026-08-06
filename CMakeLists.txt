@@ -43,4 +43,8 @@ if(BUILD_TESTING)
 	add_executable(worker_lifecycle_test tests/worker_lifecycle.c)
 	target_compile_definitions(worker_lifecycle_test PRIVATE _GNU_SOURCE)
 	add_test(NAME worker_lifecycle COMMAND worker_lifecycle_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}>)
+
+	add_executable(worker_protocol_test tests/worker_protocol.c)
+	target_compile_definitions(worker_protocol_test PRIVATE _GNU_SOURCE)
+	add_test(NAME worker_protocol COMMAND worker_protocol_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}> "${CMAKE_CURRENT_SOURCE_DIR}/tests/rawpackets")
 endif()
