@@ -30,4 +30,8 @@ if(BUILD_TESTING)
 			"-DTEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}"
 			-P "${CMAKE_CURRENT_SOURCE_DIR}/tests/cli.cmake"
 	)
+
+	add_executable(systemd_notify_test tests/systemd_notify.c)
+	target_compile_definitions(systemd_notify_test PRIVATE _GNU_SOURCE)
+	add_test(NAME systemd_notify COMMAND systemd_notify_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}>)
 endif()

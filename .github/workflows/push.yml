@@ -22,6 +22,7 @@ jobs:
         run: |
           cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=ON
           cmake --build build-debug
+          ctest --test-dir build-debug --output-on-failure
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
         with:
