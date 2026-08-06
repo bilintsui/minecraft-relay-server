@@ -157,6 +157,29 @@ static void log_config_duperr(const char *logfile, uint8_t maxlevel, uint8_t msg
 	}
 }
 
+static int log_file_validate(const char *filename) {
+	bool created = false;
+	int fd = open(filename, O_WRONLY | O_APPEND);
+	if (fd == -1 && errno == ENOENT) {
+		fd = open(filename, O_WRONLY | O_APPEND | O_CREAT | O_EXCL, 0666);
+		if (fd != -1) {
+			created = true;
+		} else if (errno == EEXIST) {
+			fd = open(filename, O_WRONLY | O_APPEND);
+		}
+	}
+	if (fd == -1) {
+		return -1;
+	}
+	if (created && unlink(filename) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	return close(fd);
+}
+
 static bool listener_endpoint_equal(const listener_endpoint *left, const listener_endpoint *right) {
 	if (left->address.family != right->address.family || left->port != right->port) {
 		return false;
@@ -315,6 +338,18 @@ static int do_reload(listener_socket *listener, const listener_events *events) {
 				);
 				break;
 			}
+			char config_logfull_candidate[PATH_MAX];
+			resolve_path(config_candidate->log.filename, cwd, config_logfull_candidate, sizeof(config_logfull_candidate));
+			if (log_file_validate(config_logfull_candidate) == -1) {
+				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+					"Cannot write candidate log to \"%s\", will keep your old configurations.\n",
+					config_candidate->log.filename
+				);
+				break;
+			}
+			if (!config_icon_load(config_candidate, config_logfull_old, config_maxlevel, "will keep your old configurations")) {
+				break;
+			}
 			if (!listener_endpoint_equal(&listener->endpoint, &candidate_endpoint)) {
 				net_addrp candidate_address = net_ntop(candidate_endpoint.address.family, &(candidate_endpoint.address.addr), true);
 				enum listener_socket_replace_status replace_status = listener_socket_replace(listener, &candidate_endpoint, events);
@@ -349,8 +384,7 @@ static int do_reload(listener_socket *listener, const listener_events *events) {
 			config_destroy(config);
 			config = config_candidate;
 			config_candidate = NULL;
-			config_icon_load(config, config_logfull, config_maxlevel);
-			resolve_path(config->log.filename, cwd, config_logfull, sizeof(config_logfull));
+			snprintf(config_logfull, sizeof(config_logfull), "%s", config_logfull_candidate);
 			config_cache_commit(&config_cache_state, &config_cache_candidate);
 			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
 				"Configuration reloaded.\n"
@@ -358,7 +392,7 @@ static int do_reload(listener_socket *listener, const listener_events *events) {
 			break;
 		}
 		case CONF_READ_UNCHANGED:
-			config_icon_load(config, config_logfull_old, config_maxlevel);
+			config_icon_load(config, config_logfull_old, config_maxlevel, "keeping existing icon");
 			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
 				"Configuration file unchanged.\n"
 			);
@@ -930,16 +964,14 @@ int main(int argc, char **argv) {
 		config_cache_destroy(&config_cache_candidate);
 		return config_load_status;
 	}
-	config_cache_commit(&config_cache_state, &config_cache_candidate);
 	resolve_path(config->log.filename, cwd, config_logfull, sizeof(config_logfull));
-	config_icon_load(config, config_logfull, config->log.level);
-	FILE *tmpfd = fopen(config_logfull, "a");
-	if (tmpfd == NULL) {
+	if (log_file_validate(config_logfull) == -1) {
+		config_cache_destroy(&config_cache_candidate);
 		LOG(MKSYS_LEVEL_CRITICAL, "Error: Cannot write log to \"%s\".\n", config->log.filename);
 		return EXITCODE_CANTCREAT;
-	} else {
-		fclose(tmpfd);
 	}
+	config_icon_load(config, config_logfull, config->log.level, "using default");
+	config_cache_commit(&config_cache_state, &config_cache_candidate);
 	listener_socket listener = { .fd = -1 };
 	enum listener_endpoint_status endpoint_status = listener_endpoint_prepare(config, &listener.endpoint);
 	if (endpoint_status == LISTENER_ENDPOINT_BAD_ADDRESS) {

@@ -115,22 +115,22 @@ int main(void) {
 
 	icon_config.icon_path = filename;
 	CHECK(write_config(fd, "abc") == 0, "cannot write initial icon");
-	config_icon_load(&icon_config, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL);
+	CHECK(config_icon_load(&icon_config, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, "using default"), "initial icon could not be loaded");
 	CHECK((icon_config.icon_b64 != NULL) && (strcmp(icon_config.icon_b64, "YWJj") == 0), "initial icon was not loaded");
 	cached_icon_b64 = icon_config.icon_b64;
 	cached_icon_data = icon_config.icon_cache.data;
-	config_icon_load(&icon_config, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL);
+	CHECK(config_icon_load(&icon_config, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, "keeping existing icon"), "unchanged icon returned an error");
 	CHECK(icon_config.icon_b64 == cached_icon_b64, "unchanged icon was re-encoded");
 	CHECK(icon_config.icon_cache.data == cached_icon_data, "unchanged icon replaced the raw cache");
 	CHECK(write_config(fd, "xyz") == 0, "cannot write changed icon");
-	config_icon_load(&icon_config, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL);
+	CHECK(config_icon_load(&icon_config, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, "keeping existing icon"), "changed icon could not be loaded");
 	CHECK((icon_config.icon_b64 != NULL) && (strcmp(icon_config.icon_b64, "eHl6") == 0), "changed icon was not reloaded");
 	CHECK((icon_config.icon_cache.size == 3) && (memcmp(icon_config.icon_cache.data, "xyz", 3) == 0), "changed icon did not replace the raw cache");
 
 	cached_icon_b64 = icon_config.icon_b64;
 	cached_icon_data = icon_config.icon_cache.data;
 	CHECK(unlink(filename) == 0, "cannot remove icon file for read-failure test");
-	config_icon_load(&icon_config, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL);
+	CHECK(!config_icon_load(&icon_config, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, "keeping existing icon"), "missing icon file did not return an error");
 	CHECK(icon_config.icon_b64 == cached_icon_b64, "missing icon file cleared existing icon");
 	CHECK(icon_config.icon_cache.data == cached_icon_data, "missing icon file invalidated the raw cache");
 

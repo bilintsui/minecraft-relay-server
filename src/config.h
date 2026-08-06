@@ -84,7 +84,7 @@ void config_cache_destroy(conf_cache *target);
 void config_destroy(conf *target);
 void config_dumper(conf *src);
 const char *config_errmsg(int err);
-void config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel);
+bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const char *failure_action);
 conf_proxy config_proxy_search(conf *src, const char *targetvhost);
 void config_proxy_search_destroy(conf_proxy *target);
 conf_read_status config_read(const char *filename, const conf_cache *active_cache, conf_cache *candidate_cache, conf **result);

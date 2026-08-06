@@ -449,24 +449,24 @@ const char *config_errmsg(int err) {
  * A NULL cfg->icon_path clears any previously loaded icon. Read or
  * encoding failures keep the last known good cfg->icon_b64 and
  * cfg->icon_cache so a transient I/O error does not drop the active
- * icon; on the first load (no prior icon) the caller falls back to
- * FAVICON_BASE64.
+ * icon. Return true when the requested icon state is ready and false
+ * when loading failed. failure_action describes the state retained by
+ * the caller and is included in failure messages.
  */
-void config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel) {
-	if (cfg == NULL) {
-		return;
+bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const char *failure_action) {
+	if (cfg == NULL || failure_action == NULL) {
+		return false;
 	}
 	if (cfg->icon_path == NULL) {
 		config_icon_clear(cfg);
-		return;
+		return true;
 	}
-	const char *fallback = (cfg->icon_b64 != NULL) ? "keeping existing icon" : "using default";
 	void *icon_raw = NULL;
 	ssize_t icon_size = freadall(cfg->icon_path, &icon_raw, false);
 	if (icon_size > 0) {
 		if ((cfg->icon_cache.data != NULL) && (cfg->icon_cache.size == (size_t)icon_size) && (memcmp(cfg->icon_cache.data, icon_raw, cfg->icon_cache.size) == 0)) {
 			free(icon_raw);
-			return;
+			return true;
 		}
 		size_t blocks = icon_size / 3;
 		size_t b64_size = (blocks + (icon_size % 3 > 0)) * 4;
@@ -474,7 +474,7 @@ void config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel) {
 			free(icon_raw);
 			mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
 				"Icon too large (base64: %zu > %u bytes), %s.\n",
-				b64_size, CONF_ICON_B64MAX, fallback
+				b64_size, CONF_ICON_B64MAX, failure_action
 			);
 		} else {
 			char *icon_b64 = (char *)malloc(b64_size + 1);
@@ -485,11 +485,12 @@ void config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel) {
 				cfg->icon_b64 = icon_b64;
 				cfg->icon_cache.data = icon_raw;
 				cfg->icon_cache.size = (size_t)icon_size;
+				return true;
 			} else {
 				free(icon_raw);
 				mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
 					"No memory for icon, %s.\n",
-					fallback
+					failure_action
 				);
 			}
 		}
@@ -498,37 +499,38 @@ void config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel) {
 		if (icon_size == 0) {
 			mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
 				"Icon file %s is empty, %s.\n",
-				cfg->icon_path, fallback
+				cfg->icon_path, failure_action
 			);
 		} else if (icon_size == -1) {
 			switch (errno) {
 				case FREADALL_ERFAIL:
 					mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
 						"Cannot open icon file %s, %s.\n",
-						cfg->icon_path, fallback
+						cfg->icon_path, failure_action
 					);
 					break;
 				case FREADALL_ELARGE:
 					mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
 						"Icon file %s too large, %s.\n",
-						cfg->icon_path, fallback
+						cfg->icon_path, failure_action
 					);
 					break;
 				case FREADALL_ENOMEM:
 					mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
 						"No memory to read icon file %s, %s.\n",
-						cfg->icon_path, fallback
+						cfg->icon_path, failure_action
 					);
 					break;
 				default:
 					mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
 						"Cannot read icon file %s, %s.\n",
-						cfg->icon_path, fallback
+						cfg->icon_path, failure_action
 					);
 					break;
 			}
 		}
 	}
+	return false;
 }
 
 conf_proxy config_proxy_search(conf *src, const char *targetvhost) {
