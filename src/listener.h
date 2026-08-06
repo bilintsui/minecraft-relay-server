@@ -13,6 +13,7 @@
 #include "config.h"
 
 /* section: functions (exported) */
+/* Takes ownership of config and the contents of config_cache. */
 int listener_run(conf *config, conf_cache *config_cache, const char *config_filename, const char *config_filename_full, const char *working_directory, const char *log_filename);
 
 #endif

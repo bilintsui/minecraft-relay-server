@@ -686,21 +686,29 @@ int listener_run(conf *config, conf_cache *config_cache, const char *config_file
 		.working_directory = working_directory
 	};
 	snprintf(context.log_filename, sizeof(context.log_filename), "%s", log_filename);
+	int exitcode;
 	listener_socket listener = { .fd = -1 };
 	enum listener_endpoint_status endpoint_status = listener_endpoint_prepare(context.config, &listener.endpoint);
 	if (endpoint_status == LISTENER_ENDPOINT_BAD_ADDRESS) {
 		LISTENER_LOG(&context, MKSYS_LEVEL_CRITICAL, "Error: Invalid bind address!\n");
-		return EXITCODE_BINDFAIL;
+		exitcode = EXITCODE_BINDFAIL;
+		goto cleanup;
 	}
 	if (endpoint_status == LISTENER_ENDPOINT_BAD_PORT) {
 		LISTENER_LOG(&context, MKSYS_LEVEL_CRITICAL, "Error: Invalid bind port!\n");
-		return EXITCODE_BADPORT;
+		exitcode = EXITCODE_BADPORT;
+		goto cleanup;
 	}
 	net_addrp bindaddrp = net_ntop(listener.endpoint.address.family, &(listener.endpoint.address.addr), true);
 	LISTENER_LOG(&context, MKSYS_LEVEL_INFORMATION, "Binding on %s:%d...\n", (char *)&bindaddrp, listener.endpoint.port);
 	if (listener_socket_bind(&listener) == -1) {
 		LISTENER_LOG(&context, MKSYS_LEVEL_CRITICAL, "Bind Failed!\n");
-		return EXITCODE_BINDFAIL;
+		exitcode = EXITCODE_BINDFAIL;
+		goto cleanup;
 	}
-	return listener_loop(&context, &listener);
+	exitcode = listener_loop(&context, &listener);
+cleanup:
+	config_destroy(context.config);
+	config_cache_destroy(context.config_cache);
+	return exitcode;
 }

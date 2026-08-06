@@ -330,13 +330,15 @@ int main(int argc, char **argv) {
 	conf_cache config_cache_candidate = { 0 };
 	int config_load_status = load_config(config_filename, config_filename_full, &config_cache_state, &config_cache_candidate, &config);
 	if (config_load_status != EXITCODE_OK) {
+		config_destroy(config);
 		config_cache_destroy(&config_cache_candidate);
 		return config_load_status;
 	}
 	resolve_path(config->log.filename, working_directory, log_filename, sizeof(log_filename));
 	if (log_file_validate(log_filename) == -1) {
-		config_cache_destroy(&config_cache_candidate);
 		LOG(MKSYS_LEVEL_CRITICAL, "Error: Cannot write log to \"%s\".\n", config->log.filename);
+		config_destroy(config);
+		config_cache_destroy(&config_cache_candidate);
 		return EXITCODE_CANTCREAT;
 	}
 	config_icon_load(config, log_filename, config->log.level, "using default");
