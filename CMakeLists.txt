@@ -13,7 +13,7 @@ if(DEBUG_MODE)
 else()
 	target_compile_definitions(mcrelay${EXEC_SUFFIX} PRIVATE _GNU_SOURCE DEBUG_MODE=false)
 endif()
-target_link_libraries(mcrelay${EXEC_SUFFIX} -lresolv -lcjson)
+target_link_libraries(mcrelay${EXEC_SUFFIX} -lresolv -lcjson -lsystemd)
 
 include(CTest)
 if(BUILD_TESTING)

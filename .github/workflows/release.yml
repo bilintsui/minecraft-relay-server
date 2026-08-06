@@ -36,7 +36,9 @@ jobs:
           sudo dpkg --add-architecture riscv64
           sudo dpkg --add-architecture s390x
           sudo apt-get update
-          sudo apt-get install -y libcjson-dev:amd64 libcjson-dev:arm64 libcjson-dev:armhf libcjson-dev:ppc64el libcjson-dev:riscv64 libcjson-dev:s390x
+          sudo apt-get install -y \
+            libcjson-dev:amd64 libcjson-dev:arm64 libcjson-dev:armhf libcjson-dev:ppc64el libcjson-dev:riscv64 libcjson-dev:s390x \
+            libsystemd-dev:amd64 libsystemd-dev:arm64 libsystemd-dev:armhf libsystemd-dev:ppc64el libsystemd-dev:riscv64 libsystemd-dev:s390x
       - name: Build amd64
         run: |
           mkdir build-amd64

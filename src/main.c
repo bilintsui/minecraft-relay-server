@@ -9,6 +9,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <netinet/in.h>
 #include <signal.h>
@@ -23,6 +24,7 @@
 #include <sys/signalfd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <systemd/sd-daemon.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -634,6 +636,29 @@ static int listener_events_wait(int socket_fd, const listener_events *events, li
 	return 0;
 }
 
+static void listener_notify_ready(void) {
+	sd_notify(0, "READY=1");
+}
+
+static int listener_notify_reloading(void) {
+	struct timespec timestamp;
+	if (clock_gettime(CLOCK_MONOTONIC, &timestamp) == -1) {
+		return -1;
+	}
+	if (timestamp.tv_sec < 0 || timestamp.tv_nsec < 0) {
+		errno = EINVAL;
+		return -1;
+	}
+	uint64_t timestamp_subsecond_usec = (uint64_t)timestamp.tv_nsec / 1000;
+	if ((uint64_t)timestamp.tv_sec > (UINT64_MAX - timestamp_subsecond_usec) / 1000000) {
+		errno = EOVERFLOW;
+		return -1;
+	}
+	uint64_t timestamp_usec = (uint64_t)timestamp.tv_sec * 1000000 + timestamp_subsecond_usec;
+	sd_notifyf(0, "RELOADING=1\nMONOTONIC_USEC=%" PRIu64, timestamp_usec);
+	return 0;
+}
+
 static arguments parse_arguments(int argc, char **argv) {
 	arguments result = {
 		.command = COMMAND_INVALID,
@@ -821,6 +846,7 @@ static int run_listener(listener_socket *listener) {
 		return EXITCODE_INTERNAL;
 	}
 	bind_success_msg();
+	listener_notify_ready();
 	if (!isatty(STDOUT_FILENO)) {
 		fclose(stdout);
 		fclose(stderr);
@@ -837,9 +863,19 @@ static int run_listener(listener_socket *listener) {
 		if (requests.stop) {
 			break;
 		}
-		if (requests.reload && do_reload(listener, &events) == -1) {
-			exitcode = EXITCODE_INTERNAL;
-			break;
+		if (requests.reload) {
+			if (listener_notify_reloading() == -1) {
+				LOG_FILE(MKSYS_LEVEL_CRITICAL, "Cannot create systemd reload timestamp: %s\n", strerror(errno));
+				exitcode = EXITCODE_INTERNAL;
+				break;
+			}
+			int reload_result = do_reload(listener, &events);
+			/* Complete the reload handshake before acting on a fatal result; systemd observes the subsequent listener exit separately. */
+			listener_notify_ready();
+			if (reload_result == -1) {
+				exitcode = EXITCODE_INTERNAL;
+				break;
+			}
 		}
 		if (!requests.accept_ready) {
 			continue;

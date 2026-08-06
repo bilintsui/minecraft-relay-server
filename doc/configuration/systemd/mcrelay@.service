@@ -6,6 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=nobody
+KillMode=control-group
 Restart=on-failure
 RestartSec=5s
 ExecStart=/usr/local/bin/mcrelay run --config /usr/local/etc/mcrelay/%i.json

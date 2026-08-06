@@ -13,8 +13,9 @@ Minecraft versions before 12w04a are **NOT SUPPORTED**!
 
 ## Requirements
 * Linux
-* <code>libresolv.so</code> (usually pre-installed)
-* <code>libcjson.so</code> (on Debian-like systems, contained in package <code>libcjson1</code>)
+* <code>libresolv.so.2</code> (usually pre-installed. On debian-like systems, contained in package <code>libc6</code>)
+* <code>libcjson.so.1</code> (on Debian-like systems, contained in package <code>libcjson1</code>)
+* <code>libsystemd.so.0</code> (on Debian-like systems, contained in package <code>libsystemd0</code>)
 
 ## Compatibility
 **Due to Minecraft handshake restrictions, this server supports:**
@@ -34,10 +35,12 @@ Minecraft versions before 12w04a are **NOT SUPPORTED**!
 * <code>doc/configuration/systemd</code> Configuration used by systemd, when using mcrelay as a service.
 * <code>src</code> Folder of source codes.
 
-## Compile
-Before compiling, you need to install cJSON at first.
+See the [systemd configuration notes](doc/configuration/systemd/README.md) for compatibility and synchronous reload modes.
 
-For example, you can install it on Debian-like systems by <code>apt install libcjson-dev</code>.
+## Compile
+Before compiling, you need to install the cJSON and systemd development files at first.
+
+For example, you can install them on Debian-like systems by <code>apt install libcjson-dev libsystemd-dev</code>.
 
 Then you can use CMake to compile it by <code>cmake -B build && cmake --build build</code>, the executable file is <code>build/mcrelay</code>.
 
