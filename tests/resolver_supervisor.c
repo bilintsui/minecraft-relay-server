@@ -324,7 +324,11 @@ static bool supervisor_test_arguments(void) {
 	}
 	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK, "initial helper-start failures were not retried");
 	CHECK(resolver_supervisor_entry_schedule(NULL, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT
-		&& resolver_supervisor_entry_schedule(supervisor, NULL, &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT, "invalid schedule arguments were accepted");
+		&& resolver_supervisor_entry_schedule(supervisor, NULL, &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT
+		&& resolver_supervisor_entry_schedule_interactive(NULL, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT
+		&& resolver_supervisor_entry_schedule_interactive(supervisor, NULL, &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT, "invalid schedule arguments were accepted");
+	CHECK(!resolver_supervisor_entry_interactive_release(NULL, entry, &now) && !resolver_supervisor_entry_interactive_release(supervisor, NULL, &now),
+		"invalid interactive-interest release succeeded");
 	CHECK(resolver_supervisor_events_process(supervisor, &invalid_time) == RESOLVER_SUPERVISOR_EVENT_TIME, "invalid event timestamp was accepted");
 	CHECK(!resolver_supervisor_completion_take(supervisor, &completion) && !resolver_supervisor_helper_view_get(supervisor, RESOLVER_SUPERVISOR_HELPER_COUNT, &(resolver_supervisor_helper_view){ 0 }),
 		"invalid supervisor inspection succeeded");
@@ -347,6 +351,7 @@ static bool supervisor_test_capacity(void) {
 	resolver_supervisor *supervisor = NULL;
 	resolver_cache *cache = NULL;
 	resolver_cache_entry *entries[RESOLVER_SUPERVISOR_JOB_LIMIT + 1U];
+	size_t background_limit = RESOLVER_SUPERVISOR_JOB_LIMIT - RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE;
 	memset(entries, 0, sizeof(entries));
 	supervisor_fake_reset();
 	supervisor = resolver_supervisor_create(&signal_mask, &now);
@@ -358,15 +363,25 @@ static bool supervisor_test_capacity(void) {
 		entries[index] = supervisor_cache_entry_create(cache, name, ns_t_a);
 		CHECK(entries[index] != NULL, "capacity-test cache entry could not be created");
 	}
-	for (size_t index = 0; index < RESOLVER_SUPERVISOR_JOB_LIMIT; index++) {
+	for (size_t index = 0; index < background_limit; index++) {
 		CHECK(resolver_supervisor_entry_schedule(supervisor, entries[index], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "capacity-test job could not be scheduled");
 	}
-	CHECK(resolver_supervisor_job_count(supervisor) == RESOLVER_SUPERVISOR_JOB_LIMIT
+	CHECK(resolver_supervisor_job_count(supervisor) == background_limit
 		&& resolver_supervisor_entry_schedule(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED
-		&& resolver_supervisor_entry_schedule(supervisor, entries[RESOLVER_SUPERVISOR_JOB_LIMIT], &now) == RESOLVER_SUPERVISOR_SCHEDULE_LIMIT,
-		"job capacity or coalescing was not enforced");
-	CHECK(resolver_supervisor_entry_cancel(supervisor, entries[RESOLVER_SUPERVISOR_JOB_LIMIT - 1U], &now)
-		&& resolver_supervisor_entry_schedule(supervisor, entries[RESOLVER_SUPERVISOR_JOB_LIMIT], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "cancelled capacity was not reusable");
+		&& resolver_supervisor_entry_schedule(supervisor, entries[background_limit], &now) == RESOLVER_SUPERVISOR_SCHEDULE_LIMIT,
+		"background capacity or coalescing was not enforced");
+	CHECK(resolver_supervisor_entry_schedule_interactive(supervisor, entries[background_limit], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
+		&& resolver_supervisor_job_count(supervisor) == RESOLVER_SUPERVISOR_JOB_LIMIT
+		&& resolver_supervisor_entry_schedule_interactive(supervisor, entries[RESOLVER_SUPERVISOR_JOB_LIMIT], &now) == RESOLVER_SUPERVISOR_SCHEDULE_LIMIT,
+		"interactive reserve was not available above the background boundary");
+	resolver_supervisor_job_view job_view;
+	CHECK(resolver_supervisor_entry_schedule_interactive(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED
+		&& resolver_supervisor_entry_view(supervisor, entries[0], &job_view) && job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE
+		&& job_view.interactive_interest_count == 1 && resolver_supervisor_entry_interactive_release(supervisor, entries[0], &now),
+		"existing-key interactive coalescing did not bypass admission or release cleanly");
+	CHECK(resolver_supervisor_entry_cancel(supervisor, entries[background_limit], &now)
+		&& resolver_supervisor_entry_schedule_interactive(supervisor, entries[RESOLVER_SUPERVISOR_JOB_LIMIT], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
+		"cancelled interactive capacity was not reusable");
 	test_result = true;
 
 cleanup:
@@ -505,7 +520,10 @@ static bool supervisor_test_completion(void) {
 	CHECK(supervisor_response_address_send(peer_fd, &request, &completed_at, 0), "TTL-zero response could not be sent");
 	now = completed_at;
 	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK
-		&& resolver_supervisor_entry_schedule(supervisor, zero_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_COMPLETE, "TTL-zero completion was not coalescible");
+		&& resolver_supervisor_entry_schedule(supervisor, zero_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_COMPLETE
+		&& resolver_supervisor_entry_schedule_interactive(supervisor, zero_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_COMPLETE
+		&& resolver_supervisor_entry_view(supervisor, zero_entry, &job_view) && job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND
+		&& job_view.interactive_interest_count == 0, "TTL-zero completion was not coalescible without retaining interactive interest");
 	CHECK(resolver_supervisor_completion_take(supervisor, &completion) && completion.publication == RESOLVER_CACHE_PUBLISH_TRANSIENT
 		&& completion.response.payload.address.address_count == 1, "TTL-zero transient payload was not transferred");
 	supervisor_completion_clear(&completion);
@@ -534,6 +552,100 @@ cleanup:
 	return test_result;
 }
 
+static bool supervisor_test_priority(void) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 350 };
+	resolver_supervisor *supervisor = NULL;
+	resolver_cache *cache = NULL;
+	resolver_cache_entry *entries[RESOLVER_SUPERVISOR_JOB_LIMIT];
+	resolver_supervisor_completion completion = { 0 };
+	memset(entries, 0, sizeof(entries));
+	supervisor_fake_reset();
+	supervisor = resolver_supervisor_create(&signal_mask, &now);
+	cache = resolver_cache_create();
+	CHECK(supervisor != NULL && cache != NULL, "priority-test state could not be created");
+	for (size_t index = 0; index < RESOLVER_SUPERVISOR_JOB_LIMIT; index++) {
+		char name[64];
+		snprintf(name, sizeof(name), "priority-%zu.supervisor.test", index);
+		entries[index] = supervisor_cache_entry_create(cache, name, ns_t_a);
+		CHECK(entries[index] != NULL, "priority-test cache entry could not be created");
+	}
+	for (size_t index = 0; index < RESOLVER_SUPERVISOR_JOB_LIMIT - RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE; index++) {
+		CHECK(resolver_supervisor_entry_schedule(supervisor, entries[index], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "priority-test background job could not be scheduled");
+	}
+	resolver_supervisor_job_view job_view;
+	CHECK(resolver_supervisor_entry_view(supervisor, entries[2], &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_QUEUED
+		&& job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND && job_view.interactive_interest_count == 0,
+		"background queue state was invalid");
+	CHECK(resolver_supervisor_entry_schedule_interactive(supervisor, entries[2], &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED
+		&& resolver_supervisor_entry_view(supervisor, entries[2], &job_view) && job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE
+		&& job_view.interactive_interest_count == 1 && resolver_supervisor_entry_interactive_release(supervisor, entries[2], &now)
+		&& resolver_supervisor_entry_view(supervisor, entries[2], &job_view) && job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND
+		&& job_view.interactive_interest_count == 0 && job_view.state == RESOLVER_SUPERVISOR_JOB_QUEUED, "queued priority promotion or downgrade failed");
+	CHECK(resolver_supervisor_entry_schedule_interactive(supervisor, entries[3], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
+		&& resolver_supervisor_entry_view(supervisor, entries[3], &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_QUEUED
+		&& job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE && job_view.interactive_interest_count == 1,
+		"new interactive job did not enter the interactive queue");
+	int peer_fds[RESOLVER_SUPERVISOR_HELPER_COUNT];
+	resolver_ipc_request requests[RESOLVER_SUPERVISOR_HELPER_COUNT];
+	for (size_t helper_index = 0; helper_index < RESOLVER_SUPERVISOR_HELPER_COUNT; helper_index++) {
+		peer_fds[helper_index] = supervisor_fake_peer(supervisor, helper_index);
+		CHECK(peer_fds[helper_index] != -1 && supervisor_request_receive(peer_fds[helper_index], &requests[helper_index])
+			&& strcmp(requests[helper_index].query_name, resolver_cache_entry_name(entries[helper_index])) == 0, "initial priority-test request was invalid");
+	}
+	struct timespec completed_at = supervisor_time_add(&now, 1, 0);
+	CHECK(supervisor_response_address_send(peer_fds[0], &requests[0], &completed_at, 30), "first priority-test response could not be sent");
+	now = completed_at;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_completion_take(supervisor, &completion),
+		"first priority-test response was not processed");
+	supervisor_completion_clear(&completion);
+	resolver_ipc_request interactive_request;
+	CHECK(supervisor_request_receive(peer_fds[0], &interactive_request) && strcmp(interactive_request.query_name, resolver_cache_entry_name(entries[3])) == 0,
+		"new interactive job did not dispatch before queued background work");
+	CHECK(resolver_supervisor_entry_schedule_interactive(supervisor, entries[2], &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED
+		&& resolver_supervisor_entry_schedule_interactive(supervisor, entries[2], &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED
+		&& resolver_supervisor_entry_view(supervisor, entries[2], &job_view) && job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE
+		&& job_view.interactive_interest_count == 2 && job_view.state == RESOLVER_SUPERVISOR_JOB_QUEUED, "queued background job was not promoted for both waiters");
+	completed_at = supervisor_time_add(&now, 1, 0);
+	CHECK(supervisor_response_address_send(peer_fds[1], &requests[1], &completed_at, 30), "second priority-test response could not be sent");
+	now = completed_at;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_completion_take(supervisor, &completion),
+		"second priority-test response was not processed");
+	supervisor_completion_clear(&completion);
+	resolver_ipc_request promoted_request;
+	CHECK(supervisor_request_receive(peer_fds[1], &promoted_request) && strcmp(promoted_request.query_name, resolver_cache_entry_name(entries[2])) == 0
+		&& resolver_supervisor_entry_view(supervisor, entries[2], &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_DISPATCHED
+		&& job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE && job_view.interactive_interest_count == 2,
+		"promoted background job was not dispatched first");
+	uint64_t query_id = job_view.query_id;
+	CHECK(resolver_supervisor_entry_interactive_release(supervisor, entries[2], &now) && resolver_supervisor_entry_view(supervisor, entries[2], &job_view)
+		&& job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE && job_view.interactive_interest_count == 1 && job_view.query_id == query_id
+		&& resolver_supervisor_entry_interactive_release(supervisor, entries[2], &now) && resolver_supervisor_entry_view(supervisor, entries[2], &job_view)
+		&& job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND && job_view.interactive_interest_count == 0 && job_view.state == RESOLVER_SUPERVISOR_JOB_DISPATCHED
+		&& job_view.query_id == query_id, "last-waiter release did not downgrade dispatched work without restarting it");
+	completed_at = supervisor_time_add(&now, 1, 0);
+	CHECK(supervisor_response_address_send(peer_fds[0], &interactive_request, &completed_at, 30), "interactive priority-test response could not be sent");
+	now = completed_at;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK
+		&& resolver_supervisor_entry_view(supervisor, entries[3], &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_COMPLETE
+		&& job_view.interactive_interest_count == 0 && resolver_supervisor_completion_take(supervisor, &completion),
+		"completion did not release outstanding interactive interest");
+	supervisor_completion_clear(&completion);
+	test_result = true;
+
+cleanup:
+	supervisor_completion_clear(&completion);
+	resolver_supervisor_destroy(supervisor);
+	for (size_t index = 0; index < RESOLVER_SUPERVISOR_JOB_LIMIT; index++) {
+		resolver_cache_entry_release(entries[index]);
+	}
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
 static bool supervisor_test_protocol_and_recovery(void) {
 	bool test_result = false;
 	sigset_t signal_mask;
@@ -550,7 +662,7 @@ static bool supervisor_test_protocol_and_recovery(void) {
 	cache = resolver_cache_create();
 	entry = supervisor_cache_entry_create(cache, "protocol.supervisor.test", ns_t_a);
 	CHECK(supervisor != NULL && cache != NULL && entry != NULL, "protocol-test state could not be created");
-	CHECK(resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "protocol job could not be scheduled");
+	CHECK(resolver_supervisor_entry_schedule_interactive(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "interactive protocol job could not be scheduled");
 	resolver_supervisor_helper_view helper_view;
 	CHECK(resolver_supervisor_helper_view_get(supervisor, 0, &helper_view), "protocol helper could not be inspected");
 	supervisor_test_helper *failed_helper = supervisor_fake_find(helper_view.process_id);
@@ -562,8 +674,9 @@ static bool supervisor_test_protocol_and_recovery(void) {
 	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && failed_helper->last_signal == SIGKILL,
 		"protocol-corrupt helper was not killed immediately");
 	resolver_supervisor_job_view job_view;
-	CHECK(resolver_supervisor_entry_view(supervisor, entry, &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT,
-		"protocol-corrupt helper job did not enter retry wait");
+	CHECK(resolver_supervisor_entry_view(supervisor, entry, &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT
+		&& job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE && job_view.interactive_interest_count == 1,
+		"protocol-corrupt helper job did not retain interactive priority through retry wait");
 	CHECK(resolver_supervisor_helper_view_get(supervisor, 0, &helper_view) && helper_view.state == RESOLVER_SUPERVISOR_HELPER_IDLE && helper_view.failure_count == 1
 		&& helper_view.last_failed_process_id == failed_helper->process_id && helper_view.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL,
 		"first helper replacement was not immediate or diagnosable");
@@ -697,7 +810,17 @@ static bool supervisor_test_retry(void) {
 		CHECK(supervisor_time_difference_milliseconds(&retry_view.retry_at, &now) == supervisor_retry_delay_expected(resolver_cache_entry_id(entry), retry_count),
 			"query retry jitter was not deterministic");
 		if (retry_count == 1) {
-			CHECK(resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED, "retry-wait job was not coalesced");
+			struct timespec retry_at = retry_view.retry_at;
+			CHECK(resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED
+				&& resolver_supervisor_entry_schedule_interactive(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED
+				&& resolver_supervisor_entry_view(supervisor, entry, &retry_view) && retry_view.state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT
+				&& retry_view.priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE && retry_view.interactive_interest_count == 1
+				&& retry_view.retry_at.tv_sec == retry_at.tv_sec && retry_view.retry_at.tv_nsec == retry_at.tv_nsec,
+				"retry-wait promotion bypassed backoff or failed to retain interest");
+			CHECK(resolver_supervisor_entry_interactive_release(supervisor, entry, &now) && resolver_supervisor_entry_view(supervisor, entry, &retry_view)
+				&& retry_view.state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT && retry_view.priority == RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND
+				&& retry_view.interactive_interest_count == 0 && retry_view.retry_at.tv_sec == retry_at.tv_sec && retry_view.retry_at.tv_nsec == retry_at.tv_nsec,
+				"retry-wait interest release did not downgrade without changing backoff");
 		}
 		now = retry_view.retry_at;
 		CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK, "retry deadline could not be processed");
@@ -915,6 +1038,7 @@ int main(void) {
 	CHECK(supervisor_test_cancel(), "supervisor cancellation tests failed");
 	CHECK(supervisor_test_child_dispose(), "supervisor child-disposal tests failed");
 	CHECK(supervisor_test_completion(), "supervisor completion tests failed");
+	CHECK(supervisor_test_priority(), "supervisor priority tests failed");
 	CHECK(supervisor_test_protocol_and_recovery(), "supervisor protocol and recovery tests failed");
 	CHECK(supervisor_test_real_process(), "supervisor real-process tests failed");
 	CHECK(supervisor_test_retry(), "supervisor retry tests failed");

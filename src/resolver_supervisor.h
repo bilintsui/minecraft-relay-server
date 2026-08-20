@@ -29,6 +29,9 @@
 #ifndef RESOLVER_SUPERVISOR_JOB_LIMIT
 #define RESOLVER_SUPERVISOR_JOB_LIMIT	4096
 #endif
+#ifndef RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE
+#define RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE	256
+#endif
 
 /* helper recovery */
 #ifndef RESOLVER_SUPERVISOR_RESPAWN_INITIAL_MS
@@ -111,9 +114,15 @@ typedef enum {
 	RESOLVER_SUPERVISOR_JOB_RETRY_WAIT,
 	RESOLVER_SUPERVISOR_JOB_COMPLETE
 } resolver_supervisor_job_state;
+typedef enum {
+	RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND,
+	RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE
+} resolver_supervisor_priority;
 typedef struct {
 	struct timespec deadline;
 	struct timespec dispatched_at;
+	size_t interactive_interest_count;
+	resolver_supervisor_priority priority;
 	uint64_t query_id;
 	struct timespec retry_at;
 	uint64_t retry_count;
@@ -142,8 +151,12 @@ void resolver_supervisor_destroy(resolver_supervisor *supervisor);
 void resolver_supervisor_dispose_in_child(resolver_supervisor *supervisor);
 /* Cancelling a dispatched entry suppresses retry and completion but lets the current helper response drain normally. */
 bool resolver_supervisor_entry_cancel(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now);
-/* A schedule-time IO result means the shared timer source failed and the caller must retire the supervisor. */
+/* Release one interest retained by a STARTED or COALESCED interactive schedule. Completion releases every remaining interest implicitly. */
+bool resolver_supervisor_entry_interactive_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now);
+/* Background scheduling observes the reserved interactive headroom. A schedule-time IO result means the shared timer source failed and the caller must retire the supervisor. */
 resolver_supervisor_schedule_status resolver_supervisor_entry_schedule(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now);
+/* A STARTED or COALESCED result retains one interactive interest until release or completion. FRESH and COMPLETE retain no interest. */
+resolver_supervisor_schedule_status resolver_supervisor_entry_schedule_interactive(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now);
 bool resolver_supervisor_entry_view(const resolver_supervisor *supervisor, const resolver_cache_entry *entry, resolver_supervisor_job_view *result);
 /* Register this stable nested-epoll descriptor for EPOLLIN in the listener; helper replacements remain internal. Sample now after readiness before processing events. */
 int resolver_supervisor_event_fd(const resolver_supervisor *supervisor);
