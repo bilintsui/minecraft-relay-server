@@ -22,6 +22,7 @@
 #include <sys/prctl.h>
 #include <sys/signalfd.h>
 #include <sys/socket.h>
+#include <sys/timerfd.h>
 #include <sys/types.h>
 #include <systemd/sd-daemon.h>
 #include <time.h>
@@ -37,6 +38,9 @@
 #include "network.h"
 #include "resolver_cache.h"
 #include "resolver_supervisor.h"
+#include "route_bindings.h"
+#include "route_resolution.h"
+#include "route_table.h"
 
 /* section: headers (self) */
 #include "listener.h"
@@ -46,6 +50,12 @@
 #define LISTENER_ACCEPT_BATCH	128
 #ifndef LISTENER_HOSTS_FILENAME
 #define LISTENER_HOSTS_FILENAME	"/etc/hosts"
+#endif
+#ifndef LISTENER_ROUTE_PREWARM_BATCH_LIMIT
+#define LISTENER_ROUTE_PREWARM_BATCH_LIMIT	64
+#endif
+#ifndef LISTENER_ROUTE_WARMUP_TIMEOUT_SEC
+#define LISTENER_ROUTE_WARMUP_TIMEOUT_SEC	10
 #endif
 
 /* logging macro */
@@ -57,6 +67,11 @@ enum listener_endpoint_status {
 	LISTENER_ENDPOINT_OK,
 	LISTENER_ENDPOINT_BAD_ADDRESS,
 	LISTENER_ENDPOINT_BAD_PORT
+};
+enum listener_route_prepare_status {
+	LISTENER_ROUTE_PREPARE_OK,
+	LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR,
+	LISTENER_ROUTE_PREPARE_TIME_ERROR
 };
 enum listener_socket_open_status {
 	LISTENER_SOCKET_OPEN_OK,
@@ -82,6 +97,9 @@ typedef struct {
 	hosts_table *hosts;
 	char log_filename[PATH_MAX];
 	resolver_supervisor *resolver;
+	route_bindings *route_bindings;
+	route_resolution *route_resolution;
+	route_table *routes;
 	const char *working_directory;
 } listener_context;
 typedef struct {
@@ -93,14 +111,21 @@ typedef struct {
 	bool mask_blocked;
 	sigset_t previous_signal_mask;
 	int resolver_fd;
+	int route_timer_fd;
 	int signal_fd;
 } listener_events;
 typedef struct {
 	bool accept_ready;
 	bool reload;
 	bool resolver_ready;
+	bool route_timer_ready;
 	bool stop;
 } listener_requests;
+typedef struct {
+	struct timespec deadline;
+	bool pressure_logged;
+	bool ready;
+} listener_route_runtime;
 typedef struct {
 	listener_endpoint endpoint;
 	int fd;
@@ -216,6 +241,9 @@ static void listener_events_destroy(listener_events *events) {
 	if (events->signal_fd != -1) {
 		close(events->signal_fd);
 	}
+	if (events->route_timer_fd != -1) {
+		close(events->route_timer_fd);
+	}
 	if (events->mask_blocked) {
 		sigprocmask(SIG_SETMASK, &events->previous_signal_mask, NULL);
 	}
@@ -233,11 +261,12 @@ static int listener_events_socket_add(const listener_events *events, int socket_
 	return epoll_ctl(events->epoll_fd, EPOLL_CTL_ADD, socket_fd, &event);
 }
 
-static int listener_events_init(int socket_fd, listener_events *events) {
+static int listener_events_init(listener_events *events) {
 	int saved_errno;
 	memset(events, 0, sizeof(*events));
 	events->epoll_fd = -1;
 	events->resolver_fd = -1;
+	events->route_timer_fd = -1;
 	events->signal_fd = -1;
 	struct sigaction child_action;
 	memset(&child_action, 0, sizeof(child_action));
@@ -270,7 +299,14 @@ static int listener_events_init(int socket_fd, listener_events *events) {
 	if (epoll_ctl(events->epoll_fd, EPOLL_CTL_ADD, events->signal_fd, &event) == -1) {
 		goto fail;
 	}
-	if (listener_events_socket_add(events, socket_fd) == -1) {
+	events->route_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+	if (events->route_timer_fd == -1) {
+		goto fail;
+	}
+	memset(&event, 0, sizeof(event));
+	event.events = EPOLLIN;
+	event.data.fd = events->route_timer_fd;
+	if (epoll_ctl(events->epoll_fd, EPOLL_CTL_ADD, events->route_timer_fd, &event) == -1) {
 		goto fail;
 	}
 	return 0;
@@ -331,11 +367,11 @@ static int listener_signals_read(int signal_fd, listener_requests *requests) {
 }
 
 static int listener_events_wait(int socket_fd, const listener_events *events, listener_requests *requests) {
-	struct epoll_event ready_events[3];
+	struct epoll_event ready_events[4];
 	memset(requests, 0, sizeof(*requests));
 	int ready_count;
 	do {
-		ready_count = epoll_wait(events->epoll_fd, ready_events, 3, -1);
+		ready_count = epoll_wait(events->epoll_fd, ready_events, 4, -1);
 	} while (ready_count == -1 && errno == EINTR);
 	if (ready_count == -1) {
 		return -1;
@@ -367,6 +403,14 @@ static int listener_events_wait(int socket_fd, const listener_events *events, li
 			if (event_flags & EPOLLIN) {
 				requests->resolver_ready = true;
 			}
+		} else if (event_fd == events->route_timer_fd) {
+			if (event_flags & (EPOLLERR | EPOLLHUP)) {
+				errno = EIO;
+				return -1;
+			}
+			if (event_flags & EPOLLIN) {
+				requests->route_timer_ready = true;
+			}
 		} else {
 			errno = EIO;
 			return -1;
@@ -392,15 +436,17 @@ static const char *listener_hosts_load_error(hosts_load_status status) {
 	}
 }
 
-static bool listener_hosts_replace(listener_context *context, uint8_t failure_level, const char *failure_action) {
-	hosts_table *candidate = NULL;
+static bool listener_hosts_prepare(listener_context *context, uint8_t failure_level, const char *failure_action, hosts_table **result) {
+	if (result == NULL || *result != NULL) {
+		return false;
+	}
 	size_t malformed_line_count = 0;
-	hosts_load_status status = hosts_table_load(LISTENER_HOSTS_FILENAME, &candidate, &malformed_line_count);
+	hosts_load_status status = hosts_table_load(LISTENER_HOSTS_FILENAME, result, &malformed_line_count);
 	if (status != HOSTS_LOAD_OK && status != HOSTS_LOAD_FILE_ERROR) {
 		LISTENER_LOG(context, failure_level, "Cannot prepare local static host table from %s: %s%s.\n", LISTENER_HOSTS_FILENAME, listener_hosts_load_error(status), failure_action);
 		return false;
 	}
-	if (candidate == NULL) {
+	if (*result == NULL) {
 		LISTENER_LOG(context, failure_level, "Cannot prepare local static host table from %s: loader returned no table%s.\n", LISTENER_HOSTS_FILENAME, failure_action);
 		return false;
 	}
@@ -411,9 +457,6 @@ static bool listener_hosts_replace(listener_context *context, uint8_t failure_le
 		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Ignored %zu malformed line%s while loading local static host table from %s.\n", malformed_line_count,
 			malformed_line_count == 1 ? "" : "s", LISTENER_HOSTS_FILENAME);
 	}
-	hosts_table *previous = context->hosts;
-	context->hosts = candidate;
-	hosts_table_destroy(previous);
 	return true;
 }
 
@@ -438,6 +481,154 @@ static int listener_notify_reloading(void) {
 	uint64_t timestamp_usec = (uint64_t)timestamp.tv_sec * 1000000 + timestamp_subsecond_usec;
 	sd_notifyf(0, "RELOADING=1\nMONOTONIC_USEC=%" PRIu64, timestamp_usec);
 	return 0;
+}
+
+static bool listener_route_bindings_prepare(listener_context *context, const route_table *routes, const hosts_table *hosts, uint8_t failure_level, const char *failure_action,
+	route_bindings **result) {
+	route_bindings_build_status status = route_bindings_build(routes, hosts, context->dns_cache, result);
+	if (status == ROUTE_BINDINGS_BUILD_OK) {
+		return true;
+	}
+	const char *reason;
+	switch (status) {
+		case ROUTE_BINDINGS_BUILD_LIMIT:
+			reason = "resolver cache capacity reached";
+			break;
+		case ROUTE_BINDINGS_BUILD_MEMORY:
+			reason = "memory allocation failed";
+			break;
+		case ROUTE_BINDINGS_BUILD_BAD_ARGUMENT:
+		case ROUTE_BINDINGS_BUILD_INVALID:
+		default:
+			reason = "invalid internal binding state";
+			break;
+	}
+	LISTENER_LOG(context, failure_level, "Cannot prepare proxy resolver bindings: %s%s.\n", reason, failure_action);
+	return false;
+}
+
+static enum listener_route_prepare_status listener_route_resolution_prepare(listener_context *context, const route_bindings *bindings, const hosts_table *hosts,
+	uint8_t failure_level, const char *failure_action, route_resolution **result) {
+	struct timespec now;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+		return LISTENER_ROUTE_PREPARE_TIME_ERROR;
+	}
+	route_resolution_build_status status = route_resolution_build(bindings, hosts, context->dns_cache, &now, result);
+	if (status == ROUTE_RESOLUTION_BUILD_OK) {
+		return LISTENER_ROUTE_PREPARE_OK;
+	}
+	const char *reason = status == ROUTE_RESOLUTION_BUILD_MEMORY ? "memory allocation failed" : "invalid internal resolution state";
+	LISTENER_LOG(context, failure_level, "Cannot prepare proxy route resolution: %s%s.\n", reason, failure_action);
+	return LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR;
+}
+
+static bool listener_route_time_add_seconds(const struct timespec *timestamp, uint64_t seconds, struct timespec *result) {
+	if (timestamp == NULL || result == NULL || timestamp->tv_sec < 0 || timestamp->tv_nsec < 0 || timestamp->tv_nsec >= 1000000000L
+		|| (uintmax_t)timestamp->tv_sec > UINTMAX_MAX - seconds) {
+		return false;
+	}
+	uintmax_t result_seconds = (uintmax_t)timestamp->tv_sec + seconds;
+	time_t converted = (time_t)result_seconds;
+	if (converted < 0 || (uintmax_t)converted != result_seconds) {
+		return false;
+	}
+	result->tv_sec = converted;
+	result->tv_nsec = timestamp->tv_nsec;
+	return true;
+}
+
+static int listener_route_time_compare(const struct timespec *left, const struct timespec *right) {
+	if (left->tv_sec != right->tv_sec) {
+		return left->tv_sec < right->tv_sec ? -1 : 1;
+	}
+	if (left->tv_nsec != right->tv_nsec) {
+		return left->tv_nsec < right->tv_nsec ? -1 : 1;
+	}
+	return 0;
+}
+
+static int listener_route_timer_drain(const listener_events *events) {
+	uint64_t expirations;
+	ssize_t bytes;
+	do {
+		bytes = read(events->route_timer_fd, &expirations, sizeof(expirations));
+	} while (bytes == -1 && errno == EINTR);
+	if (bytes == (ssize_t)sizeof(expirations)) {
+		return 0;
+	}
+	if (bytes != -1) {
+		errno = EIO;
+	}
+	return -1;
+}
+
+static int listener_route_timer_set(const listener_events *events, const struct timespec *deadline) {
+	struct itimerspec timer;
+	memset(&timer, 0, sizeof(timer));
+	if (deadline != NULL) {
+		timer.it_value = *deadline;
+	}
+	return timerfd_settime(events->route_timer_fd, TFD_TIMER_ABSTIME, &timer, NULL);
+}
+
+static int listener_route_runtime_ready(listener_context *context, listener_route_runtime *runtime, const listener_events *events, const listener_socket *listener,
+	bool warmup_complete) {
+	if (listener_events_socket_add(events, listener->fd) == -1) {
+		return -1;
+	}
+	runtime->ready = true;
+	listener_notify_ready();
+	if (!isatty(STDOUT_FILENO)) {
+		fclose(stdout);
+		fclose(stderr);
+	}
+	if (warmup_complete) {
+		LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION, "Initial proxy route warm-up finished; accepting connections.\n");
+	} else {
+		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Initial proxy route warm-up deadline reached; accepting connections while prewarming continues.\n");
+	}
+	return 0;
+}
+
+static int listener_route_runtime_schedule(listener_context *context, listener_route_runtime *runtime, const listener_events *events, const listener_socket *listener,
+	const struct timespec *now) {
+	route_prewarm_status status = route_resolution_schedule(context->route_resolution, context->resolver, now, LISTENER_ROUTE_PREWARM_BATCH_LIMIT);
+	if (status == ROUTE_PREWARM_BAD_ARGUMENT || status == ROUTE_PREWARM_IO || status == ROUTE_PREWARM_TIME) {
+		errno = status == ROUTE_PREWARM_TIME ? EINVAL : status == ROUTE_PREWARM_IO ? EIO : EINVAL;
+		return -1;
+	}
+	if (status == ROUTE_PREWARM_CAPACITY || status == ROUTE_PREWARM_MEMORY) {
+		if (!runtime->pressure_logged) {
+			LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Proxy route prewarming paused by local resolver %s pressure; it will resume after later resolver activity.\n",
+				status == ROUTE_PREWARM_CAPACITY ? "capacity" : "memory");
+			runtime->pressure_logged = true;
+		}
+	} else if (runtime->pressure_logged) {
+		LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION, "Proxy route prewarming resumed after local resolver pressure.\n");
+		runtime->pressure_logged = false;
+	}
+	bool deadline_reached = listener_route_time_compare(now, &runtime->deadline) >= 0;
+	bool warmup_complete = route_resolution_warmup_complete(context->route_resolution);
+	if (!runtime->ready && (warmup_complete || deadline_reached) && listener_route_runtime_ready(context, runtime, events, listener, warmup_complete) == -1) {
+		return -1;
+	}
+	if (status == ROUTE_PREWARM_MORE) {
+		return listener_route_timer_set(events, now);
+	}
+	if (!runtime->ready) {
+		return listener_route_timer_set(events, &runtime->deadline);
+	}
+	return listener_route_timer_set(events, NULL);
+}
+
+static int listener_route_runtime_start(listener_route_runtime *runtime, const listener_events *events, const struct timespec *now) {
+	memset(runtime, 0, sizeof(*runtime));
+	if (LISTENER_ROUTE_PREWARM_BATCH_LIMIT == 0 || LISTENER_ROUTE_WARMUP_TIMEOUT_SEC == 0
+		|| !listener_route_time_add_seconds(now, LISTENER_ROUTE_WARMUP_TIMEOUT_SEC, &runtime->deadline)) {
+		errno = EINVAL;
+		return -1;
+	}
+	return listener_route_timer_set(events, &runtime->deadline);
 }
 
 static int listener_socket_bind(listener_socket *target) {
@@ -516,9 +707,13 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 		"Reloading config from file: %s\n",
 		context->config_filename
 	);
-	listener_hosts_replace(context, MKSYS_LEVEL_WARNING, ", keeping the existing table");
+	hosts_table *hosts_candidate = NULL;
+	listener_hosts_prepare(context, MKSYS_LEVEL_WARNING, ", keeping the existing table", &hosts_candidate);
 	conf_cache config_cache_candidate = { 0 };
 	conf *config_candidate = NULL;
+	route_bindings *route_bindings_candidate = NULL;
+	route_resolution *route_resolution_candidate = NULL;
+	route_table *routes_candidate = NULL;
 	conf_read_status read_status = config_read(context->config_filename_full, context->config_cache, &config_cache_candidate, &config_candidate);
 	switch (read_status) {
 		case CONF_READ_CHANGED: {
@@ -546,6 +741,29 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 				break;
 			}
 			if (!config_icon_load(config_candidate, config_logfull_old, config_maxlevel, "will keep your old configurations")) {
+				break;
+			}
+			route_table_build_status route_status = route_table_build(config_candidate, &routes_candidate);
+			if (route_status != ROUTE_TABLE_BUILD_OK) {
+				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+					"Cannot prepare candidate proxy routes: %s, will keep your old configurations.\n",
+					route_status == ROUTE_TABLE_BUILD_MEMORY ? "memory allocation failed" : "invalid internal route state"
+				);
+				break;
+			}
+			const hosts_table *binding_hosts = hosts_candidate == NULL ? context->hosts : hosts_candidate;
+			if (!listener_route_bindings_prepare(context, routes_candidate, binding_hosts, MKSYS_LEVEL_WARNING, ", will keep your old configurations", &route_bindings_candidate)) {
+				break;
+			}
+			enum listener_route_prepare_status resolution_status = listener_route_resolution_prepare(context, route_bindings_candidate, binding_hosts, MKSYS_LEVEL_WARNING,
+				", will keep your old configurations", &route_resolution_candidate);
+			if (resolution_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
+				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
+					"Cannot sample the monotonic clock while preparing candidate proxy route resolution: %s\n", strerror(errno));
+				result = -1;
+				break;
+			}
+			if (resolution_status != LISTENER_ROUTE_PREPARE_OK) {
 				break;
 			}
 			if (!listener_endpoint_equal(&listener->endpoint, &candidate_endpoint)) {
@@ -579,11 +797,32 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 					(char *)&candidate_address, candidate_endpoint.port
 				);
 			}
-			config_destroy(context->config);
+			conf *config_previous = context->config;
+			hosts_table *hosts_previous = context->hosts;
+			route_bindings *route_bindings_previous = context->route_bindings;
+			route_resolution *route_resolution_previous = context->route_resolution;
+			route_table *routes_previous = context->routes;
 			context->config = config_candidate;
 			config_candidate = NULL;
+			context->route_bindings = route_bindings_candidate;
+			route_bindings_candidate = NULL;
+			context->route_resolution = route_resolution_candidate;
+			route_resolution_candidate = NULL;
+			context->routes = routes_candidate;
+			routes_candidate = NULL;
+			if (hosts_candidate != NULL) {
+				context->hosts = hosts_candidate;
+				hosts_candidate = NULL;
+			}
 			snprintf(context->log_filename, sizeof(context->log_filename), "%s", config_logfull_candidate);
 			config_cache_commit(context->config_cache, &config_cache_candidate);
+			config_destroy(config_previous);
+			route_resolution_destroy(route_resolution_previous);
+			route_bindings_destroy(route_bindings_previous);
+			route_table_destroy(routes_previous);
+			if (context->hosts != hosts_previous) {
+				hosts_table_destroy(hosts_previous);
+			}
 			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
 				"Configuration reloaded.\n"
 			);
@@ -624,43 +863,70 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 					break;
 			}
 	}
+	route_resolution_destroy(route_resolution_candidate);
+	route_resolution_candidate = NULL;
+	route_bindings_destroy(route_bindings_candidate);
+	route_bindings_candidate = NULL;
+	route_table_destroy(routes_candidate);
+	routes_candidate = NULL;
+	if (result == 0 && hosts_candidate != NULL
+		&& listener_route_bindings_prepare(context, context->routes, hosts_candidate, MKSYS_LEVEL_WARNING, ", keeping the existing table and bindings", &route_bindings_candidate)) {
+		enum listener_route_prepare_status resolution_status = listener_route_resolution_prepare(context, route_bindings_candidate, hosts_candidate, MKSYS_LEVEL_WARNING,
+			", keeping the existing table and bindings", &route_resolution_candidate);
+		if (resolution_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
+				"Cannot sample the monotonic clock while preparing local static host route resolution: %s\n", strerror(errno));
+			result = -1;
+		} else if (resolution_status == LISTENER_ROUTE_PREPARE_OK) {
+			hosts_table *hosts_previous = context->hosts;
+			route_bindings *route_bindings_previous = context->route_bindings;
+			route_resolution *route_resolution_previous = context->route_resolution;
+			context->hosts = hosts_candidate;
+			hosts_candidate = NULL;
+			context->route_bindings = route_bindings_candidate;
+			route_bindings_candidate = NULL;
+			context->route_resolution = route_resolution_candidate;
+			route_resolution_candidate = NULL;
+			route_resolution_destroy(route_resolution_previous);
+			route_bindings_destroy(route_bindings_previous);
+			hosts_table_destroy(hosts_previous);
+			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION, "Local static host table reloaded.\n");
+		}
+	}
 	config_destroy(config_candidate);
 	config_cache_destroy(&config_cache_candidate);
+	hosts_table_destroy(hosts_candidate);
+	route_resolution_destroy(route_resolution_candidate);
+	route_bindings_destroy(route_bindings_candidate);
+	route_table_destroy(routes_candidate);
 	return result;
-}
-
-static void listener_resolver_completions_discard(listener_context *context) {
-	resolver_supervisor_completion completion = { 0 };
-	while (resolver_supervisor_completion_take(context->resolver, &completion)) {
-		resolver_supervisor_completion_destroy(&completion);
-	}
 }
 
 static void listener_resolver_destroy(listener_context *context) {
 	resolver_supervisor_destroy(context->resolver);
 	context->resolver = NULL;
-	resolver_cache_destroy(context->dns_cache);
-	context->dns_cache = NULL;
 }
 
 static void listener_resolver_dispose_in_child(listener_context *context) {
 	resolver_supervisor_dispose_in_child(context->resolver);
 	context->resolver = NULL;
-	resolver_cache_destroy(context->dns_cache);
-	context->dns_cache = NULL;
 }
 
-static int listener_resolver_events_process(listener_context *context) {
-	struct timespec now;
-	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
-		return -1;
-	}
-	resolver_supervisor_event_status status = resolver_supervisor_events_process(context->resolver, &now);
+static int listener_resolver_events_process(listener_context *context, const struct timespec *now) {
+	resolver_supervisor_event_status status = resolver_supervisor_events_process(context->resolver, now);
 	if (status != RESOLVER_SUPERVISOR_EVENT_OK) {
 		errno = status == RESOLVER_SUPERVISOR_EVENT_TIME ? EINVAL : EIO;
 		return -1;
 	}
-	listener_resolver_completions_discard(context);
+	resolver_supervisor_completion completion = { 0 };
+	while (resolver_supervisor_completion_take(context->resolver, &completion)) {
+		route_resolution_completion_status completion_status = route_resolution_completion_observe(context->route_resolution, &completion, now);
+		resolver_supervisor_completion_destroy(&completion);
+		if (completion_status == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT) {
+			errno = EINVAL;
+			return -1;
+		}
+	}
 	return 0;
 }
 
@@ -685,6 +951,15 @@ static int listener_resolver_shutdown(listener_context *context) {
 	return 0;
 }
 
+static void listener_routes_dispose_in_child(listener_context *context) {
+	route_resolution_destroy(context->route_resolution);
+	context->route_resolution = NULL;
+	route_bindings_destroy(context->route_bindings);
+	context->route_bindings = NULL;
+	route_table_destroy(context->routes);
+	context->routes = NULL;
+}
+
 static int listener_worker_signals_restore(const sigset_t *signal_mask) {
 	struct sigaction action;
 	memset(&action, 0, sizeof(action));
@@ -703,10 +978,14 @@ static int listener_worker_signals_restore(const sigset_t *signal_mask) {
 static int listener_worker_run(int client_fd, const listener_client_address *client_address, listener_socket *listener, const listener_events *events, pid_t listener_pid,
 	listener_context *context) {
 	close(events->epoll_fd);
+	close(events->route_timer_fd);
 	close(events->signal_fd);
 	listener_socket_close(listener);
-	listener_hosts_dispose_in_child(context);
 	listener_resolver_dispose_in_child(context);
+	listener_routes_dispose_in_child(context);
+	listener_hosts_dispose_in_child(context);
+	resolver_cache_destroy(context->dns_cache);
+	context->dns_cache = NULL;
 	if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1) {
 		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot configure worker parent-death signal: %s\n", strerror(errno));
 		return EXITCODE_INTERNAL;
@@ -728,12 +1007,12 @@ static int listener_worker_run(int client_fd, const listener_client_address *cli
 
 static int listener_loop(listener_context *context, listener_socket *listener) {
 	listener_events events;
-	if (listener_events_init(listener->fd, &events) == -1) {
+	if (listener_events_init(&events) == -1) {
 		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize listener event loop: %s\n", strerror(errno));
 		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
 	}
-	if (!listener_hosts_replace(context, MKSYS_LEVEL_CRITICAL, "")) {
+	if (!listener_hosts_prepare(context, MKSYS_LEVEL_CRITICAL, "", &context->hosts)) {
 		listener_events_destroy(&events);
 		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
@@ -745,14 +1024,37 @@ static int listener_loop(listener_context *context, listener_socket *listener) {
 		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
 	}
+	if (!listener_route_bindings_prepare(context, context->routes, context->hosts, MKSYS_LEVEL_CRITICAL, "", &context->route_bindings)) {
+		listener_resolver_destroy(context);
+		listener_events_destroy(&events);
+		listener_socket_close(listener);
+		return EXITCODE_INTERNAL;
+	}
+	enum listener_route_prepare_status resolution_status = listener_route_resolution_prepare(context, context->route_bindings, context->hosts, MKSYS_LEVEL_CRITICAL, "",
+		&context->route_resolution);
+	if (resolution_status != LISTENER_ROUTE_PREPARE_OK) {
+		if (resolution_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock while preparing proxy route resolution: %s\n", strerror(errno));
+		}
+		listener_resolver_destroy(context);
+		listener_events_destroy(&events);
+		listener_socket_close(listener);
+		return EXITCODE_INTERNAL;
+	}
 	listener_bind_success_msg(context);
-	listener_notify_ready();
-	if (!isatty(STDOUT_FILENO)) {
-		fclose(stdout);
-		fclose(stderr);
+	struct timespec route_now;
+	listener_route_runtime route_runtime;
+	if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1 || listener_route_runtime_start(&route_runtime, &events, &route_now) == -1
+		|| listener_route_runtime_schedule(context, &route_runtime, &events, listener, &route_now) == -1) {
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot start proxy route prewarming: %s\n", strerror(errno));
+		listener_resolver_destroy(context);
+		listener_events_destroy(&events);
+		listener_socket_close(listener);
+		return EXITCODE_INTERNAL;
 	}
 	int exitcode = EXITCODE_OK;
 	pid_t listener_pid = getpid();
+	bool reload_pending = false;
 	bool shutting_down = false;
 	while (1) {
 		listener_requests requests;
@@ -761,13 +1063,25 @@ static int listener_loop(listener_context *context, listener_socket *listener) {
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
-		if (requests.resolver_ready && listener_resolver_events_process(context) == -1) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Resolver event processing failed: %s\n", strerror(errno));
-			exitcode = EXITCODE_INTERNAL;
-			break;
+		if (requests.resolver_ready || requests.route_timer_ready) {
+			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock for route resolution: %s\n", strerror(errno));
+				exitcode = EXITCODE_INTERNAL;
+				break;
+			}
+			if (requests.resolver_ready && listener_resolver_events_process(context, &route_now) == -1) {
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Resolver event processing failed: %s\n", strerror(errno));
+				exitcode = EXITCODE_INTERNAL;
+				break;
+			}
+			if (requests.route_timer_ready && listener_route_timer_drain(&events) == -1) {
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot consume the route warm-up timer: %s\n", strerror(errno));
+				exitcode = EXITCODE_INTERNAL;
+				break;
+			}
 		}
 		if (requests.stop && !shutting_down) {
-			if (listener_resolver_shutdown(context) == -1) {
+			if (listener_route_timer_set(&events, NULL) == -1 || listener_resolver_shutdown(context) == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot shut down resolver runtime: %s\n", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
@@ -781,6 +1095,10 @@ static int listener_loop(listener_context *context, listener_socket *listener) {
 			continue;
 		}
 		if (requests.reload) {
+			reload_pending = true;
+		}
+		bool reload_processed = false;
+		if (route_runtime.ready && reload_pending) {
 			if (listener_notify_reloading() == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot create systemd reload timestamp: %s\n", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
@@ -789,12 +1107,31 @@ static int listener_loop(listener_context *context, listener_socket *listener) {
 			int reload_result = listener_reload(context, listener, &events);
 			/* Complete the reload handshake before acting on a fatal result; systemd observes the subsequent listener exit separately. */
 			listener_notify_ready();
+			reload_pending = false;
 			if (reload_result == -1) {
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
+			reload_processed = true;
+			route_runtime.pressure_logged = false;
 		}
-		if (!requests.accept_ready) {
+		bool route_activity = requests.accept_ready || requests.reload || requests.resolver_ready || requests.route_timer_ready || reload_processed;
+		if (route_activity) {
+			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1
+				|| listener_route_runtime_schedule(context, &route_runtime, &events, listener, &route_now) == -1) {
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Proxy route prewarming failed: %s\n", strerror(errno));
+				exitcode = EXITCODE_INTERNAL;
+				break;
+			}
+		}
+		if (route_runtime.ready && reload_pending) {
+			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1 || listener_route_timer_set(&events, &route_now) == -1) {
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot resume a deferred configuration reload: %s\n", strerror(errno));
+				exitcode = EXITCODE_INTERNAL;
+				break;
+			}
+		}
+		if (!route_runtime.ready || !requests.accept_ready) {
 			continue;
 		}
 		for (size_t accept_attempt = 0; accept_attempt < LISTENER_ACCEPT_BATCH; accept_attempt++) {
@@ -866,6 +1203,13 @@ int listener_run(conf *config, conf_cache *config_cache, const char *config_file
 		exitcode = EXITCODE_BADPORT;
 		goto cleanup;
 	}
+	route_table_build_status route_status = route_table_build(context.config, &context.routes);
+	if (route_status != ROUTE_TABLE_BUILD_OK) {
+		LISTENER_LOG(&context, MKSYS_LEVEL_CRITICAL, "Cannot prepare proxy routes: %s.\n",
+			route_status == ROUTE_TABLE_BUILD_MEMORY ? "memory allocation failed" : "invalid internal route state");
+		exitcode = EXITCODE_INTERNAL;
+		goto cleanup;
+	}
 	net_addrp bindaddrp = net_ntop(listener.endpoint.address.family, &(listener.endpoint.address.addr), true);
 	LISTENER_LOG(&context, MKSYS_LEVEL_INFORMATION, "Binding on %s:%d...\n", (char *)&bindaddrp, listener.endpoint.port);
 	if (listener_socket_bind(&listener) == -1) {
@@ -877,6 +1221,10 @@ int listener_run(conf *config, conf_cache *config_cache, const char *config_file
 cleanup:
 	config_destroy(context.config);
 	config_cache_destroy(context.config_cache);
+	route_resolution_destroy(context.route_resolution);
+	route_bindings_destroy(context.route_bindings);
 	hosts_table_destroy(context.hosts);
+	route_table_destroy(context.routes);
+	resolver_cache_destroy(context.dns_cache);
 	return exitcode;
 }
