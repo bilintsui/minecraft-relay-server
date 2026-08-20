@@ -358,4 +358,18 @@ if(BUILD_TESTING)
 	add_executable(worker_protocol_test tests/worker_protocol.c)
 	target_compile_definitions(worker_protocol_test PRIVATE _GNU_SOURCE)
 	add_test(NAME worker_protocol COMMAND worker_protocol_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}> "${CMAKE_CURRENT_SOURCE_DIR}/tests/rawpackets")
+	add_executable(listener_short_runtime_daemon
+		src/basic.c src/config.c src/connsetup.c src/connsetup_short.c src/dns.c src/hosts.c src/listener.c src/log.c src/main.c src/network.c src/resolver_cache.c src/resolver_helper.c src/resolver_ipc.c
+		src/resolver_ipc_assembly.c src/resolver_supervisor.c src/route_bindings.c src/route_endpoint.c src/route_generation.c src/route_generation_registry.c src/route_prewarmer.c src/route_resolution.c
+		src/route_table.c src/route_waiter.c
+		src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c
+		tests/connect_pending.c)
+	target_compile_definitions(listener_short_runtime_daemon PRIVATE _GNU_SOURCE DEBUG_MODE=false LISTENER_CONNECTION_LIMIT=2 LISTENER_INITIAL_TIMEOUT_SEC=5
+		LISTENER_ROUTE_WARMUP_TIMEOUT_SEC=1 LISTENER_SHORT_CONNECT_TIMEOUT_SEC=10 LISTENER_SHORT_LIFETIME_TIMEOUT_SEC=5
+		LISTENER_SHORT_RELAY_IDLE_TIMEOUT_SEC=10 LISTENER_TIMER_REARM_TEST)
+	target_link_libraries(listener_short_runtime_daemon -lresolv -lcjson -lsystemd)
+	target_link_options(listener_short_runtime_daemon PRIVATE -Wl,--wrap=connect)
+	add_executable(listener_short_runtime_test tests/listener_short_runtime.c)
+	target_compile_definitions(listener_short_runtime_test PRIVATE _GNU_SOURCE)
+	add_test(NAME listener_short_runtime COMMAND listener_short_runtime_test $<TARGET_FILE:listener_short_runtime_daemon>)
 endif()

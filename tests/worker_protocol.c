@@ -6,6 +6,7 @@
  */
 
 /* section: headers (library) */
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -53,9 +54,61 @@ typedef struct {
 	const char *filename;
 	bool forwarded;
 	bool response;
+	bool worker;
 } worker_packet_fixture;
 
 /* section: functions (local) */
+static int child_count(pid_t parent) {
+	DIR *processes = opendir("/proc");
+	if (processes == NULL) {
+		return -1;
+	}
+	int count = 0;
+	struct dirent *entry;
+	while ((entry = readdir(processes)) != NULL) {
+		char *end = NULL;
+		errno = 0;
+		long process = strtol(entry->d_name, &end, 10);
+		if (errno != 0 || end == entry->d_name || *end != '\0' || process <= 0) {
+			continue;
+		}
+		char filename[PATH_MAX];
+		int filename_length = snprintf(filename, sizeof(filename), "/proc/%ld/status", process);
+		if (filename_length < 0 || (size_t)filename_length >= sizeof(filename)) {
+			continue;
+		}
+		FILE *status = fopen(filename, "r");
+		if (status == NULL) {
+			continue;
+		}
+		char line[256];
+		long process_parent = -1;
+		while (fgets(line, sizeof(line), status) != NULL) {
+			if (sscanf(line, "PPid:\t%ld", &process_parent) == 1) {
+				break;
+			}
+		}
+		fclose(status);
+		if (process_parent == (long)parent) {
+			count++;
+		}
+	}
+	closedir(processes);
+	return count;
+}
+
+static int child_count_wait(pid_t parent, int expected, int timeout_ms) {
+	const struct timespec interval = { .tv_nsec = 10000000 };
+	for (int elapsed_ms = 0; elapsed_ms < timeout_ms; elapsed_ms += 10) {
+		if (child_count(parent) == expected) {
+			return 0;
+		}
+		nanosleep(&interval, NULL);
+	}
+	errno = ETIMEDOUT;
+	return -1;
+}
+
 static pid_t child_start(const char *binary, const char *config_filename, const char *notify_socket) {
 	pid_t child = fork();
 	if (child != 0) {
@@ -476,26 +529,26 @@ int main(int argc, char **argv) {
 	};
 	/* Forward only versions with a routable virtual host that are included in the documented support policy. */
 	static const worker_packet_fixture packet_fixtures[] = {
-		{ "login/login_1-a1.0.15.bin", false, false },
-		{ "login/login_2-12w03a.bin", false, true },
-		{ "login/login_2-a1.0.16.bin", false, true },
-		{ "login/login_2-b1.4_01.bin", false, true },
-		{ "login/login_2-b1.5.bin", false, true },
-		{ "login/login_3-12w04a.bin", true, false },
-		{ "login/login_3-12w16a.bin", true, false },
-		{ "login/login_4-12w17a.bin", false, true },
-		{ "login/login_5-12w18a.bin", true, false },
-		{ "login/login_5-13w39b.bin", true, false },
-		{ "modern/login_1-13w41a.bin", false, true },
-		{ "modern/login_2-13w41b.bin", false, true },
-		{ "modern/status_1-13w41a.bin", false, true },
-		{ "modern/status_2-13w41b.bin", false, true },
-		{ "status/status_1-12w42a.bin", false, true },
-		{ "status/status_1-b1.8-pre1.bin", false, true },
-		{ "status/status_2-1.6.bin", false, true },
-		{ "status/status_2-12w42b.bin", false, true },
-		{ "status/status_3-1.6.1.bin", true, false },
-		{ "status/status_3-13w39b.bin", true, false }
+		{ "login/login_1-a1.0.15.bin", false, false, true },
+		{ "login/login_2-12w03a.bin", false, true, true },
+		{ "login/login_2-a1.0.16.bin", false, true, true },
+		{ "login/login_2-b1.4_01.bin", false, true, true },
+		{ "login/login_2-b1.5.bin", false, true, true },
+		{ "login/login_3-12w04a.bin", true, false, true },
+		{ "login/login_3-12w16a.bin", true, false, true },
+		{ "login/login_4-12w17a.bin", false, true, true },
+		{ "login/login_5-12w18a.bin", true, false, true },
+		{ "login/login_5-13w39b.bin", true, false, true },
+		{ "modern/login_1-13w41a.bin", false, true, true },
+		{ "modern/login_2-13w41b.bin", false, true, true },
+		{ "modern/status_1-13w41a.bin", false, true, false },
+		{ "modern/status_2-13w41b.bin", false, true, false },
+		{ "status/status_1-12w42a.bin", false, true, false },
+		{ "status/status_1-b1.8-pre1.bin", false, true, false },
+		{ "status/status_2-1.6.bin", false, true, false },
+		{ "status/status_2-12w42b.bin", false, true, false },
+		{ "status/status_3-1.6.1.bin", true, false, false },
+		{ "status/status_3-13w39b.bin", true, false, false }
 	};
 	/* Modern status handshake declaring a 12-byte address while only three bytes remain. */
 	static const uint8_t malformed_handshake[] = { 0x05, 0x00, 0x2F, 0x0C, 't', 0x01, 0xFF };
@@ -520,6 +573,7 @@ int main(int argc, char **argv) {
 	int result = EXIT_FAILURE;
 	int upstream_client_fd = -1;
 	int upstream_server_fd = -1;
+	int helper_child_baseline = -1;
 	CHECK(argc == 3, "mcrelay executable path and raw packet directory are required");
 	CHECK(mkdtemp(temp_directory) != NULL, "cannot create temporary directory");
 	int filename_length = snprintf(config_filename, sizeof(config_filename), "%s/config.json", temp_directory);
@@ -553,6 +607,9 @@ int main(int argc, char **argv) {
 	CHECK(ready_length > 0, "listener READY notification is missing");
 	ready_message[ready_length] = '\0';
 	CHECK(strcmp(ready_message, "READY=1") == 0, "listener READY notification is invalid");
+	CHECK(poll(NULL, 0, QUIET_TIMEOUT_MS) == 0, "cannot settle resolver helper baseline");
+	helper_child_baseline = child_count(listener);
+	CHECK(helper_child_baseline >= 0, "cannot count resolver helper children");
 
 	client_fd = client_connect(listener_port);
 	CHECK(client_fd != -1, "cannot connect malformed test client");
@@ -571,6 +628,7 @@ int main(int argc, char **argv) {
 	CHECK(socket_send_all(client_fd, valid_request, sizeof(valid_request)) == 0, "cannot send valid handshake");
 	upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
 	CHECK(upstream_client_fd >= 0, "valid handshake did not reach upstream server");
+	CHECK(child_count_wait(listener, helper_child_baseline, QUIET_TIMEOUT_MS) == 0, "short status handshake forked a worker");
 	size_t received_size = 0;
 	while (received_size < sizeof(valid_request)) {
 		ssize_t receive_result = message_receive(upstream_client_fd, received + received_size, sizeof(valid_request) - received_size, TEST_TIMEOUT_MS);
@@ -607,6 +665,7 @@ int main(int argc, char **argv) {
 	CHECK(socket_send_all(client_fd, valid_request + 1, sizeof(valid_request) - 1U) == 0, "cannot finish generation-pinning handshake");
 	upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
 	CHECK(upstream_client_fd >= 0, "connection accepted before reload did not use its pinned route generation");
+	CHECK(child_count_wait(listener, helper_child_baseline, QUIET_TIMEOUT_MS) == 0, "generation-pinned short handshake forked a worker");
 	received_size = 0;
 	while (received_size < sizeof(valid_request)) {
 		ssize_t receive_result = message_receive(upstream_client_fd, received + received_size, sizeof(valid_request) - received_size, TEST_TIMEOUT_MS);
@@ -637,10 +696,17 @@ int main(int argc, char **argv) {
 		client_fd = client_connect(listener_port);
 		CHECK(client_fd != -1, "cannot connect raw packet test client");
 		CHECK(socket_send_all(client_fd, fixture, (size_t)fixture_size) == 0, "cannot send raw packet fixture");
-		CHECK(shutdown(client_fd, SHUT_WR) == 0, "cannot finish raw packet fixture");
+		if (!packet_fixtures[fixture_index].worker || !packet_fixtures[fixture_index].forwarded) {
+			CHECK(shutdown(client_fd, SHUT_WR) == 0, "cannot finish raw packet fixture");
+		}
 		if (packet_fixtures[fixture_index].forwarded) {
 			upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
 			CHECK(upstream_client_fd >= 0, "supported raw packet did not reach upstream server");
+			if (packet_fixtures[fixture_index].worker) {
+				CHECK(child_count(listener) > helper_child_baseline, "worker login packet did not fork a worker");
+			} else {
+				CHECK(child_count_wait(listener, helper_child_baseline, QUIET_TIMEOUT_MS) == 0, "short status packet forked a worker");
+			}
 			size_t fixture_received = 0;
 			while (fixture_received < (size_t)fixture_size) {
 				ssize_t receive_result = message_receive(upstream_client_fd, received + fixture_received, (size_t)fixture_size - fixture_received, TEST_TIMEOUT_MS);
@@ -657,9 +723,15 @@ int main(int argc, char **argv) {
 			CHECK((response_size > 0) == packet_fixtures[fixture_index].response, "raw packet rejection response does not match version policy");
 			upstream_client_fd = server_accept(upstream_server_fd, QUIET_TIMEOUT_MS);
 			CHECK(upstream_client_fd == -1 && errno == ETIMEDOUT, "unsupported raw packet reached upstream server");
+			if (!packet_fixtures[fixture_index].worker) {
+				CHECK(child_count_wait(listener, helper_child_baseline, QUIET_TIMEOUT_MS) == 0, "short local response forked a worker");
+			}
 		}
 		CHECK(close(client_fd) == 0, "cannot close raw packet test client");
 		client_fd = -1;
+		if (packet_fixtures[fixture_index].worker) {
+			CHECK(child_count_wait(listener, helper_child_baseline, TEST_TIMEOUT_MS) == 0, "worker packet did not release its worker");
+		}
 		CHECK(kill(listener, 0) == 0, "raw packet fixture terminated listener");
 	}
 
@@ -706,6 +778,9 @@ int main(int argc, char **argv) {
 	CHECK(ready_length > 0, "restarted listener READY notification is missing");
 	ready_message[ready_length] = '\0';
 	CHECK(strcmp(ready_message, "READY=1") == 0, "restarted listener READY notification is invalid");
+	CHECK(poll(NULL, 0, QUIET_TIMEOUT_MS) == 0, "cannot settle restarted resolver helper baseline");
+	helper_child_baseline = child_count(listener);
+	CHECK(helper_child_baseline >= 0, "cannot count restarted resolver helper children");
 	client_fd = client_connect(listener_port);
 	CHECK(client_fd != -1, "cannot connect PROXY-header test client");
 	struct sockaddr_in client_address;
@@ -714,6 +789,7 @@ int main(int argc, char **argv) {
 	CHECK(socket_send_all(client_fd, valid_request, sizeof(valid_request)) == 0, "cannot send PROXY-header test handshake");
 	upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
 	CHECK(upstream_client_fd >= 0, "cross-family handshake did not reach IPv6 upstream server");
+	CHECK(child_count_wait(listener, helper_child_baseline, QUIET_TIMEOUT_MS) == 0, "PROXY-header short handshake forked a worker");
 	char expected_header[128];
 	int expected_header_size = snprintf(expected_header, sizeof(expected_header), "PROXY TCP4 127.0.0.1 127.0.0.1 %hu %hu\r\n", ntohs(client_address.sin_port), listener_port);
 	CHECK(expected_header_size > 0 && (size_t)expected_header_size < sizeof(expected_header), "cannot format expected PROXY header");
