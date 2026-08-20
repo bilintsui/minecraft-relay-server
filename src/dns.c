@@ -124,6 +124,24 @@ static bool dns_name_normalize(const char *source, char *target, size_t target_s
 	return true;
 }
 
+static bool dns_name_record_parse(const ns_msg *response, const ns_rr *answer, dns_cname_record *record) {
+	const unsigned char *message_begin = ns_msg_base(*response);
+	const unsigned char *message_end = ns_msg_end(*response);
+	const unsigned char *rdata = ns_rr_rdata(*answer);
+	size_t rdata_size = ns_rr_rdlen(*answer);
+	if (rdata < message_begin || rdata > message_end || rdata_size > (size_t)(message_end - rdata)) {
+		return false;
+	}
+	char target[NS_MAXDNAME];
+	int consumed = ns_name_uncompress(message_begin, message_end, rdata, target, sizeof(target));
+	if (consumed <= 0 || (size_t)consumed != rdata_size) {
+		return false;
+	}
+	memset(record, 0, sizeof(*record));
+	record->ttl = ns_rr_ttl(*answer);
+	return dns_name_normalize(ns_rr_name(*answer), record->owner, sizeof(record->owner)) && dns_name_normalize(target, record->target, sizeof(record->target));
+}
+
 static dns_address_lookup_status dns_lookup_chain_append(dns_address_result *target, dns_address_result *source, uint32_t *chain_ttl) {
 	if (target->question_name[0] == '\0') {
 		memcpy(target->question_name, source->question_name, sizeof(target->question_name));
@@ -305,18 +323,8 @@ static dns_address_parse_status dns_response_addresses_collect(ns_msg *response,
 				return DNS_ADDRESS_PARSE_MALFORMED;
 			}
 		} else if (ns_rr_type(answer) == ns_t_cname) {
-			if (ns_rr_rdata(answer) < message_begin || ns_rr_rdata(answer) > message_end || ns_rr_rdlen(answer) > (size_t)(message_end - ns_rr_rdata(answer))) {
-				return DNS_ADDRESS_PARSE_MALFORMED;
-			}
-			char target[NS_MAXDNAME];
-			int consumed = ns_name_uncompress(message_begin, message_end, ns_rr_rdata(answer), target, sizeof(target));
-			if (consumed <= 0 || (size_t)consumed != ns_rr_rdlen(answer)) {
-				return DNS_ADDRESS_PARSE_MALFORMED;
-			}
 			dns_cname_record *candidate = &cnames[(*cname_count)++];
-			memset(candidate, 0, sizeof(*candidate));
-			candidate->ttl = ns_rr_ttl(answer);
-			if (!dns_name_normalize(ns_rr_name(answer), candidate->owner, sizeof(candidate->owner)) || !dns_name_normalize(target, candidate->target, sizeof(candidate->target))) {
+			if (!dns_name_record_parse(response, &answer, candidate)) {
 				return DNS_ADDRESS_PARSE_MALFORMED;
 			}
 		}
@@ -401,6 +409,139 @@ static dns_address_parse_status dns_response_chain_build(const dns_address_candi
 		record->effective_ttl = chain_ttl < record->record_ttl ? chain_ttl : record->record_ttl;
 	}
 	return DNS_ADDRESS_PARSE_OK;
+}
+
+static dns_srv_parse_status dns_srv_response_chain_build(const dns_srv_candidate *records, size_t record_count, const dns_cname_record *cnames, size_t cname_count, dns_srv_result *result) {
+	char current_name[NS_MAXDNAME];
+	memcpy(current_name, result->question_name, sizeof(current_name));
+	uint32_t chain_ttl = UINT32_MAX;
+	if (cname_count > 0) {
+		result->cnames = calloc(DNS_CNAME_DEPTH_LIMIT, sizeof(*result->cnames));
+		if (result->cnames == NULL) {
+			return DNS_SRV_PARSE_MEMORY;
+		}
+	}
+	while (true) {
+		const dns_cname_record *matching_cname = NULL;
+		uint32_t matching_ttl = UINT32_MAX;
+		bool matching_record = false;
+		for (size_t record_index = 0; record_index < record_count; record_index++) {
+			if (dns_name_equal(records[record_index].owner, current_name)) {
+				matching_record = true;
+				break;
+			}
+		}
+		for (size_t cname_index = 0; cname_index < cname_count; cname_index++) {
+			if (!dns_name_equal(cnames[cname_index].owner, current_name)) {
+				continue;
+			}
+			if (matching_cname != NULL && !dns_name_equal(matching_cname->target, cnames[cname_index].target)) {
+				return DNS_SRV_PARSE_MALFORMED;
+			}
+			if (matching_cname == NULL) {
+				matching_cname = &cnames[cname_index];
+			}
+			if (cnames[cname_index].ttl < matching_ttl) {
+				matching_ttl = cnames[cname_index].ttl;
+			}
+		}
+		if (matching_cname == NULL) {
+			break;
+		}
+		if (matching_record || result->cname_count == DNS_CNAME_DEPTH_LIMIT) {
+			return matching_record ? DNS_SRV_PARSE_MALFORMED : DNS_SRV_PARSE_LIMIT;
+		}
+		for (size_t chain_index = 0; chain_index < result->cname_count; chain_index++) {
+			if (dns_name_equal(result->cnames[chain_index].owner, matching_cname->target)) {
+				return DNS_SRV_PARSE_MALFORMED;
+			}
+		}
+		dns_cname_record *chain_record = &result->cnames[result->cname_count++];
+		memcpy(chain_record, matching_cname, sizeof(*chain_record));
+		chain_record->ttl = matching_ttl;
+		if (matching_ttl < chain_ttl) {
+			chain_ttl = matching_ttl;
+		}
+		memcpy(current_name, matching_cname->target, sizeof(current_name));
+	}
+	memcpy(result->canonical_name, current_name, sizeof(result->canonical_name));
+	size_t matching_record_count = 0;
+	for (size_t record_index = 0; record_index < record_count; record_index++) {
+		if (dns_name_equal(records[record_index].owner, current_name)) {
+			matching_record_count++;
+		}
+	}
+	if (matching_record_count == 0) {
+		return result->cname_count == 0 ? DNS_SRV_PARSE_NODATA : DNS_SRV_PARSE_ALIAS_ONLY;
+	}
+	result->records = calloc(matching_record_count, sizeof(*result->records));
+	if (result->records == NULL) {
+		return DNS_SRV_PARSE_MEMORY;
+	}
+	for (size_t record_index = 0; record_index < record_count; record_index++) {
+		if (!dns_name_equal(records[record_index].owner, current_name)) {
+			continue;
+		}
+		dns_srv_record *record = &result->records[result->record_count++];
+		record->priority = records[record_index].priority;
+		record->weight = records[record_index].weight;
+		record->port = records[record_index].port;
+		memcpy(record->target, records[record_index].target, sizeof(record->target));
+		record->record_ttl = records[record_index].ttl;
+		record->effective_ttl = chain_ttl < record->record_ttl ? chain_ttl : record->record_ttl;
+	}
+	return DNS_SRV_PARSE_OK;
+}
+
+static dns_srv_parse_status dns_srv_response_records_collect(ns_msg *response, dns_srv_candidate *records, size_t *record_count, dns_cname_record *cnames, size_t *cname_count) {
+	const unsigned char *message_begin = ns_msg_base(*response);
+	const unsigned char *message_end = ns_msg_end(*response);
+	int answer_count = ns_msg_count(*response, ns_s_an);
+	for (int answer_index = 0; answer_index < answer_count; answer_index++) {
+		ns_rr answer;
+		if (ns_parserr(response, ns_s_an, answer_index, &answer) != 0) {
+			return DNS_SRV_PARSE_MALFORMED;
+		}
+		if (ns_rr_class(answer) != ns_c_in) {
+			continue;
+		}
+		if (ns_rr_type(answer) == ns_t_srv) {
+			const unsigned char *rdata = ns_rr_rdata(answer);
+			size_t rdata_size = ns_rr_rdlen(answer);
+			if (rdata < message_begin || rdata > message_end || rdata_size < 7 || rdata_size > (size_t)(message_end - rdata)) {
+				return DNS_SRV_PARSE_MALFORMED;
+			}
+			char target[NS_MAXDNAME];
+			int consumed = ns_name_uncompress(message_begin, message_end, rdata + 6, target, sizeof(target));
+			if (consumed <= 0 || (size_t)consumed != rdata_size - 6) {
+				return DNS_SRV_PARSE_MALFORMED;
+			}
+			dns_srv_candidate *candidate = &records[(*record_count)++];
+			memset(candidate, 0, sizeof(*candidate));
+			uint16_t value;
+			memcpy(&value, rdata, sizeof(value));
+			candidate->priority = ntohs(value);
+			memcpy(&value, rdata + 2, sizeof(value));
+			candidate->weight = ntohs(value);
+			memcpy(&value, rdata + 4, sizeof(value));
+			candidate->port = ntohs(value);
+			candidate->ttl = ns_rr_ttl(answer);
+			if (!dns_name_normalize(ns_rr_name(answer), candidate->owner, sizeof(candidate->owner)) || !dns_name_normalize(target, candidate->target, sizeof(candidate->target))) {
+				return DNS_SRV_PARSE_MALFORMED;
+			}
+		} else if (ns_rr_type(answer) == ns_t_cname) {
+			dns_cname_record *candidate = &cnames[(*cname_count)++];
+			if (!dns_name_record_parse(response, &answer, candidate)) {
+				return DNS_SRV_PARSE_MALFORMED;
+			}
+		}
+	}
+	return DNS_SRV_PARSE_OK;
+}
+
+static bool dns_srv_result_empty(const dns_srv_result *result) {
+	return result->canonical_name[0] == '\0' && result->cnames == NULL && result->cname_count == 0 && result->question_name[0] == '\0' && result->rcode == 0 && result->records == NULL
+		&& result->record_count == 0;
 }
 
 /* section: functions (exported) */
@@ -551,5 +692,72 @@ void dns_address_result_destroy(dns_address_result *result) {
 	}
 	free(result->addresses);
 	free(result->cnames);
+	memset(result, 0, sizeof(*result));
+}
+
+dns_srv_parse_status dns_srv_response_parse(const void *message, size_t message_size, dns_srv_result *result) {
+	if (message == NULL || message_size > INT_MAX || result == NULL || !dns_srv_result_empty(result)) {
+		return DNS_SRV_PARSE_BAD_ARGUMENT;
+	}
+	ns_msg response;
+	if (ns_initparse(message, (int)message_size, &response) != 0) {
+		return DNS_SRV_PARSE_MALFORMED;
+	}
+	if (!ns_msg_getflag(response, ns_f_qr) || ns_msg_getflag(response, ns_f_opcode) != ns_o_query || ns_msg_count(response, ns_s_qd) != 1) {
+		return DNS_SRV_PARSE_MALFORMED;
+	}
+	if (ns_msg_getflag(response, ns_f_tc)) {
+		return DNS_SRV_PARSE_TRUNCATED;
+	}
+	ns_rr question;
+	if (ns_parserr(&response, ns_s_qd, 0, &question) != 0 || ns_rr_class(question) != ns_c_in || ns_rr_type(question) != ns_t_srv
+		|| !dns_name_normalize(ns_rr_name(question), result->question_name, sizeof(result->question_name))) {
+		memset(result, 0, sizeof(*result));
+		return DNS_SRV_PARSE_MALFORMED;
+	}
+	result->rcode = (uint8_t)ns_msg_getflag(response, ns_f_rcode);
+	if (result->rcode == ns_r_nxdomain) {
+		return DNS_SRV_PARSE_NXDOMAIN;
+	}
+	if (result->rcode != ns_r_noerror) {
+		return DNS_SRV_PARSE_RCODE_ERROR;
+	}
+	int answer_count = ns_msg_count(response, ns_s_an);
+	if (answer_count > DNS_SRV_RECORD_LIMIT) {
+		memset(result, 0, sizeof(*result));
+		return DNS_SRV_PARSE_LIMIT;
+	}
+	dns_cname_record *cnames = NULL;
+	dns_srv_candidate *records = NULL;
+	if (answer_count > 0) {
+		cnames = calloc((size_t)answer_count, sizeof(*cnames));
+		records = calloc((size_t)answer_count, sizeof(*records));
+		if (cnames == NULL || records == NULL) {
+			free(cnames);
+			free(records);
+			memset(result, 0, sizeof(*result));
+			return DNS_SRV_PARSE_MEMORY;
+		}
+	}
+	size_t cname_count = 0;
+	size_t record_count = 0;
+	dns_srv_parse_status status = dns_srv_response_records_collect(&response, records, &record_count, cnames, &cname_count);
+	if (status == DNS_SRV_PARSE_OK) {
+		status = dns_srv_response_chain_build(records, record_count, cnames, cname_count, result);
+	}
+	free(cnames);
+	free(records);
+	if (status != DNS_SRV_PARSE_OK && status != DNS_SRV_PARSE_ALIAS_ONLY && status != DNS_SRV_PARSE_NODATA) {
+		dns_srv_result_destroy(result);
+	}
+	return status;
+}
+
+void dns_srv_result_destroy(dns_srv_result *result) {
+	if (result == NULL) {
+		return;
+	}
+	free(result->cnames);
+	free(result->records);
 	memset(result, 0, sizeof(*result));
 }

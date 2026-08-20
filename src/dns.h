@@ -24,6 +24,7 @@
 #define DNS_ADDRESS_RECORD_LIMIT	128
 #define DNS_AUTHORITY_RECORD_LIMIT	128
 #define DNS_CNAME_DEPTH_LIMIT	16
+#define DNS_SRV_RECORD_LIMIT	128
 
 /* section: types */
 typedef enum {
@@ -77,6 +78,35 @@ typedef struct {
 	char question_name[NS_MAXDNAME];
 	uint8_t rcode;
 } dns_address_result;
+typedef enum {
+	DNS_SRV_PARSE_OK,
+	DNS_SRV_PARSE_ALIAS_ONLY,
+	DNS_SRV_PARSE_NODATA,
+	DNS_SRV_PARSE_NXDOMAIN,
+	DNS_SRV_PARSE_RCODE_ERROR,
+	DNS_SRV_PARSE_TRUNCATED,
+	DNS_SRV_PARSE_BAD_ARGUMENT,
+	DNS_SRV_PARSE_LIMIT,
+	DNS_SRV_PARSE_MALFORMED,
+	DNS_SRV_PARSE_MEMORY
+} dns_srv_parse_status;
+typedef struct {
+	uint16_t priority;
+	uint16_t weight;
+	in_port_t port;
+	char target[NS_MAXDNAME];
+	uint32_t record_ttl;
+	uint32_t effective_ttl;
+} dns_srv_record;
+typedef struct {
+	char canonical_name[NS_MAXDNAME];
+	dns_cname_record *cnames;
+	size_t cname_count;
+	char question_name[NS_MAXDNAME];
+	uint8_t rcode;
+	dns_srv_record *records;
+	size_t record_count;
+} dns_srv_result;
 
 /* section: functions (exported) */
 /* Results passed to these functions must be zero-initialized or previously destroyed. */
@@ -84,5 +114,7 @@ typedef struct {
 dns_address_lookup_status dns_address_lookup(const char *hostname, sa_family_t family, dns_address_result *result);
 dns_address_parse_status dns_address_response_parse(const void *message, size_t message_size, sa_family_t family, dns_address_result *result);
 void dns_address_result_destroy(dns_address_result *result);
+dns_srv_parse_status dns_srv_response_parse(const void *message, size_t message_size, dns_srv_result *result);
+void dns_srv_result_destroy(dns_srv_result *result);
 
 #endif
