@@ -1,23 +1,5 @@
 // These comments are only valid in JSONC. Remove them when writing your own configuration for JSON compliance.
 {
-  // Optional, global setting of how an IP address or a hostname is resolved
-  "netpriority": {
-    /*
-     * Optional, boolean or integer (default: true)
-     *
-     * When set to true, it means the program will try to resolve to a valid IP address as much as possible
-     * When set to false, if the program cannot resolve using the protocol defined below, the program will fail
-     */
-    "enabled": true,
-
-    /*
-     * Optional, "IPv4" or "IPv6" (case sensitive) (default: "IPv6")
-     *
-     * The IP protocol you prefer for address resolution
-     * When netpriority is disabled, the program will only try once, not twice
-     */
-    "protocol": "IPv6"
-  },
   // Optional, log settings
   "log": {
     /*
@@ -65,6 +47,7 @@
       /*
        * Mandatory, string
        * Address or hostname of target server
+       * Hostnames prefer the inbound client's IP family and automatically fall back to the other family
        */
       "address": "localhost",
 

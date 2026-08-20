@@ -842,7 +842,6 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 				case CONF_ERMEMORY:
 				case CONF_ERPARSE:
 				case CONF_ECMEMORY:
-				case CONF_ECNETPRIORITYPROTOCOL:
 				case CONF_ECLISTENPORT:
 				case CONF_ECPROXY:
 					mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
@@ -999,7 +998,7 @@ static int listener_worker_run(int client_fd, const listener_client_address *cli
 	}
 	net_addrbundle addrbundle_inbound_client = listener_client_address_parse(client_address);
 	int socket_outbound;
-	if (!connsetup(client_fd, &socket_outbound, context->log_filename, context->config, addrbundle_inbound_client, context->config->netpriority.enabled)) {
+	if (!connsetup(client_fd, &socket_outbound, context->log_filename, context->config, addrbundle_inbound_client)) {
 		net_relay(client_fd, socket_outbound);
 	}
 	return EXITCODE_OK;

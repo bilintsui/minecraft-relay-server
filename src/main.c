@@ -69,7 +69,6 @@ static int config_exitcode(int err) {
 			return EXITCODE_NOMEM;
 		case CONF_ERPARSE:
 			return EXITCODE_BADJSON;
-		case CONF_ECNETPRIORITYPROTOCOL:
 		case CONF_ECLISTENPORT:
 		case CONF_ECPROXY:
 		case CONF_ECPROXYDUP:
@@ -100,7 +99,6 @@ static int load_config(const char *filename, const char *filename_full, const co
 		case CONF_ERMEMORY:
 		case CONF_ECMEMORY:
 		case CONF_ERPARSE:
-		case CONF_ECNETPRIORITYPROTOCOL:
 		case CONF_ECLISTENPORT:
 		case CONF_ECPROXY:
 			LOG(MKSYS_LEVEL_CRITICAL, "%s\n", config_errmsg(config_error));

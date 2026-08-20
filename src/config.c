@@ -15,7 +15,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <sys/socket.h>
 #include <sys/types.h>
 
 /* section: headers (project) */
@@ -182,25 +181,6 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 		errno = CONF_ECMEMORY;
 		return NULL;
 	}
-	result->netpriority.enabled = true;
-	result->netpriority.protocol = AF_INET6;
-	cJSON *config_json_netpriority = cJSON_GetObjectItemCaseSensitive(config_json, "netpriority");
-	if (config_json_netpriority != NULL) {
-		result->netpriority.enabled = config_jsonbool(cJSON_GetObjectItemCaseSensitive(config_json_netpriority, "enabled"), true);
-		cJSON *config_json_netpriority_protocol = cJSON_GetObjectItemCaseSensitive(config_json_netpriority, "protocol");
-		if (cJSON_IsString(config_json_netpriority_protocol)) {
-			if (strcmp(config_json_netpriority_protocol->valuestring, "IPv4") == 0) {
-				result->netpriority.protocol = AF_INET;
-			} else if (strcmp(config_json_netpriority_protocol->valuestring, "IPv6") == 0) {
-				result->netpriority.protocol = AF_INET6;
-			} else {
-				cJSON_Delete(config_json);
-				config_destroy(result);
-				errno = CONF_ECNETPRIORITYPROTOCOL;
-				return NULL;
-			}
-		}
-	}
 	const char *config_default_log_filename = "/var/log/mcrelay/access.log";
 	result->log.filename = (char *)malloc(strlen(config_default_log_filename) + 1);
 	if (result->log.filename == NULL) {
@@ -358,17 +338,6 @@ void config_destroy(conf *target) {
 
 void config_dumper(conf *src) {
 	printf("Config Detail:\n");
-	printf("\n[NETPRIORITY]\n");
-	if (src->netpriority.enabled) {
-		printf("Enabled\t\ttrue\n");
-	} else {
-		printf("Enabled\t\tfalse\n");
-	}
-	if (src->netpriority.protocol == AF_INET) {
-		printf("Protocol\tIPv4\n");
-	} else if (src->netpriority.protocol == AF_INET6) {
-		printf("Protocol\tIPv6\n");
-	}
 	printf("\n[LOG]\n");
 	printf("Filename\t%s\n", src->log.filename);
 	printf("Level\t\t%d\n", src->log.level);
@@ -430,8 +399,6 @@ const char *config_errmsg(int err) {
 			return "Error in configurations: Not a valid JSON format";
 		case CONF_ECMEMORY:
 			return "Error in processing configurations: Failed to allocate memory during internal processing";
-		case CONF_ECNETPRIORITYPROTOCOL:
-			return "Error in configurations: Entry \"netpriority.protocol\" must be IPv4 or IPv6 (case sensitive)";
 		case CONF_ECLISTENPORT:
 			return "Error in configurations: Entry \"listen.port\" must be an unsigned short integer (0-65535)";
 		case CONF_ECPROXY:

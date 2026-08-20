@@ -15,7 +15,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <sys/socket.h>
 
 /* section: headers (project) */
 #include "define/global.h"
@@ -37,10 +36,9 @@
 #define CONF_ERMEMORY	5
 #define CONF_ERPARSE	6
 #define CONF_ECMEMORY	7
-#define CONF_ECNETPRIORITYPROTOCOL	8
-#define CONF_ECLISTENPORT	9
-#define CONF_ECPROXY	10
-#define CONF_ECPROXYDUP	11
+#define CONF_ECLISTENPORT	8
+#define CONF_ECPROXY	9
+#define CONF_ECPROXYDUP	10
 
 /* section: types */
 typedef struct {
@@ -48,10 +46,6 @@ typedef struct {
 	size_t size;
 } conf_cache;
 typedef struct {
-	struct {
-		bool enabled;
-		sa_family_t protocol;
-	} netpriority;
 	struct {
 		char *filename;
 		uint8_t level;

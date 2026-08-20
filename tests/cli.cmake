@@ -144,10 +144,6 @@ endif()
 file(WRITE "${invalid_config}" "not valid JSON")
 file(WRITE "${valid_config}" [=[
 {
-  "netpriority": {
-    "enabled": false,
-    "protocol": "IPv4"
-  },
   "log": {
     "filename": "/tmp/mcrelay-dump.log",
     "level": 1

@@ -64,11 +64,11 @@ static void connsetup_proxyinfo_resolve_srv(conf_proxy *proxyinfo) {
 	}
 }
 
-static int connsetup_connect_outbound(int *socket_out, conf_proxy *proxyinfo, sa_family_t family, bool netpriority_enabled) {
+static int connsetup_connect_outbound(int *socket_out, conf_proxy *proxyinfo, sa_family_t family) {
 	int mkoutbound_status;
 	connsetup_proxyinfo_resolve_srv(proxyinfo);
 	mkoutbound_status = 0;
-	net_addr connaddr = net_resolve_dual(proxyinfo->address, family, netpriority_enabled);
+	net_addr connaddr = net_resolve_dual(proxyinfo->address, family, true);
 	if (connaddr.family == 0) {
 		mkoutbound_status = NET_ENORECORD;
 		*socket_out = -1;
@@ -88,7 +88,7 @@ static void connsetup_send_proxy_header(int socket_in, int socket_out, char *phe
 	}
 }
 
-static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled, uint8_t *inbound, ssize_t packlen_inbound) {
+static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, uint8_t *inbound, ssize_t packlen_inbound) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
@@ -127,7 +127,7 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 			return CONNSETUP_ENOVHOST;
 		}
 		int mkoutbound_status, outmsg_level;
-		mkoutbound_status = connsetup_connect_outbound(socket_out, &proxyinfo, addrinfo_in.family, netpriority_enabled);
+		mkoutbound_status = connsetup_connect_outbound(socket_out, &proxyinfo, addrinfo_in.family);
 		if (mkoutbound_status != 0) {
 			outmsg_level = MKSYS_LEVEL_WARNING;
 		} else {
@@ -177,7 +177,7 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 	return CONNSETUP_EABORT;
 }
 
-static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled, uint8_t *inbound, ssize_t packlen_inbound) {
+static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, uint8_t *inbound, ssize_t packlen_inbound) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
@@ -199,7 +199,7 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 			return CONNSETUP_ENOVHOST;
 		}
 		int mkoutbound_status, outmsg_level;
-		mkoutbound_status = connsetup_connect_outbound(socket_out, &proxyinfo, addrinfo_in.family, netpriority_enabled);
+		mkoutbound_status = connsetup_connect_outbound(socket_out, &proxyinfo, addrinfo_in.family);
 		if (mkoutbound_status != 0) {
 			outmsg_level = MKSYS_LEVEL_WARNING;
 		} else {
@@ -265,8 +265,7 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 	return CONNSETUP_EABORT;
 }
 
-static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled,
-	uint8_t *inbound, ssize_t packlen_inbound) {
+static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, uint8_t *inbound, ssize_t packlen_inbound) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
@@ -316,7 +315,7 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 		return CONNSETUP_ENOVHOST;
 	}
 	int mkoutbound_status, outmsg_level;
-	mkoutbound_status = connsetup_connect_outbound(socket_out, &proxyinfo, addrinfo_in.family, netpriority_enabled);
+	mkoutbound_status = connsetup_connect_outbound(socket_out, &proxyinfo, addrinfo_in.family);
 	if (mkoutbound_status != 0) {
 		outmsg_level = MKSYS_LEVEL_WARNING;
 	} else {
@@ -493,7 +492,7 @@ cleanup:
 }
 
 /* section: functions (exported) */
-int connsetup(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled) {
+int connsetup(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in) {
 	uint8_t inbound[BUFSIZ];
 	ssize_t packlen_inbound;
 	memset(inbound, 0, BUFSIZ);
@@ -509,10 +508,10 @@ int connsetup(int socket_in, int *socket_out, const char *logfile, conf *conf_in
 		return CONNSETUP_EUNIDENT;
 	}
 	if (inbound[0] == 0xFE) {
-		return connsetup_handle_legacy_motd(socket_in, socket_out, logfile, conf_in, addrinfo_in, netpriority_enabled, inbound, packlen_inbound);
+		return connsetup_handle_legacy_motd(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, packlen_inbound);
 	} else if (inbound[0] == 2) {
-		return connsetup_handle_legacy_login(socket_in, socket_out, logfile, conf_in, addrinfo_in, netpriority_enabled, inbound, packlen_inbound);
+		return connsetup_handle_legacy_login(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, packlen_inbound);
 	} else {
-		return connsetup_handle_modern_handshake(socket_in, socket_out, logfile, conf_in, addrinfo_in, netpriority_enabled, inbound, packlen_inbound);
+		return connsetup_handle_modern_handshake(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, packlen_inbound);
 	}
 }

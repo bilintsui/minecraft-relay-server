@@ -1,8 +1,4 @@
 {
-  "netpriority": {
-    "enabled": true,
-    "protocol": "IPv6"
-  },
   "log": {
     "filename": "/var/log/mcrelay/access.log",
     "level": 2

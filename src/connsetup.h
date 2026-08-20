@@ -9,9 +9,6 @@
 
 #define _MRS_CONNSETUP_H_INCLUDED_
 
-/* section: headers (library) */
-#include <stdbool.h>
-
 /* section: headers (project) */
 #include "config.h"
 #include "network.h"
@@ -27,6 +24,6 @@
 #define CONNSETUP_EOLDCLIENT	6
 
 /* section: functions (exported) */
-int connsetup(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, bool netpriority_enabled);
+int connsetup(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in);
 
 #endif
