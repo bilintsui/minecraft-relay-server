@@ -79,6 +79,18 @@ typedef struct {
 	uint8_t rcode;
 } dns_address_result;
 typedef enum {
+	DNS_SRV_LOOKUP_OK,
+	DNS_SRV_LOOKUP_BAD_ARGUMENT,
+	DNS_SRV_LOOKUP_LIMIT,
+	DNS_SRV_LOOKUP_MALFORMED,
+	DNS_SRV_LOOKUP_MEMORY,
+	DNS_SRV_LOOKUP_NODATA,
+	DNS_SRV_LOOKUP_NOT_FOUND,
+	DNS_SRV_LOOKUP_PERMANENT_ERROR,
+	DNS_SRV_LOOKUP_TEMPORARY_ERROR,
+	DNS_SRV_LOOKUP_TRUNCATED
+} dns_srv_lookup_status;
+typedef enum {
 	DNS_SRV_PARSE_OK,
 	DNS_SRV_PARSE_ALIAS_ONLY,
 	DNS_SRV_PARSE_NODATA,
@@ -102,6 +114,7 @@ typedef struct {
 	char canonical_name[NS_MAXDNAME];
 	dns_cname_record *cnames;
 	size_t cname_count;
+	dns_negative_record negative;
 	char question_name[NS_MAXDNAME];
 	uint8_t rcode;
 	dns_srv_record *records;
@@ -114,6 +127,7 @@ typedef struct {
 dns_address_lookup_status dns_address_lookup(const char *hostname, sa_family_t family, dns_address_result *result);
 dns_address_parse_status dns_address_response_parse(const void *message, size_t message_size, sa_family_t family, dns_address_result *result);
 void dns_address_result_destroy(dns_address_result *result);
+dns_srv_lookup_status dns_srv_lookup(const char *query_name, dns_srv_result *result);
 dns_srv_parse_status dns_srv_response_parse(const void *message, size_t message_size, dns_srv_result *result);
 void dns_srv_result_destroy(dns_srv_result *result);
 

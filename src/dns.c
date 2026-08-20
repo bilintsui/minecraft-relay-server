@@ -295,6 +295,16 @@ static dns_negative_parse_status dns_negative_response_parse(ns_msg *response, c
 	return DNS_NEGATIVE_PARSE_OK;
 }
 
+static int dns_query_exact(res_state resolver, const char *name, int type, unsigned char *response, int response_capacity) {
+	unsigned char query[NS_MAXMSG];
+	int query_size = res_nmkquery(resolver, ns_o_query, name, ns_c_in, type, NULL, 0, NULL, query, (int)sizeof(query));
+	if (query_size <= 0 || query_size > (int)sizeof(query)) {
+		resolver->res_h_errno = NO_RECOVERY;
+		return -1;
+	}
+	return res_nsend(resolver, query, query_size, response, response_capacity);
+}
+
 static dns_address_parse_status dns_response_addresses_collect(ns_msg *response, sa_family_t family, dns_address_candidate *addresses, size_t *address_count, dns_cname_record *cnames,
 	size_t *cname_count) {
 	const unsigned char *message_begin = ns_msg_base(*response);
@@ -409,6 +419,82 @@ static dns_address_parse_status dns_response_chain_build(const dns_address_candi
 		record->effective_ttl = chain_ttl < record->record_ttl ? chain_ttl : record->record_ttl;
 	}
 	return DNS_ADDRESS_PARSE_OK;
+}
+
+static dns_srv_lookup_status dns_srv_lookup_chain_append(dns_srv_result *target, dns_srv_result *source, uint32_t *chain_ttl) {
+	if (target->question_name[0] == '\0') {
+		memcpy(target->question_name, source->question_name, sizeof(target->question_name));
+		memcpy(target->canonical_name, source->question_name, sizeof(target->canonical_name));
+	} else if (!dns_name_equal(target->canonical_name, source->question_name)) {
+		return DNS_SRV_LOOKUP_MALFORMED;
+	}
+	if (source->cname_count > DNS_CNAME_DEPTH_LIMIT - target->cname_count) {
+		return DNS_SRV_LOOKUP_LIMIT;
+	}
+	if (source->cname_count > 0 && target->cnames == NULL) {
+		target->cnames = calloc(DNS_CNAME_DEPTH_LIMIT, sizeof(*target->cnames));
+		if (target->cnames == NULL) {
+			return DNS_SRV_LOOKUP_MEMORY;
+		}
+	}
+	for (size_t source_index = 0; source_index < source->cname_count; source_index++) {
+		for (size_t target_index = 0; target_index < target->cname_count; target_index++) {
+			if (dns_name_equal(target->cnames[target_index].owner, source->cnames[source_index].target)) {
+				return DNS_SRV_LOOKUP_MALFORMED;
+			}
+		}
+		target->cnames[target->cname_count++] = source->cnames[source_index];
+		if (source->cnames[source_index].ttl < *chain_ttl) {
+			*chain_ttl = source->cnames[source_index].ttl;
+		}
+	}
+	memcpy(target->canonical_name, source->canonical_name, sizeof(target->canonical_name));
+	target->rcode = source->rcode;
+	return DNS_SRV_LOOKUP_OK;
+}
+
+static dns_srv_lookup_status dns_srv_lookup_parse_status(dns_srv_parse_status parse_status, uint8_t rcode) {
+	switch (parse_status) {
+		case DNS_SRV_PARSE_OK:
+		case DNS_SRV_PARSE_ALIAS_ONLY:
+			return DNS_SRV_LOOKUP_OK;
+		case DNS_SRV_PARSE_NODATA:
+			return DNS_SRV_LOOKUP_NODATA;
+		case DNS_SRV_PARSE_NXDOMAIN:
+			return DNS_SRV_LOOKUP_NOT_FOUND;
+		case DNS_SRV_PARSE_RCODE_ERROR:
+			return rcode == ns_r_servfail ? DNS_SRV_LOOKUP_TEMPORARY_ERROR : DNS_SRV_LOOKUP_PERMANENT_ERROR;
+		case DNS_SRV_PARSE_TRUNCATED:
+			return DNS_SRV_LOOKUP_TRUNCATED;
+		case DNS_SRV_PARSE_BAD_ARGUMENT:
+			return DNS_SRV_LOOKUP_BAD_ARGUMENT;
+		case DNS_SRV_PARSE_LIMIT:
+			return DNS_SRV_LOOKUP_LIMIT;
+		case DNS_SRV_PARSE_MALFORMED:
+			return DNS_SRV_LOOKUP_MALFORMED;
+		case DNS_SRV_PARSE_MEMORY:
+			return DNS_SRV_LOOKUP_MEMORY;
+	}
+	return DNS_SRV_LOOKUP_MALFORMED;
+}
+
+static dns_srv_lookup_status dns_srv_lookup_resolver_status(int resolver_error) {
+	switch (resolver_error) {
+		case HOST_NOT_FOUND:
+			return DNS_SRV_LOOKUP_NOT_FOUND;
+		case NO_DATA:
+			return DNS_SRV_LOOKUP_NODATA;
+		case TRY_AGAIN:
+			return DNS_SRV_LOOKUP_TEMPORARY_ERROR;
+		case NO_RECOVERY:
+		default:
+			return DNS_SRV_LOOKUP_PERMANENT_ERROR;
+	}
+}
+
+static bool dns_srv_lookup_status_keeps_result(dns_srv_lookup_status status) {
+	return status == DNS_SRV_LOOKUP_OK || status == DNS_SRV_LOOKUP_NODATA || status == DNS_SRV_LOOKUP_NOT_FOUND || status == DNS_SRV_LOOKUP_PERMANENT_ERROR
+		|| status == DNS_SRV_LOOKUP_TEMPORARY_ERROR;
 }
 
 static dns_srv_parse_status dns_srv_response_chain_build(const dns_srv_candidate *records, size_t record_count, const dns_cname_record *cnames, size_t cname_count, dns_srv_result *result) {
@@ -540,7 +626,8 @@ static dns_srv_parse_status dns_srv_response_records_collect(ns_msg *response, d
 }
 
 static bool dns_srv_result_empty(const dns_srv_result *result) {
-	return result->canonical_name[0] == '\0' && result->cnames == NULL && result->cname_count == 0 && result->question_name[0] == '\0' && result->rcode == 0 && result->records == NULL
+	return result->canonical_name[0] == '\0' && result->cnames == NULL && result->cname_count == 0 && result->negative.effective_ttl == 0 && result->negative.minimum == 0
+		&& result->negative.owner[0] == '\0' && result->negative.record_ttl == 0 && !result->negative.valid && result->question_name[0] == '\0' && result->rcode == 0 && result->records == NULL
 		&& result->record_count == 0;
 }
 
@@ -566,14 +653,36 @@ dns_address_lookup_status dns_address_lookup(const char *hostname, sa_family_t f
 	dns_address_lookup_status lookup_status = DNS_ADDRESS_LOOKUP_PERMANENT_ERROR;
 	while (true) {
 		int query_type = family == AF_INET ? ns_t_a : ns_t_aaaa;
-		int response_size = res_nquery(&resolver, query_name, ns_c_in, query_type, response, NS_MAXMSG);
+		int response_size = dns_query_exact(&resolver, query_name, query_type, response, NS_MAXMSG);
 		if (response_size < 0) {
 			lookup_status = dns_lookup_resolver_status(resolver.res_h_errno);
 			break;
 		}
+		if (response_size > NS_MAXMSG) {
+			lookup_status = DNS_ADDRESS_LOOKUP_TRUNCATED;
+			break;
+		}
 		dns_address_result partial = { 0 };
 		dns_address_parse_status parse_status = dns_address_response_parse(response, (size_t)response_size, family, &partial);
+		if (partial.question_name[0] != '\0' && !dns_name_equal(partial.question_name, query_name)) {
+			dns_address_result_destroy(&partial);
+			lookup_status = DNS_ADDRESS_LOOKUP_MALFORMED;
+			break;
+		}
 		lookup_status = dns_lookup_parse_status(parse_status, partial.rcode);
+		if (parse_status == DNS_ADDRESS_PARSE_NODATA || parse_status == DNS_ADDRESS_PARSE_NXDOMAIN) {
+			dns_address_lookup_status terminal_status = lookup_status;
+			lookup_status = dns_lookup_chain_append(&aggregate, &partial, &chain_ttl);
+			if (lookup_status == DNS_ADDRESS_LOOKUP_OK) {
+				aggregate.negative = partial.negative;
+				if (aggregate.negative.valid && chain_ttl < aggregate.negative.effective_ttl) {
+					aggregate.negative.effective_ttl = chain_ttl;
+				}
+				lookup_status = terminal_status;
+			}
+			dns_address_result_destroy(&partial);
+			break;
+		}
 		if (parse_status != DNS_ADDRESS_PARSE_OK && parse_status != DNS_ADDRESS_PARSE_ALIAS_ONLY) {
 			if (dns_lookup_status_keeps_result(lookup_status)) {
 				if (aggregate.question_name[0] == '\0') {
@@ -695,6 +804,100 @@ void dns_address_result_destroy(dns_address_result *result) {
 	memset(result, 0, sizeof(*result));
 }
 
+dns_srv_lookup_status dns_srv_lookup(const char *query_name, dns_srv_result *result) {
+	if (query_name == NULL || query_name[0] == '\0' || strlen(query_name) >= NS_MAXDNAME || result == NULL || !dns_srv_result_empty(result)) {
+		return DNS_SRV_LOOKUP_BAD_ARGUMENT;
+	}
+	struct __res_state resolver;
+	memset(&resolver, 0, sizeof(resolver));
+	if (res_ninit(&resolver) != 0) {
+		return DNS_SRV_LOOKUP_PERMANENT_ERROR;
+	}
+	unsigned char *response = malloc(NS_MAXMSG);
+	if (response == NULL) {
+		res_nclose(&resolver);
+		return DNS_SRV_LOOKUP_MEMORY;
+	}
+	dns_srv_result aggregate = { 0 };
+	char current_name[NS_MAXDNAME];
+	memcpy(current_name, query_name, strlen(query_name) + 1);
+	uint32_t chain_ttl = UINT32_MAX;
+	dns_srv_lookup_status lookup_status = DNS_SRV_LOOKUP_PERMANENT_ERROR;
+	while (true) {
+		int response_size = dns_query_exact(&resolver, current_name, ns_t_srv, response, NS_MAXMSG);
+		if (response_size < 0) {
+			lookup_status = dns_srv_lookup_resolver_status(resolver.res_h_errno);
+			break;
+		}
+		if (response_size > NS_MAXMSG) {
+			lookup_status = DNS_SRV_LOOKUP_TRUNCATED;
+			break;
+		}
+		dns_srv_result partial = { 0 };
+		dns_srv_parse_status parse_status = dns_srv_response_parse(response, (size_t)response_size, &partial);
+		if (partial.question_name[0] != '\0' && !dns_name_equal(partial.question_name, current_name)) {
+			dns_srv_result_destroy(&partial);
+			lookup_status = DNS_SRV_LOOKUP_MALFORMED;
+			break;
+		}
+		lookup_status = dns_srv_lookup_parse_status(parse_status, partial.rcode);
+		if (parse_status == DNS_SRV_PARSE_NODATA || parse_status == DNS_SRV_PARSE_NXDOMAIN) {
+			dns_srv_lookup_status terminal_status = lookup_status;
+			lookup_status = dns_srv_lookup_chain_append(&aggregate, &partial, &chain_ttl);
+			if (lookup_status == DNS_SRV_LOOKUP_OK) {
+				aggregate.negative = partial.negative;
+				if (aggregate.negative.valid && chain_ttl < aggregate.negative.effective_ttl) {
+					aggregate.negative.effective_ttl = chain_ttl;
+				}
+				lookup_status = terminal_status;
+			}
+			dns_srv_result_destroy(&partial);
+			break;
+		}
+		if (parse_status != DNS_SRV_PARSE_OK && parse_status != DNS_SRV_PARSE_ALIAS_ONLY) {
+			if (dns_srv_lookup_status_keeps_result(lookup_status)) {
+				if (aggregate.question_name[0] == '\0') {
+					aggregate = partial;
+					memset(&partial, 0, sizeof(partial));
+				} else {
+					aggregate.rcode = partial.rcode;
+				}
+			}
+			dns_srv_result_destroy(&partial);
+			break;
+		}
+		lookup_status = dns_srv_lookup_chain_append(&aggregate, &partial, &chain_ttl);
+		if (lookup_status != DNS_SRV_LOOKUP_OK) {
+			dns_srv_result_destroy(&partial);
+			break;
+		}
+		if (parse_status == DNS_SRV_PARSE_OK) {
+			/* Move the SRV record array into the aggregate before destroying the partial result. */
+			aggregate.records = partial.records;
+			aggregate.record_count = partial.record_count;
+			partial.records = NULL;
+			partial.record_count = 0;
+			for (size_t record_index = 0; record_index < aggregate.record_count; record_index++) {
+				if (chain_ttl < aggregate.records[record_index].effective_ttl) {
+					aggregate.records[record_index].effective_ttl = chain_ttl;
+				}
+			}
+			dns_srv_result_destroy(&partial);
+			break;
+		}
+		memcpy(current_name, aggregate.canonical_name, sizeof(current_name));
+		dns_srv_result_destroy(&partial);
+	}
+	free(response);
+	res_nclose(&resolver);
+	if (dns_srv_lookup_status_keeps_result(lookup_status)) {
+		*result = aggregate;
+	} else {
+		dns_srv_result_destroy(&aggregate);
+	}
+	return lookup_status;
+}
+
 dns_srv_parse_status dns_srv_response_parse(const void *message, size_t message_size, dns_srv_result *result) {
 	if (message == NULL || message_size > INT_MAX || result == NULL || !dns_srv_result_empty(result)) {
 		return DNS_SRV_PARSE_BAD_ARGUMENT;
@@ -716,10 +919,7 @@ dns_srv_parse_status dns_srv_response_parse(const void *message, size_t message_
 		return DNS_SRV_PARSE_MALFORMED;
 	}
 	result->rcode = (uint8_t)ns_msg_getflag(response, ns_f_rcode);
-	if (result->rcode == ns_r_nxdomain) {
-		return DNS_SRV_PARSE_NXDOMAIN;
-	}
-	if (result->rcode != ns_r_noerror) {
+	if (result->rcode != ns_r_noerror && result->rcode != ns_r_nxdomain) {
 		return DNS_SRV_PARSE_RCODE_ERROR;
 	}
 	int answer_count = ns_msg_count(response, ns_s_an);
@@ -747,7 +947,19 @@ dns_srv_parse_status dns_srv_response_parse(const void *message, size_t message_
 	}
 	free(cnames);
 	free(records);
-	if (status != DNS_SRV_PARSE_OK && status != DNS_SRV_PARSE_ALIAS_ONLY && status != DNS_SRV_PARSE_NODATA) {
+	if (result->rcode == ns_r_nxdomain) {
+		if (status == DNS_SRV_PARSE_OK) {
+			status = DNS_SRV_PARSE_MALFORMED;
+		} else if (status == DNS_SRV_PARSE_ALIAS_ONLY || status == DNS_SRV_PARSE_NODATA) {
+			dns_negative_parse_status negative_status = dns_negative_response_parse(&response, result->canonical_name, result->cnames, result->cname_count, &result->negative);
+			status = negative_status == DNS_NEGATIVE_PARSE_OK ? DNS_SRV_PARSE_NXDOMAIN
+				: (negative_status == DNS_NEGATIVE_PARSE_LIMIT ? DNS_SRV_PARSE_LIMIT : DNS_SRV_PARSE_MALFORMED);
+		}
+	} else if (status == DNS_SRV_PARSE_NODATA) {
+		dns_negative_parse_status negative_status = dns_negative_response_parse(&response, result->canonical_name, result->cnames, result->cname_count, &result->negative);
+		status = negative_status == DNS_NEGATIVE_PARSE_OK ? status : (negative_status == DNS_NEGATIVE_PARSE_LIMIT ? DNS_SRV_PARSE_LIMIT : DNS_SRV_PARSE_MALFORMED);
+	}
+	if (status != DNS_SRV_PARSE_OK && status != DNS_SRV_PARSE_ALIAS_ONLY && status != DNS_SRV_PARSE_NODATA && status != DNS_SRV_PARSE_NXDOMAIN) {
 		dns_srv_result_destroy(result);
 	}
 	return status;

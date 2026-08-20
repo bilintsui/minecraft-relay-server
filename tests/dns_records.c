@@ -38,6 +38,11 @@
 #define DNS_TEST_MESSAGE_CAPACITY	32768
 #define DNS_TEST_NO_POINTER	SIZE_MAX
 
+/* DNS query */
+#define DNS_TEST_QUERY_SIZE	4
+#define DNS_TEST_QUERY_TOKEN_FIRST	0x4D
+#define DNS_TEST_QUERY_TOKEN_SECOND	0x52
+
 /* section: types */
 typedef struct {
 	size_t answer_count;
@@ -60,6 +65,7 @@ static size_t dns_query_fixture_count;
 static size_t dns_query_fixture_index;
 static dns_query_fixture dns_query_fixtures[DNS_CNAME_DEPTH_LIMIT + 1];
 static bool dns_query_mismatch;
+static bool dns_query_pending;
 
 /* section: functions (local) */
 static bool dns_builder_bytes_write(dns_message_builder *builder, const void *source, size_t size) {
@@ -324,6 +330,7 @@ static void dns_test_query_reset(void) {
 	dns_query_fixture_count = 0;
 	dns_query_fixture_index = 0;
 	dns_query_mismatch = false;
+	dns_query_pending = false;
 }
 
 static bool dns_test_lookup(void) {
@@ -331,7 +338,9 @@ static bool dns_test_lookup(void) {
 	dns_message_builder address_response;
 	dns_address_result result = { 0 };
 	uint8_t wire_name[NS_MAXCDNAME];
+	uint8_t wire_soa[NS_MAXCDNAME * 2 + 20];
 	size_t wire_name_size;
+	size_t wire_soa_size;
 	int test_result = false;
 	CHECK(dns_builder_response_start(&address_response, "lookup.example", ns_t_a), "cannot start lookup response");
 	uint8_t address_first[4] = { 192, 0, 2, 20 };
@@ -347,6 +356,14 @@ static bool dns_test_lookup(void) {
 	CHECK(result.addresses[0].effective_ttl == 90 && result.addresses[1].effective_ttl == 30, "IPv4 lookup lost record TTLs");
 	dns_address_result_destroy(&result);
 
+	CHECK(dns_builder_response_start(&address_response, "unexpected.lookup", ns_t_a), "cannot start mismatched-question lookup response");
+	CHECK(dns_builder_record_add(&address_response, NULL, address_response.question_name_offset, ns_t_a, ns_c_in, 30, address_first, sizeof(address_first), NULL), "cannot add mismatched-question lookup address");
+	dns_test_query_reset();
+	dns_query_fixtures[0] = (dns_query_fixture){ 0, "expected.lookup", &address_response, ns_t_a };
+	dns_query_fixture_count = 1;
+	CHECK(dns_address_lookup("expected.lookup", AF_INET, &result) == DNS_ADDRESS_LOOKUP_MALFORMED, "lookup accepted a response for a different question");
+	CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "mismatched-question lookup issued the wrong exact query");
+
 	CHECK(dns_builder_response_start(&alias_response, "alias.lookup", ns_t_a), "cannot start lookup alias response");
 	CHECK(dns_builder_wire_name_create("target.lookup", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode lookup alias target");
 	CHECK(dns_builder_record_add(&alias_response, NULL, alias_response.question_name_offset, ns_t_cname, ns_c_in, 15, wire_name, wire_name_size, NULL), "cannot add lookup alias");
@@ -361,6 +378,35 @@ static bool dns_test_lookup(void) {
 	bool alias_names_match = strcmp(result.question_name, "alias.lookup") == 0 && strcmp(result.canonical_name, "target.lookup") == 0;
 	CHECK(result.cname_count == 1 && result.address_count == 1 && alias_names_match, "aliased lookup returned the wrong chain");
 	CHECK(result.addresses[0].record_ttl == 60 && result.addresses[0].effective_ttl == 15, "aliased lookup did not combine TTLs across responses");
+	dns_address_result_destroy(&result);
+
+	CHECK(dns_builder_response_start(&alias_response, "negative.alias.lookup", ns_t_a), "cannot start negative lookup alias response");
+	CHECK(dns_builder_wire_name_create("negative.target.lookup", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode negative lookup alias target");
+	CHECK(dns_builder_record_add(&alias_response, NULL, alias_response.question_name_offset, ns_t_cname, ns_c_in, 25, wire_name, wire_name_size, NULL), "cannot add negative lookup alias");
+	CHECK(dns_builder_response_start(&address_response, "negative.target.lookup", ns_t_a), "cannot start raw NXDOMAIN lookup response");
+	CHECK(dns_builder_wire_soa_create("ns.lookup", "hostmaster.lookup", 60, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode raw NXDOMAIN lookup SOA");
+	CHECK(dns_builder_authority_add(&address_response, "lookup", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 90, wire_soa, wire_soa_size), "cannot add raw NXDOMAIN lookup SOA");
+	address_response.data[3] = (uint8_t)((address_response.data[3] & 0xF0) | ns_r_nxdomain);
+	dns_test_query_reset();
+	dns_query_fixtures[0] = (dns_query_fixture){ 0, "negative.alias.lookup", &alias_response, ns_t_a };
+	dns_query_fixtures[1] = (dns_query_fixture){ 0, "negative.target.lookup", &address_response, ns_t_a };
+	dns_query_fixture_count = 2;
+	CHECK(dns_address_lookup("negative.alias.lookup", AF_INET, &result) == DNS_ADDRESS_LOOKUP_NOT_FOUND, "cannot retain raw NXDOMAIN lookup response");
+	CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "negative lookup issued the wrong exact queries");
+	CHECK(result.cname_count == 1 && strcmp(result.canonical_name, "negative.target.lookup") == 0, "negative lookup lost its cross-response CNAME chain");
+	CHECK(result.negative.valid && strcmp(result.negative.owner, "lookup") == 0 && result.negative.record_ttl == 90 && result.negative.minimum == 60 && result.negative.effective_ttl == 25,
+		"negative lookup did not preserve or fold authoritative metadata");
+	dns_address_result_destroy(&result);
+
+	CHECK(dns_builder_response_start(&address_response, "nodata.lookup", ns_t_a), "cannot start raw NODATA lookup response");
+	CHECK(dns_builder_wire_soa_create("ns.lookup", "hostmaster.lookup", 40, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode raw NODATA lookup SOA");
+	CHECK(dns_builder_authority_add(&address_response, "lookup", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 80, wire_soa, wire_soa_size), "cannot add raw NODATA lookup SOA");
+	dns_test_query_reset();
+	dns_query_fixtures[0] = (dns_query_fixture){ 0, "nodata.lookup", &address_response, ns_t_a };
+	dns_query_fixture_count = 1;
+	CHECK(dns_address_lookup("nodata.lookup", AF_INET, &result) == DNS_ADDRESS_LOOKUP_NODATA, "cannot retain raw NODATA lookup response");
+	CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count && result.negative.valid && result.negative.effective_ttl == 40,
+		"NODATA lookup lost its query or authoritative negative TTL");
 	dns_address_result_destroy(&result);
 
 	CHECK(dns_builder_response_start(&alias_response, "a.lookup", ns_t_a), "cannot start cross-response loop a");
@@ -641,20 +687,18 @@ cleanup:
 	return test_result;
 }
 
-static int dns_test_query_answer(res_state resolver, const char *name, int record_class, int type, unsigned char *answer, int answer_size) {
-	if (dns_query_fixture_index >= dns_query_fixture_count || resolver == NULL || name == NULL || record_class != ns_c_in || answer == NULL || answer_size < 0) {
+static int dns_test_query_response(res_state resolver, const unsigned char *query, int query_size, unsigned char *answer, int answer_size) {
+	if (!dns_query_pending || dns_query_fixture_index >= dns_query_fixture_count || resolver == NULL || query == NULL || query_size != DNS_TEST_QUERY_SIZE || answer == NULL || answer_size < 0
+		|| query[0] != DNS_TEST_QUERY_TOKEN_FIRST || query[1] != DNS_TEST_QUERY_TOKEN_SECOND || query[2] != (uint8_t)(dns_query_fixture_index >> 8) || query[3] != (uint8_t)dns_query_fixture_index) {
 		dns_query_mismatch = true;
+		dns_query_pending = false;
 		if (resolver != NULL) {
 			resolver->res_h_errno = NO_RECOVERY;
 		}
 		return -1;
 	}
+	dns_query_pending = false;
 	const dns_query_fixture *fixture = &dns_query_fixtures[dns_query_fixture_index++];
-	if (fixture->name == NULL || strcmp(fixture->name, name) != 0 || fixture->type != type) {
-		dns_query_mismatch = true;
-		resolver->res_h_errno = NO_RECOVERY;
-		return -1;
-	}
 	if (fixture->error != 0) {
 		resolver->res_h_errno = fixture->error;
 		return -1;
@@ -779,8 +823,41 @@ cleanup:
 }
 
 /* section: functions (exported) */
+int __wrap_res_nmkquery(res_state resolver, int operation, const char *name, int record_class, int type, const unsigned char *data, int data_size, const unsigned char *new_record,
+	unsigned char *query, int query_size) {
+	if (dns_query_pending || dns_query_fixture_index >= dns_query_fixture_count || resolver == NULL || operation != ns_o_query || name == NULL || record_class != ns_c_in || data != NULL
+		|| data_size != 0 || new_record != NULL || query == NULL || query_size < DNS_TEST_QUERY_SIZE) {
+		dns_query_mismatch = true;
+		if (resolver != NULL) {
+			resolver->res_h_errno = NO_RECOVERY;
+		}
+		return -1;
+	}
+	const dns_query_fixture *fixture = &dns_query_fixtures[dns_query_fixture_index];
+	if (fixture->name == NULL || strcmp(fixture->name, name) != 0 || fixture->type != type) {
+		dns_query_mismatch = true;
+		resolver->res_h_errno = NO_RECOVERY;
+		return -1;
+	}
+	query[0] = DNS_TEST_QUERY_TOKEN_FIRST;
+	query[1] = DNS_TEST_QUERY_TOKEN_SECOND;
+	query[2] = (uint8_t)(dns_query_fixture_index >> 8);
+	query[3] = (uint8_t)dns_query_fixture_index;
+	dns_query_pending = true;
+	return DNS_TEST_QUERY_SIZE;
+}
+
 int __wrap_res_nquery(res_state resolver, const char *name, int record_class, int type, unsigned char *answer, int answer_size) {
-	return dns_test_query_answer(resolver, name, record_class, type, answer, answer_size);
+	(void)name;
+	(void)record_class;
+	(void)type;
+	(void)answer;
+	(void)answer_size;
+	dns_query_mismatch = true;
+	if (resolver != NULL) {
+		resolver->res_h_errno = NO_RECOVERY;
+	}
+	return -1;
 }
 
 int __wrap_res_nsearch(res_state resolver, const char *name, int record_class, int type, unsigned char *answer, int answer_size) {
@@ -794,6 +871,10 @@ int __wrap_res_nsearch(res_state resolver, const char *name, int record_class, i
 		resolver->res_h_errno = NO_RECOVERY;
 	}
 	return -1;
+}
+
+int __wrap_res_nsend(res_state resolver, const unsigned char *query, int query_size, unsigned char *answer, int answer_size) {
+	return dns_test_query_response(resolver, query, query_size, answer, answer_size);
 }
 
 /* section: functions (entry point) */
