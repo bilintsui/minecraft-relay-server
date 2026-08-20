@@ -10,6 +10,7 @@
 #define _MRS_HOSTS_H_INCLUDED_
 
 /* section: headers (library) */
+#include <stdbool.h>
 #include <stddef.h>
 
 /* section: headers (project) */
@@ -37,6 +38,7 @@ typedef struct hosts_table hosts_table;
 
 /* section: functions (exported) */
 void hosts_address_result_destroy(hosts_address_result *result);
+bool hosts_table_clone(const hosts_table *source, hosts_table **result);
 void hosts_table_destroy(hosts_table *table);
 /* HOSTS_LOAD_FILE_ERROR returns a usable table containing guaranteed localhost fallbacks. */
 hosts_load_status hosts_table_load(const char *filename, hosts_table **result, size_t *malformed_line_count);

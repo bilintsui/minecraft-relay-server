@@ -49,8 +49,11 @@ static bool hosts_address_equal(const net_addr *address, sa_family_t family, con
 static bool hosts_test_arguments(void) {
 	int test_result = false;
 	hosts_address_result result = { 0 };
+	hosts_table *clone = NULL;
 	hosts_table *table = NULL;
 	size_t malformed_line_count = 0;
+	CHECK(!hosts_table_clone(NULL, &clone) && errno == EINVAL && clone == NULL, "NULL hosts clone source was accepted");
+	CHECK(!hosts_table_clone(table, NULL) && errno == EINVAL, "NULL hosts clone output was accepted");
 	CHECK(hosts_table_load(NULL, &table, &malformed_line_count) == HOSTS_LOAD_BAD_ARGUMENT && table == NULL, "NULL hosts filename was accepted");
 	CHECK(hosts_table_load("", &table, &malformed_line_count) == HOSTS_LOAD_BAD_ARGUMENT && table == NULL, "empty hosts filename was accepted");
 	CHECK(hosts_table_lookup(NULL, "localhost", &result) == HOSTS_LOOKUP_BAD_ARGUMENT, "NULL hosts table was accepted");
@@ -60,6 +63,34 @@ static bool hosts_test_arguments(void) {
 
 cleanup:
 	hosts_address_result_destroy(&result);
+	hosts_table_destroy(clone);
+	hosts_table_destroy(table);
+	return test_result;
+}
+
+static bool hosts_test_clone(const char *filename) {
+	bool test_result = false;
+	hosts_address_result result = { 0 };
+	hosts_table *clone = NULL;
+	hosts_table *table = NULL;
+	size_t malformed_line_count = 0;
+	CHECK(hosts_table_load(filename, &table, &malformed_line_count) == HOSTS_LOAD_OK && table != NULL, "hosts clone source could not be loaded");
+	clone = (hosts_table *)(uintptr_t)1;
+	bool nonempty_accepted = hosts_table_clone(table, &clone);
+	bool nonempty_preserved = clone == (hosts_table *)(uintptr_t)1;
+	clone = NULL;
+	CHECK(!nonempty_accepted && errno == EINVAL && nonempty_preserved, "non-empty hosts clone output was accepted or modified");
+	CHECK(hosts_table_clone(table, &clone) && errno == 0 && clone != NULL && clone != table, "hosts table could not be cloned");
+	hosts_table_destroy(table);
+	table = NULL;
+	CHECK(hosts_table_lookup(clone, "EXAMPLE.COM.", &result) == HOSTS_LOOKUP_OK && result.address_count == 2
+		&& hosts_address_equal(&result.addresses[0], AF_INET, "192.0.2.10") && hosts_address_equal(&result.addresses[1], AF_INET6, "2001:db8::10"),
+		"cloned hosts table did not survive source destruction or preserve records");
+	test_result = true;
+
+cleanup:
+	hosts_address_result_destroy(&result);
+	hosts_table_destroy(clone);
 	hosts_table_destroy(table);
 	return test_result;
 }
@@ -147,6 +178,7 @@ int main(void) {
 	CHECK(snprintf(missing_filename, sizeof(missing_filename), "%s/missing", directory) > 0, "cannot create missing hosts path");
 	CHECK(hosts_write_fixture(filename) == 0, "cannot write hosts fixture");
 	CHECK(hosts_test_arguments(), "hosts argument tests failed");
+	CHECK(hosts_test_clone(filename), "hosts clone tests failed");
 	CHECK(hosts_test_file_error(missing_filename), "hosts file-error tests failed");
 	CHECK(hosts_test_records(filename), "hosts record tests failed");
 	test_result = EXIT_SUCCESS;

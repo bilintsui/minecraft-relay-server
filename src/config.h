@@ -72,6 +72,7 @@ typedef enum {
 /* section: functions (exported) */
 void config_cache_commit(conf_cache *target, conf_cache *candidate);
 void config_cache_destroy(conf_cache *target);
+bool config_clone(const conf *source, conf **result);
 void config_destroy(conf *target);
 void config_dumper(conf *src);
 const char *config_errmsg(int err);

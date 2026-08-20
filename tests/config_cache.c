@@ -6,8 +6,11 @@
  */
 
 /* section: headers (library) */
+#include <cjson/cJSON.h>
 #include <errno.h>
+#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +32,53 @@
 	} while (0)
 
 /* section: functions (local) */
+static bool config_clone_test(void) {
+	bool test_result = false;
+	conf *clone = NULL;
+	conf *source = calloc(1, sizeof(*source));
+	CHECK(source != NULL, "cannot allocate clone source");
+	source->log.filename = strdup("/tmp/clone.log");
+	source->log.level = 4;
+	source->listen.address = strdup("2001:db8::10");
+	source->listen.port = 25570;
+	source->icon_path = strdup("/tmp/icon.png");
+	source->icon_b64 = strdup("YWJj");
+	source->icon_cache.data = malloc(3);
+	source->icon_cache.size = 3;
+	source->proxy = cJSON_Parse("[{\"vhost\":[\"clone.example\"],\"address\":\"backend.example\",\"port\":25565}]");
+	CHECK(source->log.filename != NULL && source->listen.address != NULL && source->icon_path != NULL && source->icon_b64 != NULL && source->icon_cache.data != NULL
+		&& source->proxy != NULL, "cannot prepare clone source");
+	memcpy(source->icon_cache.data, "abc", 3);
+	CHECK(!config_clone(NULL, &clone) && errno == EINVAL && clone == NULL, "NULL clone source was accepted");
+	CHECK(!config_clone(source, NULL) && errno == EINVAL, "NULL clone output was accepted");
+	clone = (conf *)(uintptr_t)1;
+	bool nonempty_accepted = config_clone(source, &clone);
+	bool nonempty_preserved = clone == (conf *)(uintptr_t)1;
+	clone = NULL;
+	CHECK(!nonempty_accepted && errno == EINVAL && nonempty_preserved, "non-empty clone output was accepted or modified");
+	CHECK(config_clone(source, &clone) && errno == 0 && clone != NULL, "configuration could not be cloned");
+	CHECK(clone != source && clone->log.filename != source->log.filename && strcmp(clone->log.filename, source->log.filename) == 0 && clone->log.level == source->log.level,
+		"cloned log configuration was shallow or incorrect");
+	CHECK(clone->listen.address != source->listen.address && strcmp(clone->listen.address, source->listen.address) == 0 && clone->listen.port == source->listen.port,
+		"cloned listener configuration was shallow or incorrect");
+	CHECK(clone->icon_path != source->icon_path && strcmp(clone->icon_path, source->icon_path) == 0 && clone->icon_b64 != source->icon_b64
+		&& strcmp(clone->icon_b64, source->icon_b64) == 0 && clone->icon_cache.data != source->icon_cache.data && clone->icon_cache.size == source->icon_cache.size
+		&& memcmp(clone->icon_cache.data, source->icon_cache.data, source->icon_cache.size) == 0, "cloned icon state was shallow or incorrect");
+	CHECK(clone->proxy != source->proxy && cJSON_Compare(clone->proxy, source->proxy, true), "cloned proxy configuration was shallow or incorrect");
+	((char *)source->icon_cache.data)[0] = 'z';
+	source->listen.address[0] = '1';
+	cJSON_ReplaceItemInObject(cJSON_GetArrayItem(source->proxy, 0), "address", cJSON_CreateString("changed.example"));
+	CHECK(memcmp(clone->icon_cache.data, "abc", 3) == 0 && strcmp(clone->listen.address, "2001:db8::10") == 0
+		&& strcmp(cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(clone->proxy, 0), "address")->valuestring, "backend.example") == 0,
+		"mutating clone source changed the cloned configuration");
+	test_result = true;
+
+cleanup:
+	config_destroy(clone);
+	config_destroy(source);
+	return test_result;
+}
+
 static int write_config(int fd, const char *content) {
 	size_t length = strlen(content);
 	if ((ftruncate(fd, 0) != 0) || (lseek(fd, 0, SEEK_SET) == -1)) {
@@ -62,6 +112,7 @@ int main(void) {
 	char *cached_icon_b64 = NULL;
 	void *cached_icon_data = NULL;
 	size_t cached_size = 0;
+	CHECK(config_clone_test(), "configuration clone test failed");
 	CHECK(sizeof(config_a) == sizeof(config_b), "test configurations must have equal lengths");
 	fd = mkstemp(filename);
 	CHECK(fd != -1, "cannot create temporary configuration file");

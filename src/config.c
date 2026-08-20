@@ -303,6 +303,24 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 	return result;
 }
 
+static bool config_string_duplicate(const char *source, char **result) {
+	if (source == NULL) {
+		return true;
+	}
+	size_t length = strlen(source);
+	if (length == SIZE_MAX) {
+		errno = EOVERFLOW;
+		return false;
+	}
+	*result = malloc(length + 1U);
+	if (*result == NULL) {
+		errno = ENOMEM;
+		return false;
+	}
+	memcpy(*result, source, length + 1U);
+	return true;
+}
+
 /* section: functions (exported) */
 void config_cache_commit(conf_cache *target, conf_cache *candidate) {
 	if (target == NULL || candidate == NULL || target == candidate) {
@@ -321,6 +339,45 @@ void config_cache_destroy(conf_cache *target) {
 		target->data = NULL;
 		target->size = 0;
 	}
+}
+
+bool config_clone(const conf *source, conf **result) {
+	if (source == NULL || source->log.filename == NULL || source->listen.address == NULL || source->proxy == NULL || result == NULL || *result != NULL
+		|| (source->icon_cache.data == NULL) != (source->icon_cache.size == 0)) {
+		errno = EINVAL;
+		return false;
+	}
+	conf *candidate = calloc(1, sizeof(*candidate));
+	if (candidate == NULL) {
+		errno = ENOMEM;
+		return false;
+	}
+	candidate->listen.port = source->listen.port;
+	candidate->log.level = source->log.level;
+	if (!config_string_duplicate(source->log.filename, &candidate->log.filename) || !config_string_duplicate(source->listen.address, &candidate->listen.address)
+		|| !config_string_duplicate(source->icon_path, &candidate->icon_path) || !config_string_duplicate(source->icon_b64, &candidate->icon_b64)) {
+		config_destroy(candidate);
+		return false;
+	}
+	if (source->icon_cache.size > 0) {
+		candidate->icon_cache.data = malloc(source->icon_cache.size);
+		if (candidate->icon_cache.data == NULL) {
+			config_destroy(candidate);
+			errno = ENOMEM;
+			return false;
+		}
+		memcpy(candidate->icon_cache.data, source->icon_cache.data, source->icon_cache.size);
+		candidate->icon_cache.size = source->icon_cache.size;
+	}
+	candidate->proxy = cJSON_Duplicate(source->proxy, 1);
+	if (candidate->proxy == NULL) {
+		config_destroy(candidate);
+		errno = ENOMEM;
+		return false;
+	}
+	*result = candidate;
+	errno = 0;
+	return true;
 }
 
 void config_destroy(conf *target) {

@@ -7,6 +7,7 @@
 
 /* section: headers (library) */
 #include <ctype.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -237,6 +238,33 @@ void hosts_address_result_destroy(hosts_address_result *result) {
 	}
 	free(result->addresses);
 	memset(result, 0, sizeof(*result));
+}
+
+bool hosts_table_clone(const hosts_table *source, hosts_table **result) {
+	if (source == NULL || result == NULL || *result != NULL || source->record_count > source->record_capacity || source->record_capacity > HOSTS_RECORD_LIMIT
+		|| (source->records == NULL) != (source->record_capacity == 0)) {
+		errno = EINVAL;
+		return false;
+	}
+	hosts_table *candidate = calloc(1, sizeof(*candidate));
+	if (candidate == NULL) {
+		errno = ENOMEM;
+		return false;
+	}
+	if (source->record_count > 0) {
+		candidate->records = malloc(source->record_count * sizeof(*candidate->records));
+		if (candidate->records == NULL) {
+			hosts_table_destroy(candidate);
+			errno = ENOMEM;
+			return false;
+		}
+		memcpy(candidate->records, source->records, source->record_count * sizeof(*candidate->records));
+		candidate->record_capacity = source->record_count;
+		candidate->record_count = source->record_count;
+	}
+	*result = candidate;
+	errno = 0;
+	return true;
 }
 
 void hosts_table_destroy(hosts_table *table) {
