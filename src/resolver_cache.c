@@ -552,3 +552,18 @@ bool resolver_cache_entry_view(resolver_cache_entry *entry, const struct timespe
 size_t resolver_cache_owned_bytes(const resolver_cache *cache) {
 	return cache == NULL ? 0 : cache->owned_bytes;
 }
+
+bool resolver_cache_result_fits(uint16_t query_type, size_t cname_count, size_t record_count) {
+	if (cname_count > DNS_CNAME_DEPTH_LIMIT || (query_type != ns_t_a && query_type != ns_t_aaaa && query_type != ns_t_srv)
+		|| ((query_type == ns_t_a || query_type == ns_t_aaaa) && record_count > DNS_ADDRESS_RECORD_LIMIT) || (query_type == ns_t_srv && record_count > DNS_SRV_RECORD_LIMIT)) {
+		return false;
+	}
+	size_t size = sizeof(resolver_cache_payload);
+	size_t array_size;
+	if (cname_count > 0
+		&& (!resolver_cache_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(dns_cname_record), &array_size) || !resolver_cache_size_add(&size, array_size))) {
+		return false;
+	}
+	size_t record_size = query_type == ns_t_srv ? sizeof(dns_srv_record) : sizeof(dns_address_record);
+	return resolver_cache_size_multiply(record_count, record_size, &array_size) && resolver_cache_size_add(&size, array_size) && size <= (size_t)RESOLVER_CACHE_RESULT_BYTE_LIMIT;
+}

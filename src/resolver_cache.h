@@ -30,11 +30,6 @@
 #define RESOLVER_CACHE_RESULT_BYTE_LIMIT	(256U * 1024U)
 #endif
 
-/* reply assembly */
-#ifndef RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT
-#define RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT	(1024U * 1024U)
-#endif
-
 /* section: types */
 typedef struct resolver_cache resolver_cache;
 typedef enum {
@@ -88,5 +83,6 @@ bool resolver_cache_entry_retain(resolver_cache_entry *entry);
 /* Views and their record pointers are borrowed until the next publication, expiry check, or final entry release. */
 bool resolver_cache_entry_view(resolver_cache_entry *entry, const struct timespec *now, resolver_cache_view *result);
 size_t resolver_cache_owned_bytes(const resolver_cache *cache);
+bool resolver_cache_result_fits(uint16_t query_type, size_t cname_count, size_t record_count);
 
 #endif

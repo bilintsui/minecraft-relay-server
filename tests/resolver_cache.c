@@ -179,6 +179,10 @@ static bool cache_test_arguments(void) {
 	CHECK(resolver_cache_entry_count(NULL) == 0 && resolver_cache_owned_bytes(NULL) == 0, "NULL cache getters returned data");
 	CHECK(resolver_cache_entry_id(NULL) == 0 && resolver_cache_entry_name(NULL) == NULL && resolver_cache_entry_query_type(NULL) == 0, "NULL entry getters returned data");
 	CHECK(!resolver_cache_entry_retain(NULL), "NULL entry was retained");
+	CHECK(resolver_cache_result_fits(ns_t_a, 0, 1) && resolver_cache_result_fits(ns_t_aaaa, 1, 1) && resolver_cache_result_fits(ns_t_srv, 0, 1),
+		"bounded cache result was rejected");
+	CHECK(!resolver_cache_result_fits(ns_t_txt, 0, 1) && !resolver_cache_result_fits(ns_t_a, DNS_CNAME_DEPTH_LIMIT + 1, 1)
+		&& !resolver_cache_result_fits(ns_t_srv, 0, DNS_SRV_RECORD_LIMIT), "invalid or oversized cache result was accepted");
 	CHECK(!resolver_cache_entry_view(NULL, &now, &view), "NULL entry view was accepted");
 	CHECK(!resolver_cache_entry_view(entry, &now, NULL), "NULL view result was accepted");
 	CHECK(resolver_cache_entry_publish_address(NULL, DNS_ADDRESS_LOOKUP_OK, &now, &address_result) == RESOLVER_CACHE_PUBLISH_BAD_ARGUMENT, "NULL address entry was accepted");
