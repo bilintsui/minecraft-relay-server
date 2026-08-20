@@ -17,12 +17,12 @@
 
 /* section: headers (project) */
 #include "config.h"
-#include "hosts.h"
-#include "resolver_cache.h"
-#include "resolver_supervisor.h"
-#include "route_bindings.h"
-#include "route_prewarmer.h"
-#include "route_table.h"
+#include "resolver/cache.h"
+#include "resolver/hosts.h"
+#include "resolver/supervisor.h"
+#include "route/bindings.h"
+#include "route/prewarmer.h"
+#include "route/table.h"
 
 /* section: defines */
 /* assertion */

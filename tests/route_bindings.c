@@ -20,11 +20,11 @@
 
 /* section: headers (project) */
 #include "config.h"
-#include "hosts.h"
 #include "network.h"
-#include "resolver_cache.h"
-#include "route_bindings.h"
-#include "route_table.h"
+#include "resolver/cache.h"
+#include "resolver/hosts.h"
+#include "route/bindings.h"
+#include "route/table.h"
 
 /* section: defines */
 /* assertion */

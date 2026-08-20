@@ -14,10 +14,10 @@
 #include <time.h>
 
 /* section: headers (project) */
-#include "resolver_supervisor.h"
-#include "route_generation.h"
-#include "route_generation_registry.h"
-#include "route_resolution.h"
+#include "resolver/supervisor.h"
+#include "route/generation.h"
+#include "route/generation_registry.h"
+#include "route/resolution.h"
 
 /* section: defines */
 /* assertion */

@@ -14,7 +14,7 @@
 #include <string.h>
 
 /* section: headers (project) */
-#include "connsetup_short.h"
+#include "connection/setup_short.h"
 #include "protocol/handshake.h"
 #include "protocol/handshake_legacy.h"
 

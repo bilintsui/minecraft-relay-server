@@ -21,7 +21,7 @@
 #include <unistd.h>
 
 /* section: headers (project) */
-#include "hosts.h"
+#include "resolver/hosts.h"
 
 /* section: defines */
 /* assertion */

@@ -16,7 +16,7 @@
 /* section: headers (project) */
 #include "config.h"
 #include "network.h"
-#include "route_table.h"
+#include "route/table.h"
 
 /* section: defines */
 /* assertion */

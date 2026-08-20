@@ -21,8 +21,8 @@
 #include <time.h>
 
 /* section: headers (project) */
-#include "dns.h"
-#include "resolver_cache.h"
+#include "resolver/cache.h"
+#include "resolver/dns.h"
 
 /* section: defines */
 /* assertion */

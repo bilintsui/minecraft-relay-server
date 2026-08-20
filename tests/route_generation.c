@@ -14,11 +14,11 @@
 
 /* section: headers (project) */
 #include "config.h"
-#include "hosts.h"
-#include "route_bindings.h"
-#include "route_generation.h"
-#include "route_resolution.h"
-#include "route_table.h"
+#include "resolver/hosts.h"
+#include "route/bindings.h"
+#include "route/generation.h"
+#include "route/resolution.h"
+#include "route/table.h"
 
 /* section: defines */
 /* assertion */

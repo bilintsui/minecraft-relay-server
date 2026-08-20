@@ -21,7 +21,7 @@
 #include <sys/socket.h>
 
 /* section: headers (project) */
-#include "dns.h"
+#include "resolver/dns.h"
 
 /* section: defines */
 /* assertion */

@@ -19,8 +19,8 @@
 #include <time.h>
 
 /* section: headers (project) */
-#include "dns.h"
-#include "resolver_ipc.h"
+#include "resolver/dns.h"
+#include "resolver/ipc.h"
 
 /* section: defines */
 /* assertion */

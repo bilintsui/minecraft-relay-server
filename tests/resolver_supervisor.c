@@ -24,11 +24,11 @@
 #include <unistd.h>
 
 /* section: headers (project) */
-#include "dns.h"
-#include "resolver_cache.h"
-#include "resolver_helper.h"
-#include "resolver_ipc.h"
-#include "resolver_supervisor.h"
+#include "resolver/cache.h"
+#include "resolver/dns.h"
+#include "resolver/helper.h"
+#include "resolver/ipc.h"
+#include "resolver/supervisor.h"
 
 /* section: defines */
 /* assertion */
