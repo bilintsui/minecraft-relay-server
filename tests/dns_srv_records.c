@@ -57,6 +57,14 @@ typedef struct {
 	const char *name;
 	const dns_message_builder *response;
 } dns_query_fixture;
+typedef struct {
+	size_t close_count;
+	int expected_retrans;
+	int expected_retry;
+	size_t init_count;
+	int initial_retrans;
+	int initial_retry;
+} dns_resolver_fixture;
 
 /* section: global variables */
 static size_t dns_query_fixture_count;
@@ -64,6 +72,12 @@ static size_t dns_query_fixture_index;
 static dns_query_fixture dns_query_fixtures[DNS_CNAME_DEPTH_LIMIT + 1];
 static bool dns_query_mismatch;
 static bool dns_query_pending;
+static dns_resolver_fixture dns_resolver = {
+	.expected_retrans = DNS_QUERY_RETRANSMIT_TIMEOUT_SEC,
+	.expected_retry = DNS_QUERY_ATTEMPT_LIMIT,
+	.initial_retrans = DNS_QUERY_RETRANSMIT_TIMEOUT_SEC + 1,
+	.initial_retry = DNS_QUERY_ATTEMPT_LIMIT + 1
+};
 
 /* section: functions (local) */
 static bool dns_builder_bytes_write(dns_message_builder *builder, const void *source, size_t size) {
@@ -669,7 +683,8 @@ cleanup:
 
 static int dns_test_query_response(res_state resolver, const unsigned char *query, int query_size, unsigned char *answer, int answer_size) {
 	if (!dns_query_pending || dns_query_fixture_index >= dns_query_fixture_count || resolver == NULL || query == NULL || query_size != DNS_TEST_QUERY_SIZE || answer == NULL || answer_size < 0
-		|| query[0] != DNS_TEST_QUERY_TOKEN_FIRST || query[1] != DNS_TEST_QUERY_TOKEN_SECOND || query[2] != (uint8_t)(dns_query_fixture_index >> 8) || query[3] != (uint8_t)dns_query_fixture_index) {
+		|| resolver->retrans != dns_resolver.expected_retrans || resolver->retry != dns_resolver.expected_retry || query[0] != DNS_TEST_QUERY_TOKEN_FIRST || query[1] != DNS_TEST_QUERY_TOKEN_SECOND
+		|| query[2] != (uint8_t)(dns_query_fixture_index >> 8) || query[3] != (uint8_t)dns_query_fixture_index) {
 		dns_query_mismatch = true;
 		dns_query_pending = false;
 		if (resolver != NULL) {
@@ -725,6 +740,45 @@ static bool dns_test_records(void) {
 	test_result = true;
 
 cleanup:
+	dns_srv_result_destroy(&result);
+	return test_result;
+}
+
+static bool dns_test_resolver_limits(void) {
+	dns_message_builder builder;
+	dns_srv_result result = { 0 };
+	uint8_t wire_srv[NS_MAXCDNAME + 6];
+	size_t wire_srv_size;
+	const int expected_retrans[] = { DNS_QUERY_RETRANSMIT_TIMEOUT_SEC, 1 };
+	const int expected_retry[] = { DNS_QUERY_ATTEMPT_LIMIT, 0 };
+	const int initial_retrans[] = { DNS_QUERY_RETRANSMIT_TIMEOUT_SEC + 8, 1 };
+	const int initial_retry[] = { DNS_QUERY_ATTEMPT_LIMIT + 4, 0 };
+	int test_result = false;
+	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.limits.example", ns_t_srv), "cannot start SRV resolver-limit response");
+	CHECK(dns_builder_wire_srv_create(0, 0, 25565, "target.example", wire_srv, sizeof(wire_srv), &wire_srv_size), "cannot encode SRV resolver-limit record");
+	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_srv, ns_c_in, 30, wire_srv, wire_srv_size), "cannot add SRV resolver-limit record");
+	for (size_t limit_index = 0; limit_index < sizeof(initial_retry) / sizeof(initial_retry[0]); limit_index++) {
+		dns_resolver.expected_retrans = expected_retrans[limit_index];
+		dns_resolver.expected_retry = expected_retry[limit_index];
+		dns_resolver.initial_retrans = initial_retrans[limit_index];
+		dns_resolver.initial_retry = initial_retry[limit_index];
+		size_t close_count = dns_resolver.close_count;
+		size_t init_count = dns_resolver.init_count;
+		dns_test_query_reset();
+		dns_query_fixtures[0] = (dns_query_fixture){ 0, "_minecraft._tcp.limits.example", &builder };
+		dns_query_fixture_count = 1;
+		CHECK(dns_srv_lookup("_minecraft._tcp.limits.example", &result) == DNS_SRV_LOOKUP_OK, "resolver limits broke SRV lookup");
+		CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "SRV lookup applied the wrong resolver limits");
+		CHECK(dns_resolver.init_count == init_count + 1 && dns_resolver.close_count == close_count + 1, "SRV lookup did not close its initialized resolver state");
+		dns_srv_result_destroy(&result);
+	}
+	test_result = true;
+
+cleanup:
+	dns_resolver.expected_retrans = DNS_QUERY_RETRANSMIT_TIMEOUT_SEC;
+	dns_resolver.expected_retry = DNS_QUERY_ATTEMPT_LIMIT;
+	dns_resolver.initial_retrans = DNS_QUERY_RETRANSMIT_TIMEOUT_SEC + 1;
+	dns_resolver.initial_retry = DNS_QUERY_ATTEMPT_LIMIT + 1;
 	dns_srv_result_destroy(&result);
 	return test_result;
 }
@@ -808,6 +862,27 @@ cleanup:
 }
 
 /* section: functions (exported) */
+void __wrap___res_nclose(res_state resolver) {
+	if (resolver == NULL) {
+		dns_query_mismatch = true;
+		return;
+	}
+	dns_resolver.close_count++;
+	memset(resolver, 0, sizeof(*resolver));
+}
+
+int __wrap___res_ninit(res_state resolver) {
+	if (resolver == NULL) {
+		dns_query_mismatch = true;
+		return -1;
+	}
+	memset(resolver, 0, sizeof(*resolver));
+	resolver->retrans = dns_resolver.initial_retrans;
+	resolver->retry = dns_resolver.initial_retry;
+	dns_resolver.init_count++;
+	return 0;
+}
+
 int __wrap_res_nmkquery(res_state resolver, int operation, const char *name, int record_class, int type, const unsigned char *data, int data_size, const unsigned char *new_record,
 	unsigned char *query, int query_size) {
 	if (dns_query_pending || dns_query_fixture_index >= dns_query_fixture_count || resolver == NULL || operation != ns_o_query || name == NULL || record_class != ns_c_in || type != ns_t_srv
@@ -864,7 +939,8 @@ int __wrap_res_nsend(res_state resolver, const unsigned char *query, int query_s
 
 /* section: functions (entry point) */
 int main(void) {
-	if (!dns_test_aliases() || !dns_test_arguments() || !dns_test_malformed() || !dns_test_records() || !dns_test_statuses() || !dns_test_truncation()) {
+	if (!dns_test_aliases() || !dns_test_arguments() || !dns_test_lookup() || !dns_test_lookup_depth() || !dns_test_malformed() || !dns_test_negative() || !dns_test_records()
+		|| !dns_test_resolver_limits() || !dns_test_statuses() || !dns_test_truncation()) {
 		return EXIT_FAILURE;
 	}
 	return EXIT_SUCCESS;

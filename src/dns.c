@@ -305,6 +305,19 @@ static int dns_query_exact(res_state resolver, const char *name, int type, unsig
 	return res_nsend(resolver, query, query_size, response, response_capacity);
 }
 
+static bool dns_resolver_init(res_state resolver) {
+	if (res_ninit(resolver) != 0) {
+		return false;
+	}
+	if (resolver->retry > DNS_QUERY_ATTEMPT_LIMIT) {
+		resolver->retry = DNS_QUERY_ATTEMPT_LIMIT;
+	}
+	if (resolver->retrans > DNS_QUERY_RETRANSMIT_TIMEOUT_SEC) {
+		resolver->retrans = DNS_QUERY_RETRANSMIT_TIMEOUT_SEC;
+	}
+	return true;
+}
+
 static dns_address_parse_status dns_response_addresses_collect(ns_msg *response, sa_family_t family, dns_address_candidate *addresses, size_t *address_count, dns_cname_record *cnames,
 	size_t *cname_count) {
 	const unsigned char *message_begin = ns_msg_base(*response);
@@ -638,7 +651,7 @@ dns_address_lookup_status dns_address_lookup(const char *hostname, sa_family_t f
 	}
 	struct __res_state resolver;
 	memset(&resolver, 0, sizeof(resolver));
-	if (res_ninit(&resolver) != 0) {
+	if (!dns_resolver_init(&resolver)) {
 		return DNS_ADDRESS_LOOKUP_PERMANENT_ERROR;
 	}
 	unsigned char *response = malloc(NS_MAXMSG);
@@ -810,7 +823,7 @@ dns_srv_lookup_status dns_srv_lookup(const char *query_name, dns_srv_result *res
 	}
 	struct __res_state resolver;
 	memset(&resolver, 0, sizeof(resolver));
-	if (res_ninit(&resolver) != 0) {
+	if (!dns_resolver_init(&resolver)) {
 		return DNS_SRV_LOOKUP_PERMANENT_ERROR;
 	}
 	unsigned char *response = malloc(NS_MAXMSG);

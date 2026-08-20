@@ -26,6 +26,16 @@
 #define DNS_CNAME_DEPTH_LIMIT	16
 #define DNS_SRV_RECORD_LIMIT	128
 
+/* resolver
+ * These values cap one res_nsend() call, not a complete multi-query CNAME lookup.
+ */
+#ifndef DNS_QUERY_ATTEMPT_LIMIT
+#define DNS_QUERY_ATTEMPT_LIMIT	1
+#endif
+#ifndef DNS_QUERY_RETRANSMIT_TIMEOUT_SEC
+#define DNS_QUERY_RETRANSMIT_TIMEOUT_SEC	2
+#endif
+
 /* section: types */
 typedef enum {
 	DNS_ADDRESS_LOOKUP_OK,
