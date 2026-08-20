@@ -9,6 +9,10 @@
 
 #define _MRS_CONNSETUP_H_INCLUDED_
 
+/* section: headers (library) */
+#include <stddef.h>
+#include <stdint.h>
+
 /* section: headers (project) */
 #include "config.h"
 #include "network.h"
@@ -25,5 +29,6 @@
 
 /* section: functions (exported) */
 int connsetup(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in);
+int connsetup_preloaded(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, const uint8_t *inbound, size_t inbound_size);
 
 #endif

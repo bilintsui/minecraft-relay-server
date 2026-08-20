@@ -88,13 +88,14 @@ static void connsetup_send_proxy_header(int socket_in, int socket_out, char *phe
 	}
 }
 
-static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, uint8_t *inbound, ssize_t packlen_inbound) {
+static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, const uint8_t *inbound,
+	size_t packlen_inbound) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
 	memset(rewrited, 0, BUFSIZ);
 	memset(pheader, 0, PROTOPROXY_PACKETMAXLEN + 1);
-	uint8_t login_version = protocol_identify(inbound, (size_t)packlen_inbound, NULL);
+	uint8_t login_version = protocol_identify(inbound, packlen_inbound, NULL);
 	if (login_version == PVER_LEGACYL1) {
 		mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, type: game, status: reject_gamerelay_oldclient\n",
@@ -177,7 +178,8 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 	return CONNSETUP_EABORT;
 }
 
-static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, uint8_t *inbound, ssize_t packlen_inbound) {
+static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, const uint8_t *inbound,
+	size_t packlen_inbound) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
@@ -265,13 +267,14 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 	return CONNSETUP_EABORT;
 }
 
-static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, uint8_t *inbound, ssize_t packlen_inbound) {
+static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, const uint8_t *inbound,
+	size_t packlen_inbound) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
 	memset(rewrited, 0, BUFSIZ);
 	memset(pheader, 0, PROTOPROXY_PACKETMAXLEN + 1);
-	p_handshake inbound_info = packet_read(inbound, inbound + packlen_inbound);
+	p_handshake inbound_info = packet_read((void *)inbound, (void *)(inbound + packlen_inbound));
 	if (inbound_info.version == 0) {
 		intent_t intent;
 		protocol_identify(inbound, (size_t)packlen_inbound, &intent);
@@ -499,7 +502,15 @@ int connsetup(int socket_in, int *socket_out, const char *logfile, conf *conf_in
 	if (!connsetup_receive_initial(socket_in, inbound, &packlen_inbound, logfile, conf_in->log.level, &addrinfo_in)) {
 		return CONNSETUP_EABORT;
 	}
-	if (protocol_identify(inbound, (size_t)packlen_inbound, NULL) == PVER_UNIDENT) {
+	return connsetup_preloaded(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, (size_t)packlen_inbound);
+}
+
+int connsetup_preloaded(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, const uint8_t *inbound, size_t inbound_size) {
+	if (inbound == NULL || inbound_size == 0 || inbound_size > BUFSIZ) {
+		close(socket_in);
+		return CONNSETUP_EABORT;
+	}
+	if (protocol_identify(inbound, inbound_size, NULL) == PVER_UNIDENT) {
 		mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, status: reject_unidentproto\n",
 			(char *)&(addrinfo_in.address), addrinfo_in.port
@@ -508,10 +519,10 @@ int connsetup(int socket_in, int *socket_out, const char *logfile, conf *conf_in
 		return CONNSETUP_EUNIDENT;
 	}
 	if (inbound[0] == 0xFE) {
-		return connsetup_handle_legacy_motd(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, packlen_inbound);
+		return connsetup_handle_legacy_motd(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, inbound_size);
 	} else if (inbound[0] == 2) {
-		return connsetup_handle_legacy_login(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, packlen_inbound);
+		return connsetup_handle_legacy_login(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, inbound_size);
 	} else {
-		return connsetup_handle_modern_handshake(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, packlen_inbound);
+		return connsetup_handle_modern_handshake(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, inbound_size);
 	}
 }

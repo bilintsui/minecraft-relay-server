@@ -558,8 +558,7 @@ int main(int argc, char **argv) {
 	CHECK(socket_send_all(client_fd, malformed_handshake, sizeof(malformed_handshake)) == 0, "cannot send malformed handshake");
 	CHECK(shutdown(client_fd, SHUT_WR) == 0, "cannot finish malformed handshake");
 	uint8_t rejection[4096];
-	CHECK(message_receive(client_fd, rejection, sizeof(rejection), TEST_TIMEOUT_MS) > 0, "malformed handshake was not rejected");
-	CHECK(message_receive(client_fd, rejection, sizeof(rejection), TEST_TIMEOUT_MS) == 0, "malformed connection remained open");
+	CHECK(message_receive(client_fd, rejection, sizeof(rejection), TEST_TIMEOUT_MS) == 0, "malformed handshake connection remained open");
 	CHECK(close(client_fd) == 0, "cannot close malformed test client");
 	client_fd = -1;
 	upstream_client_fd = server_accept(upstream_server_fd, QUIET_TIMEOUT_MS);

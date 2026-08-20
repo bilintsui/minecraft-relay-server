@@ -253,6 +253,77 @@ static pid_t process_wait(pid_t process, int *status, int timeout_ms) {
 	return -1;
 }
 
+static int server_accept(int server_fd, int timeout_ms) {
+	struct pollfd poll_fd = {
+		.fd = server_fd,
+		.events = POLLIN
+	};
+	int poll_result;
+	do {
+		poll_result = poll(&poll_fd, 1, timeout_ms);
+	} while (poll_result == -1 && errno == EINTR);
+	if (poll_result == 0) {
+		errno = ETIMEDOUT;
+		return -1;
+	}
+	if (poll_result == -1 || !(poll_fd.revents & POLLIN)) {
+		if (poll_result != -1) {
+			errno = EIO;
+		}
+		return -1;
+	}
+	return accept(server_fd, NULL, NULL);
+}
+
+static int server_open(in_port_t *port) {
+	int fd = socket(AF_INET, SOCK_STREAM, 0);
+	if (fd == -1) {
+		return -1;
+	}
+	int reuse_address = 1;
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(reuse_address)) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	struct sockaddr_in address = {
+		.sin_family = AF_INET,
+		.sin_addr.s_addr = htonl(INADDR_LOOPBACK)
+	};
+	if (bind(fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	socklen_t address_length = sizeof(address);
+	if (getsockname(fd, (struct sockaddr *)&address, &address_length) == -1 || listen(fd, 1) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	*port = ntohs(address.sin_port);
+	return fd;
+}
+
+static int socket_send_all(int socket_fd, const void *data, size_t size) {
+	const uint8_t *bytes = data;
+	size_t sent = 0;
+	while (sent < size) {
+		ssize_t send_result = send(socket_fd, bytes + sent, size - sent, MSG_NOSIGNAL);
+		if (send_result == -1 && errno == EINTR) {
+			continue;
+		}
+		if (send_result <= 0) {
+			return -1;
+		}
+		sent += (size_t)send_result;
+	}
+	return 0;
+}
+
 static bool worker_descriptors_valid(pid_t worker) {
 	char directory_name[64];
 	int directory_length = snprintf(directory_name, sizeof(directory_name), "/proc/%ld/fd", (long)worker);
@@ -361,11 +432,11 @@ static int worker_ready_wait(pid_t worker, int timeout_ms) {
 	return -1;
 }
 
-static int write_config(const char *filename, const char *log_filename, in_port_t port) {
+static int write_config(const char *filename, const char *log_filename, in_port_t listener_port, in_port_t upstream_port) {
 	char content[PATH_MAX + 512];
 	int content_length = snprintf(content, sizeof(content),
-		"{\"log\":{\"filename\":\"%s\",\"level\":4},\"listen\":{\"address\":\"127.0.0.1\",\"port\":%u},\"icon\":\"\",\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"127.0.0.1\",\"port\":25565}]}\n",
-		log_filename, (unsigned int)port
+		"{\"log\":{\"filename\":\"%s\",\"level\":4},\"listen\":{\"address\":\"127.0.0.1\",\"port\":%u},\"icon\":\"\",\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"127.0.0.1\",\"port\":%u}]}\n",
+		log_filename, (unsigned int)listener_port, (unsigned int)upstream_port
 	);
 	if (content_length < 0 || (size_t)content_length >= sizeof(content)) {
 		errno = EOVERFLOW;
@@ -391,6 +462,13 @@ static int write_config(const char *filename, const char *log_filename, in_port_
 
 /* section: functions (entry point) */
 int main(int argc, char **argv) {
+	/* Modern login handshake for test.example followed by a login-start packet for testuser1. */
+	static const uint8_t login_request[] = {
+		0x12, 0x00, 0x2F, 0x0C,
+		't', 'e', 's', 't', '.', 'e', 'x', 'a', 'm', 'p', 'l', 'e',
+		0x63, 0xDD, 0x02,
+		0x0B, 0x00, 0x09, 't', 'e', 's', 't', 'u', 's', 'e', 'r', '1'
+	};
 	char temp_directory[] = "/tmp/mcrelay-worker-lifecycle-XXXXXX";
 	char config_filename[PATH_MAX] = { 0 };
 	char log_filename[PATH_MAX] = { 0 };
@@ -401,6 +479,8 @@ int main(int argc, char **argv) {
 	int notify_fd = -1;
 	int probe_fd = -1;
 	int result = EXIT_FAILURE;
+	int upstream_client_fd = -1;
+	int upstream_server_fd = -1;
 	pid_t worker = -1;
 	CHECK(argc == 2, "mcrelay executable path is required");
 	CHECK(prctl(PR_SET_CHILD_SUBREAPER, 1) == 0, "cannot become a child subreaper");
@@ -417,9 +497,11 @@ int main(int argc, char **argv) {
 	CHECK(filename_length > 0 && (size_t)filename_length < sizeof(log_filename), "cannot format log filename");
 	filename_length = snprintf(notify_filename, sizeof(notify_filename), "%s/notify.sock", temp_directory);
 	CHECK(filename_length > 0 && (size_t)filename_length < sizeof(notify_filename), "cannot format notification socket filename");
-	in_port_t port;
+	in_port_t port, upstream_port;
+	upstream_server_fd = server_open(&upstream_port);
+	CHECK(upstream_server_fd != -1, "cannot open fake upstream server");
 	CHECK(port_find(&port) == 0, "cannot find a free listener port");
-	CHECK(write_config(config_filename, log_filename, port) == 0, "cannot write configuration");
+	CHECK(write_config(config_filename, log_filename, port, upstream_port) == 0, "cannot write configuration");
 
 	notify_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
 	CHECK(notify_fd != -1, "cannot create notification socket");
@@ -435,6 +517,9 @@ int main(int argc, char **argv) {
 	CHECK(message_receive(notify_fd, message, sizeof(message), TEST_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "listener READY notification is missing");
 	client_fd = client_connect(port);
 	CHECK(client_fd != -1, "cannot connect test client");
+	CHECK(socket_send_all(client_fd, login_request, sizeof(login_request)) == 0, "cannot send test login request");
+	upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
+	CHECK(upstream_client_fd != -1, "worker did not connect to fake upstream server");
 	worker = worker_find(listener, TEST_TIMEOUT_MS);
 	CHECK(worker > 0, "cannot find worker process");
 	CHECK(worker_ready_wait(worker, TEST_TIMEOUT_MS) == 0, "worker initialization did not complete");
@@ -495,6 +580,12 @@ cleanup:
 	}
 	if (probe_fd != -1) {
 		close(probe_fd);
+	}
+	if (upstream_client_fd != -1) {
+		close(upstream_client_fd);
+	}
+	if (upstream_server_fd != -1) {
+		close(upstream_server_fd);
 	}
 	unlink(config_filename);
 	unlink(log_filename);
