@@ -18,6 +18,7 @@
 
 /* section: headers (project) */
 #include "define/global.h"
+#include "log.h"
 
 /* section: defines */
 /* limit */
@@ -27,18 +28,6 @@
  * framework + motd text + varint overhead within BUFSIZ (8192).
  */
 #define CONF_ICON_B64MAX	7000
-
-/* error code */
-#define CONF_EARGUMENT	1
-#define CONF_EROPENFAIL	2
-#define CONF_EROPENEMPTY	3
-#define CONF_EROPENLARGE	4
-#define CONF_ERMEMORY	5
-#define CONF_ERPARSE	6
-#define CONF_ECMEMORY	7
-#define CONF_ECLISTENPORT	8
-#define CONF_ECPROXY	9
-#define CONF_ECPROXYDUP	10
 
 /* section: types */
 typedef struct {
@@ -59,6 +48,19 @@ typedef struct {
 	cJSON *proxy;
 } conf;
 typedef enum {
+	CONF_ERROR_NONE,
+	CONF_EARGUMENT,
+	CONF_EROPENFAIL,
+	CONF_EROPENEMPTY,
+	CONF_EROPENLARGE,
+	CONF_ERMEMORY,
+	CONF_ERPARSE,
+	CONF_ECMEMORY,
+	CONF_ECLISTENPORT,
+	CONF_ECPROXY,
+	CONF_ECPROXYDUP
+} conf_error;
+typedef enum {
 	CONF_READ_ERROR = -1,
 	CONF_READ_UNCHANGED,
 	CONF_READ_CHANGED
@@ -70,9 +72,9 @@ void config_cache_destroy(conf_cache *target);
 bool config_clone(const conf *source, conf **result);
 void config_destroy(conf *target);
 void config_dumper(conf *src);
-const char *config_errmsg(int err);
+const char *config_errmsg(conf_error err);
 bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const char *failure_action);
-void config_log_duplicate_error(const char *logfile, uint8_t maxlevel, uint8_t msglevel, const char *suffix);
+void config_log_duplicate_error(const char *logfile, uint8_t maxlevel, mksys_level msglevel, const char *suffix);
 conf_read_status config_read(const char *filename, const conf_cache *active_cache, conf_cache *candidate_cache, conf **result);
 
 #endif

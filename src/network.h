@@ -15,27 +15,23 @@
 #include <stdint.h>
 #include <sys/socket.h>
 
-/* section: defines */
-/* socket create mode */
-#define NETSOCK_BIND	0
-#define NETSOCK_CONN	1
-
-/* error code */
-#define NET_EARGFAMILY	1
-#define NET_EMALLOC	2
-#define NET_ENORECORD	3
-#define NET_EARGACTION	4
-#define NET_EARGADDR	5
-#define NET_ESOCKET	6
-#define NET_EREUSEADDR	7
-#define NET_EBIND	8
-#define NET_ELISTEN	9
-#define NET_ECONNECT	10
-
 /* section: types */
+typedef enum {
+	NET_OK,
+	NET_EARGFAMILY,
+	NET_EMALLOC,
+	NET_ENORECORD,
+	NET_EARGACTION,
+	NET_EARGADDR,
+	NET_ESOCKET,
+	NET_EREUSEADDR,
+	NET_EBIND,
+	NET_ELISTEN,
+	NET_ECONNECT
+} net_error;
 typedef struct {
 	sa_family_t family;
-	int err;
+	net_error err;
 	union {
 		uint32_t v4;
 		uint8_t v6[16];
@@ -57,6 +53,11 @@ typedef enum {
 	NET_CONNECT_BAD_ARGUMENT,
 	NET_CONNECT_INTERNAL
 } net_connect_status;
+typedef enum {
+	NETSOCK_BIND,
+	NETSOCK_CONN
+} net_socket_action;
+
 /* section: functions (exported) */
 net_addr net_addr_parse(const char *address);
 net_connect_status net_connect_nonblocking(const net_addr *address, in_port_t port, int *socket_fd);
@@ -64,6 +65,6 @@ net_connect_status net_connect_nonblocking_complete(int socket_fd);
 net_addrp net_ntop(sa_family_t family, const void *src, bool v6addition);
 int net_relay(int socket_in, int socket_out);
 net_addr net_resolve_dual(const char *hostname, sa_family_t primary_family, bool dual);
-int net_socket(short action, sa_family_t family, const void *address, in_port_t port, bool reuseaddr);
+int net_socket(net_socket_action action, sa_family_t family, const void *address, in_port_t port, bool reuseaddr);
 
 #endif

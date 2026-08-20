@@ -269,7 +269,7 @@ route_waiter_create_status route_waiter_create(route_generation *generation, con
 	if (generation == NULL || vhost == NULL || inbound_proxy == NULL || !route_waiter_time_valid(now) || result == NULL || *result != NULL
 		|| LISTENER_ROUTE_WAIT_TIMEOUT_SEC == 0 || (inbound_proxy->family != AF_INET && inbound_proxy->family != AF_INET6)
 		|| inbound_proxy->srcaddr.family != inbound_proxy->family || inbound_proxy->dstaddr.family != inbound_proxy->family
-		|| inbound_proxy->srcaddr.err != 0 || inbound_proxy->dstaddr.err != 0) {
+		|| inbound_proxy->srcaddr.err != NET_OK || inbound_proxy->dstaddr.err != NET_OK) {
 		return ROUTE_WAITER_CREATE_BAD_ARGUMENT;
 	}
 	size_t vhost_size = strlen(vhost);

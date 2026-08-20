@@ -37,7 +37,13 @@
 #define VARINT_T_LAST_MASK	((varint_t)((1u << ((sizeof(varint_t) * 8) % 7)) - 1))
 
 /* section: types */
-typedef uint8_t intent_t;
+/* Minecraft handshake intent values; keep this declaration in wire-value order. */
+typedef enum {
+	CLIENT_INTENT_UNSPECIFIED,
+	CLIENT_INTENT_STATUS,
+	CLIENT_INTENT_LOGIN,
+	CLIENT_INTENT_TRANSFER
+} intent_t;
 typedef uint32_t varint_t;
 
 #endif

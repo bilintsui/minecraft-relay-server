@@ -37,18 +37,18 @@ typedef struct {
 } connsetup_proxy;
 
 /* section: functions (local) */
-static int connsetup_connect_outbound(int *socket_out, const connsetup_snapshot *snapshot) {
+static net_error connsetup_connect_outbound(int *socket_out, const connsetup_snapshot *snapshot) {
 	if (snapshot->route_status != CONNSETUP_ROUTE_READY) {
 		*socket_out = -1;
 		return NET_ENORECORD;
 	}
 	const net_addr *address = &snapshot->endpoint.address;
-	if ((address->family != AF_INET && address->family != AF_INET6) || address->err != 0 || snapshot->endpoint.port == 0) {
+	if ((address->family != AF_INET && address->family != AF_INET6) || address->err != NET_OK || snapshot->endpoint.port == 0) {
 		*socket_out = -1;
 		return NET_ENORECORD;
 	}
 	*socket_out = net_socket(NETSOCK_CONN, address->family, &address->addr, snapshot->endpoint.port, false);
-	return *socket_out == -1 ? NET_ECONNECT : 0;
+	return *socket_out == -1 ? NET_ECONNECT : NET_OK;
 }
 
 static connsetup_proxy connsetup_proxyinfo_prepare(const connsetup_snapshot *snapshot) {
@@ -72,14 +72,13 @@ static void connsetup_send_proxy_header(int socket_out, char *pheader, const con
 	}
 }
 
-static int connsetup_handle_legacy_login(int socket_in, int *socket_out, net_addrbundle addrinfo_in, const uint8_t *inbound, size_t packlen_inbound,
-	const connsetup_snapshot *snapshot) {
+static connsetup_status connsetup_handle_legacy_login(int socket_in, int *socket_out, net_addrbundle addrinfo_in, const uint8_t *inbound, size_t packlen_inbound, const connsetup_snapshot *snapshot) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
 	memset(rewrited, 0, BUFSIZ);
 	memset(pheader, 0, PROTOPROXY_PACKETMAXLEN + 1);
-	uint8_t login_version = protocol_identify(inbound, packlen_inbound, NULL);
+	protocol_version login_version = protocol_identify(inbound, packlen_inbound, NULL);
 	if (login_version == PVER_LEGACYL1) {
 		mksysmsg(MKSYS_PREFIX_ON, snapshot->log_filename, snapshot->log_level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, type: game, status: reject_gamerelay_oldclient\n",
@@ -111,16 +110,16 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, net_add
 			close(socket_in);
 			return CONNSETUP_ENOVHOST;
 		}
-		int mkoutbound_status;
-		uint8_t outmsg_level;
+		net_error mkoutbound_status;
+		mksys_level outmsg_level;
 		mkoutbound_status = connsetup_connect_outbound(socket_out, snapshot);
-		if (mkoutbound_status != 0) {
+		if (mkoutbound_status != NET_OK) {
 			outmsg_level = MKSYS_LEVEL_WARNING;
 		} else {
 			outmsg_level = MKSYS_LEVEL_INFORMATION;
 		}
 		switch (mkoutbound_status) {
-			case 0:
+			case NET_OK:
 				mksysmsg(MKSYS_PREFIX_ON, snapshot->log_filename, snapshot->log_level, outmsg_level,
 					"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: accept, username: %s\n",
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
@@ -136,7 +135,7 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, net_add
 				} else {
 					send(*socket_out, inbound, packlen_inbound, 0);
 				}
-				return 0;
+				return CONNSETUP_OK;
 			case NET_ENORECORD:
 			case NET_ECONNECT:
 				if (mkoutbound_status == NET_ENORECORD) {
@@ -155,14 +154,15 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, net_add
 				send(socket_in, rewrited, packlen_rewrited, 0);
 				close(socket_in);
 				return (mkoutbound_status == NET_ENORECORD) ? CONNSETUP_ENORECORD : CONNSETUP_ENOCONNECT;
+			default:
+				break;
 		}
 	}
 	close(socket_in);
 	return CONNSETUP_EABORT;
 }
 
-static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, net_addrbundle addrinfo_in, const uint8_t *inbound, size_t packlen_inbound,
-	const connsetup_snapshot *snapshot) {
+static connsetup_status connsetup_handle_modern_handshake(int socket_in, int *socket_out, net_addrbundle addrinfo_in, const uint8_t *inbound, size_t packlen_inbound, const connsetup_snapshot *snapshot) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
@@ -205,11 +205,11 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, net
 		close(socket_in);
 		return CONNSETUP_ENOVHOST;
 	}
-	int mkoutbound_status;
+	net_error mkoutbound_status;
 	mkoutbound_status = connsetup_connect_outbound(socket_out, snapshot);
-	uint8_t outmsg_level = mkoutbound_status == 0 ? MKSYS_LEVEL_INFORMATION : MKSYS_LEVEL_WARNING;
+	mksys_level outmsg_level = mkoutbound_status == NET_OK ? MKSYS_LEVEL_INFORMATION : MKSYS_LEVEL_WARNING;
 	switch (mkoutbound_status) {
-		case 0:
+		case NET_OK:
 			mksysmsg(MKSYS_PREFIX_ON, snapshot->log_filename, snapshot->log_level, outmsg_level,
 				"src: %s:%d, type: %s, vhost: %s, dst: %s:%d, status: accept, username: %s\n",
 				(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
@@ -232,7 +232,7 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, net
 				send(*socket_out, inbound, packlen_inbound, 0);
 			}
 			packet_destroy(inbound_info);
-			return 0;
+			return CONNSETUP_OK;
 		case NET_ENORECORD:
 		case NET_ECONNECT:
 			if (mkoutbound_status == NET_ENORECORD) {
@@ -252,19 +252,20 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, net
 			close(socket_in);
 			packet_destroy(inbound_info);
 			return (mkoutbound_status == NET_ENORECORD) ? CONNSETUP_ENORECORD : CONNSETUP_ENOCONNECT;
+		default:
+			break;
 	}
 	close(socket_in);
 	return CONNSETUP_EABORT;
 }
 
-static int connsetup_prepared_run(int socket_in, int *socket_out, net_addrbundle addrinfo_in, const uint8_t *inbound, size_t inbound_size,
-	const connsetup_snapshot *snapshot) {
+static connsetup_status connsetup_prepared_run(int socket_in, int *socket_out, net_addrbundle addrinfo_in, const uint8_t *inbound, size_t inbound_size, const connsetup_snapshot *snapshot) {
 	if (socket_out == NULL || inbound == NULL || inbound_size == 0 || inbound_size > BUFSIZ) {
 		close(socket_in);
 		return CONNSETUP_EABORT;
 	}
 	intent_t intent;
-	uint8_t protocol = protocol_identify(inbound, inbound_size, &intent);
+	protocol_version protocol = protocol_identify(inbound, inbound_size, &intent);
 	if (protocol == PVER_UNIDENT) {
 		mksysmsg(MKSYS_PREFIX_ON, snapshot->log_filename, snapshot->log_level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, status: reject_unidentproto\n",
@@ -296,7 +297,7 @@ static int connsetup_prepared_run(int socket_in, int *socket_out, net_addrbundle
 }
 
 /* section: functions (exported) */
-int connsetup_prepared(int socket_in, int *socket_out, const connsetup_snapshot *snapshot, net_addrbundle addrinfo_in, const uint8_t *inbound, size_t inbound_size) {
+connsetup_status connsetup_prepared(int socket_in, int *socket_out, const connsetup_snapshot *snapshot, net_addrbundle addrinfo_in, const uint8_t *inbound, size_t inbound_size) {
 	if (snapshot == NULL || memchr(snapshot->icon_b64, '\0', sizeof(snapshot->icon_b64)) == NULL
 		|| memchr(snapshot->log_filename, '\0', sizeof(snapshot->log_filename)) == NULL || snapshot->route_status < CONNSETUP_ROUTE_BYPASS
 		|| snapshot->route_status > CONNSETUP_ROUTE_UNAVAILABLE) {

@@ -18,11 +18,6 @@
 #include "../define/global.h"
 
 /* section: defines */
-/* client intent value */
-#define CLIENT_INTENT_STATUS	1
-#define CLIENT_INTENT_LOGIN	2
-#define CLIENT_INTENT_TRANSFER	3
-
 /* server icon */
 #define FAVICON_BASE64 \
 	"iVBORw0KGgoAAAANSUhEUgAAAEAAAABABAMAAABYR2ztAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAPUExURQAAAL4BAeMAALEAAP///y4OgmUAAAABdFJOUwBA5thmAAAA" \

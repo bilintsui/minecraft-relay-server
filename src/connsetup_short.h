@@ -27,7 +27,7 @@ typedef enum {
 typedef struct {
 	connsetup_snapshot snapshot;
 	net_addrbundle inbound_address;
-	uint8_t protocol;
+	protocol_version protocol;
 	intent_t intent;
 	uint8_t pheader[PROTOPROXY_PACKETMAXLEN + 1U];
 	size_t pheader_size;
@@ -35,7 +35,7 @@ typedef struct {
 	size_t request_size;
 	uint8_t *response;
 	size_t response_size;
-	int result;
+	connsetup_status result;
 } connsetup_short_plan;
 
 /* section: functions (exported) */

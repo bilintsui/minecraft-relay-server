@@ -75,7 +75,7 @@ size_t base64_encode(void *dst, size_t dst_cap, const void *src, size_t src_len)
 }
 
 ssize_t freadall(const char *filename, void **dst, bool allow_fifo) {
-	int error_code = 0;
+	freadall_error error_code = FREADALL_ERROR_NONE;
 	FILE *srcfd = NULL;
 	void *result = NULL;
 	if ((filename == NULL) || (dst == NULL)) {

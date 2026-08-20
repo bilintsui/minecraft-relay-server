@@ -442,7 +442,7 @@ void config_dumper(conf *src) {
 	}
 }
 
-const char *config_errmsg(int err) {
+const char *config_errmsg(conf_error err) {
 	switch (err) {
 		case CONF_EROPENFAIL:
 			return "Cannot read config file: ";
@@ -557,7 +557,7 @@ bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const ch
 	return false;
 }
 
-void config_log_duplicate_error(const char *logfile, uint8_t maxlevel, uint8_t msglevel, const char *suffix) {
+void config_log_duplicate_error(const char *logfile, uint8_t maxlevel, mksys_level msglevel, const char *suffix) {
 	const char *base = config_errmsg(CONF_ECPROXYDUP);
 	if (config_duperr[0] != '\0') {
 		mksysmsg(MKSYS_PREFIX_ON, logfile, maxlevel, msglevel, "%s. Affected: \"%s\"%s\n", base, config_duperr, suffix);

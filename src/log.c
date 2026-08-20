@@ -62,7 +62,7 @@ int log_file_validate(const char *filename) {
 	return close(fd);
 }
 
-int mksysmsg(bool noprefix, const char *logfile, uint8_t maxlevel, uint8_t msglevel, const char *format, ...) {
+int mksysmsg(bool noprefix, const char *logfile, uint8_t maxlevel, mksys_level msglevel, const char *format, ...) {
 	char level_str[8];
 	int status;
 	va_list varlist;

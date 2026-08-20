@@ -43,7 +43,7 @@ static bool resolver_system_family(sa_family_t family, bool *tested) {
 	CHECK(reference->h_addrtype == family && reference->h_length == (int)address_size && reference->h_addr_list != NULL && reference->h_addr_list[0] != NULL, "system NSS returned an invalid localhost address");
 	memcpy(expected, reference->h_addr_list[0], address_size);
 	net_addr result = net_resolve_dual("localhost", family, false);
-	CHECK(result.err == 0 && result.family == family && memcmp(&result.addr, expected, address_size) == 0, "net_resolve_dual did not preserve the system NSS localhost result");
+	CHECK(result.err == NET_OK && result.family == family && memcmp(&result.addr, expected, address_size) == 0, "net_resolve_dual did not preserve the system NSS localhost result");
 	*tested = true;
 	test_result = true;
 

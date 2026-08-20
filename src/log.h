@@ -14,12 +14,6 @@
 #include <stdint.h>
 
 /* section: defines */
-/* logging level */
-#define MKSYS_LEVEL_CRITICAL	0
-#define MKSYS_LEVEL_WARNING	1
-#define MKSYS_LEVEL_INFORMATION	2
-#define MKSYS_LEVEL_ALL	255
-
 /* log file alias */
 #define MKSYS_NOLOGFILE	""
 
@@ -27,8 +21,17 @@
 #define MKSYS_PREFIX_ON	false
 #define MKSYS_PREFIX_OFF	true
 
+/* section: types */
+/* Ordered by verbosity; keep the configured levels in this order. */
+typedef enum {
+	MKSYS_LEVEL_CRITICAL,
+	MKSYS_LEVEL_WARNING,
+	MKSYS_LEVEL_INFORMATION,
+	MKSYS_LEVEL_ALL
+} mksys_level;
+
 /* section: functions (exported) */
 int log_file_validate(const char *filename);
-int mksysmsg(bool noprefix, const char *logfile, uint8_t maxlevel, uint8_t msglevel, const char *format, ...);
+int mksysmsg(bool noprefix, const char *logfile, uint8_t maxlevel, mksys_level msglevel, const char *format, ...);
 
 #endif

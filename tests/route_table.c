@@ -136,7 +136,7 @@ static bool route_test_routes(void) {
 		"equivalent IPv6 literals were not deduplicated");
 	CHECK(route_table_destination_get(table, 2, &destination) && !destination.numeric && strcmp(destination.query_name, "example.com") == 0 && destination.port == 25566 && !destination.srv,
 		"explicit-port DNS destination was not normalized");
-	CHECK(destination.numeric_address.family == 0 && destination.numeric_address.err == 0, "name destination retained numeric-parser error state");
+	CHECK(destination.numeric_address.family == 0 && destination.numeric_address.err == NET_OK, "name destination retained numeric-parser error state");
 	CHECK(route_table_destination_get(table, 3, &destination) && !destination.numeric && strcmp(destination.query_name, "_minecraft._tcp.example.com") == 0 && destination.port == 0 && destination.srv,
 		"SRV owner was not prepared exactly");
 	CHECK(route_table_destination_get(table, 4, &destination) && !destination.numeric && strcmp(destination.query_name, "example.com") == 0 && destination.port == 25567,

@@ -19,16 +19,6 @@
 #include "network.h"
 #include "route_endpoint.h"
 
-/* section: defines */
-/* error code */
-#define CONNSETUP_OK	0
-#define CONNSETUP_EABORT	1
-#define CONNSETUP_EUNIDENT	2
-#define CONNSETUP_ENOVHOST	3
-#define CONNSETUP_ENORECORD	4
-#define CONNSETUP_ENOCONNECT	5
-#define CONNSETUP_EOLDCLIENT	6
-
 /* section: types */
 typedef enum {
 	CONNSETUP_ROUTE_BYPASS,
@@ -43,9 +33,18 @@ typedef struct {
 	uint8_t log_level;
 	connsetup_route_status route_status;
 } connsetup_snapshot;
+typedef enum {
+	CONNSETUP_OK,
+	CONNSETUP_EABORT,
+	CONNSETUP_EUNIDENT,
+	CONNSETUP_ENOVHOST,
+	CONNSETUP_ENORECORD,
+	CONNSETUP_ENOCONNECT,
+	CONNSETUP_EOLDCLIENT
+} connsetup_status;
 
 /* section: functions (exported) */
 /* The snapshot is a self-contained value with no config, route, cache, resolution, or DNS-record pointers. */
-int connsetup_prepared(int socket_in, int *socket_out, const connsetup_snapshot *snapshot, net_addrbundle addrinfo_in, const uint8_t *inbound, size_t inbound_size);
+connsetup_status connsetup_prepared(int socket_in, int *socket_out, const connsetup_snapshot *snapshot, net_addrbundle addrinfo_in, const uint8_t *inbound, size_t inbound_size);
 
 #endif

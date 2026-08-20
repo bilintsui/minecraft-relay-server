@@ -29,7 +29,7 @@
 
 /* section: functions (local) */
 static bool connsetup_short_address_valid(const net_addr *address) {
-	return address != NULL && address->err == 0 && (address->family == AF_INET || address->family == AF_INET6);
+	return address != NULL && address->err == NET_OK && (address->family == AF_INET || address->family == AF_INET6);
 }
 
 static bool connsetup_short_bundle_valid(const net_addrbundle *address) {
@@ -40,9 +40,9 @@ static bool connsetup_short_bundle_valid(const net_addrbundle *address) {
 	return true;
 }
 
-static bool connsetup_short_packet_complete(const uint8_t *initial, size_t initial_size, uint8_t protocol, size_t *packet_size_result) {
+static bool connsetup_short_packet_complete(const uint8_t *initial, size_t initial_size, protocol_version protocol, size_t *packet_size_result) {
 	size_t packet_size = 0;
-	enum protocol_packet_status status = protocol_packet_length(initial, initial_size, &packet_size);
+	protocol_packet_status status = protocol_packet_length(initial, initial_size, &packet_size);
 	if (packet_size_result != NULL) {
 		*packet_size_result = packet_size;
 	}
@@ -190,7 +190,7 @@ static bool connsetup_short_plan_request_modern(connsetup_short_plan *plan, cons
 	return result;
 }
 
-static bool connsetup_short_plan_response_legacy(connsetup_short_plan *plan, const char *message, uint8_t motd_version, uint8_t version) {
+static bool connsetup_short_plan_response_legacy(connsetup_short_plan *plan, const char *message, protocol_version motd_version, uint8_t version) {
 	if (plan == NULL || message == NULL) {
 		return false;
 	}
@@ -236,7 +236,7 @@ static bool connsetup_short_plan_response_modern(connsetup_short_plan *plan, con
 	return true;
 }
 
-static bool connsetup_short_plan_response_unavailable(connsetup_short_plan *plan, uint8_t protocol, varint_t modern_version, uint8_t legacy_version) {
+static bool connsetup_short_plan_response_unavailable(connsetup_short_plan *plan, protocol_version protocol, varint_t modern_version, uint8_t legacy_version) {
 	if (protocol == PVER_LEGACYM3) {
 		return connsetup_short_plan_response_legacy(plan, "[Proxy] Server Temporarily Unavailable.", protocol, legacy_version);
 	}

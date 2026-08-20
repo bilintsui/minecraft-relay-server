@@ -43,7 +43,7 @@ static route_endpoint_address_status route_endpoint_address_family_select(const 
 		return ROUTE_ENDPOINT_ADDRESS_BAD_ARGUMENT;
 	}
 	for (size_t address_index = 0; address_index < address_count; address_index++) {
-		if (addresses[address_index].family == family && addresses[address_index].err == 0) {
+		if (addresses[address_index].family == family && addresses[address_index].err == NET_OK) {
 			*result = addresses[address_index];
 			return ROUTE_ENDPOINT_ADDRESS_OK;
 		}
@@ -138,7 +138,7 @@ static route_endpoint_address_status route_endpoint_cache_family_select(resolver
 		return ROUTE_ENDPOINT_ADDRESS_UNAVAILABLE;
 	}
 	for (size_t address_index = 0; address_index < view.address_count; address_index++) {
-		if (view.addresses[address_index].address.family == family && view.addresses[address_index].address.err == 0) {
+		if (view.addresses[address_index].address.family == family && view.addresses[address_index].address.err == NET_OK) {
 			*result = view.addresses[address_index].address;
 			return ROUTE_ENDPOINT_ADDRESS_OK;
 		}
@@ -259,7 +259,7 @@ static route_endpoint_address_status route_endpoint_target_select(const route_re
 	}
 	switch (target->source) {
 		case ROUTE_RESOLUTION_TARGET_NUMERIC:
-			if (target->numeric_address.err != 0 || (target->numeric_address.family != AF_INET && target->numeric_address.family != AF_INET6)) {
+			if (target->numeric_address.err != NET_OK || (target->numeric_address.family != AF_INET && target->numeric_address.family != AF_INET6)) {
 				return ROUTE_ENDPOINT_ADDRESS_UNAVAILABLE;
 			}
 			*result = target->numeric_address;
@@ -285,7 +285,7 @@ route_endpoint_select_status route_endpoint_evaluate(route_generation *generatio
 	if (generation == NULL || vhost == NULL || now == NULL || inbound_proxy == NULL || requirements == NULL || result == NULL || route_generation_identity(generation) == 0
 		|| now->tv_sec < 0 || now->tv_nsec < 0 || now->tv_nsec >= 1000000000L
 		|| (inbound_proxy->family != AF_INET && inbound_proxy->family != AF_INET6) || inbound_proxy->srcaddr.family != inbound_proxy->family
-		|| inbound_proxy->dstaddr.family != inbound_proxy->family || inbound_proxy->srcaddr.err != 0 || inbound_proxy->dstaddr.err != 0) {
+		|| inbound_proxy->dstaddr.family != inbound_proxy->family || inbound_proxy->srcaddr.err != NET_OK || inbound_proxy->dstaddr.err != NET_OK) {
 		return ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT;
 	}
 	const route_table *routes = route_generation_routes(generation);
@@ -309,7 +309,7 @@ route_endpoint_select_status route_endpoint_evaluate(route_generation *generatio
 	route_endpoint_address_status address_status;
 	switch (binding.source) {
 		case ROUTE_BINDING_SOURCE_NUMERIC:
-			if (binding.numeric_address.err != 0 || (binding.numeric_address.family != AF_INET && binding.numeric_address.family != AF_INET6)) {
+			if (binding.numeric_address.err != NET_OK || (binding.numeric_address.family != AF_INET && binding.numeric_address.family != AF_INET6)) {
 				return ROUTE_ENDPOINT_SELECT_UNAVAILABLE;
 			}
 			selected_address = binding.numeric_address;

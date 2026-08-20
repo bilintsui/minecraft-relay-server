@@ -17,14 +17,17 @@
 #include "define/global.h"
 
 /* section: defines */
-/* freadall() error code */
-#define FREADALL_EINVAL	1
-#define FREADALL_ERFAIL	2
-#define FREADALL_ELARGE	3
-#define FREADALL_ENOMEM	4
-
 /* freadall() limit */
 #define FREADALL_SLIMIT	5242880
+
+/* section: types */
+typedef enum {
+	FREADALL_ERROR_NONE,
+	FREADALL_EINVAL,
+	FREADALL_ERFAIL,
+	FREADALL_ELARGE,
+	FREADALL_ENOMEM
+} freadall_error;
 
 /* section: functions (exported) */
 size_t base64_encode(void *dst, size_t dst_cap, const void *src, size_t src_len);

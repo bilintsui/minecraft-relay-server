@@ -115,41 +115,41 @@
 #define LISTENER_LOG_TERMINAL(ctx, lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, (ctx)->config->log.level, lvl, __VA_ARGS__)
 
 /* section: types */
-enum listener_endpoint_status {
+typedef enum {
 	LISTENER_ENDPOINT_OK,
 	LISTENER_ENDPOINT_BAD_ADDRESS,
 	LISTENER_ENDPOINT_BAD_PORT
-};
-enum listener_connection_progress {
+} listener_endpoint_status;
+typedef enum {
 	LISTENER_CONNECTION_ABORT,
 	LISTENER_CONNECTION_CLOSED,
 	LISTENER_CONNECTION_FATAL,
 	LISTENER_CONNECTION_PENDING,
 	LISTENER_CONNECTION_READY
-};
-enum listener_connection_route {
+} listener_connection_progress;
+typedef enum {
 	LISTENER_CONNECTION_ROUTE_INVALID,
 	LISTENER_CONNECTION_ROUTE_SHORT_LOCAL,
 	LISTENER_CONNECTION_ROUTE_SHORT_WAIT,
 	LISTENER_CONNECTION_ROUTE_WORKER_BYPASS,
 	LISTENER_CONNECTION_ROUTE_WORKER_WAIT
-};
-enum listener_connection_state {
+} listener_connection_route;
+typedef enum {
 	LISTENER_CONNECTION_INITIAL,
 	LISTENER_CONNECTION_ROUTE_WAITING,
 	LISTENER_CONNECTION_SHORT_CONNECTING,
 	LISTENER_CONNECTION_SHORT_RELAYING,
 	LISTENER_CONNECTION_SHORT_RESPONDING
-};
-enum listener_connection_timer {
+} listener_connection_state;
+typedef enum {
 	LISTENER_CONNECTION_TIMER_ASSEMBLY,
 	LISTENER_CONNECTION_TIMER_GRACE,
 	LISTENER_CONNECTION_TIMER_ROUTE,
 	LISTENER_CONNECTION_TIMER_SHORT_CONNECT,
 	LISTENER_CONNECTION_TIMER_SHORT_IDLE,
 	LISTENER_CONNECTION_TIMER_SHORT_LIFETIME
-};
-enum listener_event_kind {
+} listener_connection_timer;
+typedef enum {
 	LISTENER_EVENT_CLIENT,
 	LISTENER_EVENT_LISTENER,
 	LISTENER_EVENT_RESOLVER,
@@ -157,23 +157,23 @@ enum listener_event_kind {
 	LISTENER_EVENT_SIGNAL,
 	LISTENER_EVENT_TIMEOUT,
 	LISTENER_EVENT_UPSTREAM
-};
-enum listener_route_prepare_status {
+} listener_event_kind;
+typedef enum {
 	LISTENER_ROUTE_PREPARE_OK,
 	LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR,
 	LISTENER_ROUTE_PREPARE_TIME_ERROR
-};
-enum listener_socket_open_status {
+} listener_route_prepare_status;
+typedef enum {
 	LISTENER_SOCKET_OPEN_OK,
 	LISTENER_SOCKET_OPEN_BIND_ERROR,
 	LISTENER_SOCKET_OPEN_EVENTS_ERROR
-};
-enum listener_socket_replace_status {
+} listener_socket_open_status;
+typedef enum {
 	LISTENER_SOCKET_REPLACE_OK,
 	LISTENER_SOCKET_REPLACE_CANDIDATE_ERROR,
 	LISTENER_SOCKET_REPLACE_ACTIVE_ERROR,
 	LISTENER_SOCKET_REPLACE_ROLLBACK_ERROR
-};
+} listener_socket_replace_status;
 typedef union {
 	struct sockaddr_in v4;
 	struct sockaddr_in6 v6;
@@ -188,7 +188,7 @@ typedef struct {
 typedef struct {
 	listener_connection *connection;
 	uint64_t generation;
-	enum listener_event_kind kind;
+	listener_event_kind kind;
 } listener_event_source;
 struct listener_connection {
 	listener_client_address address;
@@ -201,7 +201,7 @@ struct listener_connection {
 	bool client_registered;
 	bool client_write_closed;
 	bool closing;
-	enum listener_connection_route dispatch;
+	listener_connection_route dispatch;
 	route_endpoint_snapshot endpoint;
 	route_generation *generation;
 	uint8_t inbound[BUFSIZ];
@@ -211,12 +211,12 @@ struct listener_connection {
 	size_t request_offset;
 	connsetup_short_plan short_plan;
 	int socket_fd;
-	enum listener_connection_state state;
+	listener_connection_state state;
 	int timer_fd;
 	struct timespec timer_deadline;
 	uint64_t timer_generation;
 	listener_event_source timer_source;
-	enum listener_connection_timer timer;
+	listener_connection_timer timer;
 	listener_connection_buffer upstream_buffer;
 	uint32_t upstream_events;
 	int upstream_fd;
@@ -404,7 +404,7 @@ static int listener_connection_time_compare(const struct timespec *left, const s
 	return left->tv_nsec < right->tv_nsec ? -1 : left->tv_nsec > right->tv_nsec;
 }
 
-static int listener_connection_timer_set(listener_connection *connection, enum listener_connection_timer timer, const struct timespec *expiration) {
+static int listener_connection_timer_set(listener_connection *connection, listener_connection_timer timer, const struct timespec *expiration) {
 	struct timespec effective = *expiration;
 	if (listener_connection_time_compare(&connection->lifetime_deadline, &effective) < 0) {
 		effective = connection->lifetime_deadline;
@@ -420,7 +420,7 @@ static int listener_connection_timer_set(listener_connection *connection, enum l
 	return 0;
 }
 
-static int listener_connection_timer_arm(listener_connection *connection, enum listener_connection_timer timer) {
+static int listener_connection_timer_arm(listener_connection *connection, listener_connection_timer timer) {
 	struct timespec expiration = connection->assembly_deadline;
 	if (timer == LISTENER_CONNECTION_TIMER_GRACE) {
 		struct timespec now;
@@ -437,7 +437,7 @@ static int listener_connection_timer_arm(listener_connection *connection, enum l
 	return listener_connection_timer_set(connection, timer, &expiration);
 }
 
-static int listener_connection_timer_arm_short(listener_connection *connection, enum listener_connection_timer timer, const struct timespec *now, uint64_t seconds) {
+static int listener_connection_timer_arm_short(listener_connection *connection, listener_connection_timer timer, const struct timespec *now, uint64_t seconds) {
 	struct timespec expiration;
 	return listener_connection_time_add_seconds(now, seconds, &expiration) ? listener_connection_timer_set(connection, timer, &expiration) : -1;
 }
@@ -783,13 +783,13 @@ static size_t listener_connection_limit(void) {
 	return resource_limit < LISTENER_CONNECTION_LIMIT ? (size_t)resource_limit : LISTENER_CONNECTION_LIMIT;
 }
 
-static enum listener_connection_progress listener_connection_receive(listener_connection *connection, uint32_t event_flags) {
+static listener_connection_progress listener_connection_receive(listener_connection *connection, uint32_t event_flags) {
 	while (connection->inbound_size < sizeof(connection->inbound)) {
 		ssize_t receive_size = recv(connection->socket_fd, connection->inbound + connection->inbound_size, sizeof(connection->inbound) - connection->inbound_size, 0);
 		if (receive_size > 0) {
 			connection->inbound_size += (size_t)receive_size;
 			size_t packet_size;
-			enum protocol_packet_status packet_status = protocol_packet_length(connection->inbound, connection->inbound_size, &packet_size);
+			protocol_packet_status packet_status = protocol_packet_length(connection->inbound, connection->inbound_size, &packet_size);
 			if (packet_status == PROTOCOL_PACKET_COMPLETE) {
 				return protocol_identify(connection->inbound, connection->inbound_size, NULL) == PVER_UNIDENT
 					? LISTENER_CONNECTION_ABORT : LISTENER_CONNECTION_READY;
@@ -797,7 +797,7 @@ static enum listener_connection_progress listener_connection_receive(listener_co
 			if (packet_status == PROTOCOL_PACKET_INVALID || packet_size > sizeof(connection->inbound)) {
 				return LISTENER_CONNECTION_ABORT;
 			}
-			enum listener_connection_timer timer = packet_status == PROTOCOL_PACKET_AMBIGUOUS ? LISTENER_CONNECTION_TIMER_GRACE : LISTENER_CONNECTION_TIMER_ASSEMBLY;
+			listener_connection_timer timer = packet_status == PROTOCOL_PACKET_AMBIGUOUS ? LISTENER_CONNECTION_TIMER_GRACE : LISTENER_CONNECTION_TIMER_ASSEMBLY;
 			if (listener_connection_timer_arm(connection, timer) == -1) {
 				return LISTENER_CONNECTION_ABORT;
 			}
@@ -819,11 +819,11 @@ static enum listener_connection_progress listener_connection_receive(listener_co
 	return LISTENER_CONNECTION_ABORT;
 }
 
-static enum listener_connection_route listener_connection_route_parse(listener_connection *connection) {
+static listener_connection_route listener_connection_route_parse(listener_connection *connection) {
 	intent_t intent;
-	uint8_t protocol = protocol_identify(connection->inbound, connection->inbound_size, &intent);
+	protocol_version protocol = protocol_identify(connection->inbound, connection->inbound_size, &intent);
 	const char *source = NULL;
-	enum listener_connection_route route = LISTENER_CONNECTION_ROUTE_INVALID;
+	listener_connection_route route = LISTENER_CONNECTION_ROUTE_INVALID;
 	p_handshake modern;
 	p_login_legacy legacy_login;
 	p_motd_legacy legacy_motd;
@@ -874,7 +874,7 @@ static enum listener_connection_route listener_connection_route_parse(listener_c
 	return valid ? route : LISTENER_CONNECTION_ROUTE_INVALID;
 }
 
-static enum listener_connection_progress listener_connection_route_progress(listener_connection *connection, resolver_supervisor *supervisor, const struct timespec *now) {
+static listener_connection_progress listener_connection_route_progress(listener_connection *connection, resolver_supervisor *supervisor, const struct timespec *now) {
 	connection->waiter_status = route_waiter_progress(connection->waiter, supervisor, now);
 	switch (connection->waiter_status) {
 		case ROUTE_WAITER_PENDING:
@@ -913,9 +913,9 @@ static bool listener_connection_route_release(listener_connection *connection, r
 	return result;
 }
 
-static enum listener_connection_progress listener_connection_route_start(listener_connection *connection, const listener_events *events, resolver_supervisor *supervisor,
+static listener_connection_progress listener_connection_route_start(listener_connection *connection, const listener_events *events, resolver_supervisor *supervisor,
 	const struct timespec *now) {
-	enum listener_connection_route route = listener_connection_route_parse(connection);
+	listener_connection_route route = listener_connection_route_parse(connection);
 	connection->dispatch = route;
 	if (route == LISTENER_CONNECTION_ROUTE_SHORT_LOCAL || route == LISTENER_CONNECTION_ROUTE_WORKER_BYPASS) {
 		return LISTENER_CONNECTION_READY;
@@ -937,7 +937,7 @@ static enum listener_connection_progress listener_connection_route_start(listene
 		connection->waiter_status = create_status == ROUTE_WAITER_CREATE_LIMIT ? ROUTE_WAITER_LIMIT : ROUTE_WAITER_MEMORY;
 		return LISTENER_CONNECTION_READY;
 	}
-	enum listener_connection_progress progress = listener_connection_route_progress(connection, supervisor, now);
+	listener_connection_progress progress = listener_connection_route_progress(connection, supervisor, now);
 	if (progress != LISTENER_CONNECTION_PENDING) {
 		return progress;
 	}
@@ -1008,7 +1008,7 @@ static void listener_connection_upstream_close(listener_connection *connection, 
 	connection->upstream_source.generation = connection->upstream_source.generation == UINT64_MAX ? 1 : connection->upstream_source.generation + 1U;
 }
 
-static enum listener_connection_progress listener_connection_short_drive(listener_connection *connection, const listener_events *events, const struct timespec *now,
+static listener_connection_progress listener_connection_short_drive(listener_connection *connection, const listener_events *events, const struct timespec *now,
 	size_t activity) {
 	if (listener_connection_time_compare(now, &connection->lifetime_deadline) >= 0) {
 		return LISTENER_CONNECTION_CLOSED;
@@ -1072,7 +1072,7 @@ static enum listener_connection_progress listener_connection_short_drive(listene
 	return listener_connection_interests_update(connection, events) == -1 ? LISTENER_CONNECTION_FATAL : LISTENER_CONNECTION_PENDING;
 }
 
-static enum listener_connection_progress listener_connection_short_failure(listener_connection *connection, const listener_events *events, const struct timespec *now) {
+static listener_connection_progress listener_connection_short_failure(listener_connection *connection, const listener_events *events, const struct timespec *now) {
 	if (listener_connection_time_compare(now, &connection->lifetime_deadline) >= 0) {
 		return LISTENER_CONNECTION_CLOSED;
 	}
@@ -1085,7 +1085,7 @@ static enum listener_connection_progress listener_connection_short_failure(liste
 	return listener_connection_short_drive(connection, events, now, 0);
 }
 
-static enum listener_connection_progress listener_connection_short_connect_complete(listener_connection *connection, const listener_events *events,
+static listener_connection_progress listener_connection_short_connect_complete(listener_connection *connection, const listener_events *events,
 	const struct timespec *now) {
 	net_connect_status status = net_connect_nonblocking_complete(connection->upstream_fd);
 	if (status != NET_CONNECT_OK) {
@@ -1104,7 +1104,7 @@ static enum listener_connection_progress listener_connection_short_connect_compl
 	return LISTENER_CONNECTION_PENDING;
 }
 
-static enum listener_connection_progress listener_connection_short_event(listener_connection *connection, enum listener_event_kind kind, uint32_t event_flags,
+static listener_connection_progress listener_connection_short_event(listener_connection *connection, listener_event_kind kind, uint32_t event_flags,
 	uint64_t source_generation, const listener_events *events, const struct timespec *now) {
 	size_t activity = 0;
 	if (kind == LISTENER_EVENT_CLIENT) {
@@ -1123,7 +1123,7 @@ static enum listener_connection_progress listener_connection_short_event(listene
 			return LISTENER_CONNECTION_PENDING;
 		}
 		if (connection->state == LISTENER_CONNECTION_SHORT_CONNECTING) {
-			enum listener_connection_progress progress = listener_connection_short_connect_complete(connection, events, now);
+			listener_connection_progress progress = listener_connection_short_connect_complete(connection, events, now);
 			if (progress != LISTENER_CONNECTION_PENDING) {
 				return progress;
 			}
@@ -1147,7 +1147,7 @@ static enum listener_connection_progress listener_connection_short_event(listene
 	return listener_connection_short_drive(connection, events, now, activity);
 }
 
-static enum listener_connection_progress listener_connection_short_start(listener_connection *connection, const listener_events *events, listener_context *context,
+static listener_connection_progress listener_connection_short_start(listener_connection *connection, const listener_events *events, listener_context *context,
 	const struct timespec *now) {
 	connsetup_snapshot snapshot;
 	if (!listener_connection_snapshot_prepare(connection, context, &snapshot)) {
@@ -1192,7 +1192,7 @@ static enum listener_connection_progress listener_connection_short_start(listene
 	return listener_connection_short_drive(connection, events, now, 0);
 }
 
-static enum listener_connection_progress listener_connection_timeout(listener_connection *connection, uint32_t event_flags, uint64_t timer_generation,
+static listener_connection_progress listener_connection_timeout(listener_connection *connection, uint32_t event_flags, uint64_t timer_generation,
 	const listener_events *events, resolver_supervisor *supervisor, const struct timespec *now) {
 	if (!(event_flags & EPOLLIN) || (event_flags & (EPOLLERR | EPOLLHUP))) {
 		return LISTENER_CONNECTION_ABORT;
@@ -1291,7 +1291,7 @@ static bool listener_endpoint_may_conflict(const listener_endpoint *left, const 
 	return listener_endpoint_is_wildcard(left) || listener_endpoint_is_wildcard(right);
 }
 
-static enum listener_endpoint_status listener_endpoint_prepare(const conf *source, listener_endpoint *target) {
+static listener_endpoint_status listener_endpoint_prepare(const conf *source, listener_endpoint *target) {
 	target->address = net_addr_parse(source->listen.address);
 	target->port = source->listen.port;
 	if (target->address.family == 0) {
@@ -1512,7 +1512,7 @@ static int listener_events_wait(const listener_events *events, listener_requests
 }
 
 static bool listener_generation_create(listener_context *context, conf *config, hosts_table *hosts, route_table *routes, route_bindings *bindings,
-	route_resolution *resolution, uint8_t failure_level, const char *failure_action, route_generation **result) {
+	route_resolution *resolution, mksys_level failure_level, const char *failure_action, route_generation **result) {
 	if (result == NULL || *result != NULL) {
 		return false;
 	}
@@ -1556,7 +1556,7 @@ static const char *listener_hosts_load_error(hosts_load_status status) {
 	}
 }
 
-static bool listener_hosts_prepare(listener_context *context, uint8_t failure_level, const char *failure_action, hosts_table **result) {
+static bool listener_hosts_prepare(listener_context *context, mksys_level failure_level, const char *failure_action, hosts_table **result) {
 	if (result == NULL || *result != NULL) {
 		return false;
 	}
@@ -1603,8 +1603,7 @@ static int listener_notify_reloading(void) {
 	return 0;
 }
 
-static bool listener_route_bindings_prepare(listener_context *context, const route_table *routes, const hosts_table *hosts, uint8_t failure_level, const char *failure_action,
-	route_bindings **result) {
+static bool listener_route_bindings_prepare(listener_context *context, const route_table *routes, const hosts_table *hosts, mksys_level failure_level, const char *failure_action, route_bindings **result) {
 	route_bindings_build_status status = route_bindings_build(routes, hosts, context->dns_cache, result);
 	if (status == ROUTE_BINDINGS_BUILD_OK) {
 		return true;
@@ -1627,8 +1626,8 @@ static bool listener_route_bindings_prepare(listener_context *context, const rou
 	return false;
 }
 
-static enum listener_route_prepare_status listener_route_resolution_prepare(listener_context *context, const route_bindings *bindings, const hosts_table *hosts,
-	uint8_t failure_level, const char *failure_action, route_resolution **result) {
+static listener_route_prepare_status listener_route_resolution_prepare(listener_context *context, const route_bindings *bindings, const hosts_table *hosts,
+	mksys_level failure_level, const char *failure_action, route_resolution **result) {
 	struct timespec now;
 	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
 		return LISTENER_ROUTE_PREPARE_TIME_ERROR;
@@ -1642,7 +1641,7 @@ static enum listener_route_prepare_status listener_route_resolution_prepare(list
 	return LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR;
 }
 
-static enum listener_route_prepare_status listener_generation_prepare(listener_context *context, conf **config, hosts_table **hosts, uint8_t failure_level,
+static listener_route_prepare_status listener_generation_prepare(listener_context *context, conf **config, hosts_table **hosts, mksys_level failure_level,
 	const char *failure_action, route_generation **result) {
 	if (config == NULL || *config == NULL || hosts == NULL || *hosts == NULL || result == NULL || *result != NULL) {
 		return LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR;
@@ -1660,7 +1659,7 @@ static enum listener_route_prepare_status listener_generation_prepare(listener_c
 		route_table_destroy(routes);
 		return LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR;
 	}
-	enum listener_route_prepare_status status = listener_route_resolution_prepare(context, bindings, *hosts, failure_level, failure_action, &resolution);
+	listener_route_prepare_status status = listener_route_resolution_prepare(context, bindings, *hosts, failure_level, failure_action, &resolution);
 	if (status == LISTENER_ROUTE_PREPARE_OK && !listener_generation_create(context, *config, *hosts, routes, bindings, resolution, failure_level, failure_action, result)) {
 		status = LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR;
 	}
@@ -1796,7 +1795,7 @@ static void listener_socket_close(listener_socket *target) {
 	}
 }
 
-static enum listener_socket_open_status listener_socket_open(listener_socket *target, const listener_events *events) {
+static listener_socket_open_status listener_socket_open(listener_socket *target, const listener_events *events) {
 	if (listener_socket_bind(target) == -1) {
 		return LISTENER_SOCKET_OPEN_BIND_ERROR;
 	}
@@ -1809,7 +1808,7 @@ static enum listener_socket_open_status listener_socket_open(listener_socket *ta
 	return LISTENER_SOCKET_OPEN_OK;
 }
 
-static enum listener_socket_replace_status listener_socket_replace_conflicting(listener_socket *target, listener_socket *candidate, const listener_events *events) {
+static listener_socket_replace_status listener_socket_replace_conflicting(listener_socket *target, listener_socket *candidate, const listener_events *events) {
 	if (listener_events_remove(events, target->fd) == -1) {
 		return LISTENER_SOCKET_REPLACE_ACTIVE_ERROR;
 	}
@@ -1826,12 +1825,12 @@ static enum listener_socket_replace_status listener_socket_replace_conflicting(l
 	return LISTENER_SOCKET_REPLACE_CANDIDATE_ERROR;
 }
 
-static enum listener_socket_replace_status listener_socket_replace(listener_socket *target, const listener_endpoint *endpoint, const listener_events *events) {
+static listener_socket_replace_status listener_socket_replace(listener_socket *target, const listener_endpoint *endpoint, const listener_events *events) {
 	listener_socket candidate = {
 		.endpoint = *endpoint,
 		.fd = -1
 	};
-	enum listener_socket_open_status open_status = listener_socket_open(&candidate, events);
+	listener_socket_open_status open_status = listener_socket_open(&candidate, events);
 	if (open_status != LISTENER_SOCKET_OPEN_OK) {
 		/* Same-port address transitions may require closing the active socket before binding the candidate. */
 		if (open_status == LISTENER_SOCKET_OPEN_BIND_ERROR && listener_endpoint_may_conflict(&target->endpoint, &candidate.endpoint) && errno == NET_EBIND) {
@@ -1870,7 +1869,7 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 	switch (read_status) {
 		case CONF_READ_CHANGED: {
 			listener_endpoint candidate_endpoint;
-			enum listener_endpoint_status endpoint_status = listener_endpoint_prepare(config_candidate, &candidate_endpoint);
+			listener_endpoint_status endpoint_status = listener_endpoint_prepare(config_candidate, &candidate_endpoint);
 			if (endpoint_status == LISTENER_ENDPOINT_BAD_ADDRESS) {
 				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
 					"Error in configurations: Invalid candidate bind address, will keep your old configurations.\n"
@@ -1900,7 +1899,7 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 					"Cannot clone the existing local static host table for the candidate generation, will keep your old configurations.\n");
 				break;
 			}
-			enum listener_route_prepare_status prepare_status = listener_generation_prepare(context, &config_candidate, &hosts_candidate, MKSYS_LEVEL_WARNING,
+			listener_route_prepare_status prepare_status = listener_generation_prepare(context, &config_candidate, &hosts_candidate, MKSYS_LEVEL_WARNING,
 				", will keep your old configurations", &generation_candidate);
 			if (prepare_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
 				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
@@ -1913,7 +1912,7 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 			}
 			if (!listener_endpoint_equal(&listener->endpoint, &candidate_endpoint)) {
 				net_addrp candidate_address = net_ntop(candidate_endpoint.address.family, &(candidate_endpoint.address.addr), true);
-				enum listener_socket_replace_status replace_status = listener_socket_replace(listener, &candidate_endpoint, events);
+				listener_socket_replace_status replace_status = listener_socket_replace(listener, &candidate_endpoint, events);
 				if (replace_status == LISTENER_SOCKET_REPLACE_CANDIDATE_ERROR) {
 					mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
 						"Cannot activate candidate listening endpoint %s:%d, will keep your old configurations.\n",
@@ -1975,7 +1974,7 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 				case CONF_ECPROXY:
 					mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
 						"%s%s%s\n",
-						config_errmsg(errno),
+						config_errmsg((conf_error)errno),
 						(errno == CONF_EROPENFAIL || errno == CONF_EROPENEMPTY) ? context->config_filename : "",
 						", will keep your old configurations"
 					);
@@ -2013,7 +2012,7 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 			if (read_status == CONF_READ_UNCHANGED) {
 				config_icon_load(config_candidate, config_logfull_old, config_maxlevel, "keeping existing icon");
 			}
-			enum listener_route_prepare_status prepare_status = listener_generation_prepare(context, &config_candidate, &hosts_candidate, MKSYS_LEVEL_WARNING,
+			listener_route_prepare_status prepare_status = listener_generation_prepare(context, &config_candidate, &hosts_candidate, MKSYS_LEVEL_WARNING,
 				", keeping the existing generation", &generation_candidate);
 			if (prepare_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
 				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
@@ -2125,7 +2124,7 @@ static int listener_worker_signals_restore(const sigset_t *signal_mask) {
 	return sigprocmask(SIG_SETMASK, signal_mask, NULL);
 }
 
-static int listener_worker_run(int client_fd, const listener_client_address *client_address, const uint8_t *inbound, size_t inbound_size,
+static exit_code listener_worker_run(int client_fd, const listener_client_address *client_address, const uint8_t *inbound, size_t inbound_size,
 	const connsetup_snapshot *snapshot, listener_socket *listener, const listener_events *events, pid_t listener_pid, listener_context *context) {
 	close(events->epoll_fd);
 	close(events->route_timer_fd);
@@ -2149,8 +2148,8 @@ static int listener_worker_run(int client_fd, const listener_client_address *cli
 	listener_worker_route_state_dispose(context);
 	net_addrbundle addrbundle_inbound_client = listener_client_address_parse(client_address);
 	int socket_outbound;
-	int setup_status = connsetup_prepared(client_fd, &socket_outbound, snapshot, addrbundle_inbound_client, inbound, inbound_size);
-	if (setup_status == 0) {
+	connsetup_status setup_status = connsetup_prepared(client_fd, &socket_outbound, snapshot, addrbundle_inbound_client, inbound, inbound_size);
+	if (setup_status == CONNSETUP_OK) {
 		net_relay(client_fd, socket_outbound);
 	}
 	return EXITCODE_OK;
@@ -2187,7 +2186,7 @@ static void listener_connection_dispatch(listener_connection *connections, liste
 	_exit(listener_worker_run(connection->socket_fd, &connection->address, connection->inbound, connection->inbound_size, &snapshot, listener, events, listener_pid, context));
 }
 
-static enum listener_connection_progress listener_connection_ready(listener_connection *connections, listener_connection *connection, listener_socket *listener,
+static listener_connection_progress listener_connection_ready(listener_connection *connections, listener_connection *connection, listener_socket *listener,
 	const listener_events *events, pid_t listener_pid, listener_context *context, const struct timespec *now) {
 	if (connection->dispatch == LISTENER_CONNECTION_ROUTE_SHORT_LOCAL || connection->dispatch == LISTENER_CONNECTION_ROUTE_SHORT_WAIT) {
 		return listener_connection_short_start(connection, events, context, now);
@@ -2205,7 +2204,7 @@ static int listener_connections_route_progress(listener_connection *connections,
 		if (connection->closing || connection->state != LISTENER_CONNECTION_ROUTE_WAITING) {
 			continue;
 		}
-		enum listener_connection_progress progress = listener_connection_route_progress(connection, context->resolver, now);
+		listener_connection_progress progress = listener_connection_route_progress(connection, context->resolver, now);
 		if (progress == LISTENER_CONNECTION_READY) {
 			progress = listener_connection_ready(connections, connection, listener, events, listener_pid, context, now);
 		} else if (progress == LISTENER_CONNECTION_FATAL) {
@@ -2221,7 +2220,7 @@ static int listener_connections_route_progress(listener_connection *connections,
 	return 0;
 }
 
-static int listener_loop(listener_context *context, listener_socket *listener) {
+static exit_code listener_loop(listener_context *context, listener_socket *listener) {
 	listener_events events;
 	if (listener_events_init(&events) == -1) {
 		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize listener event loop: %s\n", strerror(errno));
@@ -2253,7 +2252,7 @@ static int listener_loop(listener_context *context, listener_socket *listener) {
 		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
 	}
-	enum listener_route_prepare_status resolution_status = listener_route_resolution_prepare(context, context->route_bindings, context->hosts, MKSYS_LEVEL_CRITICAL, "",
+	listener_route_prepare_status resolution_status = listener_route_resolution_prepare(context, context->route_bindings, context->hosts, MKSYS_LEVEL_CRITICAL, "",
 		&context->route_resolution);
 	if (resolution_status != LISTENER_ROUTE_PREPARE_OK) {
 		if (resolution_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
@@ -2297,7 +2296,7 @@ static int listener_loop(listener_context *context, listener_socket *listener) {
 		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
 	}
-	int exitcode = EXITCODE_OK;
+	exit_code exitcode = EXITCODE_OK;
 	size_t connection_count = 0;
 	const size_t connection_limit = listener_connection_limit();
 	listener_connection *connections = NULL;
@@ -2403,7 +2402,7 @@ static int listener_loop(listener_context *context, listener_socket *listener) {
 			}
 			for (size_t ready_index = 0; ready_index < requests.ready_count; ready_index++) {
 				const listener_event_source *source = requests.ready[ready_index].source;
-				enum listener_event_kind kind = source->kind;
+				listener_event_kind kind = source->kind;
 				if ((kind == LISTENER_EVENT_TIMEOUT) != (bool)timeout_pass) {
 					continue;
 				}
@@ -2411,7 +2410,7 @@ static int listener_loop(listener_context *context, listener_socket *listener) {
 				if (connection == NULL || connection->closing) {
 					continue;
 				}
-				enum listener_connection_progress progress;
+				listener_connection_progress progress;
 				if (kind == LISTENER_EVENT_TIMEOUT) {
 					progress = listener_connection_timeout(connection, requests.ready[ready_index].flags, requests.ready[ready_index].timer_generation, &events,
 						context->resolver, &route_now);
@@ -2520,7 +2519,7 @@ cleanup: {
 }
 
 /* section: functions (exported) */
-int listener_run(conf *config, conf_cache *config_cache, const char *config_filename, const char *config_filename_full, const char *working_directory, const char *log_filename) {
+exit_code listener_run(conf *config, conf_cache *config_cache, const char *config_filename, const char *config_filename_full, const char *working_directory, const char *log_filename) {
 	listener_context context = {
 		.config = config,
 		.config_cache = config_cache,
@@ -2531,9 +2530,9 @@ int listener_run(conf *config, conf_cache *config_cache, const char *config_file
 	};
 	snprintf(context.log_filename, sizeof(context.log_filename), "%s", log_filename);
 	bool generation_owned;
-	int exitcode;
+	exit_code exitcode;
 	listener_socket listener = { .fd = -1 };
-	enum listener_endpoint_status endpoint_status = listener_endpoint_prepare(context.config, &listener.endpoint);
+	listener_endpoint_status endpoint_status = listener_endpoint_prepare(context.config, &listener.endpoint);
 	if (endpoint_status == LISTENER_ENDPOINT_BAD_ADDRESS) {
 		LISTENER_LOG(&context, MKSYS_LEVEL_CRITICAL, "Error: Invalid bind address!\n");
 		exitcode = EXITCODE_BINDFAIL;

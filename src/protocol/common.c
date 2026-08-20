@@ -19,7 +19,7 @@
 #include "common.h"
 
 /* section: functions (local) */
-static enum protocol_packet_status protocol_varint_read(const uint8_t **cursor, const uint8_t *end, varint_t *value) {
+static protocol_packet_status protocol_varint_read(const uint8_t **cursor, const uint8_t *end, varint_t *value) {
 	if (cursor == NULL || *cursor == NULL || end == NULL || value == NULL) {
 		return PROTOCOL_PACKET_INVALID;
 	}
@@ -45,9 +45,9 @@ static enum protocol_packet_status protocol_varint_read(const uint8_t **cursor, 
 }
 
 /* section: functions (exported) */
-uint8_t protocol_identify(const void *src, size_t src_size, intent_t *intent) {
+protocol_version protocol_identify(const void *src, size_t src_size, intent_t *intent) {
 	if (intent != NULL) {
-		*intent = 0;
+		*intent = CLIENT_INTENT_UNSPECIFIED;
 	}
 	if (src == NULL || src_size == 0) {
 		return PVER_UNIDENT;
@@ -113,10 +113,10 @@ uint8_t protocol_identify(const void *src, size_t src_size, intent_t *intent) {
 			if (protocol_varint_read(&cursor, frame_end, &version) != PROTOCOL_PACKET_COMPLETE || cursor == frame_end) {
 				return PVER_UNIDENT;
 			}
-			intent_t frame_intent = frame_end[-1];
+			uint8_t frame_intent = frame_end[-1];
 			if ((frame_intent == CLIENT_INTENT_STATUS) || (frame_intent == CLIENT_INTENT_LOGIN) || (frame_intent == CLIENT_INTENT_TRANSFER)) {
 				if (intent != NULL) {
-					*intent = frame_intent;
+					*intent = (intent_t)frame_intent;
 				}
 				if (version != 0) {
 					return PVER_MODERN2;
@@ -130,7 +130,7 @@ uint8_t protocol_identify(const void *src, size_t src_size, intent_t *intent) {
 	}
 }
 
-enum protocol_packet_status protocol_packet_length(const void *src, size_t src_size, size_t *packet_size) {
+protocol_packet_status protocol_packet_length(const void *src, size_t src_size, size_t *packet_size) {
 	if (src == NULL || packet_size == NULL) {
 		return PROTOCOL_PACKET_INVALID;
 	}
@@ -194,7 +194,7 @@ enum protocol_packet_status protocol_packet_length(const void *src, size_t src_s
 			const uint8_t *cursor = source;
 			const uint8_t *end = source + src_size;
 			varint_t frame_size;
-			enum protocol_packet_status status = protocol_varint_read(&cursor, end, &frame_size);
+			protocol_packet_status status = protocol_varint_read(&cursor, end, &frame_size);
 			if (status != PROTOCOL_PACKET_COMPLETE) {
 				*packet_size = (status == PROTOCOL_PACKET_INCOMPLETE && src_size < SIZE_MAX) ? src_size + 1 : 0;
 				return status;
@@ -209,7 +209,7 @@ enum protocol_packet_status protocol_packet_length(const void *src, size_t src_s
 				return PROTOCOL_PACKET_INCOMPLETE;
 			}
 			intent_t intent;
-			uint8_t protocol = protocol_identify(source, first_frame_size, &intent);
+			protocol_version protocol = protocol_identify(source, first_frame_size, &intent);
 			if (protocol == PVER_UNIDENT) {
 				return PROTOCOL_PACKET_INVALID;
 			}

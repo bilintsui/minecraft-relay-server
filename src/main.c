@@ -28,7 +28,7 @@
 #define LOG(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, lvl, __VA_ARGS__)
 
 /* section: types */
-enum arg_error {
+typedef enum {
 	ARG_OK,
 	ARG_ERR_UNKNOWN_COMMAND,
 	ARG_ERR_UNKNOWN_HELP_TOPIC,
@@ -36,31 +36,31 @@ enum arg_error {
 	ARG_ERR_MISSING_VALUE,
 	ARG_ERR_INVALID_ARGUMENT,
 	ARG_ERR_INVALID
-};
-enum command {
+} arg_error;
+typedef enum {
 	COMMAND_INVALID,
 	COMMAND_DUMPCONFIG,
 	COMMAND_HELP,
 	COMMAND_RUN,
 	COMMAND_VERSION
-};
-enum help_topic {
+} command;
+typedef enum {
 	HELP_GENERAL,
 	HELP_DUMPCONFIG,
 	HELP_HELP,
 	HELP_RUN,
 	HELP_VERSION
-};
+} help_topic;
 typedef struct {
-	enum command command;
+	command command;
 	const char *configfile;
-	enum help_topic help_topic;
-	enum arg_error error;
+	help_topic help_topic;
+	arg_error error;
 	const char *error_arg;
 } arguments;
 
 /* section: functions (local) */
-static int config_exitcode(int err) {
+static exit_code config_exitcode(conf_error err) {
 	switch (err) {
 		case CONF_EROPENLARGE:
 			return EXITCODE_FILELARGE;
@@ -78,7 +78,7 @@ static int config_exitcode(int err) {
 	}
 }
 
-static int load_config(const char *filename, const char *filename_full, const conf_cache *active_cache, conf_cache *candidate_cache, conf **target) {
+static exit_code load_config(const char *filename, const char *filename_full, const conf_cache *active_cache, conf_cache *candidate_cache, conf **target) {
 	conf_read_status read_status = config_read(filename_full, active_cache, candidate_cache, target);
 	switch (read_status) {
 		case CONF_READ_CHANGED:
@@ -89,7 +89,7 @@ static int load_config(const char *filename, const char *filename_full, const co
 		case CONF_READ_ERROR:
 			break;
 	}
-	int config_error = errno;
+	conf_error config_error = (conf_error)errno;
 	switch (config_error) {
 		case CONF_EROPENFAIL:
 		case CONF_EROPENEMPTY:
@@ -112,7 +112,7 @@ static int load_config(const char *filename, const char *filename_full, const co
 	}
 }
 
-static int dump_config(const char *filename) {
+static exit_code dump_config(const char *filename) {
 	char current_directory[PATH_MAX];
 	char filename_full[PATH_MAX];
 	conf_cache active_cache = { 0 };
@@ -123,7 +123,7 @@ static int dump_config(const char *filename) {
 		return EXITCODE_INTERNAL;
 	}
 	resolve_path(filename, current_directory, filename_full, sizeof(filename_full));
-	int exitcode = load_config(filename, filename_full, &active_cache, &candidate_cache, &parsed);
+	exit_code exitcode = load_config(filename, filename_full, &active_cache, &candidate_cache, &parsed);
 	if (exitcode == EXITCODE_OK) {
 		config_dumper(parsed);
 	}
@@ -177,7 +177,7 @@ static arguments parse_arguments(int argc, char **argv) {
 			result.error_arg = argv[2];
 		}
 	} else if (strcmp(argv[1], "dumpconfig") == 0 || strcmp(argv[1], "run") == 0) {
-		enum command config_command = strcmp(argv[1], "dumpconfig") == 0 ? COMMAND_DUMPCONFIG : COMMAND_RUN;
+		command config_command = strcmp(argv[1], "dumpconfig") == 0 ? COMMAND_DUMPCONFIG : COMMAND_RUN;
 		if (argc == 2) {
 			result.command = config_command;
 			result.configfile = DEFAULT_CONFIG_FILE;
@@ -211,7 +211,7 @@ static arguments parse_arguments(int argc, char **argv) {
 	return result;
 }
 
-static void print_help(enum help_topic topic, const char *progname) {
+static void print_help(help_topic topic, const char *progname) {
 	fputs(
 		"Minecraft Relay Server [Version " MCRELAY_VERSION_DISPLAY "/"
 		MCRELAY_VERSION_INTERNAL "]\n"
@@ -326,7 +326,7 @@ int main(int argc, char **argv) {
 	conf *config = NULL;
 	conf_cache config_cache_state = { 0 };
 	conf_cache config_cache_candidate = { 0 };
-	int config_load_status = load_config(config_filename, config_filename_full, &config_cache_state, &config_cache_candidate, &config);
+	exit_code config_load_status = load_config(config_filename, config_filename_full, &config_cache_state, &config_cache_candidate, &config);
 	if (config_load_status != EXITCODE_OK) {
 		config_destroy(config);
 		config_cache_destroy(&config_cache_candidate);

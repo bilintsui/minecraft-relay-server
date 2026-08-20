@@ -95,7 +95,7 @@ net_connect_status net_connect_nonblocking(const net_addr *address, in_port_t po
 	socklen_t address_size;
 	const struct sockaddr *socket_address;
 	int connect_error, result;
-	if (socket_fd == NULL || address == NULL || address->err != 0 || ((address->family != AF_INET) && (address->family != AF_INET6))) {
+	if (socket_fd == NULL || address == NULL || address->err != NET_OK || ((address->family != AF_INET) && (address->family != AF_INET6))) {
 		if (socket_fd != NULL) {
 			*socket_fd = -1;
 		}
@@ -261,7 +261,7 @@ cleanup:
 net_addr net_resolve_dual(const char *hostname, sa_family_t primary_family, bool dual) {
 	net_addr result;
 	result.family = 0;
-	result.err = 0;
+	result.err = NET_OK;
 	memset(&(result.addr), 0, sizeof(result.addr));
 	if ((primary_family != AF_INET) && (primary_family != AF_INET6)) {
 		result.err = NET_EARGFAMILY;
@@ -289,7 +289,7 @@ net_addr net_resolve_dual(const char *hostname, sa_family_t primary_family, bool
 	return result;
 }
 
-int net_socket(short action, sa_family_t family, const void *address, in_port_t port, bool reuseaddr) {
+int net_socket(net_socket_action action, sa_family_t family, const void *address, in_port_t port, bool reuseaddr) {
 	if ((action != NETSOCK_BIND) && (action != NETSOCK_CONN)) {
 		errno = NET_EARGACTION;
 		return -1;

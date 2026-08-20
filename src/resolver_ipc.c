@@ -649,7 +649,7 @@ resolver_ipc_codec_status resolver_ipc_response_address_encode(const resolver_ip
 	if (packet_size != NULL) {
 		*packet_size = 0;
 	}
-	if (response == NULL || packet == NULL || packet_size == NULL || response->index >= DNS_ADDRESS_RECORD_LIMIT || response->record.address.err != 0
+	if (response == NULL || packet == NULL || packet_size == NULL || response->index >= DNS_ADDRESS_RECORD_LIMIT || response->record.address.err != NET_OK
 		|| response->record.effective_ttl > response->record.record_ttl || (response->record.address.family != AF_INET && response->record.address.family != AF_INET6)) {
 		return RESOLVER_IPC_CODEC_BAD_ARGUMENT;
 	}

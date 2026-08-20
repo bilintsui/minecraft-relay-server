@@ -13,22 +13,18 @@
 #include <errno.h>
 #include <sysexits.h>
 
-/* section: defines */
-#define EXITCODE_OK		EX_OK	/* successful termination */
-
-/* errno aliases */
-#define EXITCODE_NOMEM		ENOMEM	/* memory allocation failed */
-#define EXITCODE_BADARG		EINVAL	/* invalid arguments or config */
-#define EXITCODE_FILELARGE	EFBIG	/* configuration file too large */
-
-/* sysexits aliases */
-#define EXITCODE_CANTCREAT	EX_CANTCREAT	/* cannot create output file */
-#define EXITCODE_BADPORT	EX_CONFIG	/* invalid bind port */
-#define EXITCODE_INTERNAL	EX_SOFTWARE	/* unknown internal error */
-
-/* custom */
-#define EXITCODE_BADJSON	(EX__MAX + 1)	/* JSON parse error */
-#define EXITCODE_BINDFAIL	(EX__MAX + 2)	/* socket bind failed */
-#define EXITCODE_NOCONFFILE	(EX__MAX + 3)	/* config file not found */
+/* section: types */
+typedef enum {
+	EXITCODE_OK = EX_OK,			/* successful termination */
+	EXITCODE_NOMEM = ENOMEM,		/* memory allocation failed */
+	EXITCODE_BADARG = EINVAL,		/* invalid arguments or config */
+	EXITCODE_FILELARGE = EFBIG,		/* configuration file too large */
+	EXITCODE_CANTCREAT = EX_CANTCREAT,	/* cannot create output file */
+	EXITCODE_BADPORT = EX_CONFIG,		/* invalid bind port */
+	EXITCODE_INTERNAL = EX_SOFTWARE,		/* unknown internal error */
+	EXITCODE_BADJSON = EX__MAX + 1,		/* JSON parse error */
+	EXITCODE_BINDFAIL = EX__MAX + 2,		/* socket bind failed */
+	EXITCODE_NOCONFFILE = EX__MAX + 3	/* config file not found */
+} exit_code;
 
 #endif

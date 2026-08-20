@@ -31,17 +31,17 @@
 	} while (0)
 
 /* section: types */
-enum client_fixture_kind {
+typedef enum {
 	CLIENT_FIXTURE_IDENTIFY_ONLY,
 	CLIENT_FIXTURE_LEGACY_LOGIN,
 	CLIENT_FIXTURE_LEGACY_STATUS,
 	CLIENT_FIXTURE_MODERN
-};
+} client_fixture_kind;
 
 typedef struct {
 	const char *filename;
-	enum client_fixture_kind kind;
-	uint8_t protocol;
+	client_fixture_kind kind;
+	protocol_version protocol;
 	bool roundtrip;
 } client_fixture;
 
@@ -138,7 +138,7 @@ static bool modern_message_validate(const uint8_t *data, size_t size) {
 	return true;
 }
 
-static bool packet_roundtrip(enum client_fixture_kind kind, uint8_t protocol, const uint8_t *source, size_t source_size, uint8_t *target) {
+static bool packet_roundtrip(client_fixture_kind kind, protocol_version protocol, const uint8_t *source, size_t source_size, uint8_t *target) {
 	size_t target_size;
 	if (kind == CLIENT_FIXTURE_LEGACY_LOGIN) {
 		p_login_legacy packet = packet_read_legacy_login(source, source_size, protocol);
@@ -245,7 +245,7 @@ int main(int argc, char **argv) {
 	legacy_m3_long_address[0x1E] = 0x01;
 	legacy_m3_long_address[0x1F] = 0x00;
 	for (size_t prefix_size = 1; prefix_size < sizeof(legacy_m3_long_address); prefix_size++) {
-		enum protocol_packet_status packet_status = protocol_packet_length(legacy_m3_long_address, prefix_size, &packet_size);
+		protocol_packet_status packet_status = protocol_packet_length(legacy_m3_long_address, prefix_size, &packet_size);
 		if (prefix_size < 3) {
 			CHECK(packet_status == PROTOCOL_PACKET_AMBIGUOUS, "ambiguous legacy M3 prefix was classified incorrectly");
 		} else {

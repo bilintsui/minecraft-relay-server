@@ -45,7 +45,7 @@ size_t make_kickreason_legacy(void *dst, const void *src) {
 	return make_message_legacy(dst, src, strlen(src));
 }
 
-size_t make_motd_legacy(void *dst, const void *src, uint8_t motd_version, uint8_t version) {
+size_t make_motd_legacy(void *dst, const void *src, protocol_version motd_version, uint8_t version) {
 	void *tmp = malloc(BUFSIZ);
 	size_t tmp_length = 0;
 	switch (motd_version) {
@@ -80,7 +80,7 @@ void packet_destroy_legacy_motd(p_motd_legacy object) {
 	}
 }
 
-p_login_legacy packet_read_legacy_login(const void *sourcepacket, size_t sourcepacket_length, uint8_t login_version) {
+p_login_legacy packet_read_legacy_login(const void *sourcepacket, size_t sourcepacket_length, protocol_version login_version) {
 	p_login_legacy result;
 	uint8_t source[BUFSIZ];
 	uint8_t *ptr_source = source;
