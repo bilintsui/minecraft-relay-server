@@ -32,6 +32,7 @@
 typedef enum {
 	ROUTE_ENDPOINT_ADDRESS_OK,
 	ROUTE_ENDPOINT_ADDRESS_BAD_ARGUMENT,
+	ROUTE_ENDPOINT_ADDRESS_LIMIT,
 	ROUTE_ENDPOINT_ADDRESS_PENDING,
 	ROUTE_ENDPOINT_ADDRESS_UNAVAILABLE
 } route_endpoint_address_status;
@@ -59,7 +60,63 @@ static route_endpoint_address_status route_endpoint_addresses_select(const net_a
 	return route_endpoint_address_family_select(addresses, address_count, alternate_family, result);
 }
 
-static route_endpoint_address_status route_endpoint_cache_family_select(resolver_cache_entry *entry, sa_family_t family, const struct timespec *now, net_addr *result) {
+static bool route_endpoint_entry_view(resolver_cache_entry *entry, const struct timespec *now, const route_endpoint_overlay *overlays, resolver_cache_view *result) {
+	if (result != NULL) {
+		memset(result, 0, sizeof(*result));
+	}
+	if (entry == NULL || now == NULL || result == NULL) {
+		return false;
+	}
+	const route_endpoint_overlay *match = NULL;
+	const route_endpoint_overlay *overlay = overlays;
+	for (size_t overlay_index = 0; overlay != NULL && overlay_index < ROUTE_ENDPOINT_REQUIREMENT_LIMIT; overlay_index++) {
+		if (overlay->entry == NULL || overlay->status > ROUTE_ENDPOINT_OVERLAY_UNAVAILABLE) {
+			return false;
+		}
+		if (overlay->entry == entry && match == NULL) {
+			match = overlay;
+		}
+		overlay = overlay->next;
+	}
+	if (overlay != NULL) {
+		return false;
+	}
+	if (match == NULL || match->status == ROUTE_ENDPOINT_OVERLAY_NONE) {
+		return resolver_cache_entry_view(entry, now, result);
+	}
+	if (match->status == ROUTE_ENDPOINT_OVERLAY_UNAVAILABLE) {
+		result->status = RESOLVER_CACHE_VIEW_FRESH_NODATA;
+		return true;
+	}
+	result->addresses = match->addresses;
+	result->address_count = match->address_count;
+	result->srv_records = match->srv_records;
+	result->srv_record_count = match->srv_record_count;
+	result->status = RESOLVER_CACHE_VIEW_FRESH_POSITIVE;
+	return true;
+}
+
+static bool route_endpoint_requirement_add(route_endpoint_requirements *requirements, resolver_cache_entry *entry, bool pending) {
+	if (requirements == NULL || entry == NULL) {
+		return false;
+	}
+	for (size_t requirement_index = 0; requirement_index < requirements->count; requirement_index++) {
+		if (requirements->items[requirement_index].entry == entry) {
+			requirements->items[requirement_index].pending = requirements->items[requirement_index].pending || pending;
+			return true;
+		}
+	}
+	if (requirements->count >= ROUTE_ENDPOINT_REQUIREMENT_LIMIT) {
+		return false;
+	}
+	requirements->items[requirements->count].entry = entry;
+	requirements->items[requirements->count].pending = pending;
+	requirements->count++;
+	return true;
+}
+
+static route_endpoint_address_status route_endpoint_cache_family_select(resolver_cache_entry *entry, sa_family_t family, const struct timespec *now,
+	const route_endpoint_overlay *overlays, route_endpoint_requirements *requirements, net_addr *result) {
 	if (entry == NULL) {
 		return ROUTE_ENDPOINT_ADDRESS_UNAVAILABLE;
 	}
@@ -68,8 +125,11 @@ static route_endpoint_address_status route_endpoint_cache_family_select(resolver
 		return ROUTE_ENDPOINT_ADDRESS_BAD_ARGUMENT;
 	}
 	resolver_cache_view view;
-	if (!resolver_cache_entry_view(entry, now, &view)) {
+	if (!route_endpoint_entry_view(entry, now, overlays, &view)) {
 		return ROUTE_ENDPOINT_ADDRESS_BAD_ARGUMENT;
+	}
+	if (!route_endpoint_requirement_add(requirements, entry, view.status == RESOLVER_CACHE_VIEW_EMPTY)) {
+		return ROUTE_ENDPOINT_ADDRESS_LIMIT;
 	}
 	if (view.status == RESOLVER_CACHE_VIEW_EMPTY) {
 		return ROUTE_ENDPOINT_ADDRESS_PENDING;
@@ -87,19 +147,19 @@ static route_endpoint_address_status route_endpoint_cache_family_select(resolver
 }
 
 static route_endpoint_address_status route_endpoint_cache_select(resolver_cache_entry *ipv4_entry, resolver_cache_entry *ipv6_entry, sa_family_t preferred_family,
-	const struct timespec *now, net_addr *result) {
+	const struct timespec *now, const route_endpoint_overlay *overlays, route_endpoint_requirements *requirements, net_addr *result) {
 	resolver_cache_entry *preferred_entry = preferred_family == AF_INET ? ipv4_entry : preferred_family == AF_INET6 ? ipv6_entry : NULL;
 	resolver_cache_entry *alternate_entry = preferred_family == AF_INET ? ipv6_entry : preferred_family == AF_INET6 ? ipv4_entry : NULL;
 	if (preferred_entry == NULL && alternate_entry == NULL) {
 		return ROUTE_ENDPOINT_ADDRESS_UNAVAILABLE;
 	}
-	route_endpoint_address_status preferred_status = route_endpoint_cache_family_select(preferred_entry, preferred_family, now, result);
-	if (preferred_status == ROUTE_ENDPOINT_ADDRESS_OK || preferred_status == ROUTE_ENDPOINT_ADDRESS_BAD_ARGUMENT) {
+	route_endpoint_address_status preferred_status = route_endpoint_cache_family_select(preferred_entry, preferred_family, now, overlays, requirements, result);
+	if (preferred_status == ROUTE_ENDPOINT_ADDRESS_OK || preferred_status == ROUTE_ENDPOINT_ADDRESS_BAD_ARGUMENT || preferred_status == ROUTE_ENDPOINT_ADDRESS_LIMIT) {
 		return preferred_status;
 	}
 	sa_family_t alternate_family = preferred_family == AF_INET ? AF_INET6 : preferred_family == AF_INET6 ? AF_INET : AF_UNSPEC;
-	route_endpoint_address_status alternate_status = route_endpoint_cache_family_select(alternate_entry, alternate_family, now, result);
-	if (alternate_status == ROUTE_ENDPOINT_ADDRESS_OK || alternate_status == ROUTE_ENDPOINT_ADDRESS_BAD_ARGUMENT) {
+	route_endpoint_address_status alternate_status = route_endpoint_cache_family_select(alternate_entry, alternate_family, now, overlays, requirements, result);
+	if (alternate_status == ROUTE_ENDPOINT_ADDRESS_OK || alternate_status == ROUTE_ENDPOINT_ADDRESS_BAD_ARGUMENT || alternate_status == ROUTE_ENDPOINT_ADDRESS_LIMIT) {
 		return alternate_status;
 	}
 	return preferred_status == ROUTE_ENDPOINT_ADDRESS_PENDING || alternate_status == ROUTE_ENDPOINT_ADDRESS_PENDING ? ROUTE_ENDPOINT_ADDRESS_PENDING
@@ -112,6 +172,8 @@ static route_endpoint_select_status route_endpoint_select_status_from_address(ro
 			return ROUTE_ENDPOINT_SELECT_OK;
 		case ROUTE_ENDPOINT_ADDRESS_PENDING:
 			return ROUTE_ENDPOINT_SELECT_PENDING;
+		case ROUTE_ENDPOINT_ADDRESS_LIMIT:
+			return ROUTE_ENDPOINT_SELECT_LIMIT;
 		case ROUTE_ENDPOINT_ADDRESS_UNAVAILABLE:
 			return ROUTE_ENDPOINT_SELECT_UNAVAILABLE;
 		case ROUTE_ENDPOINT_ADDRESS_BAD_ARGUMENT:
@@ -191,7 +253,7 @@ static bool route_endpoint_target_find(const route_resolution *resolution, size_
 }
 
 static route_endpoint_address_status route_endpoint_target_select(const route_resolution_target_view *target, sa_family_t preferred_family, const struct timespec *now,
-	net_addr *result) {
+	const route_endpoint_overlay *overlays, route_endpoint_requirements *requirements, net_addr *result) {
 	if (target == NULL) {
 		return ROUTE_ENDPOINT_ADDRESS_BAD_ARGUMENT;
 	}
@@ -205,19 +267,22 @@ static route_endpoint_address_status route_endpoint_target_select(const route_re
 		case ROUTE_RESOLUTION_TARGET_HOSTS:
 			return route_endpoint_addresses_select(target->addresses, target->address_count, preferred_family, result);
 		case ROUTE_RESOLUTION_TARGET_DNS:
-			return route_endpoint_cache_select(target->ipv4_entry, target->ipv6_entry, preferred_family, now, result);
+			return route_endpoint_cache_select(target->ipv4_entry, target->ipv6_entry, preferred_family, now, overlays, requirements, result);
 		default:
 			return ROUTE_ENDPOINT_ADDRESS_BAD_ARGUMENT;
 	}
 }
 
 /* section: functions (exported) */
-route_endpoint_select_status route_endpoint_select(route_generation *generation, const char *vhost, const struct timespec *now, const p_proxy *inbound_proxy,
-	route_endpoint_snapshot *result) {
+route_endpoint_select_status route_endpoint_evaluate(route_generation *generation, const char *vhost, const struct timespec *now, const p_proxy *inbound_proxy,
+	const route_endpoint_overlay *overlays, route_endpoint_requirements *requirements, route_endpoint_snapshot *result) {
 	if (result != NULL) {
 		memset(result, 0, sizeof(*result));
 	}
-	if (generation == NULL || vhost == NULL || now == NULL || inbound_proxy == NULL || result == NULL || route_generation_identity(generation) == 0
+	if (requirements != NULL) {
+		memset(requirements, 0, sizeof(*requirements));
+	}
+	if (generation == NULL || vhost == NULL || now == NULL || inbound_proxy == NULL || requirements == NULL || result == NULL || route_generation_identity(generation) == 0
 		|| now->tv_sec < 0 || now->tv_nsec < 0 || now->tv_nsec >= 1000000000L
 		|| (inbound_proxy->family != AF_INET && inbound_proxy->family != AF_INET6) || inbound_proxy->srcaddr.family != inbound_proxy->family
 		|| inbound_proxy->dstaddr.family != inbound_proxy->family || inbound_proxy->srcaddr.err != 0 || inbound_proxy->dstaddr.err != 0) {
@@ -256,7 +321,7 @@ route_endpoint_select_status route_endpoint_select(route_generation *generation,
 			}
 			break;
 		case ROUTE_BINDING_SOURCE_DNS_ADDRESS:
-			address_status = route_endpoint_cache_select(binding.ipv4_entry, binding.ipv6_entry, inbound_proxy->family, now, &selected_address);
+			address_status = route_endpoint_cache_select(binding.ipv4_entry, binding.ipv6_entry, inbound_proxy->family, now, overlays, requirements, &selected_address);
 			if (address_status != ROUTE_ENDPOINT_ADDRESS_OK) {
 				return route_endpoint_select_status_from_address(address_status);
 			}
@@ -264,8 +329,11 @@ route_endpoint_select_status route_endpoint_select(route_generation *generation,
 		case ROUTE_BINDING_SOURCE_DNS_SRV: {
 			resolver_cache_view srv_view;
 			if (binding.srv_entry == NULL || resolver_cache_entry_query_type(binding.srv_entry) != ns_t_srv
-				|| !resolver_cache_entry_view(binding.srv_entry, now, &srv_view)) {
+				|| !route_endpoint_entry_view(binding.srv_entry, now, overlays, &srv_view)) {
 				return ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT;
+			}
+			if (!route_endpoint_requirement_add(requirements, binding.srv_entry, srv_view.status == RESOLVER_CACHE_VIEW_EMPTY)) {
+				return ROUTE_ENDPOINT_SELECT_LIMIT;
 			}
 			if (srv_view.status == RESOLVER_CACHE_VIEW_EMPTY) {
 				return ROUTE_ENDPOINT_SELECT_PENDING;
@@ -284,7 +352,7 @@ route_endpoint_select_status route_endpoint_select(route_generation *generation,
 				|| !route_endpoint_target_find(resolution, route.destination_index, destination.target_count, selected_record->target, &target)) {
 				return ROUTE_ENDPOINT_SELECT_UNAVAILABLE;
 			}
-			address_status = route_endpoint_target_select(&target, inbound_proxy->family, now, &selected_address);
+			address_status = route_endpoint_target_select(&target, inbound_proxy->family, now, overlays, requirements, &selected_address);
 			if (address_status != ROUTE_ENDPOINT_ADDRESS_OK) {
 				return route_endpoint_select_status_from_address(address_status);
 			}
@@ -311,4 +379,10 @@ route_endpoint_select_status route_endpoint_select(route_generation *generation,
 	result->port = selected_port;
 	result->rewrite = route.rewrite;
 	return ROUTE_ENDPOINT_SELECT_OK;
+}
+
+route_endpoint_select_status route_endpoint_select(route_generation *generation, const char *vhost, const struct timespec *now, const p_proxy *inbound_proxy,
+	route_endpoint_snapshot *result) {
+	route_endpoint_requirements requirements;
+	return route_endpoint_evaluate(generation, vhost, now, inbound_proxy, NULL, &requirements, result);
 }
