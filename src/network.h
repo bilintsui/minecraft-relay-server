@@ -50,8 +50,17 @@ typedef struct {
 	net_addrp address, address_clean;
 	in_port_t port;
 } net_addrbundle;
+typedef enum {
+	NET_CONNECT_OK,
+	NET_CONNECT_PENDING,
+	NET_CONNECT_FAILURE,
+	NET_CONNECT_BAD_ARGUMENT,
+	NET_CONNECT_INTERNAL
+} net_connect_status;
 /* section: functions (exported) */
 net_addr net_addr_parse(const char *address);
+net_connect_status net_connect_nonblocking(const net_addr *address, in_port_t port, int *socket_fd);
+net_connect_status net_connect_nonblocking_complete(int socket_fd);
 net_addrp net_ntop(sa_family_t family, const void *src, bool v6addition);
 int net_relay(int socket_in, int socket_out);
 net_addr net_resolve_dual(const char *hostname, sa_family_t primary_family, bool dual);

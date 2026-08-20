@@ -89,6 +89,70 @@ net_addr net_addr_parse(const char *address) {
 	return result;
 }
 
+net_connect_status net_connect_nonblocking(const net_addr *address, in_port_t port, int *socket_fd) {
+	struct sockaddr_in address_v4;
+	struct sockaddr_in6 address_v6;
+	socklen_t address_size;
+	const struct sockaddr *socket_address;
+	int connect_error, result;
+	if (socket_fd == NULL || address == NULL || address->err != 0 || ((address->family != AF_INET) && (address->family != AF_INET6))) {
+		if (socket_fd != NULL) {
+			*socket_fd = -1;
+		}
+		errno = NET_EARGADDR;
+		return NET_CONNECT_BAD_ARGUMENT;
+	}
+	*socket_fd = -1;
+	if (address->family == AF_INET) {
+		memset(&address_v4, 0, sizeof(address_v4));
+		address_v4.sin_family = AF_INET;
+		address_v4.sin_port = htons(port);
+		memcpy(&address_v4.sin_addr, &address->addr.v4, sizeof(address_v4.sin_addr));
+		address_size = sizeof(address_v4);
+		socket_address = (const struct sockaddr *)&address_v4;
+	} else {
+		memset(&address_v6, 0, sizeof(address_v6));
+		address_v6.sin6_family = AF_INET6;
+		address_v6.sin6_port = htons(port);
+		memcpy(&address_v6.sin6_addr, &address->addr.v6, sizeof(address_v6.sin6_addr));
+		address_size = sizeof(address_v6);
+		socket_address = (const struct sockaddr *)&address_v6;
+	}
+	result = socket(address->family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+	if (result == -1) {
+		return NET_CONNECT_INTERNAL;
+	}
+	if (connect(result, socket_address, address_size) == 0) {
+		*socket_fd = result;
+		return NET_CONNECT_OK;
+	}
+	if ((errno == EINPROGRESS) || (errno == EALREADY) || (errno == EINTR)) {
+		*socket_fd = result;
+		return NET_CONNECT_PENDING;
+	}
+	connect_error = errno;
+	close(result);
+	errno = connect_error;
+	return NET_CONNECT_FAILURE;
+}
+
+net_connect_status net_connect_nonblocking_complete(int socket_fd) {
+	int socket_error;
+	socklen_t socket_error_size = sizeof(socket_error);
+	if (socket_fd < 0) {
+		errno = NET_EARGADDR;
+		return NET_CONNECT_BAD_ARGUMENT;
+	}
+	if (getsockopt(socket_fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_size) == -1) {
+		return NET_CONNECT_INTERNAL;
+	}
+	if (socket_error != 0) {
+		errno = socket_error;
+		return NET_CONNECT_FAILURE;
+	}
+	return NET_CONNECT_OK;
+}
+
 net_addrp net_ntop(sa_family_t family, const void *src, bool v6addition) {
 	net_addrp pre_result;
 	memset(&pre_result, 0, sizeof(pre_result));
