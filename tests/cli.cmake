@@ -133,6 +133,7 @@ assert_contains("${CLI_STDOUT}" "(" "version internal opening delimiter")
 assert_contains("${CLI_STDOUT}" ")" "version internal closing delimiter")
 
 string(RANDOM LENGTH 16 ALPHABET 0123456789abcdef random_suffix)
+set(hostname_config "${TEST_DIRECTORY}/mcrelay-cli-hostname-${random_suffix}.json")
 set(invalid_config "${TEST_DIRECTORY}/mcrelay-cli-invalid-${random_suffix}.json")
 set(missing_config "${TEST_DIRECTORY}/mcrelay-cli-missing-${random_suffix}.json")
 set(valid_config "${TEST_DIRECTORY}/mcrelay-cli-valid-${random_suffix}.json")
@@ -169,6 +170,9 @@ file(WRITE "${valid_config}" [=[
   ]
 }
 ]=])
+file(READ "${valid_config}" hostname_config_contents)
+string(REPLACE "\"address\": \"127.0.0.1\"" "\"address\": \"localhost\"" hostname_config_contents "${hostname_config_contents}")
+file(WRITE "${hostname_config}" "${hostname_config_contents}")
 
 run_cli(0 dumpconfig -c "${valid_config}")
 assert_empty("${CLI_STDERR}" "dumpconfig stderr")
@@ -194,6 +198,8 @@ foreach(config_command dumpconfig run)
 	run_cli(79 ${config_command} -c "${invalid_config}")
 	assert_contains("${CLI_STDERR}" "Not a valid JSON format" "${config_command} invalid JSON error")
 endforeach()
+
+run_cli(80 run -c "${hostname_config}")
 
 run_cli(81 run -c "${missing_config}")
 assert_contains("${CLI_STDOUT}${CLI_STDERR}" "${missing_config}" "short config option")
@@ -272,4 +278,4 @@ expect_empty_config(dumpconfig --config)
 expect_empty_config(run -c)
 expect_empty_config(run --config)
 
-file(REMOVE "${invalid_config}" "${valid_config}")
+file(REMOVE "${hostname_config}" "${invalid_config}" "${valid_config}")

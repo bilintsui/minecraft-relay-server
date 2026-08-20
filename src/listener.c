@@ -187,7 +187,7 @@ static bool listener_endpoint_may_conflict(const listener_endpoint *left, const 
 }
 
 static enum listener_endpoint_status listener_endpoint_prepare(const conf *source, listener_endpoint *target) {
-	target->address = net_resolve_dual(source->listen.address, source->netpriority.protocol, source->netpriority.enabled);
+	target->address = net_addr_parse(source->listen.address);
 	target->port = source->listen.port;
 	if (target->address.family == 0) {
 		return LISTENER_ENDPOINT_BAD_ADDRESS;

@@ -76,6 +76,22 @@ static void *net_resolve(const char *hostname, sa_family_t family) {
 }
 
 /* section: functions (exported) */
+net_addr net_addr_parse(const char *address) {
+	net_addr result;
+	memset(&result, 0, sizeof(result));
+	if (address != NULL && inet_pton(AF_INET, address, &result.addr.v4) == 1) {
+		result.family = AF_INET;
+		return result;
+	}
+	memset(&result.addr, 0, sizeof(result.addr));
+	if (address != NULL && inet_pton(AF_INET6, address, result.addr.v6) == 1) {
+		result.family = AF_INET6;
+		return result;
+	}
+	result.err = NET_EARGADDR;
+	return result;
+}
+
 net_addrp net_ntop(sa_family_t family, const void *src, bool v6addition) {
 	net_addrp pre_result;
 	memset(&pre_result, 0, sizeof(pre_result));

@@ -56,6 +56,7 @@ typedef struct {
 } net_srvrecord;
 
 /* section: functions (exported) */
+net_addr net_addr_parse(const char *address);
 net_addrp net_ntop(sa_family_t family, const void *src, bool v6addition);
 int net_relay(int socket_in, int socket_out);
 net_addr net_resolve_dual(const char *hostname, sa_family_t primary_family, bool dual);

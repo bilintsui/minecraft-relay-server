@@ -39,7 +39,7 @@
     /*
      * Optional, string (default: "::")
      *
-     * The address that the server will listen on
+     * The numeric IPv4 or IPv6 address that the server will listen on
      */
     "address": "::",
 
