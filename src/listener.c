@@ -32,6 +32,7 @@
 #include "config.h"
 #include "connsetup.h"
 #include "define/exitcode.h"
+#include "hosts.h"
 #include "log.h"
 #include "network.h"
 #include "resolver_cache.h"
@@ -43,6 +44,9 @@
 /* section: defines */
 /* listener */
 #define LISTENER_ACCEPT_BATCH	128
+#ifndef LISTENER_HOSTS_FILENAME
+#define LISTENER_HOSTS_FILENAME	"/etc/hosts"
+#endif
 
 /* logging macro */
 #define LISTENER_LOG(ctx, lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, (ctx)->log_filename, (ctx)->config->log.level, lvl, __VA_ARGS__)
@@ -75,6 +79,7 @@ typedef struct {
 	const char *config_filename;
 	const char *config_filename_full;
 	resolver_cache *dns_cache;
+	hosts_table *hosts;
 	char log_filename[PATH_MAX];
 	resolver_supervisor *resolver;
 	const char *working_directory;
@@ -370,6 +375,48 @@ static int listener_events_wait(int socket_fd, const listener_events *events, li
 	return 0;
 }
 
+static void listener_hosts_dispose_in_child(listener_context *context) {
+	hosts_table_destroy(context->hosts);
+	context->hosts = NULL;
+}
+
+static const char *listener_hosts_load_error(hosts_load_status status) {
+	switch (status) {
+		case HOSTS_LOAD_LIMIT:
+			return "entry limit reached";
+		case HOSTS_LOAD_MEMORY:
+			return "memory allocation failed";
+		case HOSTS_LOAD_BAD_ARGUMENT:
+		default:
+			return "invalid loader state";
+	}
+}
+
+static bool listener_hosts_replace(listener_context *context, uint8_t failure_level, const char *failure_action) {
+	hosts_table *candidate = NULL;
+	size_t malformed_line_count = 0;
+	hosts_load_status status = hosts_table_load(LISTENER_HOSTS_FILENAME, &candidate, &malformed_line_count);
+	if (status != HOSTS_LOAD_OK && status != HOSTS_LOAD_FILE_ERROR) {
+		LISTENER_LOG(context, failure_level, "Cannot prepare local static host table from %s: %s%s.\n", LISTENER_HOSTS_FILENAME, listener_hosts_load_error(status), failure_action);
+		return false;
+	}
+	if (candidate == NULL) {
+		LISTENER_LOG(context, failure_level, "Cannot prepare local static host table from %s: loader returned no table%s.\n", LISTENER_HOSTS_FILENAME, failure_action);
+		return false;
+	}
+	if (status == HOSTS_LOAD_FILE_ERROR) {
+		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot read local static host table from %s; using guaranteed localhost entries.\n", LISTENER_HOSTS_FILENAME);
+	}
+	if (malformed_line_count > 0) {
+		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Ignored %zu malformed line%s while loading local static host table from %s.\n", malformed_line_count,
+			malformed_line_count == 1 ? "" : "s", LISTENER_HOSTS_FILENAME);
+	}
+	hosts_table *previous = context->hosts;
+	context->hosts = candidate;
+	hosts_table_destroy(previous);
+	return true;
+}
+
 static void listener_notify_ready(void) {
 	sd_notify(0, "READY=1");
 }
@@ -469,6 +516,7 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 		"Reloading config from file: %s\n",
 		context->config_filename
 	);
+	listener_hosts_replace(context, MKSYS_LEVEL_WARNING, ", keeping the existing table");
 	conf_cache config_cache_candidate = { 0 };
 	conf *config_candidate = NULL;
 	conf_read_status read_status = config_read(context->config_filename_full, context->config_cache, &config_cache_candidate, &config_candidate);
@@ -657,6 +705,7 @@ static int listener_worker_run(int client_fd, const listener_client_address *cli
 	close(events->epoll_fd);
 	close(events->signal_fd);
 	listener_socket_close(listener);
+	listener_hosts_dispose_in_child(context);
 	listener_resolver_dispose_in_child(context);
 	if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1) {
 		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot configure worker parent-death signal: %s\n", strerror(errno));
@@ -681,6 +730,11 @@ static int listener_loop(listener_context *context, listener_socket *listener) {
 	listener_events events;
 	if (listener_events_init(listener->fd, &events) == -1) {
 		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize listener event loop: %s\n", strerror(errno));
+		listener_socket_close(listener);
+		return EXITCODE_INTERNAL;
+	}
+	if (!listener_hosts_replace(context, MKSYS_LEVEL_CRITICAL, "")) {
+		listener_events_destroy(&events);
 		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
 	}
@@ -823,5 +877,6 @@ int listener_run(conf *config, conf_cache *config_cache, const char *config_file
 cleanup:
 	config_destroy(context.config);
 	config_cache_destroy(context.config_cache);
+	hosts_table_destroy(context.hosts);
 	return exitcode;
 }

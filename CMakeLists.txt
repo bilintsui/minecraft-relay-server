@@ -6,7 +6,7 @@ set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 add_executable(mcrelay${EXEC_SUFFIX}
-	src/basic.c src/config.c src/dns.c src/listener.c src/log.c src/main.c src/connsetup.c src/network.c src/resolver_cache.c src/resolver_helper.c src/resolver_ipc.c src/resolver_ipc_assembly.c src/resolver_supervisor.c
+	src/basic.c src/config.c src/dns.c src/hosts.c src/listener.c src/log.c src/main.c src/connsetup.c src/network.c src/resolver_cache.c src/resolver_helper.c src/resolver_ipc.c src/resolver_ipc_assembly.c src/resolver_supervisor.c
 	src/protocol/common.c src/protocol/handshake.c
 	src/protocol/handshake_legacy.c src/protocol/proxy.c)
 option(DEBUG_MODE "Allow FIFO as config input (debug)" OFF)
@@ -40,6 +40,11 @@ if(BUILD_TESTING)
 	set_target_properties(dns_srv_records_test PROPERTIES
 		LINK_FLAGS "-Wl,--wrap=__res_nclose -Wl,--wrap=__res_ninit -Wl,--wrap=res_nmkquery -Wl,--wrap=res_nquery -Wl,--wrap=res_nsearch -Wl,--wrap=res_nsend")
 	add_test(NAME dns_srv_records COMMAND dns_srv_records_test)
+	add_executable(hosts_test tests/hosts.c src/hosts.c src/network.c)
+	target_include_directories(hosts_test PRIVATE src)
+	target_compile_definitions(hosts_test PRIVATE _GNU_SOURCE)
+	target_link_libraries(hosts_test -lresolv)
+	add_test(NAME hosts COMMAND hosts_test)
 
 	add_test(
 		NAME cli
@@ -110,6 +115,13 @@ if(BUILD_TESTING)
 			LINK_FLAGS "-Wl,--wrap=__res_nclose -Wl,--wrap=__res_ninit -Wl,--wrap=res_nmkquery -Wl,--wrap=res_nquery -Wl,--wrap=res_nsearch -Wl,--wrap=res_nsend")
 		add_test(NAME dns_srv_records_ubsan COMMAND dns_srv_records_ubsan_test)
 		set_tests_properties(dns_srv_records_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+		add_executable(hosts_ubsan_test tests/hosts.c src/hosts.c src/network.c)
+		target_include_directories(hosts_ubsan_test PRIVATE src)
+		target_compile_definitions(hosts_ubsan_test PRIVATE _GNU_SOURCE)
+		target_compile_options(hosts_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
+		target_link_libraries(hosts_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all -lresolv)
+		add_test(NAME hosts_ubsan COMMAND hosts_ubsan_test)
+		set_tests_properties(hosts_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 
 		add_executable(network_resolve_ubsan_test tests/network_resolve.c src/network.c)
 		target_include_directories(network_resolve_ubsan_test PRIVATE src)
