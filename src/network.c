@@ -7,14 +7,11 @@
 
 /* section: headers (library) */
 #include <arpa/inet.h>
-#include <arpa/nameser.h>
-#include <arpa/nameser_compat.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <resolv.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -308,62 +305,4 @@ int net_socket(short action, sa_family_t family, const void *address, in_port_t 
 	}
 	free(serv_addr);
 	return result;
-}
-
-int net_srvresolve(char *query_name, net_srvrecord *target) {
-	char query_name_full[256];
-	memset(query_name_full, 0, 256);
-	snprintf(query_name_full, sizeof(query_name_full), "_minecraft._tcp.%s", query_name);
-	struct {
-		uint16_t priority, weight;
-		in_port_t port;
-		char target[128];
-	} records[128], records_minpriority[128];
-	memset(records, 0, sizeof(records));
-	res_init();
-	unsigned char query_buffer[1024];
-	int response = res_query(query_name_full, C_IN, ns_t_srv, query_buffer, sizeof(query_buffer));
-	if (response == -1) {
-		return -1;
-	}
-	ns_msg nsMsg;
-	ns_initparse(query_buffer, response, &nsMsg);
-	uint16_t priority_min = 65535;
-	uint16_t weight_max = 0;
-	int rec_record = 0;
-	int max_record = ns_msg_count(nsMsg, ns_s_an);
-	if (max_record == 0) {
-		return 0;
-	}
-	for (rec_record = 0; rec_record < max_record; rec_record++) {
-		ns_rr rr;
-		ns_parserr(&nsMsg, ns_s_an, rec_record, &rr);
-		records[rec_record].priority = ntohs(*((const uint16_t *)ns_rr_rdata(rr) + 0));
-		records[rec_record].weight = ntohs(*((const uint16_t *)ns_rr_rdata(rr) + 1));
-		records[rec_record].port = ntohs(*((const in_port_t *)ns_rr_rdata(rr) + 2));
-		dn_expand(ns_msg_base(nsMsg), ns_msg_end(nsMsg), ns_rr_rdata(rr) + 6, records[rec_record].target, sizeof(records[rec_record].target));
-		if (records[rec_record].priority < priority_min) {
-			priority_min = records[rec_record].priority;
-		}
-	}
-	int max_record_minpriority = 0;
-	for (rec_record = 0; rec_record < max_record; rec_record++) {
-		if (records[rec_record].priority == priority_min) {
-			records_minpriority[max_record_minpriority] = records[rec_record];
-			if (records_minpriority[max_record_minpriority].weight > weight_max) {
-				weight_max = records_minpriority[max_record_minpriority].weight;
-			}
-			max_record_minpriority++;
-		}
-	}
-	int rec_record_minpriority = 0;
-	int max_record_maxweight = 0;
-	for (rec_record_minpriority = 0; rec_record_minpriority < max_record_minpriority; rec_record_minpriority++) {
-		if (records_minpriority[rec_record_minpriority].weight == weight_max) {
-			strcpy(target[max_record_maxweight].target, records_minpriority[rec_record_minpriority].target);
-			target[max_record_maxweight].port = records_minpriority[rec_record_minpriority].port;
-			max_record_maxweight++;
-		}
-	}
-	return max_record_maxweight;
 }

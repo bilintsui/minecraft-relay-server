@@ -567,56 +567,6 @@ void config_log_duplicate_error(const char *logfile, uint8_t maxlevel, uint8_t m
 	}
 }
 
-conf_proxy config_proxy_search(conf *src, const char *targetvhost) {
-	conf_proxy result;
-	memset(&result, 0, sizeof(result));
-	if ((src == NULL) || (targetvhost == NULL)) {
-		return result;
-	}
-	cJSON *proxylist = src->proxy;
-	if (proxylist == NULL) {
-		return result;
-	}
-	cJSON *rec_proxylist = NULL;
-	cJSON_ArrayForEach(rec_proxylist, proxylist) {
-		cJSON *vhostnames = cJSON_GetObjectItemCaseSensitive(rec_proxylist, "vhost");
-		if (vhostnames == NULL) {
-			return result;
-		}
-		cJSON *rec_vhostname = NULL;
-		cJSON_ArrayForEach(rec_vhostname, vhostnames) {
-			if (cJSON_IsString(rec_vhostname)) {
-				if (strcmp_notail(rec_vhostname->valuestring, targetvhost, '.', true) == 0) {
-					result.address = (char *)malloc(strlen(cJSON_GetObjectItemCaseSensitive(rec_proxylist, "address")->valuestring) + 1);
-					if (result.address == NULL) {
-						return result;
-					}
-					result.valid = true;
-					strcpy(result.address, cJSON_GetObjectItemCaseSensitive(rec_proxylist, "address")->valuestring);
-					cJSON *target_port = cJSON_GetObjectItemCaseSensitive(rec_proxylist, "port");
-					if (target_port == NULL) {
-						result.srvenabled = true;
-					} else {
-						result.port = target_port->valueint;
-					}
-					result.rewrite = config_jsonbool(cJSON_GetObjectItemCaseSensitive(rec_proxylist, "rewrite"), false);
-					result.pheader = config_jsonbool(cJSON_GetObjectItemCaseSensitive(rec_proxylist, "pheader"), false);
-					return result;
-				}
-			}
-		}
-	}
-	return result;
-}
-
-void config_proxy_search_destroy(conf_proxy *target) {
-	if (target->address != NULL) {
-		free(target->address);
-		target->address = NULL;
-	}
-	memset(target, 0, sizeof(conf_proxy));
-}
-
 /*
  * Successfully parsed raw content is returned through candidate_cache.
  * The caller must explicitly commit or destroy it, so later preparation

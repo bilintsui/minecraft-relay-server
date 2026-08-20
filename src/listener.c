@@ -174,6 +174,7 @@ struct listener_connection {
 	enum listener_connection_timer timer;
 	route_waiter *waiter;
 	route_waiter_status waiter_status;
+	char vhost[ROUTE_ENDPOINT_TEXT_SIZE];
 };
 typedef struct {
 	conf *config;
@@ -427,6 +428,62 @@ static void listener_connection_destroy(listener_connection **connections, liste
 	free(target);
 }
 
+static bool listener_connection_handoff_prepare(listener_connection *connection, listener_context *context, const struct timespec *now, connsetup_snapshot *result) {
+	if (connection == NULL || connection->generation == NULL || context == NULL || now == NULL || result == NULL) {
+		return false;
+	}
+	const conf *config = route_generation_config(connection->generation);
+	const char *icon_b64 = config == NULL || config->icon_b64 == NULL ? FAVICON_BASE64 : config->icon_b64;
+	size_t icon_size = strlen(icon_b64);
+	if (config == NULL || config->log.filename == NULL || context->working_directory == NULL || icon_size > CONF_ICON_B64MAX) {
+		return false;
+	}
+	memset(result, 0, sizeof(*result));
+	memcpy(result->icon_b64, icon_b64, icon_size + 1U);
+	int log_filename_size = config->log.filename[0] == '/'
+		? snprintf(result->log_filename, sizeof(result->log_filename), "%s", config->log.filename)
+		: snprintf(result->log_filename, sizeof(result->log_filename), "%s/%s", context->working_directory, config->log.filename);
+	if (log_filename_size < 0 || (size_t)log_filename_size >= sizeof(result->log_filename)) {
+		return false;
+	}
+	result->log_level = config->log.level;
+	if (connection->state == LISTENER_CONNECTION_INITIAL) {
+		result->route_status = CONNSETUP_ROUTE_BYPASS;
+	} else {
+		switch (connection->waiter_status) {
+			case ROUTE_WAITER_READY:
+				result->endpoint = connection->endpoint;
+				result->route_status = CONNSETUP_ROUTE_READY;
+				break;
+			case ROUTE_WAITER_NO_ROUTE:
+				result->route_status = CONNSETUP_ROUTE_NO_ROUTE;
+				break;
+			case ROUTE_WAITER_CONTRADICTORY:
+			case ROUTE_WAITER_LIMIT:
+			case ROUTE_WAITER_MEMORY:
+			case ROUTE_WAITER_SERVICE_UNAVAILABLE:
+			case ROUTE_WAITER_TIMEOUT:
+			case ROUTE_WAITER_UNAVAILABLE:
+				result->route_status = CONNSETUP_ROUTE_UNAVAILABLE;
+				break;
+			case ROUTE_WAITER_PENDING:
+			case ROUTE_WAITER_BAD_ARGUMENT:
+			case ROUTE_WAITER_IO:
+			case ROUTE_WAITER_TIME:
+			default:
+				return false;
+		}
+	}
+	if (result->route_status != CONNSETUP_ROUTE_READY) {
+		memcpy(result->endpoint.vhost, connection->vhost, strlen(connection->vhost) + 1U);
+	}
+	bool waiter_destroyed = route_waiter_destroy(connection->waiter, context->resolver, now);
+	connection->waiter = NULL;
+	route_generation_release(connection->generation);
+	connection->generation = NULL;
+	return waiter_destroyed;
+}
+
 static size_t listener_connection_limit(void) {
 	struct rlimit descriptor_limit;
 	if (getrlimit(RLIMIT_NOFILE, &descriptor_limit) == -1) {
@@ -478,7 +535,7 @@ static enum listener_connection_progress listener_connection_receive(listener_co
 	return LISTENER_CONNECTION_ABORT;
 }
 
-static enum listener_connection_route listener_connection_route_parse(const listener_connection *connection, char *vhost, size_t vhost_size) {
+static enum listener_connection_route listener_connection_route_parse(listener_connection *connection) {
 	uint8_t protocol = protocol_identify(connection->inbound, connection->inbound_size, NULL);
 	const char *source = NULL;
 	p_handshake modern;
@@ -517,9 +574,9 @@ static enum listener_connection_route listener_connection_route_parse(const list
 		default:
 			return LISTENER_CONNECTION_ROUTE_INVALID;
 	}
-	bool valid = source != NULL && source[0] != '\0' && strlen(source) < vhost_size;
+	bool valid = source != NULL && source[0] != '\0' && strlen(source) < sizeof(connection->vhost);
 	if (valid) {
-		memcpy(vhost, source, strlen(source) + 1U);
+		memcpy(connection->vhost, source, strlen(source) + 1U);
 	}
 	packet_destroy(modern);
 	packet_destroy_legacy_motd(legacy_motd);
@@ -556,8 +613,7 @@ static enum listener_connection_progress listener_connection_route_progress(list
 
 static enum listener_connection_progress listener_connection_route_start(listener_connection *connection, const listener_events *events, resolver_supervisor *supervisor,
 	const struct timespec *now) {
-	char vhost[ROUTE_ENDPOINT_TEXT_SIZE];
-	enum listener_connection_route route = listener_connection_route_parse(connection, vhost, sizeof(vhost));
+	enum listener_connection_route route = listener_connection_route_parse(connection);
 	if (route == LISTENER_CONNECTION_ROUTE_BYPASS) {
 		return LISTENER_CONNECTION_READY;
 	}
@@ -568,7 +624,8 @@ static enum listener_connection_progress listener_connection_route_start(listene
 	if (!protocol_proxy_socket_read(connection->socket_fd, &inbound_proxy)) {
 		return LISTENER_CONNECTION_ABORT;
 	}
-	route_waiter_create_status create_status = route_waiter_create(connection->generation, vhost, &inbound_proxy, now, &connection->waiter);
+	connection->state = LISTENER_CONNECTION_ROUTE_WAITING;
+	route_waiter_create_status create_status = route_waiter_create(connection->generation, connection->vhost, &inbound_proxy, now, &connection->waiter);
 	if (create_status != ROUTE_WAITER_CREATE_OK) {
 		if (create_status == ROUTE_WAITER_CREATE_BAD_ARGUMENT || create_status == ROUTE_WAITER_CREATE_TIME) {
 			errno = create_status == ROUTE_WAITER_CREATE_TIME ? EOVERFLOW : EINVAL;
@@ -577,9 +634,6 @@ static enum listener_connection_progress listener_connection_route_start(listene
 		connection->waiter_status = create_status == ROUTE_WAITER_CREATE_LIMIT ? ROUTE_WAITER_LIMIT : ROUTE_WAITER_MEMORY;
 		return LISTENER_CONNECTION_READY;
 	}
-	route_generation_release(connection->generation);
-	connection->generation = NULL;
-	connection->state = LISTENER_CONNECTION_ROUTE_WAITING;
 	enum listener_connection_progress progress = listener_connection_route_progress(connection, supervisor, now);
 	if (progress != LISTENER_CONNECTION_PENDING) {
 		return progress;
@@ -1510,15 +1564,15 @@ static int listener_worker_signals_restore(const sigset_t *signal_mask) {
 	return sigprocmask(SIG_SETMASK, signal_mask, NULL);
 }
 
-static int listener_worker_run(int client_fd, const listener_client_address *client_address, const uint8_t *inbound, size_t inbound_size, listener_socket *listener,
-	const listener_events *events, pid_t listener_pid, listener_context *context) {
+static int listener_worker_run(int client_fd, const listener_client_address *client_address, const uint8_t *inbound, size_t inbound_size,
+	const connsetup_snapshot *snapshot, listener_socket *listener, const listener_events *events, pid_t listener_pid, listener_context *context) {
 	close(events->epoll_fd);
 	close(events->route_timer_fd);
 	close(events->signal_fd);
 	listener_socket_close(listener);
 	listener_resolver_dispose_in_child(context);
 	if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1) {
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot configure worker parent-death signal: %s\n", strerror(errno));
+		mksysmsg(MKSYS_PREFIX_ON, snapshot->log_filename, snapshot->log_level, MKSYS_LEVEL_WARNING, "Cannot configure worker parent-death signal: %s\n", strerror(errno));
 		listener_worker_route_state_dispose(context);
 		return EXITCODE_INTERNAL;
 	}
@@ -1527,14 +1581,14 @@ static int listener_worker_run(int client_fd, const listener_client_address *cli
 		return EXITCODE_OK;
 	}
 	if (listener_worker_signals_restore(&events->previous_signal_mask) == -1) {
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot restore worker signal state: %s\n", strerror(errno));
+		mksysmsg(MKSYS_PREFIX_ON, snapshot->log_filename, snapshot->log_level, MKSYS_LEVEL_WARNING, "Cannot restore worker signal state: %s\n", strerror(errno));
 		listener_worker_route_state_dispose(context);
 		return EXITCODE_INTERNAL;
 	}
+	listener_worker_route_state_dispose(context);
 	net_addrbundle addrbundle_inbound_client = listener_client_address_parse(client_address);
 	int socket_outbound;
-	int setup_status = connsetup_preloaded(client_fd, &socket_outbound, context->log_filename, context->config, addrbundle_inbound_client, inbound, inbound_size);
-	listener_worker_route_state_dispose(context);
+	int setup_status = connsetup_prepared(client_fd, &socket_outbound, snapshot, addrbundle_inbound_client, inbound, inbound_size);
 	if (setup_status == 0) {
 		net_relay(client_fd, socket_outbound);
 	}
@@ -1542,7 +1596,13 @@ static int listener_worker_run(int client_fd, const listener_client_address *cli
 }
 
 static void listener_connection_dispatch(listener_connection *connections, listener_connection *connection, listener_socket *listener, const listener_events *events,
-	pid_t listener_pid, listener_context *context) {
+	pid_t listener_pid, listener_context *context, const struct timespec *now) {
+	connsetup_snapshot snapshot;
+	if (!listener_connection_handoff_prepare(connection, context, now, &snapshot)) {
+		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot prepare a self-contained worker handoff.\n");
+		connection->closing = true;
+		return;
+	}
 	int socket_flags = fcntl(connection->socket_fd, F_GETFL);
 	if (socket_flags == -1 || fcntl(connection->socket_fd, F_SETFL, socket_flags & ~O_NONBLOCK) == -1) {
 		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot prepare client connection for worker: %s\n", strerror(errno));
@@ -1562,7 +1622,7 @@ static void listener_connection_dispatch(listener_connection *connections, liste
 		return;
 	}
 	listener_connections_close_except(connections, connection);
-	_exit(listener_worker_run(connection->socket_fd, &connection->address, connection->inbound, connection->inbound_size, listener, events, listener_pid, context));
+	_exit(listener_worker_run(connection->socket_fd, &connection->address, connection->inbound, connection->inbound_size, &snapshot, listener, events, listener_pid, context));
 }
 
 static int listener_connections_route_progress(listener_connection *connections, listener_socket *listener, const listener_events *events, pid_t listener_pid,
@@ -1573,7 +1633,7 @@ static int listener_connections_route_progress(listener_connection *connections,
 		}
 		enum listener_connection_progress progress = listener_connection_route_progress(connection, context->resolver, now);
 		if (progress == LISTENER_CONNECTION_READY) {
-			listener_connection_dispatch(connections, connection, listener, events, listener_pid, context);
+			listener_connection_dispatch(connections, connection, listener, events, listener_pid, context, now);
 		} else if (progress == LISTENER_CONNECTION_FATAL) {
 			return -1;
 		}
@@ -1764,7 +1824,7 @@ static int listener_loop(listener_context *context, listener_socket *listener) {
 					progress = listener_connection_route_start(connection, &events, context->resolver, &route_now);
 				}
 				if (progress == LISTENER_CONNECTION_READY) {
-					listener_connection_dispatch(connections, connection, listener, &events, listener_pid, context);
+					listener_connection_dispatch(connections, connection, listener, &events, listener_pid, context, &route_now);
 				} else if (progress == LISTENER_CONNECTION_FATAL) {
 					LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Connection state processing failed: %s\n", strerror(errno));
 					exitcode = EXITCODE_INTERNAL;

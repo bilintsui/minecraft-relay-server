@@ -516,6 +516,7 @@ int main(int argc, char **argv) {
 	pid_t listener = -1;
 	int listener_reservation_fd = -1;
 	int notify_fd = -1;
+	int replacement_server_fd = -1;
 	int result = EXIT_FAILURE;
 	int upstream_client_fd = -1;
 	int upstream_server_fd = -1;
@@ -583,6 +584,47 @@ int main(int argc, char **argv) {
 	upstream_client_fd = -1;
 	CHECK(close(client_fd) == 0, "cannot close valid test client");
 	client_fd = -1;
+
+	in_port_t replacement_port;
+	replacement_server_fd = server_open(&replacement_port);
+	CHECK(replacement_server_fd != -1, "cannot open replacement upstream server");
+	client_fd = client_connect(listener_port);
+	CHECK(client_fd != -1, "cannot connect generation-pinning test client");
+	CHECK(socket_send_all(client_fd, valid_request, 1) == 0, "cannot send generation-pinning handshake prefix");
+	uint8_t quiet_response;
+	CHECK(message_receive(client_fd, &quiet_response, sizeof(quiet_response), QUIET_TIMEOUT_MS) == -1 && errno == ETIMEDOUT,
+		"generation-pinning handshake prefix produced an unexpected response");
+	CHECK(write_config(config_filename, log_filename, listener_port, replacement_port) == 0, "cannot write replacement route generation");
+	CHECK(kill(listener, SIGUSR1) == 0, "cannot request route generation reload");
+	ready_length = message_receive(notify_fd, ready_message, sizeof(ready_message) - 1, TEST_TIMEOUT_MS);
+	CHECK(ready_length > 0, "listener RELOADING notification is missing");
+	ready_message[ready_length] = '\0';
+	CHECK(strncmp(ready_message, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0, "listener RELOADING notification is invalid");
+	ready_length = message_receive(notify_fd, ready_message, sizeof(ready_message) - 1, TEST_TIMEOUT_MS);
+	CHECK(ready_length > 0, "reloaded listener READY notification is missing");
+	ready_message[ready_length] = '\0';
+	CHECK(strcmp(ready_message, "READY=1") == 0, "reloaded listener READY notification is invalid");
+	CHECK(socket_send_all(client_fd, valid_request + 1, sizeof(valid_request) - 1U) == 0, "cannot finish generation-pinning handshake");
+	upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
+	CHECK(upstream_client_fd >= 0, "connection accepted before reload did not use its pinned route generation");
+	received_size = 0;
+	while (received_size < sizeof(valid_request)) {
+		ssize_t receive_result = message_receive(upstream_client_fd, received + received_size, sizeof(valid_request) - received_size, TEST_TIMEOUT_MS);
+		CHECK(receive_result > 0, "cannot receive generation-pinned handshake");
+		received_size += (size_t)receive_result;
+	}
+	CHECK(memcmp(received, valid_request, sizeof(valid_request)) == 0, "generation-pinned handshake differs from client input");
+	int replacement_client_fd = server_accept(replacement_server_fd, QUIET_TIMEOUT_MS);
+	CHECK(replacement_client_fd == -1 && errno == ETIMEDOUT, "connection accepted before reload used the replacement route generation");
+	CHECK(close(upstream_client_fd) == 0, "cannot close generation-pinned upstream connection");
+	upstream_client_fd = -1;
+	CHECK(close(client_fd) == 0, "cannot close generation-pinning test client");
+	client_fd = -1;
+	CHECK(close(upstream_server_fd) == 0, "cannot close retired upstream server");
+	upstream_server_fd = replacement_server_fd;
+	replacement_server_fd = -1;
+	upstream_port = replacement_port;
+
 	CHECK(worker_packet_timeout(listener_port, upstream_server_fd) == 0, "incomplete packet did not observe the absolute assembly timeout");
 	CHECK(kill(listener, 0) == 0, "incomplete packet timeout terminated listener");
 
@@ -707,6 +749,9 @@ cleanup:
 	}
 	if (notify_fd != -1) {
 		close(notify_fd);
+	}
+	if (replacement_server_fd != -1) {
+		close(replacement_server_fd);
 	}
 	if (upstream_client_fd != -1) {
 		close(upstream_client_fd);

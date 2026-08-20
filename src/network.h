@@ -50,17 +50,11 @@ typedef struct {
 	net_addrp address, address_clean;
 	in_port_t port;
 } net_addrbundle;
-typedef struct {
-	char target[128];
-	in_port_t port;
-} net_srvrecord;
-
 /* section: functions (exported) */
 net_addr net_addr_parse(const char *address);
 net_addrp net_ntop(sa_family_t family, const void *src, bool v6addition);
 int net_relay(int socket_in, int socket_out);
 net_addr net_resolve_dual(const char *hostname, sa_family_t primary_family, bool dual);
 int net_socket(short action, sa_family_t family, const void *address, in_port_t port, bool reuseaddr);
-int net_srvresolve(char *query_name, net_srvrecord *target);
 
 #endif

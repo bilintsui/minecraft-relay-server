@@ -6,18 +6,13 @@
  */
 
 /* section: headers (library) */
-#include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/epoll.h>
 #include <sys/socket.h>
-#include <sys/timerfd.h>
-#include <sys/types.h>
-#include <time.h>
 #include <unistd.h>
 
 /* section: headers (project) */
@@ -33,63 +28,53 @@
 /* section: headers (self) */
 #include "connsetup.h"
 
-/* section: defines */
-/* initial packet */
-#define CONNSETUP_INITIAL_TIMEOUT_SEC	10
-#define CONNSETUP_LEGACY_PING_GRACE_MS	100
-
 /* section: types */
-enum connsetup_receive_status {
-	CONNSETUP_RECEIVE_DATA,
-	CONNSETUP_RECEIVE_END,
-	CONNSETUP_RECEIVE_ERROR,
-	CONNSETUP_RECEIVE_GRACE_TIMEOUT,
-	CONNSETUP_RECEIVE_TIMEOUT
-};
+typedef struct {
+	const char *address;
+	bool pheader;
+	in_port_t port;
+	bool rewrite;
+	bool valid;
+} connsetup_proxy;
 
 /* section: functions (local) */
-static void connsetup_proxyinfo_resolve_srv(conf_proxy *proxyinfo) {
-	if (!proxyinfo->srvenabled) {
-		return;
-	}
-	net_srvrecord srvrecords[128];
-	if (net_srvresolve(proxyinfo->address, srvrecords) > 0) {
-		char *proxyaddr_new = (char *)realloc(proxyinfo->address, strlen(srvrecords[0].target) + 1);
-		if (proxyaddr_new != NULL) {
-			proxyinfo->address = proxyaddr_new;
-			strcpy(proxyinfo->address, srvrecords[0].target);
-			proxyinfo->port = srvrecords[0].port;
-			proxyinfo->srvenabled = false;
-		}
-	}
-}
-
-static int connsetup_connect_outbound(int *socket_out, conf_proxy *proxyinfo, sa_family_t family) {
-	int mkoutbound_status;
-	connsetup_proxyinfo_resolve_srv(proxyinfo);
-	mkoutbound_status = 0;
-	net_addr connaddr = net_resolve_dual(proxyinfo->address, family, true);
-	if (connaddr.family == 0) {
-		mkoutbound_status = NET_ENORECORD;
+static int connsetup_connect_outbound(int *socket_out, const connsetup_snapshot *snapshot) {
+	if (snapshot->route_status != CONNSETUP_ROUTE_READY) {
 		*socket_out = -1;
-	} else {
-		*socket_out = net_socket(NETSOCK_CONN, connaddr.family, &connaddr.addr, proxyinfo->port, false);
-		if (*socket_out == -1) {
-			mkoutbound_status = NET_ECONNECT;
-		}
+		return NET_ENORECORD;
 	}
-	return mkoutbound_status;
+	const net_addr *address = &snapshot->endpoint.address;
+	if ((address->family != AF_INET && address->family != AF_INET6) || address->err != 0 || snapshot->endpoint.port == 0) {
+		*socket_out = -1;
+		return NET_ENORECORD;
+	}
+	*socket_out = net_socket(NETSOCK_CONN, address->family, &address->addr, snapshot->endpoint.port, false);
+	return *socket_out == -1 ? NET_ECONNECT : 0;
 }
 
-static void connsetup_send_proxy_header(int socket_in, int socket_out, char *pheader) {
-	size_t packlen_pheader = protocol_proxy_write_socket(pheader, socket_in);
+static connsetup_proxy connsetup_proxyinfo_prepare(const connsetup_snapshot *snapshot) {
+	connsetup_proxy proxyinfo;
+	memset(&proxyinfo, 0, sizeof(proxyinfo));
+	if (snapshot->route_status == CONNSETUP_ROUTE_BYPASS || snapshot->route_status == CONNSETUP_ROUTE_NO_ROUTE) {
+		return proxyinfo;
+	}
+	proxyinfo.address = snapshot->endpoint.target_name[0] == '\0' ? snapshot->endpoint.configured_address : snapshot->endpoint.target_name;
+	proxyinfo.pheader = snapshot->endpoint.pheader;
+	proxyinfo.port = snapshot->endpoint.port;
+	proxyinfo.rewrite = snapshot->endpoint.rewrite;
+	proxyinfo.valid = true;
+	return proxyinfo;
+}
+
+static void connsetup_send_proxy_header(int socket_out, char *pheader, const connsetup_snapshot *snapshot) {
+	size_t packlen_pheader = protocol_proxy_write(pheader, snapshot->endpoint.inbound_proxy);
 	if (packlen_pheader > 0) {
 		send(socket_out, pheader, packlen_pheader, 0);
 	}
 }
 
 static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, const uint8_t *inbound,
-	size_t packlen_inbound) {
+	size_t packlen_inbound, const connsetup_snapshot *snapshot) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
@@ -116,7 +101,7 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 		return CONNSETUP_EOLDCLIENT;
 	} else if ((login_version == PVER_LEGACYL2) || (login_version == PVER_LEGACYL4)) {
 		p_login_legacy inbound_info = packet_read_legacy_login(inbound, packlen_inbound, login_version);
-		conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
+		connsetup_proxy proxyinfo = connsetup_proxyinfo_prepare(snapshot);
 		if (!proxyinfo.valid) {
 			mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 				"src: %s:%d, type: game, vhost: %s, status: reject_vhostinvalid, username: %s\n",
@@ -127,8 +112,9 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 			close(socket_in);
 			return CONNSETUP_ENOVHOST;
 		}
-		int mkoutbound_status, outmsg_level;
-		mkoutbound_status = connsetup_connect_outbound(socket_out, &proxyinfo, addrinfo_in.family);
+		int mkoutbound_status;
+		uint8_t outmsg_level;
+		mkoutbound_status = connsetup_connect_outbound(socket_out, snapshot);
 		if (mkoutbound_status != 0) {
 			outmsg_level = MKSYS_LEVEL_WARNING;
 		} else {
@@ -141,7 +127,7 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 				);
 				if (proxyinfo.pheader) {
-					connsetup_send_proxy_header(socket_in, *socket_out, pheader);
+					connsetup_send_proxy_header(*socket_out, pheader, snapshot);
 				}
 				if (proxyinfo.rewrite) {
 					snprintf(inbound_info.address, sizeof(inbound_info.address), "%s", proxyinfo.address);
@@ -151,7 +137,6 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 				} else {
 					send(*socket_out, inbound, packlen_inbound, 0);
 				}
-				config_proxy_search_destroy(&proxyinfo);
 				return 0;
 			case NET_ENORECORD:
 			case NET_ECONNECT:
@@ -170,7 +155,6 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 				}
 				send(socket_in, rewrited, packlen_rewrited, 0);
 				close(socket_in);
-				config_proxy_search_destroy(&proxyinfo);
 				return (mkoutbound_status == NET_ENORECORD) ? CONNSETUP_ENORECORD : CONNSETUP_ENOCONNECT;
 		}
 	}
@@ -179,7 +163,7 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 }
 
 static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, const uint8_t *inbound,
-	size_t packlen_inbound) {
+	size_t packlen_inbound, const connsetup_snapshot *snapshot) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
@@ -188,7 +172,7 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 	uint8_t motd_version = protocol_identify(inbound, (size_t)packlen_inbound, NULL);
 	if (motd_version == PVER_LEGACYM3) {
 		p_motd_legacy inbound_info = packet_read_legacy_motd(inbound);
-		conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
+		connsetup_proxy proxyinfo = connsetup_proxyinfo_prepare(snapshot);
 		if (!proxyinfo.valid) {
 			mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
 				"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n",
@@ -200,8 +184,9 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 			close(socket_in);
 			return CONNSETUP_ENOVHOST;
 		}
-		int mkoutbound_status, outmsg_level;
-		mkoutbound_status = connsetup_connect_outbound(socket_out, &proxyinfo, addrinfo_in.family);
+		int mkoutbound_status;
+		uint8_t outmsg_level;
+		mkoutbound_status = connsetup_connect_outbound(socket_out, snapshot);
 		if (mkoutbound_status != 0) {
 			outmsg_level = MKSYS_LEVEL_WARNING;
 		} else {
@@ -214,7 +199,7 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 				);
 				if (proxyinfo.pheader) {
-					connsetup_send_proxy_header(socket_in, *socket_out, pheader);
+					connsetup_send_proxy_header(*socket_out, pheader, snapshot);
 				}
 				if (proxyinfo.rewrite) {
 					void *inbound_addr_new = realloc(inbound_info.address, strlen(proxyinfo.address) + 1);
@@ -230,7 +215,6 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 				} else {
 					send(*socket_out, inbound, packlen_inbound, 0);
 				}
-				config_proxy_search_destroy(&proxyinfo);
 				packet_destroy_legacy_motd(inbound_info);
 				return 0;
 			case NET_ENORECORD:
@@ -250,7 +234,6 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 				send(socket_in, rewrited, packlen_rewrited, 0);
 				close(socket_in);
 				packet_destroy_legacy_motd(inbound_info);
-				config_proxy_search_destroy(&proxyinfo);
 				return (mkoutbound_status == NET_ENORECORD) ? CONNSETUP_ENORECORD : CONNSETUP_ENOCONNECT;
 		}
 	} else {
@@ -268,7 +251,7 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 }
 
 static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, const uint8_t *inbound,
-	size_t packlen_inbound) {
+	size_t packlen_inbound, const connsetup_snapshot *snapshot) {
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
@@ -297,7 +280,7 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 		return CONNSETUP_EOLDCLIENT;
 	}
 	const char *typestr = (inbound_info.nextstate == CLIENT_INTENT_TRANSFER) ? "transfer" : "game";
-	conf_proxy proxyinfo = config_proxy_search(conf_in, inbound_info.address);
+	connsetup_proxy proxyinfo = connsetup_proxyinfo_prepare(snapshot);
 	if (!proxyinfo.valid) {
 		if (inbound_info.nextstate == CLIENT_INTENT_STATUS) {
 			mksysmsg(MKSYS_PREFIX_ON, logfile, conf_in->log.level, MKSYS_LEVEL_WARNING,
@@ -317,8 +300,9 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 		close(socket_in);
 		return CONNSETUP_ENOVHOST;
 	}
-	int mkoutbound_status, outmsg_level;
-	mkoutbound_status = connsetup_connect_outbound(socket_out, &proxyinfo, addrinfo_in.family);
+	int mkoutbound_status;
+	uint8_t outmsg_level;
+	mkoutbound_status = connsetup_connect_outbound(socket_out, snapshot);
 	if (mkoutbound_status != 0) {
 		outmsg_level = MKSYS_LEVEL_WARNING;
 	} else {
@@ -342,7 +326,7 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 				);
 			}
 			if (proxyinfo.pheader) {
-				connsetup_send_proxy_header(socket_in, *socket_out, pheader);
+				connsetup_send_proxy_header(*socket_out, pheader, snapshot);
 			}
 			if (proxyinfo.rewrite) {
 				void *inbound_addr_new = realloc(inbound_info.address, strlen(proxyinfo.address) + 1);
@@ -358,7 +342,6 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 			} else {
 				send(*socket_out, inbound, packlen_inbound, 0);
 			}
-			config_proxy_search_destroy(&proxyinfo);
 			packet_destroy(inbound_info);
 			return 0;
 		case NET_ENORECORD:
@@ -393,7 +376,6 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 			}
 			send(socket_in, rewrited, packlen_rewrited, 0);
 			close(socket_in);
-			config_proxy_search_destroy(&proxyinfo);
 			packet_destroy(inbound_info);
 			return (mkoutbound_status == NET_ENORECORD) ? CONNSETUP_ENORECORD : CONNSETUP_ENOCONNECT;
 	}
@@ -401,112 +383,9 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 	return CONNSETUP_EABORT;
 }
 
-static enum connsetup_receive_status connsetup_receive_more(int event_fd, int socket_in, int timeout_fd, uint8_t *inbound, ssize_t *packlen_inbound, int timeout_ms) {
-	struct epoll_event events[2];
-	int event_count;
-	do {
-		event_count = epoll_wait(event_fd, events, 2, timeout_ms);
-	} while (event_count == -1 && errno == EINTR);
-	if (event_count == 0) {
-		return CONNSETUP_RECEIVE_GRACE_TIMEOUT;
-	}
-	if (event_count == -1) {
-		return CONNSETUP_RECEIVE_ERROR;
-	}
-	const struct epoll_event *socket_event = NULL;
-	for (int event_index = 0; event_index < event_count; event_index++) {
-		if (events[event_index].data.fd == timeout_fd) {
-			return (events[event_index].events & EPOLLIN) ? CONNSETUP_RECEIVE_TIMEOUT : CONNSETUP_RECEIVE_ERROR;
-		}
-		if (events[event_index].data.fd != socket_in) {
-			return CONNSETUP_RECEIVE_ERROR;
-		}
-		socket_event = &events[event_index];
-	}
-	if (socket_event == NULL || !(socket_event->events & (EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP)) || *packlen_inbound >= BUFSIZ) {
-		return CONNSETUP_RECEIVE_ERROR;
-	}
-	ssize_t receive_size;
-	do {
-		receive_size = recv(socket_in, inbound + *packlen_inbound, BUFSIZ - (size_t)*packlen_inbound, 0);
-	} while (receive_size == -1 && errno == EINTR);
-	if (receive_size == 0) {
-		return CONNSETUP_RECEIVE_END;
-	}
-	if (receive_size == -1) {
-		return CONNSETUP_RECEIVE_ERROR;
-	}
-	*packlen_inbound += receive_size;
-	return CONNSETUP_RECEIVE_DATA;
-}
-
-static bool connsetup_receive_initial(int socket_in, uint8_t *inbound, ssize_t *packlen_inbound, const char *logfile, uint8_t loglevel, const net_addrbundle *addrinfo_in) {
-	bool result = false;
-	int event_fd = epoll_create1(EPOLL_CLOEXEC);
-	struct epoll_event socket_event = {
-		.events = EPOLLIN | EPOLLRDHUP,
-		.data.fd = socket_in
-	};
-	int timeout_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
-	struct epoll_event timeout_event = {
-		.events = EPOLLIN,
-		.data.fd = timeout_fd
-	};
-	const struct itimerspec timeout = {
-		.it_value.tv_sec = CONNSETUP_INITIAL_TIMEOUT_SEC
-	};
-	*packlen_inbound = 0;
-	if (event_fd == -1 || timeout_fd == -1 || timerfd_settime(timeout_fd, 0, &timeout, NULL) == -1 || epoll_ctl(event_fd, EPOLL_CTL_ADD, socket_in, &socket_event) == -1
-		|| epoll_ctl(event_fd, EPOLL_CTL_ADD, timeout_fd, &timeout_event) == -1) {
-		goto cleanup;
-	}
-	while (1) {
-		size_t packet_size;
-		enum protocol_packet_status packet_status = protocol_packet_length(inbound, (size_t)*packlen_inbound, &packet_size);
-		if (packet_status == PROTOCOL_PACKET_COMPLETE || packet_status == PROTOCOL_PACKET_INVALID) {
-			result = true;
-			break;
-		}
-		if (packet_size > BUFSIZ) {
-			break;
-		}
-		int timeout_ms = (packet_status == PROTOCOL_PACKET_AMBIGUOUS) ? CONNSETUP_LEGACY_PING_GRACE_MS : -1;
-		enum connsetup_receive_status receive_status = connsetup_receive_more(event_fd, socket_in, timeout_fd, inbound, packlen_inbound, timeout_ms);
-		if (receive_status == CONNSETUP_RECEIVE_DATA) {
-			continue;
-		}
-		if (packet_status == PROTOCOL_PACKET_AMBIGUOUS && (receive_status == CONNSETUP_RECEIVE_END || receive_status == CONNSETUP_RECEIVE_GRACE_TIMEOUT)) {
-			result = true;
-		}
-		break;
-	}
-cleanup:
-	if (timeout_fd != -1) {
-		close(timeout_fd);
-	}
-	if (event_fd != -1) {
-		close(event_fd);
-	}
-	if (!result) {
-		mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING, "src: %s:%d, status: abort_init\n", (char *)&(addrinfo_in->address), addrinfo_in->port);
-		close(socket_in);
-	}
-	return result;
-}
-
-/* section: functions (exported) */
-int connsetup(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in) {
-	uint8_t inbound[BUFSIZ];
-	ssize_t packlen_inbound;
-	memset(inbound, 0, BUFSIZ);
-	if (!connsetup_receive_initial(socket_in, inbound, &packlen_inbound, logfile, conf_in->log.level, &addrinfo_in)) {
-		return CONNSETUP_EABORT;
-	}
-	return connsetup_preloaded(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, (size_t)packlen_inbound);
-}
-
-int connsetup_preloaded(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, const uint8_t *inbound, size_t inbound_size) {
-	if (inbound == NULL || inbound_size == 0 || inbound_size > BUFSIZ) {
+static int connsetup_prepared_run(int socket_in, int *socket_out, const char *logfile, conf *conf_in, net_addrbundle addrinfo_in, const uint8_t *inbound,
+	size_t inbound_size, const connsetup_snapshot *snapshot) {
+	if (socket_out == NULL || logfile == NULL || conf_in == NULL || inbound == NULL || inbound_size == 0 || inbound_size > BUFSIZ) {
 		close(socket_in);
 		return CONNSETUP_EABORT;
 	}
@@ -519,10 +398,25 @@ int connsetup_preloaded(int socket_in, int *socket_out, const char *logfile, con
 		return CONNSETUP_EUNIDENT;
 	}
 	if (inbound[0] == 0xFE) {
-		return connsetup_handle_legacy_motd(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, inbound_size);
-	} else if (inbound[0] == 2) {
-		return connsetup_handle_legacy_login(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, inbound_size);
-	} else {
-		return connsetup_handle_modern_handshake(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, inbound_size);
+		return connsetup_handle_legacy_motd(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, inbound_size, snapshot);
 	}
+	if (inbound[0] == 2) {
+		return connsetup_handle_legacy_login(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, inbound_size, snapshot);
+	}
+	return connsetup_handle_modern_handshake(socket_in, socket_out, logfile, conf_in, addrinfo_in, inbound, inbound_size, snapshot);
+}
+
+/* section: functions (exported) */
+int connsetup_prepared(int socket_in, int *socket_out, const connsetup_snapshot *snapshot, net_addrbundle addrinfo_in, const uint8_t *inbound, size_t inbound_size) {
+	if (snapshot == NULL || memchr(snapshot->icon_b64, '\0', sizeof(snapshot->icon_b64)) == NULL
+		|| memchr(snapshot->log_filename, '\0', sizeof(snapshot->log_filename)) == NULL || snapshot->route_status < CONNSETUP_ROUTE_BYPASS
+		|| snapshot->route_status > CONNSETUP_ROUTE_UNAVAILABLE) {
+		close(socket_in);
+		return CONNSETUP_EABORT;
+	}
+	conf prepared;
+	memset(&prepared, 0, sizeof(prepared));
+	prepared.icon_b64 = (char *)snapshot->icon_b64;
+	prepared.log.level = snapshot->log_level;
+	return connsetup_prepared_run(socket_in, socket_out, snapshot->log_filename, &prepared, addrinfo_in, inbound, inbound_size, snapshot);
 }

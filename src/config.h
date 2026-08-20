@@ -58,11 +58,6 @@ typedef struct {
 	conf_cache icon_cache;
 	cJSON *proxy;
 } conf;
-typedef struct {
-	char *address;
-	in_port_t port;
-	bool valid, srvenabled, rewrite, pheader;
-} conf_proxy;
 typedef enum {
 	CONF_READ_ERROR = -1,
 	CONF_READ_UNCHANGED,
@@ -78,8 +73,6 @@ void config_dumper(conf *src);
 const char *config_errmsg(int err);
 bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const char *failure_action);
 void config_log_duplicate_error(const char *logfile, uint8_t maxlevel, uint8_t msglevel, const char *suffix);
-conf_proxy config_proxy_search(conf *src, const char *targetvhost);
-void config_proxy_search_destroy(conf_proxy *target);
 conf_read_status config_read(const char *filename, const conf_cache *active_cache, conf_cache *candidate_cache, conf **result);
 
 #endif
