@@ -20,6 +20,34 @@
 /* section: headers (self) */
 #include "proxy.h"
 
+/* section: functions (local) */
+static bool protocol_proxy_endpoint_read(const struct sockaddr_storage *source, net_addr *address, in_port_t *port) {
+	memset(address, 0, sizeof(*address));
+	switch (source->ss_family) {
+		case AF_INET: {
+			const struct sockaddr_in *source_v4 = (const struct sockaddr_in *)source;
+			address->family = AF_INET;
+			address->addr.v4 = source_v4->sin_addr.s_addr;
+			*port = ntohs(source_v4->sin_port);
+			return true;
+		}
+		case AF_INET6: {
+			const struct sockaddr_in6 *source_v6 = (const struct sockaddr_in6 *)source;
+			if (IN6_IS_ADDR_V4MAPPED(&source_v6->sin6_addr)) {
+				address->family = AF_INET;
+				memcpy(&address->addr.v4, &source_v6->sin6_addr.s6_addr[12], sizeof(address->addr.v4));
+			} else {
+				address->family = AF_INET6;
+				memcpy(address->addr.v6, &source_v6->sin6_addr, sizeof(address->addr.v6));
+			}
+			*port = ntohs(source_v6->sin6_port);
+			return true;
+		}
+		default:
+			return false;
+	}
+}
+
 /* section: functions (exported) */
 sa_family_t protocol_proxy_getfamily(const void *src, size_t n) {
 	if (src == NULL) {
@@ -74,14 +102,18 @@ p_proxy protocol_proxy_read(const void *src, size_t n) {
 size_t protocol_proxy_write(void *dst, p_proxy src) {
 	net_addrp srcaddrp = net_ntop(src.family, &(src.srcaddr.addr), false);
 	net_addrp dstaddrp = net_ntop(src.family, &(src.dstaddr.addr), false);
+	int result;
 	switch (src.family) {
 		case AF_INET:
-			return snprintf(dst, PROTOPROXY_PACKETMAXLEN + 1, "PROXY TCP4 %s %s %hu %hu\r\n", (char *)&srcaddrp, (char *)&dstaddrp, src.srcport, src.dstport);
+			result = snprintf(dst, PROTOPROXY_PACKETMAXLEN + 1, "PROXY TCP4 %s %s %hu %hu\r\n", (char *)&srcaddrp, (char *)&dstaddrp, src.srcport, src.dstport);
+			break;
 		case AF_INET6:
-			return snprintf(dst, PROTOPROXY_PACKETMAXLEN + 1, "PROXY TCP6 %s %s %hu %hu\r\n", (char *)&srcaddrp, (char *)&dstaddrp, src.srcport, src.dstport);
+			result = snprintf(dst, PROTOPROXY_PACKETMAXLEN + 1, "PROXY TCP6 %s %s %hu %hu\r\n", (char *)&srcaddrp, (char *)&dstaddrp, src.srcport, src.dstport);
+			break;
 		default:
 			return 0;
 	}
+	return result > 0 ? (size_t)result : 0;
 }
 
 size_t protocol_proxy_write_plain(void *dst, sa_family_t family, net_addr srcaddr, net_addr dstaddr, in_port_t srcport, in_port_t dstport) {
@@ -92,4 +124,30 @@ size_t protocol_proxy_write_plain(void *dst, sa_family_t family, net_addr srcadd
 	data.srcport = srcport;
 	data.dstport = dstport;
 	return protocol_proxy_write(dst, data);
+}
+
+size_t protocol_proxy_write_socket(void *dst, int socket_fd) {
+	if (dst == NULL || socket_fd < 0) {
+		return 0;
+	}
+	struct sockaddr_storage destination_socket;
+	struct sockaddr_storage source_socket;
+	socklen_t destination_socket_size = sizeof(destination_socket);
+	socklen_t source_socket_size = sizeof(source_socket);
+	memset(&destination_socket, 0, sizeof(destination_socket));
+	memset(&source_socket, 0, sizeof(source_socket));
+	if (getpeername(socket_fd, (struct sockaddr *)&source_socket, &source_socket_size) == -1
+		|| getsockname(socket_fd, (struct sockaddr *)&destination_socket, &destination_socket_size) == -1) {
+		return 0;
+	}
+	net_addr destination_address;
+	net_addr source_address;
+	in_port_t destination_port;
+	in_port_t source_port;
+	if (!protocol_proxy_endpoint_read(&source_socket, &source_address, &source_port)
+		|| !protocol_proxy_endpoint_read(&destination_socket, &destination_address, &destination_port)
+		|| source_address.family != destination_address.family) {
+		return 0;
+	}
+	return protocol_proxy_write_plain(dst, source_address.family, source_address, destination_address, source_port, destination_port);
 }

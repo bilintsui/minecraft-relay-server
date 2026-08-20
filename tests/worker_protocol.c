@@ -203,6 +203,39 @@ static int server_open(in_port_t *port) {
 	return fd;
 }
 
+static int server_open_ipv6(in_port_t *port) {
+	int fd = socket(AF_INET6, SOCK_STREAM, 0);
+	if (fd == -1) {
+		return -1;
+	}
+	int reuse_address = 1;
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(reuse_address)) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	struct sockaddr_in6 address = {
+		.sin6_family = AF_INET6,
+		.sin6_addr = IN6ADDR_LOOPBACK_INIT
+	};
+	if (bind(fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	socklen_t address_length = sizeof(address);
+	if (getsockname(fd, (struct sockaddr *)&address, &address_length) == -1 || listen(fd, 1) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	*port = ntohs(address.sin6_port);
+	return fd;
+}
+
 static ssize_t socket_receive_all(int socket_fd, void *data, size_t capacity, int timeout_ms) {
 	size_t size = 0;
 	while (size < capacity) {
@@ -379,6 +412,35 @@ static int write_config(const char *filename, const char *log_filename, in_port_
 	int content_length = snprintf(content, sizeof(content),
 		"{\"log\":{\"filename\":\"%s\",\"level\":4},\"listen\":{\"address\":\"127.0.0.1\",\"port\":%u},\"icon\":\"\",\"proxy\":["
 		"{\"vhost\":[\"localhost\",\"test.example\"],\"address\":\"127.0.0.1\",\"port\":%u}]}\n",
+		log_filename, (unsigned int)listener_port, (unsigned int)upstream_port
+	);
+	if (content_length < 0 || (size_t)content_length >= sizeof(content)) {
+		errno = EOVERFLOW;
+		return -1;
+	}
+	int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd == -1) {
+		return -1;
+	}
+	size_t written = 0;
+	while (written < (size_t)content_length) {
+		ssize_t write_result = write(fd, content + written, (size_t)content_length - written);
+		if (write_result <= 0) {
+			int saved_errno = errno;
+			close(fd);
+			errno = saved_errno;
+			return -1;
+		}
+		written += (size_t)write_result;
+	}
+	return close(fd);
+}
+
+static int write_proxy_config(const char *filename, const char *log_filename, in_port_t listener_port, in_port_t upstream_port) {
+	char content[PATH_MAX + 512];
+	int content_length = snprintf(content, sizeof(content),
+		"{\"log\":{\"filename\":\"%s\",\"level\":4},\"listen\":{\"address\":\"127.0.0.1\",\"port\":%u},\"icon\":\"\",\"proxy\":["
+		"{\"vhost\":[\"test.example\"],\"address\":\"::1\",\"port\":%u,\"pheader\":true}]}\n",
 		log_filename, (unsigned int)listener_port, (unsigned int)upstream_port
 	);
 	if (content_length < 0 || (size_t)content_length >= sizeof(content)) {
@@ -592,6 +654,43 @@ int main(int argc, char **argv) {
 
 	CHECK(kill(listener, SIGTERM) == 0, "cannot stop listener");
 	CHECK(child_wait(listener, TEST_TIMEOUT_MS) == 0, "listener did not exit successfully");
+	listener = -1;
+	CHECK(close(upstream_server_fd) == 0, "cannot close IPv4 upstream server");
+	upstream_server_fd = server_open_ipv6(&upstream_port);
+	CHECK(upstream_server_fd != -1, "cannot open IPv6 fake upstream server");
+	CHECK(write_proxy_config(config_filename, log_filename, listener_port, upstream_port) == 0, "cannot write PROXY-header configuration");
+	listener = child_start(argv[1], config_filename, notify_filename);
+	CHECK(listener > 0, "cannot restart mcrelay listener for PROXY-header test");
+	ready_length = message_receive(notify_fd, ready_message, sizeof(ready_message) - 1, TEST_TIMEOUT_MS);
+	CHECK(ready_length > 0, "restarted listener READY notification is missing");
+	ready_message[ready_length] = '\0';
+	CHECK(strcmp(ready_message, "READY=1") == 0, "restarted listener READY notification is invalid");
+	client_fd = client_connect(listener_port);
+	CHECK(client_fd != -1, "cannot connect PROXY-header test client");
+	struct sockaddr_in client_address;
+	socklen_t client_address_size = sizeof(client_address);
+	CHECK(getsockname(client_fd, (struct sockaddr *)&client_address, &client_address_size) == 0, "cannot read PROXY-header client endpoint");
+	CHECK(socket_send_all(client_fd, valid_request, sizeof(valid_request)) == 0, "cannot send PROXY-header test handshake");
+	upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
+	CHECK(upstream_client_fd >= 0, "cross-family handshake did not reach IPv6 upstream server");
+	char expected_header[128];
+	int expected_header_size = snprintf(expected_header, sizeof(expected_header), "PROXY TCP4 127.0.0.1 127.0.0.1 %hu %hu\r\n", ntohs(client_address.sin_port), listener_port);
+	CHECK(expected_header_size > 0 && (size_t)expected_header_size < sizeof(expected_header), "cannot format expected PROXY header");
+	size_t expected_size = (size_t)expected_header_size + sizeof(valid_request);
+	size_t proxy_received_size = 0;
+	while (proxy_received_size < expected_size) {
+		ssize_t receive_result = message_receive(upstream_client_fd, received + proxy_received_size, expected_size - proxy_received_size, TEST_TIMEOUT_MS);
+		CHECK(receive_result > 0, "cannot receive PROXY header and forwarded handshake");
+		proxy_received_size += (size_t)receive_result;
+	}
+	CHECK(memcmp(received, expected_header, (size_t)expected_header_size) == 0, "PROXY header did not describe the original inbound connection");
+	CHECK(memcmp(received + expected_header_size, valid_request, sizeof(valid_request)) == 0, "handshake following PROXY header was corrupted");
+	CHECK(close(upstream_client_fd) == 0, "cannot close PROXY-header upstream connection");
+	upstream_client_fd = -1;
+	CHECK(close(client_fd) == 0, "cannot close PROXY-header client connection");
+	client_fd = -1;
+	CHECK(kill(listener, SIGTERM) == 0, "cannot stop restarted listener");
+	CHECK(child_wait(listener, TEST_TIMEOUT_MS) == 0, "restarted listener did not exit successfully");
 	listener = -1;
 
 	result = EXIT_SUCCESS;

@@ -64,16 +64,16 @@ static void connsetup_proxyinfo_resolve_srv(conf_proxy *proxyinfo) {
 	}
 }
 
-static int connsetup_connect_outbound(int *socket_out, net_addr *connaddr_out, conf_proxy *proxyinfo, sa_family_t family, bool netpriority_enabled) {
+static int connsetup_connect_outbound(int *socket_out, conf_proxy *proxyinfo, sa_family_t family, bool netpriority_enabled) {
 	int mkoutbound_status;
 	connsetup_proxyinfo_resolve_srv(proxyinfo);
 	mkoutbound_status = 0;
-	*connaddr_out = net_resolve_dual(proxyinfo->address, family, netpriority_enabled);
-	if (connaddr_out->family == 0) {
+	net_addr connaddr = net_resolve_dual(proxyinfo->address, family, netpriority_enabled);
+	if (connaddr.family == 0) {
 		mkoutbound_status = NET_ENORECORD;
 		*socket_out = -1;
 	} else {
-		*socket_out = net_socket(NETSOCK_CONN, connaddr_out->family, &(connaddr_out->addr), proxyinfo->port, false);
+		*socket_out = net_socket(NETSOCK_CONN, connaddr.family, &connaddr.addr, proxyinfo->port, false);
 		if (*socket_out == -1) {
 			mkoutbound_status = NET_ECONNECT;
 		}
@@ -81,23 +81,10 @@ static int connsetup_connect_outbound(int *socket_out, net_addr *connaddr_out, c
 	return mkoutbound_status;
 }
 
-static void connsetup_send_proxy_header(int socket_out, char *pheader, int *packlen_pheader, const net_addr *connaddr, const net_addrbundle *addrinfo_in, const conf_proxy *proxyinfo) {
-	if (connaddr->family != addrinfo_in->family) {
-		return;
-	}
-	net_addrp addrinfo_out = net_ntop(connaddr->family, &(connaddr->addr), false);
-	if (addrinfo_in->family == AF_INET) {
-		*packlen_pheader = snprintf(pheader, PROTOPROXY_PACKETMAXLEN + 1,
-			"PROXY TCP4 %s %s %d %d\r\n",
-			(char *)&(addrinfo_in->address_clean), (char *)&addrinfo_out, addrinfo_in->port, proxyinfo->port
-		);
-		send(socket_out, pheader, *packlen_pheader, 0);
-	} else if (addrinfo_in->family == AF_INET6) {
-		*packlen_pheader = snprintf(pheader, PROTOPROXY_PACKETMAXLEN + 1,
-			"PROXY TCP6 %s %s %d %d\r\n",
-			(char *)&(addrinfo_in->address_clean), (char *)&addrinfo_out, addrinfo_in->port, proxyinfo->port
-		);
-		send(socket_out, pheader, *packlen_pheader, 0);
+static void connsetup_send_proxy_header(int socket_in, int socket_out, char *pheader) {
+	size_t packlen_pheader = protocol_proxy_write_socket(pheader, socket_in);
+	if (packlen_pheader > 0) {
+		send(socket_out, pheader, packlen_pheader, 0);
 	}
 }
 
@@ -105,7 +92,6 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
-	int packlen_pheader;
 	memset(rewrited, 0, BUFSIZ);
 	memset(pheader, 0, PROTOPROXY_PACKETMAXLEN + 1);
 	uint8_t login_version = protocol_identify(inbound, (size_t)packlen_inbound, NULL);
@@ -141,8 +127,7 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 			return CONNSETUP_ENOVHOST;
 		}
 		int mkoutbound_status, outmsg_level;
-		net_addr connaddr;
-		mkoutbound_status = connsetup_connect_outbound(socket_out, &connaddr, &proxyinfo, addrinfo_in.family, netpriority_enabled);
+		mkoutbound_status = connsetup_connect_outbound(socket_out, &proxyinfo, addrinfo_in.family, netpriority_enabled);
 		if (mkoutbound_status != 0) {
 			outmsg_level = MKSYS_LEVEL_WARNING;
 		} else {
@@ -155,7 +140,7 @@ static int connsetup_handle_legacy_login(int socket_in, int *socket_out, const c
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 				);
 				if (proxyinfo.pheader) {
-					connsetup_send_proxy_header(*socket_out, pheader, &packlen_pheader, &connaddr, &addrinfo_in, &proxyinfo);
+					connsetup_send_proxy_header(socket_in, *socket_out, pheader);
 				}
 				if (proxyinfo.rewrite) {
 					snprintf(inbound_info.address, sizeof(inbound_info.address), "%s", proxyinfo.address);
@@ -196,7 +181,6 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
-	int packlen_pheader;
 	memset(rewrited, 0, BUFSIZ);
 	memset(pheader, 0, PROTOPROXY_PACKETMAXLEN + 1);
 	uint8_t motd_version = protocol_identify(inbound, (size_t)packlen_inbound, NULL);
@@ -215,8 +199,7 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 			return CONNSETUP_ENOVHOST;
 		}
 		int mkoutbound_status, outmsg_level;
-		net_addr connaddr;
-		mkoutbound_status = connsetup_connect_outbound(socket_out, &connaddr, &proxyinfo, addrinfo_in.family, netpriority_enabled);
+		mkoutbound_status = connsetup_connect_outbound(socket_out, &proxyinfo, addrinfo_in.family, netpriority_enabled);
 		if (mkoutbound_status != 0) {
 			outmsg_level = MKSYS_LEVEL_WARNING;
 		} else {
@@ -229,7 +212,7 @@ static int connsetup_handle_legacy_motd(int socket_in, int *socket_out, const ch
 					(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port
 				);
 				if (proxyinfo.pheader) {
-					connsetup_send_proxy_header(*socket_out, pheader, &packlen_pheader, &connaddr, &addrinfo_in, &proxyinfo);
+					connsetup_send_proxy_header(socket_in, *socket_out, pheader);
 				}
 				if (proxyinfo.rewrite) {
 					void *inbound_addr_new = realloc(inbound_info.address, strlen(proxyinfo.address) + 1);
@@ -287,7 +270,6 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 	uint8_t rewrited[BUFSIZ];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
-	int packlen_pheader;
 	memset(rewrited, 0, BUFSIZ);
 	memset(pheader, 0, PROTOPROXY_PACKETMAXLEN + 1);
 	p_handshake inbound_info = packet_read(inbound, inbound + packlen_inbound);
@@ -334,8 +316,7 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 		return CONNSETUP_ENOVHOST;
 	}
 	int mkoutbound_status, outmsg_level;
-	net_addr connaddr;
-	mkoutbound_status = connsetup_connect_outbound(socket_out, &connaddr, &proxyinfo, addrinfo_in.family, netpriority_enabled);
+	mkoutbound_status = connsetup_connect_outbound(socket_out, &proxyinfo, addrinfo_in.family, netpriority_enabled);
 	if (mkoutbound_status != 0) {
 		outmsg_level = MKSYS_LEVEL_WARNING;
 	} else {
@@ -359,7 +340,7 @@ static int connsetup_handle_modern_handshake(int socket_in, int *socket_out, con
 				);
 			}
 			if (proxyinfo.pheader) {
-				connsetup_send_proxy_header(*socket_out, pheader, &packlen_pheader, &connaddr, &addrinfo_in, &proxyinfo);
+				connsetup_send_proxy_header(socket_in, *socket_out, pheader);
 			}
 			if (proxyinfo.rewrite) {
 				void *inbound_addr_new = realloc(inbound_info.address, strlen(proxyinfo.address) + 1);

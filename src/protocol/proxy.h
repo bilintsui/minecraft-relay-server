@@ -33,5 +33,6 @@ sa_family_t protocol_proxy_getfamily(const void *src, size_t n);
 p_proxy protocol_proxy_read(const void *src, size_t n);
 size_t protocol_proxy_write(void *dst, p_proxy src);
 size_t protocol_proxy_write_plain(void *dst, sa_family_t family, net_addr srcaddr, net_addr dstaddr, in_port_t srcport, in_port_t dstport);
+size_t protocol_proxy_write_socket(void *dst, int socket_fd);
 
 #endif
