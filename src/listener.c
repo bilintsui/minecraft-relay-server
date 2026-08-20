@@ -34,6 +34,8 @@
 #include "define/exitcode.h"
 #include "log.h"
 #include "network.h"
+#include "resolver_cache.h"
+#include "resolver_supervisor.h"
 
 /* section: headers (self) */
 #include "listener.h"
@@ -72,7 +74,9 @@ typedef struct {
 	conf_cache *config_cache;
 	const char *config_filename;
 	const char *config_filename_full;
+	resolver_cache *dns_cache;
 	char log_filename[PATH_MAX];
+	resolver_supervisor *resolver;
 	const char *working_directory;
 } listener_context;
 typedef struct {
@@ -83,11 +87,13 @@ typedef struct {
 	int epoll_fd;
 	bool mask_blocked;
 	sigset_t previous_signal_mask;
+	int resolver_fd;
 	int signal_fd;
 } listener_events;
 typedef struct {
 	bool accept_ready;
 	bool reload;
+	bool resolver_ready;
 	bool stop;
 } listener_requests;
 typedef struct {
@@ -226,6 +232,7 @@ static int listener_events_init(int socket_fd, listener_events *events) {
 	int saved_errno;
 	memset(events, 0, sizeof(*events));
 	events->epoll_fd = -1;
+	events->resolver_fd = -1;
 	events->signal_fd = -1;
 	struct sigaction child_action;
 	memset(&child_action, 0, sizeof(child_action));
@@ -269,6 +276,22 @@ fail:
 	return -1;
 }
 
+static int listener_events_resolver_add(listener_events *events, int resolver_fd) {
+	if (events == NULL || resolver_fd < 0 || events->resolver_fd != -1) {
+		errno = EINVAL;
+		return -1;
+	}
+	struct epoll_event event;
+	memset(&event, 0, sizeof(event));
+	event.events = EPOLLIN;
+	event.data.fd = resolver_fd;
+	if (epoll_ctl(events->epoll_fd, EPOLL_CTL_ADD, resolver_fd, &event) == -1) {
+		return -1;
+	}
+	events->resolver_fd = resolver_fd;
+	return 0;
+}
+
 static int listener_events_socket_remove(const listener_events *events, int socket_fd) {
 	return epoll_ctl(events->epoll_fd, EPOLL_CTL_DEL, socket_fd, NULL);
 }
@@ -303,11 +326,11 @@ static int listener_signals_read(int signal_fd, listener_requests *requests) {
 }
 
 static int listener_events_wait(int socket_fd, const listener_events *events, listener_requests *requests) {
-	struct epoll_event ready_events[2];
+	struct epoll_event ready_events[3];
 	memset(requests, 0, sizeof(*requests));
 	int ready_count;
 	do {
-		ready_count = epoll_wait(events->epoll_fd, ready_events, 2, -1);
+		ready_count = epoll_wait(events->epoll_fd, ready_events, 3, -1);
 	} while (ready_count == -1 && errno == EINTR);
 	if (ready_count == -1) {
 		return -1;
@@ -330,6 +353,14 @@ static int listener_events_wait(int socket_fd, const listener_events *events, li
 			}
 			if (event_flags & EPOLLIN) {
 				requests->accept_ready = true;
+			}
+		} else if (event_fd == events->resolver_fd) {
+			if (event_flags & (EPOLLERR | EPOLLHUP)) {
+				errno = EIO;
+				return -1;
+			}
+			if (event_flags & EPOLLIN) {
+				requests->resolver_ready = true;
 			}
 		} else {
 			errno = EIO;
@@ -550,6 +581,62 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 	return result;
 }
 
+static void listener_resolver_completions_discard(listener_context *context) {
+	resolver_supervisor_completion completion = { 0 };
+	while (resolver_supervisor_completion_take(context->resolver, &completion)) {
+		resolver_supervisor_completion_destroy(&completion);
+	}
+}
+
+static void listener_resolver_destroy(listener_context *context) {
+	resolver_supervisor_destroy(context->resolver);
+	context->resolver = NULL;
+	resolver_cache_destroy(context->dns_cache);
+	context->dns_cache = NULL;
+}
+
+static void listener_resolver_dispose_in_child(listener_context *context) {
+	resolver_supervisor_dispose_in_child(context->resolver);
+	context->resolver = NULL;
+	resolver_cache_destroy(context->dns_cache);
+	context->dns_cache = NULL;
+}
+
+static int listener_resolver_events_process(listener_context *context) {
+	struct timespec now;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+		return -1;
+	}
+	resolver_supervisor_event_status status = resolver_supervisor_events_process(context->resolver, &now);
+	if (status != RESOLVER_SUPERVISOR_EVENT_OK) {
+		errno = status == RESOLVER_SUPERVISOR_EVENT_TIME ? EINVAL : EIO;
+		return -1;
+	}
+	listener_resolver_completions_discard(context);
+	return 0;
+}
+
+static int listener_resolver_init(listener_context *context, listener_events *events) {
+	struct timespec now;
+	context->dns_cache = resolver_cache_create();
+	if (context->dns_cache == NULL || clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+		return -1;
+	}
+	context->resolver = resolver_supervisor_create(&events->previous_signal_mask, &now);
+	if (context->resolver == NULL || listener_events_resolver_add(events, resolver_supervisor_event_fd(context->resolver)) == -1) {
+		return -1;
+	}
+	return 0;
+}
+
+static int listener_resolver_shutdown(listener_context *context) {
+	struct timespec now;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1 || !resolver_supervisor_shutdown(context->resolver, &now)) {
+		return -1;
+	}
+	return 0;
+}
+
 static int listener_worker_signals_restore(const sigset_t *signal_mask) {
 	struct sigaction action;
 	memset(&action, 0, sizeof(action));
@@ -570,6 +657,7 @@ static int listener_worker_run(int client_fd, const listener_client_address *cli
 	close(events->epoll_fd);
 	close(events->signal_fd);
 	listener_socket_close(listener);
+	listener_resolver_dispose_in_child(context);
 	if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1) {
 		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot configure worker parent-death signal: %s\n", strerror(errno));
 		return EXITCODE_INTERNAL;
@@ -596,6 +684,13 @@ static int listener_loop(listener_context *context, listener_socket *listener) {
 		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
 	}
+	if (listener_resolver_init(context, &events) == -1) {
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize resolver runtime: %s\n", strerror(errno));
+		listener_resolver_destroy(context);
+		listener_events_destroy(&events);
+		listener_socket_close(listener);
+		return EXITCODE_INTERNAL;
+	}
 	listener_bind_success_msg(context);
 	listener_notify_ready();
 	if (!isatty(STDOUT_FILENO)) {
@@ -604,6 +699,7 @@ static int listener_loop(listener_context *context, listener_socket *listener) {
 	}
 	int exitcode = EXITCODE_OK;
 	pid_t listener_pid = getpid();
+	bool shutting_down = false;
 	while (1) {
 		listener_requests requests;
 		if (listener_events_wait(listener->fd, &events, &requests) == -1) {
@@ -611,8 +707,24 @@ static int listener_loop(listener_context *context, listener_socket *listener) {
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
-		if (requests.stop) {
+		if (requests.resolver_ready && listener_resolver_events_process(context) == -1) {
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Resolver event processing failed: %s\n", strerror(errno));
+			exitcode = EXITCODE_INTERNAL;
 			break;
+		}
+		if (requests.stop && !shutting_down) {
+			if (listener_resolver_shutdown(context) == -1) {
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot shut down resolver runtime: %s\n", strerror(errno));
+				exitcode = EXITCODE_INTERNAL;
+				break;
+			}
+			shutting_down = true;
+		}
+		if (shutting_down) {
+			if (resolver_supervisor_shutdown_complete(context->resolver)) {
+				break;
+			}
+			continue;
 		}
 		if (requests.reload) {
 			if (listener_notify_reloading() == -1) {
@@ -671,6 +783,7 @@ static int listener_loop(listener_context *context, listener_socket *listener) {
 		}
 	}
 cleanup:
+	listener_resolver_destroy(context);
 	listener_events_destroy(&events);
 	listener_socket_close(listener);
 	return exitcode;

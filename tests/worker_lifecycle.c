@@ -326,7 +326,7 @@ static pid_t worker_find(pid_t listener, int timeout_ms) {
 				}
 			}
 			fclose(status);
-			if (parent == (long)listener) {
+			if (parent == (long)listener && worker_descriptors_valid((pid_t)process)) {
 				closedir(processes);
 				return (pid_t)process;
 			}
