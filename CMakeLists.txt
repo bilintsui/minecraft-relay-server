@@ -7,7 +7,8 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 add_executable(mcrelay${EXEC_SUFFIX}
 	src/basic.c src/config.c src/dns.c src/hosts.c src/listener.c src/log.c src/main.c src/connsetup.c src/network.c src/resolver_cache.c src/resolver_helper.c src/resolver_ipc.c
-	src/resolver_ipc_assembly.c src/resolver_supervisor.c src/route_bindings.c src/route_generation.c src/route_generation_registry.c src/route_prewarmer.c src/route_resolution.c src/route_table.c
+	src/resolver_ipc_assembly.c src/resolver_supervisor.c src/route_bindings.c src/route_endpoint.c src/route_generation.c src/route_generation_registry.c src/route_prewarmer.c src/route_resolution.c
+	src/route_table.c
 	src/protocol/common.c src/protocol/handshake.c
 	src/protocol/handshake_legacy.c src/protocol/proxy.c)
 option(DEBUG_MODE "Allow FIFO as config input (debug)" OFF)
@@ -107,6 +108,14 @@ if(BUILD_TESTING)
 	target_compile_definitions(route_bindings_test PRIVATE _GNU_SOURCE RESOLVER_CACHE_ENTRY_LIMIT=4)
 	target_link_libraries(route_bindings_test -lcjson -lresolv)
 	add_test(NAME route_bindings COMMAND route_bindings_test)
+	add_executable(route_endpoint_test
+		tests/route_endpoint.c src/dns.c src/hosts.c src/network.c src/protocol/proxy.c src/resolver_cache.c src/route_bindings.c src/route_endpoint.c src/route_prewarmer.c src/route_resolution.c src/route_table.c)
+	target_include_directories(route_endpoint_test PRIVATE src)
+	target_compile_definitions(route_endpoint_test PRIVATE _GNU_SOURCE)
+	target_link_libraries(route_endpoint_test -lcjson -lresolv)
+	set_target_properties(route_endpoint_test PROPERTIES
+		LINK_FLAGS "-Wl,--wrap=resolver_supervisor_entry_schedule -Wl,--wrap=route_generation_bindings -Wl,--wrap=route_generation_identity -Wl,--wrap=route_generation_resolution -Wl,--wrap=route_generation_routes")
+	add_test(NAME route_endpoint COMMAND route_endpoint_test)
 	add_executable(route_generation_test tests/route_generation.c src/route_generation.c)
 	target_include_directories(route_generation_test PRIVATE src)
 	target_compile_definitions(route_generation_test PRIVATE _GNU_SOURCE)
@@ -229,6 +238,16 @@ if(BUILD_TESTING)
 		target_link_libraries(route_bindings_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all -lcjson -lresolv)
 		add_test(NAME route_bindings_ubsan COMMAND route_bindings_ubsan_test)
 		set_tests_properties(route_bindings_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+		add_executable(route_endpoint_ubsan_test
+			tests/route_endpoint.c src/dns.c src/hosts.c src/network.c src/protocol/proxy.c src/resolver_cache.c src/route_bindings.c src/route_endpoint.c src/route_prewarmer.c src/route_resolution.c src/route_table.c)
+		target_include_directories(route_endpoint_ubsan_test PRIVATE src)
+		target_compile_definitions(route_endpoint_ubsan_test PRIVATE _GNU_SOURCE)
+		target_compile_options(route_endpoint_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
+		target_link_libraries(route_endpoint_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all -lcjson -lresolv)
+		set_target_properties(route_endpoint_ubsan_test PROPERTIES
+			LINK_FLAGS "-Wl,--wrap=resolver_supervisor_entry_schedule -Wl,--wrap=route_generation_bindings -Wl,--wrap=route_generation_identity -Wl,--wrap=route_generation_resolution -Wl,--wrap=route_generation_routes")
+		add_test(NAME route_endpoint_ubsan COMMAND route_endpoint_ubsan_test)
+		set_tests_properties(route_endpoint_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(route_generation_ubsan_test tests/route_generation.c src/route_generation.c)
 		target_include_directories(route_generation_ubsan_test PRIVATE src)
 		target_compile_definitions(route_generation_ubsan_test PRIVATE _GNU_SOURCE)

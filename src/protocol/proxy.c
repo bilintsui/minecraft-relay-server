@@ -81,6 +81,7 @@ sa_family_t protocol_proxy_getfamily(const void *src, size_t n) {
 
 p_proxy protocol_proxy_read(const void *src, size_t n) {
 	p_proxy result;
+	memset(&result, 0, sizeof(result));
 	result.family = AF_UNSPEC;
 	if (src == NULL) {
 		return result;
@@ -97,6 +98,31 @@ p_proxy protocol_proxy_read(const void *src, size_t n) {
 		result.family = AF_UNSPEC;
 	}
 	return result;
+}
+
+bool protocol_proxy_socket_read(int socket_fd, p_proxy *result) {
+	if (result != NULL) {
+		memset(result, 0, sizeof(*result));
+	}
+	if (socket_fd < 0 || result == NULL) {
+		return false;
+	}
+	struct sockaddr_storage destination_socket;
+	struct sockaddr_storage source_socket;
+	socklen_t destination_socket_size = sizeof(destination_socket);
+	socklen_t source_socket_size = sizeof(source_socket);
+	memset(&destination_socket, 0, sizeof(destination_socket));
+	memset(&source_socket, 0, sizeof(source_socket));
+	if (getpeername(socket_fd, (struct sockaddr *)&source_socket, &source_socket_size) == -1
+		|| getsockname(socket_fd, (struct sockaddr *)&destination_socket, &destination_socket_size) == -1
+		|| !protocol_proxy_endpoint_read(&source_socket, &result->srcaddr, &result->srcport)
+		|| !protocol_proxy_endpoint_read(&destination_socket, &result->dstaddr, &result->dstport)
+		|| result->srcaddr.family != result->dstaddr.family) {
+		memset(result, 0, sizeof(*result));
+		return false;
+	}
+	result->family = result->srcaddr.family;
+	return true;
 }
 
 size_t protocol_proxy_write(void *dst, p_proxy src) {
@@ -127,27 +153,9 @@ size_t protocol_proxy_write_plain(void *dst, sa_family_t family, net_addr srcadd
 }
 
 size_t protocol_proxy_write_socket(void *dst, int socket_fd) {
-	if (dst == NULL || socket_fd < 0) {
+	p_proxy source;
+	if (dst == NULL || !protocol_proxy_socket_read(socket_fd, &source)) {
 		return 0;
 	}
-	struct sockaddr_storage destination_socket;
-	struct sockaddr_storage source_socket;
-	socklen_t destination_socket_size = sizeof(destination_socket);
-	socklen_t source_socket_size = sizeof(source_socket);
-	memset(&destination_socket, 0, sizeof(destination_socket));
-	memset(&source_socket, 0, sizeof(source_socket));
-	if (getpeername(socket_fd, (struct sockaddr *)&source_socket, &source_socket_size) == -1
-		|| getsockname(socket_fd, (struct sockaddr *)&destination_socket, &destination_socket_size) == -1) {
-		return 0;
-	}
-	net_addr destination_address;
-	net_addr source_address;
-	in_port_t destination_port;
-	in_port_t source_port;
-	if (!protocol_proxy_endpoint_read(&source_socket, &source_address, &source_port)
-		|| !protocol_proxy_endpoint_read(&destination_socket, &destination_address, &destination_port)
-		|| source_address.family != destination_address.family) {
-		return 0;
-	}
-	return protocol_proxy_write_plain(dst, source_address.family, source_address, destination_address, source_port, destination_port);
+	return protocol_proxy_write(dst, source);
 }

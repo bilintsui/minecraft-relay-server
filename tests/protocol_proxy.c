@@ -170,6 +170,10 @@ static bool proxy_header_test(sa_family_t listener_family, sa_family_t client_fa
 	char header[PROTOPROXY_PACKETMAXLEN + 1];
 	int expected_size = snprintf(expected, sizeof(expected), "PROXY %s %s %s %hu %hu\r\n", protocol, source, destination, connection.client_port, connection.listener_port);
 	CHECK(expected_size > 0 && (size_t)expected_size < sizeof(expected), "cannot format expected PROXY header");
+	p_proxy endpoints;
+	CHECK(protocol_proxy_socket_read(connection.accepted_fd, &endpoints) && endpoints.family == client_family && endpoints.srcport == connection.client_port
+		&& endpoints.dstport == connection.listener_port && protocol_proxy_write(header, endpoints) == (size_t)expected_size
+		&& memcmp(header, expected, (size_t)expected_size + 1U) == 0, "accepted connection endpoints were not captured as a reusable value");
 	size_t header_size = protocol_proxy_write_socket(header, connection.accepted_fd);
 	CHECK(header_size == (size_t)expected_size && memcmp(header, expected, header_size + 1) == 0, "PROXY header did not describe the accepted connection");
 	p_proxy parsed = protocol_proxy_read(header, header_size);
@@ -183,7 +187,10 @@ cleanup:
 
 static bool proxy_test_arguments(void) {
 	char header[PROTOPROXY_PACKETMAXLEN + 1];
-	return protocol_proxy_write_socket(NULL, -1) == 0 && protocol_proxy_write_socket(header, -1) == 0;
+	p_proxy endpoints;
+	memset(&endpoints, 0xFF, sizeof(endpoints));
+	return !protocol_proxy_socket_read(-1, &endpoints) && endpoints.family == AF_UNSPEC && endpoints.srcaddr.family == AF_UNSPEC
+		&& !protocol_proxy_socket_read(-1, NULL) && protocol_proxy_write_socket(NULL, -1) == 0 && protocol_proxy_write_socket(header, -1) == 0;
 }
 
 static bool proxy_test_ipv4(void) {
