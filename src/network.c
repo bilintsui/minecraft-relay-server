@@ -10,7 +10,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <netdb.h>
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -27,51 +26,6 @@
 #include "network.h"
 
 /* section: functions (local) */
-static size_t net_getaddrsize(sa_family_t family) {
-	switch (family) {
-		case AF_INET:
-			return sizeof(uint32_t);
-		case AF_INET6:
-			return sizeof(uint8_t) * 16;
-		default:
-			return 0;
-	}
-}
-
-static sa_family_t net_getaltfamily(sa_family_t family) {
-	switch (family) {
-		case AF_INET:
-			return AF_INET6;
-		case AF_INET6:
-			return AF_INET;
-		default:
-			return 0;
-	}
-}
-
-static void *net_resolve(const char *hostname, sa_family_t family) {
-	if ((family != AF_INET) && (family != AF_INET6)) {
-		errno = NET_EARGFAMILY;
-		return NULL;
-	}
-	void *result = malloc(net_getaddrsize(family));
-	if (result == NULL) {
-		errno = NET_EMALLOC;
-		return NULL;
-	}
-	if (inet_pton(family, hostname, result) == 1) {
-		return result;
-	}
-	struct hostent *response = gethostbyname2(hostname, family);
-	if (response == NULL) {
-		errno = NET_ENORECORD;
-		free(result);
-		return NULL;
-	}
-	memcpy(result, response->h_addr_list[0], net_getaddrsize(family));
-	return result;
-}
-
 /* section: functions (exported) */
 net_addr net_addr_parse(const char *address) {
 	net_addr result;
@@ -256,37 +210,6 @@ cleanup:
 		close(epfd);
 	}
 	return ret;
-}
-
-net_addr net_resolve_dual(const char *hostname, sa_family_t primary_family, bool dual) {
-	net_addr result;
-	result.family = 0;
-	result.err = NET_OK;
-	memset(&(result.addr), 0, sizeof(result.addr));
-	if ((primary_family != AF_INET) && (primary_family != AF_INET6)) {
-		result.err = NET_EARGFAMILY;
-		return result;
-	}
-	void *resolved = net_resolve(hostname, primary_family);
-	if (resolved != NULL) {
-		result.family = primary_family;
-		memcpy(&(result.addr), resolved, net_getaddrsize(result.family));
-		free(resolved);
-		return result;
-	}
-	if (!dual) {
-		result.err = errno;
-		return result;
-	}
-	resolved = net_resolve(hostname, net_getaltfamily(primary_family));
-	if (resolved != NULL) {
-		result.family = net_getaltfamily(primary_family);
-		memcpy(&(result.addr), resolved, net_getaddrsize(result.family));
-		free(resolved);
-		return result;
-	}
-	result.err = errno;
-	return result;
 }
 
 int net_socket(net_socket_action action, sa_family_t family, const void *address, in_port_t port, bool reuseaddr) {

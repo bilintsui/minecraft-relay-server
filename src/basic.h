@@ -42,7 +42,6 @@ size_t memcat(void *dst, size_t dst_size, const void *src, size_t src_size);
 size_t packetexpand(const void *source, size_t source_length, void *target);
 size_t packetshrink(const void *source, size_t source_length, void *target);
 void resolve_path(const char *path, const char *cwd, char *out, size_t out_size);
-int strcmp_notail(const char *str1, const char *str2, char exemptchr, bool case_insensitive);
 char *strtok_head(char *dst, size_t dst_size, char *src, char delim);
 size_t strtok_tail(char *dst, size_t dst_size, const char *src, size_t src_size, char delim);
 /* Returns the first unconsumed byte on success and NULL otherwise. dst is written only on success; status may be NULL. */

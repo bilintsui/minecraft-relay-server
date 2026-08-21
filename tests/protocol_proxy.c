@@ -193,6 +193,17 @@ static bool proxy_test_arguments(void) {
 		&& !protocol_proxy_socket_read(-1, NULL) && protocol_proxy_write_socket(NULL, -1) == 0 && protocol_proxy_write_socket(header, -1) == 0;
 }
 
+static bool proxy_test_declared_family(void) {
+	static const char tcp4[] = "PROXY TCP4 ::1 ::1 1 2\r\n";
+	static const char tcp6[] = "PROXY TCP6 127.0.0.1 127.0.0.1 1 2\r\n";
+	p_proxy parsed = protocol_proxy_read(tcp4, sizeof(tcp4) - 1U);
+	if (parsed.family != AF_UNSPEC) {
+		return false;
+	}
+	parsed = protocol_proxy_read(tcp6, sizeof(tcp6) - 1U);
+	return parsed.family == AF_UNSPEC;
+}
+
 static bool proxy_test_ipv4(void) {
 	return proxy_header_test(AF_INET, AF_INET, false, "TCP4", "127.0.0.1", "127.0.0.1");
 }
@@ -207,7 +218,7 @@ static bool proxy_test_ipv6(void) {
 
 /* section: functions (entry point) */
 int main(void) {
-	if (!proxy_test_arguments() || !proxy_test_ipv4() || !proxy_test_ipv4_mapped() || !proxy_test_ipv6()) {
+	if (!proxy_test_arguments() || !proxy_test_declared_family() || !proxy_test_ipv4() || !proxy_test_ipv4_mapped() || !proxy_test_ipv6()) {
 		return EXIT_FAILURE;
 	}
 	return EXIT_SUCCESS;

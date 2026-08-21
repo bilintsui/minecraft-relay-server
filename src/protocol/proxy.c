@@ -92,9 +92,9 @@ p_proxy protocol_proxy_read(const void *src, size_t n) {
 	}
 	net_addrp srcaddrp, dstaddrp;
 	sscanf((const char *)src + 11, "%s %s %hu %hu\r\n", (char *)&srcaddrp, (char *)&dstaddrp, &(result.srcport), &(result.dstport));
-	result.srcaddr = net_resolve_dual((char *)&srcaddrp, result.family, false);
-	result.dstaddr = net_resolve_dual((char *)&dstaddrp, result.family, false);
-	if (result.srcaddr.err || result.dstaddr.err) {
+	result.srcaddr = net_addr_parse((char *)&srcaddrp);
+	result.dstaddr = net_addr_parse((char *)&dstaddrp);
+	if (result.srcaddr.err || result.dstaddr.err || result.srcaddr.family != result.family || result.dstaddr.family != result.family) {
 		result.family = AF_UNSPEC;
 	}
 	return result;

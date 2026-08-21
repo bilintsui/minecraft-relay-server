@@ -64,7 +64,6 @@ net_connect_status net_connect_nonblocking(const net_addr *address, in_port_t po
 net_connect_status net_connect_nonblocking_complete(int socket_fd);
 net_addrp net_ntop(sa_family_t family, const void *src, bool v6addition);
 int net_relay(int socket_in, int socket_out);
-net_addr net_resolve_dual(const char *hostname, sa_family_t primary_family, bool dual);
 int net_socket(net_socket_action action, sa_family_t family, const void *address, in_port_t port, bool reuseaddr);
 
 #endif

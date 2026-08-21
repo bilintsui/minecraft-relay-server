@@ -13,7 +13,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -22,21 +21,6 @@
 
 /* section: headers (self) */
 #include "basic.h"
-
-/* section: functions (local) */
-static size_t strlen_notail(const char *src, char exemptchr) {
-	if (src == NULL) {
-		return 0;
-	}
-	size_t result = strlen(src);
-	while (result > 0) {
-		if (src[result - 1] != exemptchr) {
-			break;
-		}
-		result--;
-	}
-	return result;
-}
 
 /* section: functions (exported) */
 size_t base64_encode(void *dst, size_t dst_cap, const void *src, size_t src_len) {
@@ -203,22 +187,6 @@ void resolve_path(const char *path, const char *cwd, char *out, size_t out_size)
 		snprintf(out, out_size, "%s/%s", cwd, path);
 	} else {
 		snprintf(out, out_size, "%s", path);
-	}
-}
-
-int strcmp_notail(const char *str1, const char *str2, char exemptchr, bool case_insensitive) {
-	size_t str1_length = strlen(str1);
-	size_t str2_length = strlen_notail(str2, exemptchr);
-	if (str1_length < str2_length) {
-		return -1;
-	} else if (str1_length > str2_length) {
-		return 1;
-	} else {
-		if (case_insensitive) {
-			return strncasecmp(str1, str2, str2_length);
-		} else {
-			return strncmp(str1, str2, str2_length);
-		}
 	}
 }
 
