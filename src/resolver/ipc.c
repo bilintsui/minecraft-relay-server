@@ -22,6 +22,16 @@
 #define RESOLVER_IPC_MAGIC	UINT32_C(0x4D525350)
 
 /* section: types */
+typedef enum {
+	RESOLVER_IPC_LOOKUP_STATUS_ADDRESS,
+	RESOLVER_IPC_LOOKUP_STATUS_IPC,
+	RESOLVER_IPC_LOOKUP_STATUS_SRV
+} resolver_ipc_lookup_status_domain;
+typedef struct {
+	unsigned int address;
+	unsigned int srv;
+	unsigned int ipc;
+} resolver_ipc_lookup_status_map;
 typedef struct {
 	const uint8_t *data;
 	size_t offset;
@@ -32,6 +42,20 @@ typedef struct {
 	size_t offset;
 	size_t size;
 } resolver_ipc_writer;
+
+/* section: global variables */
+static const resolver_ipc_lookup_status_map resolver_ipc_lookup_status_maps[] = {
+	{ DNS_ADDRESS_LOOKUP_OK, DNS_SRV_LOOKUP_OK, RESOLVER_IPC_LOOKUP_OK },
+	{ DNS_ADDRESS_LOOKUP_BAD_ARGUMENT, DNS_SRV_LOOKUP_BAD_ARGUMENT, RESOLVER_IPC_LOOKUP_BAD_ARGUMENT },
+	{ DNS_ADDRESS_LOOKUP_LIMIT, DNS_SRV_LOOKUP_LIMIT, RESOLVER_IPC_LOOKUP_LIMIT },
+	{ DNS_ADDRESS_LOOKUP_MALFORMED, DNS_SRV_LOOKUP_MALFORMED, RESOLVER_IPC_LOOKUP_MALFORMED },
+	{ DNS_ADDRESS_LOOKUP_MEMORY, DNS_SRV_LOOKUP_MEMORY, RESOLVER_IPC_LOOKUP_MEMORY },
+	{ DNS_ADDRESS_LOOKUP_NODATA, DNS_SRV_LOOKUP_NODATA, RESOLVER_IPC_LOOKUP_NODATA },
+	{ DNS_ADDRESS_LOOKUP_NOT_FOUND, DNS_SRV_LOOKUP_NOT_FOUND, RESOLVER_IPC_LOOKUP_NOT_FOUND },
+	{ DNS_ADDRESS_LOOKUP_PERMANENT_ERROR, DNS_SRV_LOOKUP_PERMANENT_ERROR, RESOLVER_IPC_LOOKUP_PERMANENT_ERROR },
+	{ DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR, DNS_SRV_LOOKUP_TEMPORARY_ERROR, RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR },
+	{ DNS_ADDRESS_LOOKUP_TRUNCATED, DNS_SRV_LOOKUP_TRUNCATED, RESOLVER_IPC_LOOKUP_TRUNCATED }
+};
 
 /* section: functions (local) */
 static bool resolver_ipc_address_family_decode(uint16_t encoded, sa_family_t *result) {
@@ -64,21 +88,32 @@ static bool resolver_ipc_address_family_encode(sa_family_t family, uint16_t *res
 	return false;
 }
 
-static bool resolver_ipc_lookup_status_valid(resolver_ipc_lookup_status status) {
-	switch (status) {
-		case RESOLVER_IPC_LOOKUP_OK:
-		case RESOLVER_IPC_LOOKUP_BAD_ARGUMENT:
-		case RESOLVER_IPC_LOOKUP_LIMIT:
-		case RESOLVER_IPC_LOOKUP_MALFORMED:
-		case RESOLVER_IPC_LOOKUP_MEMORY:
-		case RESOLVER_IPC_LOOKUP_NODATA:
-		case RESOLVER_IPC_LOOKUP_NOT_FOUND:
-		case RESOLVER_IPC_LOOKUP_PERMANENT_ERROR:
-		case RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR:
-		case RESOLVER_IPC_LOOKUP_TRUNCATED:
-			return true;
+static const resolver_ipc_lookup_status_map *resolver_ipc_lookup_status_find(resolver_ipc_lookup_status_domain domain, unsigned int source) {
+	for (size_t status_index = 0; status_index < sizeof(resolver_ipc_lookup_status_maps) / sizeof(resolver_ipc_lookup_status_maps[0]); status_index++) {
+		const resolver_ipc_lookup_status_map *mapping = &resolver_ipc_lookup_status_maps[status_index];
+		switch (domain) {
+			case RESOLVER_IPC_LOOKUP_STATUS_ADDRESS:
+				if (mapping->address == source) {
+					return mapping;
+				}
+				break;
+			case RESOLVER_IPC_LOOKUP_STATUS_IPC:
+				if (mapping->ipc == source) {
+					return mapping;
+				}
+				break;
+			case RESOLVER_IPC_LOOKUP_STATUS_SRV:
+				if (mapping->srv == source) {
+					return mapping;
+				}
+				break;
+		}
 	}
-	return false;
+	return NULL;
+}
+
+static bool resolver_ipc_lookup_status_valid(resolver_ipc_lookup_status status) {
+	return resolver_ipc_lookup_status_find(RESOLVER_IPC_LOOKUP_STATUS_IPC, (unsigned int)status) != NULL;
 }
 
 static bool resolver_ipc_name_size(const char *name, bool allow_empty, size_t *result) {
@@ -387,159 +422,55 @@ static bool resolver_ipc_response_count_valid(uint16_t query_type, size_t cname_
 
 /* section: functions (exported) */
 bool resolver_ipc_lookup_status_from_address(dns_address_lookup_status source, resolver_ipc_lookup_status *result) {
+	const resolver_ipc_lookup_status_map *mapping;
 	if (result == NULL) {
 		return false;
 	}
-	switch (source) {
-		case DNS_ADDRESS_LOOKUP_OK:
-			*result = RESOLVER_IPC_LOOKUP_OK;
-			return true;
-		case DNS_ADDRESS_LOOKUP_BAD_ARGUMENT:
-			*result = RESOLVER_IPC_LOOKUP_BAD_ARGUMENT;
-			return true;
-		case DNS_ADDRESS_LOOKUP_LIMIT:
-			*result = RESOLVER_IPC_LOOKUP_LIMIT;
-			return true;
-		case DNS_ADDRESS_LOOKUP_MALFORMED:
-			*result = RESOLVER_IPC_LOOKUP_MALFORMED;
-			return true;
-		case DNS_ADDRESS_LOOKUP_MEMORY:
-			*result = RESOLVER_IPC_LOOKUP_MEMORY;
-			return true;
-		case DNS_ADDRESS_LOOKUP_NODATA:
-			*result = RESOLVER_IPC_LOOKUP_NODATA;
-			return true;
-		case DNS_ADDRESS_LOOKUP_NOT_FOUND:
-			*result = RESOLVER_IPC_LOOKUP_NOT_FOUND;
-			return true;
-		case DNS_ADDRESS_LOOKUP_PERMANENT_ERROR:
-			*result = RESOLVER_IPC_LOOKUP_PERMANENT_ERROR;
-			return true;
-		case DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR:
-			*result = RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR;
-			return true;
-		case DNS_ADDRESS_LOOKUP_TRUNCATED:
-			*result = RESOLVER_IPC_LOOKUP_TRUNCATED;
-			return true;
+	mapping = resolver_ipc_lookup_status_find(RESOLVER_IPC_LOOKUP_STATUS_ADDRESS, (unsigned int)source);
+	if (mapping == NULL) {
+		return false;
 	}
-	return false;
+	*result = (resolver_ipc_lookup_status)mapping->ipc;
+	return true;
 }
 
 bool resolver_ipc_lookup_status_from_srv(dns_srv_lookup_status source, resolver_ipc_lookup_status *result) {
+	const resolver_ipc_lookup_status_map *mapping;
 	if (result == NULL) {
 		return false;
 	}
-	switch (source) {
-		case DNS_SRV_LOOKUP_OK:
-			*result = RESOLVER_IPC_LOOKUP_OK;
-			return true;
-		case DNS_SRV_LOOKUP_BAD_ARGUMENT:
-			*result = RESOLVER_IPC_LOOKUP_BAD_ARGUMENT;
-			return true;
-		case DNS_SRV_LOOKUP_LIMIT:
-			*result = RESOLVER_IPC_LOOKUP_LIMIT;
-			return true;
-		case DNS_SRV_LOOKUP_MALFORMED:
-			*result = RESOLVER_IPC_LOOKUP_MALFORMED;
-			return true;
-		case DNS_SRV_LOOKUP_MEMORY:
-			*result = RESOLVER_IPC_LOOKUP_MEMORY;
-			return true;
-		case DNS_SRV_LOOKUP_NODATA:
-			*result = RESOLVER_IPC_LOOKUP_NODATA;
-			return true;
-		case DNS_SRV_LOOKUP_NOT_FOUND:
-			*result = RESOLVER_IPC_LOOKUP_NOT_FOUND;
-			return true;
-		case DNS_SRV_LOOKUP_PERMANENT_ERROR:
-			*result = RESOLVER_IPC_LOOKUP_PERMANENT_ERROR;
-			return true;
-		case DNS_SRV_LOOKUP_TEMPORARY_ERROR:
-			*result = RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR;
-			return true;
-		case DNS_SRV_LOOKUP_TRUNCATED:
-			*result = RESOLVER_IPC_LOOKUP_TRUNCATED;
-			return true;
+	mapping = resolver_ipc_lookup_status_find(RESOLVER_IPC_LOOKUP_STATUS_SRV, (unsigned int)source);
+	if (mapping == NULL) {
+		return false;
 	}
-	return false;
+	*result = (resolver_ipc_lookup_status)mapping->ipc;
+	return true;
 }
 
 bool resolver_ipc_lookup_status_to_address(resolver_ipc_lookup_status source, dns_address_lookup_status *result) {
+	const resolver_ipc_lookup_status_map *mapping;
 	if (result == NULL) {
 		return false;
 	}
-	switch (source) {
-		case RESOLVER_IPC_LOOKUP_OK:
-			*result = DNS_ADDRESS_LOOKUP_OK;
-			return true;
-		case RESOLVER_IPC_LOOKUP_BAD_ARGUMENT:
-			*result = DNS_ADDRESS_LOOKUP_BAD_ARGUMENT;
-			return true;
-		case RESOLVER_IPC_LOOKUP_LIMIT:
-			*result = DNS_ADDRESS_LOOKUP_LIMIT;
-			return true;
-		case RESOLVER_IPC_LOOKUP_MALFORMED:
-			*result = DNS_ADDRESS_LOOKUP_MALFORMED;
-			return true;
-		case RESOLVER_IPC_LOOKUP_MEMORY:
-			*result = DNS_ADDRESS_LOOKUP_MEMORY;
-			return true;
-		case RESOLVER_IPC_LOOKUP_NODATA:
-			*result = DNS_ADDRESS_LOOKUP_NODATA;
-			return true;
-		case RESOLVER_IPC_LOOKUP_NOT_FOUND:
-			*result = DNS_ADDRESS_LOOKUP_NOT_FOUND;
-			return true;
-		case RESOLVER_IPC_LOOKUP_PERMANENT_ERROR:
-			*result = DNS_ADDRESS_LOOKUP_PERMANENT_ERROR;
-			return true;
-		case RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR:
-			*result = DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR;
-			return true;
-		case RESOLVER_IPC_LOOKUP_TRUNCATED:
-			*result = DNS_ADDRESS_LOOKUP_TRUNCATED;
-			return true;
+	mapping = resolver_ipc_lookup_status_find(RESOLVER_IPC_LOOKUP_STATUS_IPC, (unsigned int)source);
+	if (mapping == NULL) {
+		return false;
 	}
-	return false;
+	*result = (dns_address_lookup_status)mapping->address;
+	return true;
 }
 
 bool resolver_ipc_lookup_status_to_srv(resolver_ipc_lookup_status source, dns_srv_lookup_status *result) {
+	const resolver_ipc_lookup_status_map *mapping;
 	if (result == NULL) {
 		return false;
 	}
-	switch (source) {
-		case RESOLVER_IPC_LOOKUP_OK:
-			*result = DNS_SRV_LOOKUP_OK;
-			return true;
-		case RESOLVER_IPC_LOOKUP_BAD_ARGUMENT:
-			*result = DNS_SRV_LOOKUP_BAD_ARGUMENT;
-			return true;
-		case RESOLVER_IPC_LOOKUP_LIMIT:
-			*result = DNS_SRV_LOOKUP_LIMIT;
-			return true;
-		case RESOLVER_IPC_LOOKUP_MALFORMED:
-			*result = DNS_SRV_LOOKUP_MALFORMED;
-			return true;
-		case RESOLVER_IPC_LOOKUP_MEMORY:
-			*result = DNS_SRV_LOOKUP_MEMORY;
-			return true;
-		case RESOLVER_IPC_LOOKUP_NODATA:
-			*result = DNS_SRV_LOOKUP_NODATA;
-			return true;
-		case RESOLVER_IPC_LOOKUP_NOT_FOUND:
-			*result = DNS_SRV_LOOKUP_NOT_FOUND;
-			return true;
-		case RESOLVER_IPC_LOOKUP_PERMANENT_ERROR:
-			*result = DNS_SRV_LOOKUP_PERMANENT_ERROR;
-			return true;
-		case RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR:
-			*result = DNS_SRV_LOOKUP_TEMPORARY_ERROR;
-			return true;
-		case RESOLVER_IPC_LOOKUP_TRUNCATED:
-			*result = DNS_SRV_LOOKUP_TRUNCATED;
-			return true;
+	mapping = resolver_ipc_lookup_status_find(RESOLVER_IPC_LOOKUP_STATUS_IPC, (unsigned int)source);
+	if (mapping == NULL) {
+		return false;
 	}
-	return false;
+	*result = (dns_srv_lookup_status)mapping->srv;
+	return true;
 }
 
 resolver_ipc_codec_status resolver_ipc_packet_inspect(const void *packet, size_t packet_size, resolver_ipc_packet_header *result) {
