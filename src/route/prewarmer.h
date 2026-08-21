@@ -1,5 +1,5 @@
 /*
- * route/prewarmer.h: Bounded route DNS prewarm scheduling
+ * route/prewarmer.h: Header file of route/prewarmer.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

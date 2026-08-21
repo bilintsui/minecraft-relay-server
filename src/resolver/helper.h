@@ -1,5 +1,5 @@
 /*
- * resolver/helper.h: Resolver helper process runtime
+ * resolver/helper.h: Header file of resolver/helper.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

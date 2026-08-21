@@ -1,5 +1,5 @@
 /*
- * route/generation.h: Reference-counted prepared listener route generation
+ * route/generation.h: Header file of route/generation.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

@@ -1,5 +1,5 @@
 /*
- * resolver/cache.h: Listener-owned DNS result cache
+ * resolver/cache.h: Header file of resolver/cache.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

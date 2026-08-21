@@ -1,5 +1,5 @@
 /*
- * define/global.h: Header file for global/general defines
+ * define/global.h: Header file of global definitions
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

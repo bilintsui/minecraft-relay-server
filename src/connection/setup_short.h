@@ -1,5 +1,5 @@
 /*
- * connection/setup_short.h: Header file of setup_short.c
+ * connection/setup_short.h: Header file of connection/setup_short.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

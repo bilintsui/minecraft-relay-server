@@ -1,5 +1,5 @@
 /*
- * resolver/ipc.h: Resolver helper IPC packet codec
+ * resolver/ipc.h: Header file of resolver/ipc.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

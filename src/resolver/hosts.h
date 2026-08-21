@@ -1,5 +1,5 @@
 /*
- * resolver/hosts.h: Local static host-name table
+ * resolver/hosts.h: Header file of resolver/hosts.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

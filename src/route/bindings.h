@@ -1,5 +1,5 @@
 /*
- * route/bindings.h: Per-generation proxy destination resolver bindings
+ * route/bindings.h: Header file of route/bindings.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

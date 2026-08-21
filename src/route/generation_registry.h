@@ -1,5 +1,5 @@
 /*
- * route/generation_registry.h: Bounded live listener route generations
+ * route/generation_registry.h: Header file of route/generation_registry.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

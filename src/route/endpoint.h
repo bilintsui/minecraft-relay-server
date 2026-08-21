@@ -1,5 +1,5 @@
 /*
- * route/endpoint.h: Fresh route endpoint selection and worker snapshots
+ * route/endpoint.h: Header file of route/endpoint.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

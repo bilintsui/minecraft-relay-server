@@ -1,5 +1,5 @@
 /*
- * connection/setup_long.h: Header file of setup_long.c
+ * connection/setup_long.h: Header file of connection/setup_long.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

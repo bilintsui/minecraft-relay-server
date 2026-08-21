@@ -1,5 +1,5 @@
 /*
- * route/table.h: Immutable prepared proxy route table
+ * route/table.h: Header file of route/table.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

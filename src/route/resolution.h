@@ -1,5 +1,5 @@
 /*
- * route/resolution.h: Per-generation route DNS resolution coordination
+ * route/resolution.h: Header file of route/resolution.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

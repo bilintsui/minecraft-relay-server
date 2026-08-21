@@ -1,5 +1,5 @@
 /*
- * define/exitcode.h: Header file for exit codes
+ * define/exitcode.h: Header file of exit code definitions
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

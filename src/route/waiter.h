@@ -1,5 +1,5 @@
 /*
- * route/waiter.h: Per-connection asynchronous route resolution waiters
+ * route/waiter.h: Header file of route/waiter.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

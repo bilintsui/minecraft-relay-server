@@ -1,5 +1,5 @@
 /*
- * connection/setup.h: Shared connection setup types and helpers
+ * connection/setup.h: Header file of connection/setup.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

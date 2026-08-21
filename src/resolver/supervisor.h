@@ -1,5 +1,5 @@
 /*
- * resolver/supervisor.h: Listener-owned resolver helper supervision
+ * resolver/supervisor.h: Header file of resolver/supervisor.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

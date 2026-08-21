@@ -1,5 +1,5 @@
 /*
- * resolver/ipc_assembly.h: Listener-side resolver IPC response assembly
+ * resolver/ipc_assembly.h: Header file of resolver/ipc_assembly.c
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui
