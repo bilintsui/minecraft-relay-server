@@ -1,3 +1,12 @@
+mcrelay (1.2~beta9-1) unstable; urgency=high
+
+  * New upstream release: listener-owned DNS resolution, bounded route
+    preparation, and listener-relayed status connections.
+  * Breaking configuration changes: require a numeric listen address and
+    remove the obsolete netpriority options.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Fri, 21 Aug 2026 19:12:11 +0800
+
 mcrelay (1.2~beta8-1) unstable; urgency=high
 
   * New upstream release: event-driven listener, transactional reloads,
