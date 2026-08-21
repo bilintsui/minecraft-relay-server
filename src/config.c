@@ -47,6 +47,20 @@ static bool config_jsonbool(cJSON *src, bool defaultvalue) {
 	}
 }
 
+static conf *config_parse_failure(cJSON *config_json, conf *result, conf_error error) {
+	cJSON_Delete(config_json);
+	config_destroy(result);
+	errno = error;
+	return NULL;
+}
+
+static void config_proxy_vhost_namelist_destroy(char **vhost_namelist, int vhost_count) {
+	for (int index = 0; index < vhost_count; index++) {
+		free(vhost_namelist[index]);
+	}
+	free(vhost_namelist);
+}
+
 static cJSON *config_proxy_parse(cJSON *src) {
 	cJSON *single = NULL;
 	cJSON_ArrayForEach(single, src) {
@@ -111,7 +125,7 @@ static cJSON *config_proxy_parse(cJSON *src) {
 				}
 				vhost_namelist[dupdet_count] = (char *)malloc(strlen(rec_result_vhostname->valuestring) + 1);
 				if (vhost_namelist[dupdet_count] == NULL) {
-					free(vhost_namelist);
+					config_proxy_vhost_namelist_destroy(vhost_namelist, dupdet_count);
 					cJSON_Delete(result);
 					errno = CONF_ECMEMORY;
 					return NULL;
@@ -123,10 +137,7 @@ static cJSON *config_proxy_parse(cJSON *src) {
 			for (int i = 0; i < dupdet_count; i++) {
 				if (strcasecmp(vhost_namelist[i], rec_result_vhostname->valuestring) == 0) {
 					snprintf(config_duperr, sizeof(config_duperr), "%s", rec_result_vhostname->valuestring);
-					for (int j = 0; j < dupdet_count; j++) {
-						free(vhost_namelist[j]);
-					}
-					free(vhost_namelist);
+					config_proxy_vhost_namelist_destroy(vhost_namelist, dupdet_count);
 					cJSON_Delete(result);
 					errno = CONF_ECPROXYDUP;
 					return NULL;
@@ -134,10 +145,7 @@ static cJSON *config_proxy_parse(cJSON *src) {
 				if (i == (dupdet_count - 1)) {
 					char **vhost_namelist_new = (char **)realloc(vhost_namelist, (dupdet_count + 1) * sizeof(char **));
 					if (vhost_namelist_new == NULL) {
-						for (int j = 0; j < dupdet_count; j++) {
-							free(vhost_namelist[j]);
-						}
-						free(vhost_namelist);
+						config_proxy_vhost_namelist_destroy(vhost_namelist, dupdet_count);
 						cJSON_Delete(result);
 						errno = CONF_ECMEMORY;
 						return NULL;
@@ -145,10 +153,7 @@ static cJSON *config_proxy_parse(cJSON *src) {
 					vhost_namelist = vhost_namelist_new;
 					vhost_namelist[dupdet_count] = (char *)malloc(strlen(rec_result_vhostname->valuestring) + 1);
 					if (vhost_namelist[dupdet_count] == NULL) {
-						for (int j = 0; j < dupdet_count; j++) {
-							free(vhost_namelist[j]);
-						}
-						free(vhost_namelist);
+						config_proxy_vhost_namelist_destroy(vhost_namelist, dupdet_count);
 						cJSON_Delete(result);
 						errno = CONF_ECMEMORY;
 						return NULL;
@@ -160,10 +165,7 @@ static cJSON *config_proxy_parse(cJSON *src) {
 			}
 		}
 	}
-	for (int i = 0; i < dupdet_count; i++) {
-		free(vhost_namelist[i]);
-	}
-	free(vhost_namelist);
+	config_proxy_vhost_namelist_destroy(vhost_namelist, dupdet_count);
 	cJSON_Delete(src);
 	errno = 0;
 	return result;
@@ -177,17 +179,12 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 	}
 	conf *result = (conf *)calloc(1, sizeof(conf));
 	if (result == NULL) {
-		cJSON_Delete(config_json);
-		errno = CONF_ECMEMORY;
-		return NULL;
+		return config_parse_failure(config_json, NULL, CONF_ECMEMORY);
 	}
 	const char *config_default_log_filename = "/var/log/mcrelay/access.log";
 	result->log.filename = (char *)malloc(strlen(config_default_log_filename) + 1);
 	if (result->log.filename == NULL) {
-		cJSON_Delete(config_json);
-		config_destroy(result);
-		errno = CONF_ECMEMORY;
-		return NULL;
+		return config_parse_failure(config_json, result, CONF_ECMEMORY);
 	}
 	strcpy(result->log.filename, config_default_log_filename);
 	result->log.level = MKSYS_LEVEL_INFORMATION;
@@ -199,10 +196,7 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 				if (config_json_log_filename->valuestring != NULL) {
 					char *result_log_filename_new = (char *)realloc(result->log.filename, strlen(config_json_log_filename->valuestring) + 1);
 					if (result_log_filename_new == NULL) {
-						cJSON_Delete(config_json);
-						config_destroy(result);
-						errno = CONF_ECMEMORY;
-						return NULL;
+						return config_parse_failure(config_json, result, CONF_ECMEMORY);
 					}
 					result->log.filename = result_log_filename_new;
 					strcpy(result->log.filename, config_json_log_filename->valuestring);
@@ -219,10 +213,7 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 	const char *config_default_listen_address = "::";
 	result->listen.address = (char *)malloc(strlen(config_default_listen_address) + 1);
 	if (result->listen.address == NULL) {
-		cJSON_Delete(config_json);
-		config_destroy(result);
-		errno = CONF_ECMEMORY;
-		return NULL;
+		return config_parse_failure(config_json, result, CONF_ECMEMORY);
 	}
 	strcpy(result->listen.address, config_default_listen_address);
 	result->listen.port = 25565;
@@ -234,10 +225,7 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 				if (config_json_listen_address->valuestring != NULL) {
 					char *result_listen_address_new = (char *)realloc(result->listen.address, strlen(config_json_listen_address->valuestring) + 1);
 					if (result_listen_address_new == NULL) {
-						cJSON_Delete(config_json);
-						config_destroy(result);
-						errno = CONF_ECMEMORY;
-						return NULL;
+						return config_parse_failure(config_json, result, CONF_ECMEMORY);
 					}
 					result->listen.address = result_listen_address_new;
 					strcpy(result->listen.address, config_json_listen_address->valuestring);
@@ -249,10 +237,7 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 			if (cJSON_IsNumber(config_json_listen_port)) {
 				int port = config_json_listen_port->valueint;
 				if ((port < 0) || (port > 65535)) {
-					cJSON_Delete(config_json);
-					config_destroy(result);
-					errno = CONF_ECLISTENPORT;
-					return NULL;
+					return config_parse_failure(config_json, result, CONF_ECLISTENPORT);
 				}
 				result->listen.port = port;
 			}
@@ -262,10 +247,7 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 	if (cJSON_IsString(config_json_icon) && config_json_icon->valuestring != NULL && config_json_icon->valuestring[0] != '\0') {
 		result->icon_path = (char *)malloc(strlen(config_json_icon->valuestring) + 1);
 		if (result->icon_path == NULL) {
-			cJSON_Delete(config_json);
-			config_destroy(result);
-			errno = CONF_ECMEMORY;
-			return NULL;
+			return config_parse_failure(config_json, result, CONF_ECMEMORY);
 		}
 		strcpy(result->icon_path, config_json_icon->valuestring);
 	} else {
@@ -274,10 +256,7 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 	result->icon_b64 = NULL;
 	cJSON *config_json_proxy = cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(config_json, "proxy"), 1);
 	if (config_json_proxy == NULL) {
-		cJSON_Delete(config_json);
-		config_destroy(result);
-		errno = CONF_ECPROXY;
-		return NULL;
+		return config_parse_failure(config_json, result, CONF_ECPROXY);
 	}
 	cJSON_Delete(config_json);
 	if (!cJSON_IsArray(config_json_proxy)) {
