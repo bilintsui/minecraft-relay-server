@@ -6,7 +6,7 @@ set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 add_executable(mcrelay${EXEC_SUFFIX}
-	src/basic.c src/config.c src/connection/setup.c src/connection/setup_short.c src/listener.c src/log.c src/main.c src/network.c
+	src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/log.c src/main.c src/network.c
 	src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c
 	src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c src/route/table.c src/route/waiter.c
 	src/protocol/common.c src/protocol/handshake.c
@@ -73,11 +73,12 @@ if(BUILD_TESTING)
 	target_include_directories(protocol_proxy_test PRIVATE src)
 	target_compile_definitions(protocol_proxy_test PRIVATE _GNU_SOURCE)
 	add_test(NAME protocol_proxy COMMAND protocol_proxy_test)
-	add_executable(connsetup_short_test
-		tests/connsetup_short.c src/basic.c src/connection/setup_short.c src/network.c src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c)
-	target_include_directories(connsetup_short_test PRIVATE src)
-	target_compile_definitions(connsetup_short_test PRIVATE _GNU_SOURCE)
-	add_test(NAME connsetup_short COMMAND connsetup_short_test)
+	add_executable(connection_setup_short_test
+		tests/connection_setup_short.c src/basic.c src/connection/setup.c src/connection/setup_short.c
+		src/network.c src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c)
+	target_include_directories(connection_setup_short_test PRIVATE src)
+	target_compile_definitions(connection_setup_short_test PRIVATE _GNU_SOURCE)
+	add_test(NAME connection_setup_short COMMAND connection_setup_short_test)
 	add_executable(resolver_cache_test tests/resolver_cache.c src/resolver/dns.c src/resolver/cache.c)
 	target_include_directories(resolver_cache_test PRIVATE src)
 	target_compile_definitions(resolver_cache_test PRIVATE _GNU_SOURCE RESOLVER_CACHE_ENTRY_LIMIT=8 RESOLVER_CACHE_OWNED_BYTE_LIMIT=65536 RESOLVER_CACHE_RESULT_BYTE_LIMIT=49152)
@@ -221,14 +222,15 @@ if(BUILD_TESTING)
 		target_link_libraries(protocol_proxy_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all)
 		add_test(NAME protocol_proxy_ubsan COMMAND protocol_proxy_ubsan_test)
 		set_tests_properties(protocol_proxy_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
-		add_executable(connsetup_short_ubsan_test
-			tests/connsetup_short.c src/basic.c src/connection/setup_short.c src/network.c src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c)
-		target_include_directories(connsetup_short_ubsan_test PRIVATE src)
-		target_compile_definitions(connsetup_short_ubsan_test PRIVATE _GNU_SOURCE)
-		target_compile_options(connsetup_short_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
-		target_link_libraries(connsetup_short_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all)
-		add_test(NAME connsetup_short_ubsan COMMAND connsetup_short_ubsan_test)
-		set_tests_properties(connsetup_short_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+		add_executable(connection_setup_short_ubsan_test
+			tests/connection_setup_short.c src/basic.c src/connection/setup.c src/connection/setup_short.c
+			src/network.c src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c)
+		target_include_directories(connection_setup_short_ubsan_test PRIVATE src)
+		target_compile_definitions(connection_setup_short_ubsan_test PRIVATE _GNU_SOURCE)
+		target_compile_options(connection_setup_short_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
+		target_link_libraries(connection_setup_short_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all)
+		add_test(NAME connection_setup_short_ubsan COMMAND connection_setup_short_ubsan_test)
+		set_tests_properties(connection_setup_short_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(resolver_cache_ubsan_test tests/resolver_cache.c src/resolver/dns.c src/resolver/cache.c)
 		target_include_directories(resolver_cache_ubsan_test PRIVATE src)
 		target_compile_definitions(resolver_cache_ubsan_test PRIVATE _GNU_SOURCE RESOLVER_CACHE_ENTRY_LIMIT=8 RESOLVER_CACHE_OWNED_BYTE_LIMIT=65536 RESOLVER_CACHE_RESULT_BYTE_LIMIT=49152)
@@ -360,7 +362,7 @@ if(BUILD_TESTING)
 	target_compile_definitions(worker_protocol_test PRIVATE _GNU_SOURCE)
 	add_test(NAME worker_protocol COMMAND worker_protocol_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}> "${CMAKE_CURRENT_SOURCE_DIR}/tests/rawpackets")
 	add_executable(listener_short_runtime_daemon
-		src/basic.c src/config.c src/connection/setup.c src/connection/setup_short.c src/listener.c src/log.c src/main.c src/network.c
+		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/log.c src/main.c src/network.c
 		src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c
 		src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c
 		src/route/table.c src/route/waiter.c

@@ -36,7 +36,7 @@
 /* section: headers (project) */
 #include "basic.h"
 #include "config.h"
-#include "connection/setup.h"
+#include "connection/setup_long.h"
 #include "connection/setup_short.h"
 #include "define/exitcode.h"
 #include "log.h"
@@ -209,7 +209,7 @@ struct listener_connection {
 	struct timespec lifetime_deadline;
 	struct listener_connection *next;
 	size_t request_offset;
-	connsetup_short_plan short_plan;
+	connection_setup_short_plan short_plan;
 	int socket_fd;
 	listener_connection_state state;
 	int timer_fd;
@@ -709,14 +709,14 @@ static void listener_connection_destroy(listener_connection **connections, liste
 		}
 		close(target->upstream_fd);
 	}
-	connsetup_short_destroy(&target->short_plan);
+	connection_setup_short_destroy(&target->short_plan);
 	free(target->upstream_buffer.data);
 	route_waiter_destroy(target->waiter, supervisor, now);
 	route_generation_release(target->generation);
 	free(target);
 }
 
-static bool listener_connection_snapshot_prepare(listener_connection *connection, listener_context *context, connsetup_snapshot *result) {
+static bool listener_connection_snapshot_prepare(listener_connection *connection, listener_context *context, connection_setup_snapshot *result) {
 	if (connection == NULL || connection->generation == NULL || context == NULL || result == NULL) {
 		return false;
 	}
@@ -736,15 +736,15 @@ static bool listener_connection_snapshot_prepare(listener_connection *connection
 	}
 	result->log_level = config->log.level;
 	if (connection->state == LISTENER_CONNECTION_INITIAL) {
-		result->route_status = CONNSETUP_ROUTE_BYPASS;
+		result->route_status = CONNECTION_SETUP_ROUTE_BYPASS;
 	} else {
 		switch (connection->waiter_status) {
 			case ROUTE_WAITER_READY:
 				result->endpoint = connection->endpoint;
-				result->route_status = CONNSETUP_ROUTE_READY;
+				result->route_status = CONNECTION_SETUP_ROUTE_READY;
 				break;
 			case ROUTE_WAITER_NO_ROUTE:
-				result->route_status = CONNSETUP_ROUTE_NO_ROUTE;
+				result->route_status = CONNECTION_SETUP_ROUTE_NO_ROUTE;
 				break;
 			case ROUTE_WAITER_CONTRADICTORY:
 			case ROUTE_WAITER_LIMIT:
@@ -752,7 +752,7 @@ static bool listener_connection_snapshot_prepare(listener_connection *connection
 			case ROUTE_WAITER_SERVICE_UNAVAILABLE:
 			case ROUTE_WAITER_TIMEOUT:
 			case ROUTE_WAITER_UNAVAILABLE:
-				result->route_status = CONNSETUP_ROUTE_UNAVAILABLE;
+				result->route_status = CONNECTION_SETUP_ROUTE_UNAVAILABLE;
 				break;
 			case ROUTE_WAITER_PENDING:
 			case ROUTE_WAITER_BAD_ARGUMENT:
@@ -762,7 +762,7 @@ static bool listener_connection_snapshot_prepare(listener_connection *connection
 				return false;
 		}
 	}
-	if (result->route_status != CONNSETUP_ROUTE_READY) {
+	if (result->route_status != CONNECTION_SETUP_ROUTE_READY) {
 		memcpy(result->endpoint.vhost, connection->vhost, strlen(connection->vhost) + 1U);
 	}
 	return true;
@@ -972,21 +972,21 @@ static bool listener_connection_short_buffer_prepare(listener_connection *connec
 }
 
 static void listener_connection_short_log(const listener_connection *connection, bool connected) {
-	const connsetup_short_plan *plan = &connection->short_plan;
+	const connection_setup_short_plan *plan = &connection->short_plan;
 	const route_endpoint_snapshot *endpoint = &plan->snapshot.endpoint;
 	const char *destination = endpoint->target_name[0] == '\0' ? endpoint->configured_address : endpoint->target_name;
 	const char *source = (const char *)&plan->inbound_address.address;
-	if (plan->result == CONNSETUP_EOLDCLIENT) {
+	if (plan->result == CONNECTION_SETUP_EOLDCLIENT) {
 		mksysmsg(MKSYS_PREFIX_ON, plan->snapshot.log_filename, plan->snapshot.log_level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, type: motd, status: %s\n", source, plan->inbound_address.port,
 			plan->protocol == PVER_MODERN1 ? "reject_motdrelay_13w41*" : "reject_motdrelay_oldclient");
-	} else if (plan->result == CONNSETUP_ENOVHOST) {
+	} else if (plan->result == CONNECTION_SETUP_ENOVHOST) {
 		mksysmsg(MKSYS_PREFIX_ON, plan->snapshot.log_filename, plan->snapshot.log_level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n", source, plan->inbound_address.port, endpoint->vhost);
-	} else if (plan->result == CONNSETUP_ENORECORD) {
+	} else if (plan->result == CONNECTION_SETUP_ENORECORD) {
 		mksysmsg(MKSYS_PREFIX_ON, plan->snapshot.log_filename, plan->snapshot.log_level, MKSYS_LEVEL_WARNING,
 			"src: %s:%d, type: motd, vhost: %s, status: reject_dstnoresolve\n", source, plan->inbound_address.port, endpoint->vhost);
-	} else if (plan->result == CONNSETUP_OK) {
+	} else if (plan->result == CONNECTION_SETUP_OK) {
 		mksysmsg(MKSYS_PREFIX_ON, plan->snapshot.log_filename, plan->snapshot.log_level,
 			connected ? MKSYS_LEVEL_INFORMATION + 1 : MKSYS_LEVEL_WARNING,
 			"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: %s\n", source, plan->inbound_address.port, endpoint->vhost, destination,
@@ -1149,20 +1149,20 @@ static listener_connection_progress listener_connection_short_event(listener_con
 
 static listener_connection_progress listener_connection_short_start(listener_connection *connection, const listener_events *events, listener_context *context,
 	const struct timespec *now) {
-	connsetup_snapshot snapshot;
+	connection_setup_snapshot snapshot;
 	if (!listener_connection_snapshot_prepare(connection, context, &snapshot)) {
 		return LISTENER_CONNECTION_ABORT;
 	}
 	net_addrbundle client = listener_client_address_parse(&connection->address);
-	connsetup_short_action action = connsetup_short_prepare(&connection->short_plan, &snapshot, client, connection->inbound, connection->inbound_size);
+	connection_setup_short_action action = connection_setup_short_prepare(&connection->short_plan, &snapshot, client, connection->inbound, connection->inbound_size);
 	if (!listener_connection_route_release(connection, context->resolver, now)) {
 		errno = EINVAL;
 		return LISTENER_CONNECTION_FATAL;
 	}
-	if (action == CONNSETUP_SHORT_ABORT || !listener_connection_short_buffer_prepare(connection)) {
+	if (action == CONNECTION_SETUP_SHORT_ABORT || !listener_connection_short_buffer_prepare(connection)) {
 		return LISTENER_CONNECTION_ABORT;
 	}
-	if (action == CONNSETUP_SHORT_RESPOND) {
+	if (action == CONNECTION_SETUP_SHORT_RESPOND) {
 		listener_connection_short_log(connection, false);
 		connection->state = LISTENER_CONNECTION_SHORT_RESPONDING;
 		if (listener_connection_timer_arm_short(connection, LISTENER_CONNECTION_TIMER_SHORT_IDLE, now, LISTENER_SHORT_RELAY_IDLE_TIMEOUT_SEC) == -1) {
@@ -2125,7 +2125,7 @@ static int listener_worker_signals_restore(const sigset_t *signal_mask) {
 }
 
 static exit_code listener_worker_run(int client_fd, const listener_client_address *client_address, const uint8_t *inbound, size_t inbound_size,
-	const connsetup_snapshot *snapshot, listener_socket *listener, const listener_events *events, pid_t listener_pid, listener_context *context) {
+	const connection_setup_snapshot *snapshot, listener_socket *listener, const listener_events *events, pid_t listener_pid, listener_context *context) {
 	close(events->epoll_fd);
 	close(events->route_timer_fd);
 	close(events->signal_fd);
@@ -2148,8 +2148,8 @@ static exit_code listener_worker_run(int client_fd, const listener_client_addres
 	listener_worker_route_state_dispose(context);
 	net_addrbundle addrbundle_inbound_client = listener_client_address_parse(client_address);
 	int socket_outbound;
-	connsetup_status setup_status = connsetup_prepared(client_fd, &socket_outbound, snapshot, addrbundle_inbound_client, inbound, inbound_size);
-	if (setup_status == CONNSETUP_OK) {
+	connection_setup_status setup_status = connection_setup_long_prepared(client_fd, &socket_outbound, snapshot, addrbundle_inbound_client, inbound, inbound_size);
+	if (setup_status == CONNECTION_SETUP_OK) {
 		net_relay(client_fd, socket_outbound);
 	}
 	return EXITCODE_OK;
@@ -2157,7 +2157,7 @@ static exit_code listener_worker_run(int client_fd, const listener_client_addres
 
 static void listener_connection_dispatch(listener_connection *connections, listener_connection *connection, listener_socket *listener, const listener_events *events,
 	pid_t listener_pid, listener_context *context, const struct timespec *now) {
-	connsetup_snapshot snapshot;
+	connection_setup_snapshot snapshot;
 	if (!listener_connection_snapshot_prepare(connection, context, &snapshot)
 		|| !listener_connection_route_release(connection, context->resolver, now)) {
 		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot prepare a self-contained worker handoff.\n");

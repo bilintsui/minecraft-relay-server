@@ -20,12 +20,12 @@
 
 /* section: types */
 typedef enum {
-	CONNSETUP_SHORT_ABORT,
-	CONNSETUP_SHORT_CONNECT,
-	CONNSETUP_SHORT_RESPOND
-} connsetup_short_action;
+	CONNECTION_SETUP_SHORT_ABORT,
+	CONNECTION_SETUP_SHORT_CONNECT,
+	CONNECTION_SETUP_SHORT_RESPOND
+} connection_setup_short_action;
 typedef struct {
-	connsetup_snapshot snapshot;
+	connection_setup_snapshot snapshot;
 	net_addrbundle inbound_address;
 	protocol_version protocol;
 	intent_t intent;
@@ -35,14 +35,14 @@ typedef struct {
 	size_t request_size;
 	uint8_t *response;
 	size_t response_size;
-	connsetup_status result;
-} connsetup_short_plan;
+	connection_setup_status result;
+} connection_setup_short_plan;
 
 /* section: functions (exported) */
 /* The plan owns its request and response buffers and contains no borrowed snapshot or configuration pointer. */
-void connsetup_short_destroy(connsetup_short_plan *plan);
+void connection_setup_short_destroy(connection_setup_short_plan *plan);
 /* The initial packet is copied into an exact-size request allocation when the action is CONNECT. */
-connsetup_short_action connsetup_short_prepare(connsetup_short_plan *plan, const connsetup_snapshot *snapshot, net_addrbundle inbound_address,
+connection_setup_short_action connection_setup_short_prepare(connection_setup_short_plan *plan, const connection_setup_snapshot *snapshot, net_addrbundle inbound_address,
 	const uint8_t *initial, size_t initial_size);
 
 #endif

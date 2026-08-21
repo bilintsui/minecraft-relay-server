@@ -1,5 +1,5 @@
 /*
- * connection/setup.h: Header file of setup.c
+ * connection/setup.h: Shared connection setup types and helpers
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui
@@ -11,6 +11,7 @@
 
 /* section: headers (library) */
 #include <limits.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -21,30 +22,33 @@
 
 /* section: types */
 typedef enum {
-	CONNSETUP_ROUTE_BYPASS,
-	CONNSETUP_ROUTE_READY,
-	CONNSETUP_ROUTE_NO_ROUTE,
-	CONNSETUP_ROUTE_UNAVAILABLE
-} connsetup_route_status;
+	CONNECTION_SETUP_ROUTE_BYPASS,
+	CONNECTION_SETUP_ROUTE_READY,
+	CONNECTION_SETUP_ROUTE_NO_ROUTE,
+	CONNECTION_SETUP_ROUTE_UNAVAILABLE
+} connection_setup_route_status;
 typedef struct {
 	route_endpoint_snapshot endpoint;
 	char icon_b64[CONF_ICON_B64MAX + 1U];
 	char log_filename[PATH_MAX];
 	uint8_t log_level;
-	connsetup_route_status route_status;
-} connsetup_snapshot;
+	connection_setup_route_status route_status;
+} connection_setup_snapshot;
 typedef enum {
-	CONNSETUP_OK,
-	CONNSETUP_EABORT,
-	CONNSETUP_EUNIDENT,
-	CONNSETUP_ENOVHOST,
-	CONNSETUP_ENORECORD,
-	CONNSETUP_ENOCONNECT,
-	CONNSETUP_EOLDCLIENT
-} connsetup_status;
+	CONNECTION_SETUP_OK,
+	CONNECTION_SETUP_EABORT,
+	CONNECTION_SETUP_EUNIDENT,
+	CONNECTION_SETUP_ENOVHOST,
+	CONNECTION_SETUP_ENORECORD,
+	CONNECTION_SETUP_ENOCONNECT,
+	CONNECTION_SETUP_EOLDCLIENT
+} connection_setup_status;
 
 /* section: functions (exported) */
 /* The snapshot is a self-contained value with no config, route, cache, resolution, or DNS-record pointers. */
-connsetup_status connsetup_prepared(int socket_in, int *socket_out, const connsetup_snapshot *snapshot, net_addrbundle addrinfo_in, const uint8_t *inbound, size_t inbound_size);
+bool connection_setup_address_valid(const net_addr *address);
+bool connection_setup_bundle_valid(const net_addrbundle *address);
+const char *connection_setup_destination(const route_endpoint_snapshot *endpoint);
+bool connection_setup_snapshot_valid(const connection_setup_snapshot *snapshot);
 
 #endif
