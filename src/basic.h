@@ -28,6 +28,11 @@ typedef enum {
 	FREADALL_ELARGE,
 	FREADALL_ENOMEM
 } freadall_error;
+typedef enum {
+	VARINT_COMPLETE,
+	VARINT_INCOMPLETE,
+	VARINT_INVALID
+} varint_status;
 
 /* section: functions (exported) */
 size_t base64_encode(void *dst, size_t dst_cap, const void *src, size_t src_len);
@@ -40,6 +45,7 @@ void resolve_path(const char *path, const char *cwd, char *out, size_t out_size)
 int strcmp_notail(const char *str1, const char *str2, char exemptchr, bool case_insensitive);
 char *strtok_head(char *dst, size_t dst_size, char *src, char delim);
 size_t strtok_tail(char *dst, size_t dst_size, const char *src, size_t src_size, char delim);
-void *varint2int(void *src, varint_t *dst);
+/* Returns the first unconsumed byte on success and NULL otherwise. dst is written only on success; status may be NULL. */
+void *varint2int(void *src, void *end, varint_t *dst, varint_status *status);
 
 #endif

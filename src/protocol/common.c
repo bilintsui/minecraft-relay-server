@@ -12,6 +12,7 @@
 #include <string.h>
 
 /* section: headers (project) */
+#include "../basic.h"
 #include "../define/global.h"
 #include "handshake.h"
 
@@ -23,25 +24,13 @@ static protocol_packet_status protocol_varint_read(const uint8_t **cursor, const
 	if (cursor == NULL || *cursor == NULL || end == NULL || value == NULL) {
 		return PROTOCOL_PACKET_INVALID;
 	}
-	const uint8_t *src = *cursor;
-	varint_t result = 0;
-	for (size_t index = 0; index <= VARINT_T_MAXIDX; index++) {
-		if (src == end) {
-			return PROTOCOL_PACKET_INCOMPLETE;
-		}
-		uint8_t byte = *src++;
-		varint_t result_single = byte & 0x7F;
-		if (index == VARINT_T_MAXIDX && ((byte & 0x80) || result_single > VARINT_T_LAST_MASK)) {
-			return PROTOCOL_PACKET_INVALID;
-		}
-		result |= result_single << (index * 7);
-		if (!(byte & 0x80)) {
-			*cursor = src;
-			*value = result;
-			return PROTOCOL_PACKET_COMPLETE;
-		}
+	varint_status status;
+	void *result = varint2int((void *)*cursor, (void *)end, value, &status);
+	if (result == NULL) {
+		return status == VARINT_INCOMPLETE ? PROTOCOL_PACKET_INCOMPLETE : PROTOCOL_PACKET_INVALID;
 	}
-	return PROTOCOL_PACKET_INVALID;
+	*cursor = result;
+	return PROTOCOL_PACKET_COMPLETE;
 }
 
 /* section: functions (exported) */

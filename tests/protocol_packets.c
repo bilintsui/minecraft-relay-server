@@ -16,6 +16,7 @@
 #include <sys/types.h>
 
 /* section: headers (project) */
+#include "../src/basic.h"
 #include "../src/protocol/common.h"
 #include "../src/protocol/handshake.h"
 #include "../src/protocol/handshake_legacy.h"
@@ -169,6 +170,36 @@ static int path_format(char *target, size_t target_size, const char *directory, 
 	return 0;
 }
 
+static bool varint_bounds_test(void) {
+	static const uint8_t complete[] = { 0xAC, 0x02, 0x7F };
+	static const uint8_t truncated[] = { 0x80, 0x80, 0x80, 0x80 };
+	static const uint8_t continuation_overflow[] = { 0x80, 0x80, 0x80, 0x80, 0x80 };
+	static const uint8_t value_overflow[] = { 0x80, 0x80, 0x80, 0x80, 0x10 };
+	varint_status status;
+	varint_t value = 0;
+	void *next = varint2int((void *)complete, (void *)(complete + sizeof(complete)), &value, &status);
+	if (next != (void *)(complete + 2) || value != 300 || status != VARINT_COMPLETE) {
+		return false;
+	}
+	next = varint2int((void *)complete, (void *)(complete + sizeof(complete)), NULL, NULL);
+	if (next != (void *)(complete + 2)) {
+		return false;
+	}
+	value = UINT32_MAX;
+	next = varint2int((void *)truncated, (void *)(truncated + sizeof(truncated)), &value, &status);
+	if (next != NULL || value != UINT32_MAX || status != VARINT_INCOMPLETE) {
+		return false;
+	}
+	value = UINT32_MAX;
+	next = varint2int((void *)continuation_overflow, (void *)(continuation_overflow + sizeof(continuation_overflow)), &value, &status);
+	if (next != NULL || value != UINT32_MAX || status != VARINT_INVALID) {
+		return false;
+	}
+	value = UINT32_MAX;
+	next = varint2int((void *)value_overflow, (void *)(value_overflow + sizeof(value_overflow)), &value, &status);
+	return next == NULL && value == UINT32_MAX && status == VARINT_INVALID;
+}
+
 /* section: functions (entry point) */
 int main(int argc, char **argv) {
 	/* Some excluded protocol versions remain structurally round-trippable even though workers reject them by policy. */
@@ -214,6 +245,7 @@ int main(int argc, char **argv) {
 	char filename[BUFSIZ];
 	int result = EXIT_FAILURE;
 	CHECK(argc == 2, "raw packet directory is required");
+	CHECK(varint_bounds_test(), "bounded varint decoding failed");
 
 	for (size_t index = 0; index < sizeof(client_fixtures) / sizeof(client_fixtures[0]); index++) {
 		memset(source, 0, BUFSIZ);

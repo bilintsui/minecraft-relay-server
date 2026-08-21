@@ -282,26 +282,40 @@ size_t strtok_tail(char *dst, size_t dst_size, const char *src, size_t src_size,
 	return offset;
 }
 
-void *varint2int(void *src, varint_t *dst) {
-	if (src == NULL) {
+void *varint2int(void *src, void *end, varint_t *dst, varint_status *status) {
+	if (status != NULL) {
+		*status = VARINT_INVALID;
+	}
+	if (src == NULL || end == NULL || (uintptr_t)src > (uintptr_t)end) {
 		return NULL;
 	}
 	uint8_t *base = src;
+	uint8_t *limit = end;
 	varint_t result = 0;
 	varint_t result_single = 0;
 	for (size_t i = 0; i <= VARINT_T_MAXIDX; i++) {
-		result_single = base[i] & 0x7F;
+		if (base >= limit) {
+			if (status != NULL) {
+				*status = VARINT_INCOMPLETE;
+			}
+			return NULL;
+		}
+		uint8_t byte = *base++;
+		result_single = byte & 0x7F;
 		if (i == VARINT_T_MAXIDX) {
-			if ((base[i] & 0x80) || result_single > VARINT_T_LAST_MASK) {
+			if ((byte & 0x80) || result_single > VARINT_T_LAST_MASK) {
 				return NULL;
 			}
 		}
 		result = result | (result_single << (i * 7));
-		if (!(base[i] & 0x80)) {
+		if (!(byte & 0x80)) {
 			if (dst != NULL) {
 				*dst = result;
 			}
-			return base + i + 1;
+			if (status != NULL) {
+				*status = VARINT_COMPLETE;
+			}
+			return base;
 		}
 	}
 	return NULL;

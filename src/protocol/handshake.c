@@ -84,19 +84,19 @@ p_handshake packet_read(void *src, void *end) {
 	void *part2_start;
 	varint_t address_length, size_part1, size_part2, username_length;
 	memset(&result, 0, sizeof(result));
-	src = varint2int(src, &size_part1);
+	src = varint2int(src, end, &size_part1, NULL);
 	if (src == NULL) {
 		goto cleanup;
 	}
-	src = varint2int(src, &result.id_part1);
+	src = varint2int(src, end, &result.id_part1, NULL);
 	if (src == NULL) {
 		goto cleanup;
 	}
-	src = varint2int(src, &result.version);
+	src = varint2int(src, end, &result.version, NULL);
 	if (src == NULL) {
 		goto cleanup;
 	}
-	src = varint2int(src, &address_length);
+	src = varint2int(src, end, &address_length, NULL);
 	if (src == NULL) {
 		goto cleanup;
 	}
@@ -137,20 +137,20 @@ p_handshake packet_read(void *src, void *end) {
 	}
 	result.port = protocol_uint16_read(src);
 	src = (uint8_t *)src + sizeof(uint16_t);
-	src = varint2int(src, &result.nextstate);
+	src = varint2int(src, end, &result.nextstate, NULL);
 	if (src == NULL) {
 		goto cleanup;
 	}
 	if ((result.nextstate == CLIENT_INTENT_LOGIN) || (result.nextstate == CLIENT_INTENT_TRANSFER)) {
-		part2_start = src = varint2int(src, &size_part2);
+		part2_start = src = varint2int(src, end, &size_part2, NULL);
 		if (src == NULL) {
 			goto cleanup;
 		}
-		src = varint2int(src, &result.id_part2);
+		src = varint2int(src, end, &result.id_part2, NULL);
 		if (src == NULL) {
 			goto cleanup;
 		}
-		src = varint2int(src, &username_length);
+		src = varint2int(src, end, &username_length, NULL);
 		if (src == NULL) {
 			goto cleanup;
 		}
