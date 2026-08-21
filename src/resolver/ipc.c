@@ -13,6 +13,9 @@
 #include <string.h>
 #include <time.h>
 
+/* section: headers (project) */
+#include "../timeutil.h"
+
 /* section: headers (self) */
 #include "ipc.h"
 
@@ -273,7 +276,7 @@ static bool resolver_ipc_time_decode(uint64_t seconds, uint32_t nanoseconds, str
 }
 
 static bool resolver_ipc_time_encode(const struct timespec *source, uint64_t *seconds, uint32_t *nanoseconds) {
-	if (source == NULL || seconds == NULL || nanoseconds == NULL || source->tv_sec < 0 || source->tv_nsec < 0 || source->tv_nsec >= 1000000000L) {
+	if (seconds == NULL || nanoseconds == NULL || !timeutil_valid(source)) {
 		return false;
 	}
 	uint64_t converted_seconds = (uint64_t)source->tv_sec;

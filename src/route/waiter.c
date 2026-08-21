@@ -21,6 +21,7 @@
 #include "../resolver/dns.h"
 #include "../resolver/ipc.h"
 #include "../resolver/supervisor.h"
+#include "../timeutil.h"
 #include "endpoint.h"
 #include "generation.h"
 
@@ -50,33 +51,6 @@ struct route_waiter {
 };
 
 /* section: functions (local) */
-static int route_waiter_time_compare(const struct timespec *left, const struct timespec *right) {
-	if (left->tv_sec != right->tv_sec) {
-		return left->tv_sec < right->tv_sec ? -1 : 1;
-	}
-	if (left->tv_nsec != right->tv_nsec) {
-		return left->tv_nsec < right->tv_nsec ? -1 : 1;
-	}
-	return 0;
-}
-
-static bool route_waiter_time_valid(const struct timespec *value) {
-	return value != NULL && value->tv_sec >= 0 && value->tv_nsec >= 0 && value->tv_nsec < 1000000000L;
-}
-
-static bool route_waiter_time_add_seconds(const struct timespec *source, uint64_t seconds, struct timespec *result) {
-	if (!route_waiter_time_valid(source) || result == NULL || (uintmax_t)source->tv_sec > UINTMAX_MAX - seconds) {
-		return false;
-	}
-	uintmax_t combined = (uintmax_t)source->tv_sec + seconds;
-	result->tv_sec = (time_t)combined;
-	if ((uintmax_t)result->tv_sec != combined) {
-		return false;
-	}
-	result->tv_nsec = source->tv_nsec;
-	return true;
-}
-
 static void route_waiter_entry_overlay_clear(route_waiter_entry *entry) {
 	free((void *)entry->overlay.addresses);
 	free((void *)entry->overlay.srv_records);
@@ -84,10 +58,27 @@ static void route_waiter_entry_overlay_clear(route_waiter_entry *entry) {
 	entry->overlay.entry = entry->entry;
 }
 
+static route_waiter_completion_status route_waiter_entry_overlay_records_copy(route_waiter_entry *entry, size_t record_count, size_t record_limit,
+	size_t record_size, const void *source, void **result) {
+	if (record_count == 0 || record_count > record_limit || record_size == 0 || source == NULL || result == NULL
+		|| record_count > SIZE_MAX / record_size) {
+		entry->overlay.status = ROUTE_ENDPOINT_OVERLAY_UNAVAILABLE;
+		return ROUTE_WAITER_COMPLETION_BAD_ARGUMENT;
+	}
+	void *records = malloc(record_count * record_size);
+	if (records == NULL) {
+		entry->overlay.status = ROUTE_ENDPOINT_OVERLAY_UNAVAILABLE;
+		return ROUTE_WAITER_COMPLETION_MEMORY;
+	}
+	memcpy(records, source, record_count * record_size);
+	*result = records;
+	return ROUTE_WAITER_COMPLETION_OK;
+}
+
 static bool route_waiter_entry_clear(route_waiter_entry *entry, resolver_supervisor *supervisor, const struct timespec *now) {
 	bool result = true;
 	if (entry->interest) {
-		result = supervisor != NULL && route_waiter_time_valid(now) && resolver_supervisor_entry_interactive_release(supervisor, entry->entry, now);
+		result = supervisor != NULL && timeutil_valid(now) && resolver_supervisor_entry_interactive_release(supervisor, entry->entry, now);
 		entry->interest = false;
 	}
 	route_waiter_entry_overlay_clear(entry);
@@ -124,7 +115,7 @@ static bool route_waiter_entries_interests_release(route_waiter *waiter, resolve
 	for (size_t entry_index = 0; entry_index < ROUTE_ENDPOINT_REQUIREMENT_LIMIT; entry_index++) {
 		route_waiter_entry *entry = &waiter->entries[entry_index];
 		if (entry->interest) {
-			bool released = supervisor != NULL && route_waiter_time_valid(now) && resolver_supervisor_entry_interactive_release(supervisor, entry->entry, now);
+			bool released = supervisor != NULL && timeutil_valid(now) && resolver_supervisor_entry_interactive_release(supervisor, entry->entry, now);
 			entry->interest = false;
 			result = released && result;
 		}
@@ -195,7 +186,7 @@ static route_waiter_status route_waiter_terminal_set(route_waiter *waiter, route
 
 /* section: functions (exported) */
 route_waiter_completion_status route_waiter_completion_observe(route_waiter *waiter, const resolver_supervisor_completion *completion) {
-	if (waiter == NULL || completion == NULL || completion->entry == NULL || !route_waiter_time_valid(&completion->response.completed_at)
+	if (waiter == NULL || completion == NULL || completion->entry == NULL || !timeutil_valid(&completion->response.completed_at)
 		|| completion->response.query_type != resolver_cache_entry_query_type(completion->entry) || completion->response.status < RESOLVER_IPC_LOOKUP_OK
 		|| completion->response.status > RESOLVER_IPC_LOOKUP_TRUNCATED || completion->response.status == RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR) {
 		return ROUTE_WAITER_COMPLETION_BAD_ARGUMENT;
@@ -219,41 +210,31 @@ route_waiter_completion_status route_waiter_completion_observe(route_waiter *wai
 	entry->completion_pending = false;
 	entry->interest = false;
 	route_waiter_entry_overlay_clear(entry);
-	if (route_waiter_time_compare(&completion->response.completed_at, &waiter->deadline) > 0 || completion->publication != RESOLVER_CACHE_PUBLISH_TRANSIENT
+	if (timeutil_compare(&completion->response.completed_at, &waiter->deadline) > 0 || completion->publication != RESOLVER_CACHE_PUBLISH_TRANSIENT
 		|| completion->response.status != RESOLVER_IPC_LOOKUP_OK) {
 		entry->overlay.status = completion->publication == RESOLVER_CACHE_PUBLISH_STORED
-			&& route_waiter_time_compare(&completion->response.completed_at, &waiter->deadline) <= 0 ? ROUTE_ENDPOINT_OVERLAY_NONE : ROUTE_ENDPOINT_OVERLAY_UNAVAILABLE;
+			&& timeutil_compare(&completion->response.completed_at, &waiter->deadline) <= 0 ? ROUTE_ENDPOINT_OVERLAY_NONE : ROUTE_ENDPOINT_OVERLAY_UNAVAILABLE;
 		return ROUTE_WAITER_COMPLETION_OK;
 	}
 	uint16_t query_type = completion->response.query_type;
 	if (query_type == ns_t_a || query_type == ns_t_aaaa) {
 		size_t record_count = completion->response.payload.address.address_count;
-		if (record_count == 0 || record_count > DNS_ADDRESS_RECORD_LIMIT || completion->response.payload.address.addresses == NULL
-			|| record_count > SIZE_MAX / sizeof(*completion->response.payload.address.addresses)) {
-			entry->overlay.status = ROUTE_ENDPOINT_OVERLAY_UNAVAILABLE;
-			return ROUTE_WAITER_COMPLETION_BAD_ARGUMENT;
+		void *records = NULL;
+		route_waiter_completion_status copy_status = route_waiter_entry_overlay_records_copy(entry, record_count, DNS_ADDRESS_RECORD_LIMIT,
+			sizeof(*completion->response.payload.address.addresses), completion->response.payload.address.addresses, &records);
+		if (copy_status != ROUTE_WAITER_COMPLETION_OK) {
+			return copy_status;
 		}
-		dns_address_record *records = malloc(record_count * sizeof(*records));
-		if (records == NULL) {
-			entry->overlay.status = ROUTE_ENDPOINT_OVERLAY_UNAVAILABLE;
-			return ROUTE_WAITER_COMPLETION_MEMORY;
-		}
-		memcpy(records, completion->response.payload.address.addresses, record_count * sizeof(*records));
 		entry->overlay.addresses = records;
 		entry->overlay.address_count = record_count;
 	} else if (query_type == ns_t_srv) {
 		size_t record_count = completion->response.payload.srv.record_count;
-		if (record_count == 0 || record_count > DNS_SRV_RECORD_LIMIT || completion->response.payload.srv.records == NULL
-			|| record_count > SIZE_MAX / sizeof(*completion->response.payload.srv.records)) {
-			entry->overlay.status = ROUTE_ENDPOINT_OVERLAY_UNAVAILABLE;
-			return ROUTE_WAITER_COMPLETION_BAD_ARGUMENT;
+		void *records = NULL;
+		route_waiter_completion_status copy_status = route_waiter_entry_overlay_records_copy(entry, record_count, DNS_SRV_RECORD_LIMIT,
+			sizeof(*completion->response.payload.srv.records), completion->response.payload.srv.records, &records);
+		if (copy_status != ROUTE_WAITER_COMPLETION_OK) {
+			return copy_status;
 		}
-		dns_srv_record *records = malloc(record_count * sizeof(*records));
-		if (records == NULL) {
-			entry->overlay.status = ROUTE_ENDPOINT_OVERLAY_UNAVAILABLE;
-			return ROUTE_WAITER_COMPLETION_MEMORY;
-		}
-		memcpy(records, completion->response.payload.srv.records, record_count * sizeof(*records));
 		entry->overlay.srv_records = records;
 		entry->overlay.srv_record_count = record_count;
 	} else {
@@ -266,7 +247,7 @@ route_waiter_completion_status route_waiter_completion_observe(route_waiter *wai
 
 route_waiter_create_status route_waiter_create(route_generation *generation, const char *vhost, const p_proxy *inbound_proxy, const struct timespec *now,
 	route_waiter **result) {
-	if (generation == NULL || vhost == NULL || inbound_proxy == NULL || !route_waiter_time_valid(now) || result == NULL || *result != NULL
+	if (generation == NULL || vhost == NULL || inbound_proxy == NULL || !timeutil_valid(now) || result == NULL || *result != NULL
 		|| LISTENER_ROUTE_WAIT_TIMEOUT_SEC == 0 || (inbound_proxy->family != AF_INET && inbound_proxy->family != AF_INET6)
 		|| inbound_proxy->srcaddr.family != inbound_proxy->family || inbound_proxy->dstaddr.family != inbound_proxy->family
 		|| inbound_proxy->srcaddr.err != NET_OK || inbound_proxy->dstaddr.err != NET_OK) {
@@ -277,7 +258,7 @@ route_waiter_create_status route_waiter_create(route_generation *generation, con
 		return ROUTE_WAITER_CREATE_LIMIT;
 	}
 	struct timespec deadline;
-	if (!route_waiter_time_add_seconds(now, LISTENER_ROUTE_WAIT_TIMEOUT_SEC, &deadline)) {
+	if (!timeutil_add_seconds(now, LISTENER_ROUTE_WAIT_TIMEOUT_SEC, &deadline)) {
 		return ROUTE_WAITER_CREATE_TIME;
 	}
 	route_waiter *waiter = calloc(1, sizeof(*waiter));
@@ -319,7 +300,7 @@ bool route_waiter_destroy(route_waiter *waiter, resolver_supervisor *supervisor,
 }
 
 route_waiter_status route_waiter_progress(route_waiter *waiter, resolver_supervisor *supervisor, const struct timespec *now) {
-	if (waiter == NULL || supervisor == NULL || !route_waiter_time_valid(now)) {
+	if (waiter == NULL || supervisor == NULL || !timeutil_valid(now)) {
 		return ROUTE_WAITER_BAD_ARGUMENT;
 	}
 	if (waiter->status != ROUTE_WAITER_PENDING) {
@@ -338,7 +319,7 @@ route_waiter_status route_waiter_progress(route_waiter *waiter, resolver_supervi
 		if (status != ROUTE_WAITER_PENDING) {
 			return route_waiter_terminal_set(waiter, status, supervisor, now);
 		}
-		if (route_waiter_time_compare(now, &waiter->deadline) >= 0) {
+		if (timeutil_compare(now, &waiter->deadline) >= 0) {
 			return route_waiter_terminal_set(waiter, ROUTE_WAITER_TIMEOUT, supervisor, now);
 		}
 		bool reevaluate = false;

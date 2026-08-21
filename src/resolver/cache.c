@@ -15,6 +15,7 @@
 #include <time.h>
 
 /* section: headers (project) */
+#include "../timeutil.h"
 #include "util.h"
 
 /* section: headers (self) */
@@ -231,25 +232,8 @@ static bool resolver_cache_srv_result_validate(const resolver_cache_entry *entry
 	return true;
 }
 
-static int resolver_cache_time_compare(const struct timespec *left, const struct timespec *right) {
-	if (left->tv_sec < right->tv_sec) {
-		return -1;
-	}
-	if (left->tv_sec > right->tv_sec) {
-		return 1;
-	}
-	if (left->tv_nsec < right->tv_nsec) {
-		return -1;
-	}
-	return left->tv_nsec > right->tv_nsec ? 1 : 0;
-}
-
-static bool resolver_cache_time_valid(const struct timespec *timestamp) {
-	return timestamp != NULL && timestamp->tv_sec >= 0 && timestamp->tv_nsec >= 0 && timestamp->tv_nsec < 1000000000L;
-}
-
 static bool resolver_cache_expiry_calculate(const struct timespec *completed_at, uint32_t ttl, struct timespec *expires_at) {
-	if (!resolver_cache_time_valid(completed_at) || expires_at == NULL) {
+	if (!timeutil_valid(completed_at) || expires_at == NULL) {
 		return false;
 	}
 	uintmax_t completed_seconds = (uintmax_t)completed_at->tv_sec;
@@ -268,7 +252,7 @@ static bool resolver_cache_expiry_calculate(const struct timespec *completed_at,
 
 static resolver_cache_publish_status resolver_cache_entry_payload_publish(resolver_cache_entry *entry, resolver_cache_payload_type payload_type, resolver_cache_view_status view_status,
 	const struct timespec *completed_at, uint32_t ttl, size_t result_size, void *result) {
-	if (!resolver_cache_time_valid(completed_at)) {
+	if (!timeutil_valid(completed_at)) {
 		return RESOLVER_CACHE_PUBLISH_TIME;
 	}
 	if (result_size > (size_t)RESOLVER_CACHE_RESULT_BYTE_LIMIT) {
@@ -484,10 +468,10 @@ bool resolver_cache_entry_view(resolver_cache_entry *entry, const struct timespe
 	if (result != NULL) {
 		memset(result, 0, sizeof(*result));
 	}
-	if (entry == NULL || result == NULL || !resolver_cache_time_valid(now)) {
+	if (entry == NULL || result == NULL || !timeutil_valid(now)) {
 		return false;
 	}
-	if (entry->payload != NULL && resolver_cache_time_compare(now, &entry->payload->expires_at) >= 0) {
+	if (entry->payload != NULL && timeutil_compare(now, &entry->payload->expires_at) >= 0) {
 		resolver_cache_entry_payload_clear(entry);
 	}
 	if (entry->payload == NULL) {

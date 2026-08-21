@@ -20,6 +20,7 @@
 #include "../resolver/dns.h"
 #include "../resolver/hosts.h"
 #include "../resolver/supervisor.h"
+#include "../timeutil.h"
 #include "bindings.h"
 #include "prewarmer.h"
 
@@ -618,14 +619,10 @@ static bool route_resolution_entry_fresh_observe(route_resolution *resolution, r
 	return true;
 }
 
-static bool route_resolution_time_valid(const struct timespec *timestamp) {
-	return timestamp != NULL && timestamp->tv_sec >= 0 && timestamp->tv_nsec >= 0 && timestamp->tv_nsec < 1000000000L;
-}
-
 /* section: functions (exported) */
 route_resolution_build_status route_resolution_build(const route_bindings *bindings, const hosts_table *hosts, resolver_cache *cache, const struct timespec *now,
 	route_resolution **result) {
-	if (bindings == NULL || hosts == NULL || cache == NULL || !route_resolution_time_valid(now) || result == NULL || *result != NULL || RESOLVER_CACHE_ENTRY_LIMIT == 0) {
+	if (bindings == NULL || hosts == NULL || cache == NULL || !timeutil_valid(now) || result == NULL || *result != NULL || RESOLVER_CACHE_ENTRY_LIMIT == 0) {
 		return ROUTE_RESOLUTION_BUILD_BAD_ARGUMENT;
 	}
 	size_t destination_count = route_bindings_destination_count(bindings);
@@ -727,7 +724,7 @@ route_resolution_build_status route_resolution_build(const route_bindings *bindi
 }
 
 route_resolution_completion_status route_resolution_completion_observe(route_resolution *resolution, const resolver_supervisor_completion *completion, const struct timespec *now) {
-	if (resolution == NULL || completion == NULL || completion->entry == NULL || !route_resolution_time_valid(now)) {
+	if (resolution == NULL || completion == NULL || completion->entry == NULL || !timeutil_valid(now)) {
 		return ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT;
 	}
 	route_resolution_entry *entry = route_resolution_entry_find(resolution, completion->entry);
@@ -844,7 +841,7 @@ bool route_resolution_destination_target_get(const route_resolution *resolution,
 }
 
 route_prewarm_status route_resolution_schedule(route_resolution *resolution, resolver_supervisor *supervisor, const struct timespec *now, size_t batch_limit) {
-	if (resolution == NULL || supervisor == NULL || !route_resolution_time_valid(now) || batch_limit == 0) {
+	if (resolution == NULL || supervisor == NULL || !timeutil_valid(now) || batch_limit == 0) {
 		return ROUTE_PREWARM_BAD_ARGUMENT;
 	}
 	size_t calls = 0;

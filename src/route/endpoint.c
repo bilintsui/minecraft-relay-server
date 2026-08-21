@@ -20,6 +20,7 @@
 #include "../protocol/proxy.h"
 #include "../resolver/cache.h"
 #include "../resolver/dns.h"
+#include "../timeutil.h"
 #include "bindings.h"
 #include "generation.h"
 #include "resolution.h"
@@ -282,8 +283,8 @@ route_endpoint_select_status route_endpoint_evaluate(route_generation *generatio
 	if (requirements != NULL) {
 		memset(requirements, 0, sizeof(*requirements));
 	}
-	if (generation == NULL || vhost == NULL || now == NULL || inbound_proxy == NULL || requirements == NULL || result == NULL || route_generation_identity(generation) == 0
-		|| now->tv_sec < 0 || now->tv_nsec < 0 || now->tv_nsec >= 1000000000L
+	if (generation == NULL || vhost == NULL || inbound_proxy == NULL || requirements == NULL || result == NULL || route_generation_identity(generation) == 0
+		|| !timeutil_valid(now)
 		|| (inbound_proxy->family != AF_INET && inbound_proxy->family != AF_INET6) || inbound_proxy->srcaddr.family != inbound_proxy->family
 		|| inbound_proxy->dstaddr.family != inbound_proxy->family || inbound_proxy->srcaddr.err != NET_OK || inbound_proxy->dstaddr.err != NET_OK) {
 		return ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT;

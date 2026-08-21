@@ -54,6 +54,7 @@
 #include "route/resolution.h"
 #include "route/table.h"
 #include "route/waiter.h"
+#include "timeutil.h"
 
 /* section: headers (self) */
 #include "listener.h"
@@ -362,51 +363,9 @@ static int listener_events_remove(const listener_events *events, int fd) {
 	return epoll_ctl(events->epoll_fd, EPOLL_CTL_DEL, fd, NULL);
 }
 
-static bool listener_connection_time_add_milliseconds(const struct timespec *source, uint64_t milliseconds, struct timespec *result) {
-	if (source == NULL || result == NULL || source->tv_sec < 0 || source->tv_nsec < 0 || source->tv_nsec >= 1000000000L || milliseconds > UINT64_MAX / 1000000U) {
-		return false;
-	}
-	uint64_t nanoseconds = milliseconds * 1000000U;
-	uint64_t added_seconds = nanoseconds / 1000000000U;
-	uint64_t added_nanoseconds = nanoseconds % 1000000000U;
-	if ((uintmax_t)source->tv_sec > UINTMAX_MAX - added_seconds) {
-		return false;
-	}
-	uintmax_t seconds = (uintmax_t)source->tv_sec + added_seconds;
-	long result_nanoseconds = source->tv_nsec + (long)added_nanoseconds;
-	if (result_nanoseconds >= 1000000000L) {
-		if (seconds == UINTMAX_MAX) {
-			return false;
-		}
-		seconds++;
-		result_nanoseconds -= 1000000000L;
-	}
-	time_t converted = (time_t)seconds;
-	if (converted < 0 || (uintmax_t)converted != seconds) {
-		return false;
-	}
-	result->tv_sec = converted;
-	result->tv_nsec = result_nanoseconds;
-	return true;
-}
-
-static bool listener_connection_time_add_seconds(const struct timespec *source, uint64_t seconds, struct timespec *result) {
-	return seconds <= UINT64_MAX / 1000U && listener_connection_time_add_milliseconds(source, seconds * 1000U, result);
-}
-
-static int listener_connection_time_compare(const struct timespec *left, const struct timespec *right) {
-	if (left->tv_sec < right->tv_sec) {
-		return -1;
-	}
-	if (left->tv_sec > right->tv_sec) {
-		return 1;
-	}
-	return left->tv_nsec < right->tv_nsec ? -1 : left->tv_nsec > right->tv_nsec;
-}
-
 static int listener_connection_timer_set(listener_connection *connection, listener_connection_timer timer, const struct timespec *expiration) {
 	struct timespec effective = *expiration;
-	if (listener_connection_time_compare(&connection->lifetime_deadline, &effective) < 0) {
+	if (timeutil_compare(&connection->lifetime_deadline, &effective) < 0) {
 		effective = connection->lifetime_deadline;
 		timer = LISTENER_CONNECTION_TIMER_SHORT_LIFETIME;
 	}
@@ -425,10 +384,10 @@ static int listener_connection_timer_arm(listener_connection *connection, listen
 	if (timer == LISTENER_CONNECTION_TIMER_GRACE) {
 		struct timespec now;
 		struct timespec grace_expiration;
-		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1 || !listener_connection_time_add_milliseconds(&now, LISTENER_LEGACY_PING_GRACE_MS, &grace_expiration)) {
+		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1 || !timeutil_add_milliseconds(&now, LISTENER_LEGACY_PING_GRACE_MS, &grace_expiration)) {
 			return -1;
 		}
-		if (grace_expiration.tv_sec < expiration.tv_sec || (grace_expiration.tv_sec == expiration.tv_sec && grace_expiration.tv_nsec < expiration.tv_nsec)) {
+		if (timeutil_compare(&grace_expiration, &expiration) < 0) {
 			expiration = grace_expiration;
 		} else {
 			timer = LISTENER_CONNECTION_TIMER_ASSEMBLY;
@@ -439,7 +398,7 @@ static int listener_connection_timer_arm(listener_connection *connection, listen
 
 static int listener_connection_timer_arm_short(listener_connection *connection, listener_connection_timer timer, const struct timespec *now, uint64_t seconds) {
 	struct timespec expiration;
-	return listener_connection_time_add_seconds(now, seconds, &expiration) ? listener_connection_timer_set(connection, timer, &expiration) : -1;
+	return timeutil_add_seconds(now, seconds, &expiration) ? listener_connection_timer_set(connection, timer, &expiration) : -1;
 }
 
 #ifdef LISTENER_TIMER_REARM_TEST
@@ -541,6 +500,28 @@ static int listener_connection_buffer_send(listener_connection_buffer *buffer, i
 	return 0;
 }
 
+static int listener_connection_interest_update(const listener_events *events, int fd, uint32_t flags, const listener_event_source *source, uint32_t *current_flags, bool *registered) {
+	if (flags == 0 && *registered) {
+		if (listener_events_remove(events, fd) == -1) {
+			return -1;
+		}
+		*current_flags = 0;
+		*registered = false;
+	} else if (flags != 0 && !*registered) {
+		if (listener_events_add(events, fd, flags, source) == -1) {
+			return -1;
+		}
+		*current_flags = flags;
+		*registered = true;
+	} else if (flags != 0 && flags != *current_flags) {
+		if (listener_events_modify(events, fd, flags, source) == -1) {
+			return -1;
+		}
+		*current_flags = flags;
+	}
+	return 0;
+}
+
 static int listener_connection_interests_update(listener_connection *connection, const listener_events *events) {
 	uint32_t client_flags = 0;
 	if (connection->state == LISTENER_CONNECTION_SHORT_RESPONDING) {
@@ -555,23 +536,8 @@ static int listener_connection_interests_update(listener_connection *connection,
 			client_flags |= EPOLLOUT;
 		}
 	}
-	if (client_flags == 0 && connection->client_registered) {
-		if (listener_events_remove(events, connection->socket_fd) == -1) {
-			return -1;
-		}
-		connection->client_events = 0;
-		connection->client_registered = false;
-	} else if (client_flags != 0 && !connection->client_registered) {
-		if (listener_events_add(events, connection->socket_fd, client_flags, &connection->client_source) == -1) {
-			return -1;
-		}
-		connection->client_events = client_flags;
-		connection->client_registered = true;
-	} else if (client_flags != 0 && client_flags != connection->client_events) {
-		if (listener_events_modify(events, connection->socket_fd, client_flags, &connection->client_source) == -1) {
-			return -1;
-		}
-		connection->client_events = client_flags;
+	if (listener_connection_interest_update(events, connection->socket_fd, client_flags, &connection->client_source, &connection->client_events, &connection->client_registered) == -1) {
+		return -1;
 	}
 	if (connection->upstream_fd == -1) {
 		return 0;
@@ -587,25 +553,7 @@ static int listener_connection_interests_update(listener_connection *connection,
 			upstream_flags |= EPOLLOUT;
 		}
 	}
-	if (upstream_flags == 0 && connection->upstream_registered) {
-		if (listener_events_remove(events, connection->upstream_fd) == -1) {
-			return -1;
-		}
-		connection->upstream_events = 0;
-		connection->upstream_registered = false;
-	} else if (upstream_flags != 0 && !connection->upstream_registered) {
-		if (listener_events_add(events, connection->upstream_fd, upstream_flags, &connection->upstream_source) == -1) {
-			return -1;
-		}
-		connection->upstream_events = upstream_flags;
-		connection->upstream_registered = true;
-	} else if (upstream_flags != 0 && upstream_flags != connection->upstream_events) {
-		if (listener_events_modify(events, connection->upstream_fd, upstream_flags, &connection->upstream_source) == -1) {
-			return -1;
-		}
-		connection->upstream_events = upstream_flags;
-	}
-	return 0;
+	return listener_connection_interest_update(events, connection->upstream_fd, upstream_flags, &connection->upstream_source, &connection->upstream_events, &connection->upstream_registered);
 }
 
 static listener_connection *listener_connection_create(int client_fd, const listener_client_address *client_address, const listener_events *events,
@@ -628,8 +576,8 @@ static listener_connection *listener_connection_create(int client_fd, const list
 	connection->upstream_source.connection = connection;
 	connection->upstream_source.kind = LISTENER_EVENT_UPSTREAM;
 	struct timespec now;
-	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1 || !listener_connection_time_add_seconds(&now, LISTENER_INITIAL_TIMEOUT_SEC, &connection->assembly_deadline)
-		|| !listener_connection_time_add_seconds(&now, LISTENER_SHORT_LIFETIME_TIMEOUT_SEC, &connection->lifetime_deadline)) {
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1 || !timeutil_add_seconds(&now, LISTENER_INITIAL_TIMEOUT_SEC, &connection->assembly_deadline)
+		|| !timeutil_add_seconds(&now, LISTENER_SHORT_LIFETIME_TIMEOUT_SEC, &connection->lifetime_deadline)) {
 		goto fail;
 	}
 	connection->timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
@@ -1010,7 +958,7 @@ static void listener_connection_upstream_close(listener_connection *connection, 
 
 static listener_connection_progress listener_connection_short_drive(listener_connection *connection, const listener_events *events, const struct timespec *now,
 	size_t activity) {
-	if (listener_connection_time_compare(now, &connection->lifetime_deadline) >= 0) {
+	if (timeutil_compare(now, &connection->lifetime_deadline) >= 0) {
 		return LISTENER_CONNECTION_CLOSED;
 	}
 	if (connection->state == LISTENER_CONNECTION_SHORT_RESPONDING) {
@@ -1073,7 +1021,7 @@ static listener_connection_progress listener_connection_short_drive(listener_con
 }
 
 static listener_connection_progress listener_connection_short_failure(listener_connection *connection, const listener_events *events, const struct timespec *now) {
-	if (listener_connection_time_compare(now, &connection->lifetime_deadline) >= 0) {
+	if (timeutil_compare(now, &connection->lifetime_deadline) >= 0) {
 		return LISTENER_CONNECTION_CLOSED;
 	}
 	listener_connection_short_log(connection, false);
@@ -1091,7 +1039,7 @@ static listener_connection_progress listener_connection_short_connect_complete(l
 	if (status != NET_CONNECT_OK) {
 		return listener_connection_short_failure(connection, events, now);
 	}
-	if (listener_connection_time_compare(now, &connection->lifetime_deadline) >= 0) {
+	if (timeutil_compare(now, &connection->lifetime_deadline) >= 0) {
 		return LISTENER_CONNECTION_CLOSED;
 	}
 	connection->state = LISTENER_CONNECTION_SHORT_RELAYING;
@@ -1213,7 +1161,7 @@ static listener_connection_progress listener_connection_timeout(listener_connect
 		return LISTENER_CONNECTION_FATAL;
 	}
 	/* A rearmed timer may have expired after epoll collected the stale readiness event. */
-	if (listener_connection_time_compare(&current_now, &connection->timer_deadline) < 0) {
+	if (timeutil_compare(&current_now, &connection->timer_deadline) < 0) {
 		return LISTENER_CONNECTION_PENDING;
 	}
 	if (connection->timer == LISTENER_CONNECTION_TIMER_ROUTE) {
@@ -1589,7 +1537,7 @@ static int listener_notify_reloading(void) {
 	if (clock_gettime(CLOCK_MONOTONIC, &timestamp) == -1) {
 		return -1;
 	}
-	if (timestamp.tv_sec < 0 || timestamp.tv_nsec < 0) {
+	if (!timeutil_valid(&timestamp)) {
 		errno = EINVAL;
 		return -1;
 	}
@@ -1674,31 +1622,6 @@ static listener_route_prepare_status listener_generation_prepare(listener_contex
 	return status;
 }
 
-static bool listener_route_time_add_seconds(const struct timespec *timestamp, uint64_t seconds, struct timespec *result) {
-	if (timestamp == NULL || result == NULL || timestamp->tv_sec < 0 || timestamp->tv_nsec < 0 || timestamp->tv_nsec >= 1000000000L
-		|| (uintmax_t)timestamp->tv_sec > UINTMAX_MAX - seconds) {
-		return false;
-	}
-	uintmax_t result_seconds = (uintmax_t)timestamp->tv_sec + seconds;
-	time_t converted = (time_t)result_seconds;
-	if (converted < 0 || (uintmax_t)converted != result_seconds) {
-		return false;
-	}
-	result->tv_sec = converted;
-	result->tv_nsec = timestamp->tv_nsec;
-	return true;
-}
-
-static int listener_route_time_compare(const struct timespec *left, const struct timespec *right) {
-	if (left->tv_sec != right->tv_sec) {
-		return left->tv_sec < right->tv_sec ? -1 : 1;
-	}
-	if (left->tv_nsec != right->tv_nsec) {
-		return left->tv_nsec < right->tv_nsec ? -1 : 1;
-	}
-	return 0;
-}
-
 static int listener_route_timer_drain(const listener_events *events) {
 	uint64_t expirations;
 	ssize_t bytes;
@@ -1759,7 +1682,7 @@ static int listener_route_runtime_schedule(listener_context *context, listener_r
 		LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION, "Proxy route prewarming resumed after local resolver pressure.\n");
 		runtime->pressure_logged = false;
 	}
-	bool deadline_reached = listener_route_time_compare(now, &runtime->deadline) >= 0;
+	bool deadline_reached = timeutil_compare(now, &runtime->deadline) >= 0;
 	bool warmup_complete = route_resolution_warmup_complete(context->route_resolution);
 	if (!runtime->ready && (warmup_complete || deadline_reached) && listener_route_runtime_ready(context, runtime, events, listener, warmup_complete) == -1) {
 		return -1;
@@ -1776,7 +1699,7 @@ static int listener_route_runtime_schedule(listener_context *context, listener_r
 static int listener_route_runtime_start(listener_route_runtime *runtime, const listener_events *events, const struct timespec *now) {
 	memset(runtime, 0, sizeof(*runtime));
 	if (LISTENER_ROUTE_PREWARM_BATCH_LIMIT == 0 || LISTENER_ROUTE_WARMUP_TIMEOUT_SEC == 0
-		|| !listener_route_time_add_seconds(now, LISTENER_ROUTE_WARMUP_TIMEOUT_SEC, &runtime->deadline)) {
+		|| !timeutil_add_seconds(now, LISTENER_ROUTE_WARMUP_TIMEOUT_SEC, &runtime->deadline)) {
 		errno = EINVAL;
 		return -1;
 	}

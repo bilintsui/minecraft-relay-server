@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 /* section: headers (project) */
+#include "../timeutil.h"
 #include "cache.h"
 #include "helper.h"
 #include "ipc.h"
@@ -175,49 +176,8 @@ static uint64_t resolver_supervisor_delay_respawn_base(uint64_t failure_count) {
 	return delay < RESOLVER_SUPERVISOR_RESPAWN_MAX_MS ? delay : RESOLVER_SUPERVISOR_RESPAWN_MAX_MS;
 }
 
-static int resolver_supervisor_time_compare(const struct timespec *left, const struct timespec *right) {
-	if (left->tv_sec != right->tv_sec) {
-		return left->tv_sec < right->tv_sec ? -1 : 1;
-	}
-	if (left->tv_nsec != right->tv_nsec) {
-		return left->tv_nsec < right->tv_nsec ? -1 : 1;
-	}
-	return 0;
-}
-
-static bool resolver_supervisor_time_valid(const struct timespec *value) {
-	return value != NULL && value->tv_sec >= 0 && value->tv_nsec >= 0 && value->tv_nsec < 1000000000L;
-}
-
-static bool resolver_supervisor_time_add_milliseconds(const struct timespec *source, uint64_t milliseconds, struct timespec *result) {
-	if (!resolver_supervisor_time_valid(source) || result == NULL) {
-		return false;
-	}
-	uint64_t seconds = milliseconds / 1000U;
-	uint64_t nanoseconds = milliseconds % 1000U * UINT64_C(1000000) + (uint64_t)source->tv_nsec;
-	seconds += nanoseconds / UINT64_C(1000000000);
-	nanoseconds %= UINT64_C(1000000000);
-	if ((uintmax_t)source->tv_sec > UINTMAX_MAX - seconds) {
-		return false;
-	}
-	uintmax_t combined = (uintmax_t)source->tv_sec + seconds;
-	result->tv_sec = (time_t)combined;
-	if ((uintmax_t)result->tv_sec != combined) {
-		return false;
-	}
-	result->tv_nsec = (long)nanoseconds;
-	return true;
-}
-
-static bool resolver_supervisor_time_add_seconds(const struct timespec *source, uint64_t seconds, struct timespec *result) {
-	if (seconds > UINT64_MAX / 1000U) {
-		return false;
-	}
-	return resolver_supervisor_time_add_milliseconds(source, seconds * 1000U, result);
-}
-
 static bool resolver_supervisor_time_update(resolver_supervisor *supervisor, const struct timespec *now) {
-	if (supervisor == NULL || !resolver_supervisor_time_valid(now) || resolver_supervisor_time_compare(now, &supervisor->last_now) < 0) {
+	if (supervisor == NULL || !timeutil_valid(now) || timeutil_compare(now, &supervisor->last_now) < 0) {
 		return false;
 	}
 	supervisor->last_now = *now;
@@ -396,7 +356,7 @@ static void resolver_supervisor_job_retry(resolver_supervisor *supervisor, resol
 	uint64_t base_delay = resolver_supervisor_delay_query_base(job->retry_count);
 	uint64_t delay = resolver_supervisor_delay_jitter(base_delay, RESOLVER_SUPERVISOR_QUERY_RETRY_MAX_MS, RESOLVER_SUPERVISOR_JITTER_QUERY_DOMAIN,
 		resolver_cache_entry_id(job->entry), job->retry_count);
-	if (!resolver_supervisor_time_add_milliseconds(now, delay, &job->retry_at)) {
+	if (!timeutil_add_milliseconds(now, delay, &job->retry_at)) {
 		resolver_ipc_assembly_result response = {
 			.query_type = resolver_cache_entry_query_type(job->entry),
 			.status = RESOLVER_IPC_LOOKUP_PERMANENT_ERROR
@@ -408,8 +368,8 @@ static void resolver_supervisor_job_retry(resolver_supervisor *supervisor, resol
 }
 
 static bool resolver_supervisor_job_timestamp_valid(const resolver_supervisor_job *job, const struct timespec *completed_at, const struct timespec *now) {
-	return resolver_supervisor_time_valid(completed_at) && resolver_supervisor_time_compare(completed_at, &job->dispatched_at) >= 0
-		&& resolver_supervisor_time_compare(completed_at, &job->deadline) <= 0 && resolver_supervisor_time_compare(completed_at, now) <= 0;
+	return timeutil_valid(completed_at) && timeutil_compare(completed_at, &job->dispatched_at) >= 0
+		&& timeutil_compare(completed_at, &job->deadline) <= 0 && timeutil_compare(completed_at, now) <= 0;
 }
 
 static void resolver_supervisor_process_reap(pid_t process_id) {
@@ -498,7 +458,7 @@ static void resolver_supervisor_helper_respawn_schedule(resolver_supervisor *sup
 	uint64_t base_delay = resolver_supervisor_delay_respawn_base(helper->failure_count);
 	uint64_t delay = base_delay == 0 ? 0 : resolver_supervisor_delay_jitter(base_delay, RESOLVER_SUPERVISOR_RESPAWN_MAX_MS, RESOLVER_SUPERVISOR_JITTER_RESPAWN_DOMAIN,
 		helper_index, helper->failure_count);
-	if (!resolver_supervisor_time_add_milliseconds(now, delay, &helper->next_event_at)) {
+	if (!timeutil_add_milliseconds(now, delay, &helper->next_event_at)) {
 		helper->next_event_at = *now;
 	}
 }
@@ -559,7 +519,7 @@ static int resolver_supervisor_helper_spawn(resolver_supervisor *supervisor, siz
 	}
 	helper->fd = socket_fd;
 	helper->next_event_at = *now;
-	if (helper->failure_count > 0 && !resolver_supervisor_time_add_seconds(now, RESOLVER_SUPERVISOR_RESPAWN_RESET_STABLE_SEC, &helper->next_event_at)) {
+	if (helper->failure_count > 0 && !timeutil_add_seconds(now, RESOLVER_SUPERVISOR_RESPAWN_RESET_STABLE_SEC, &helper->next_event_at)) {
 		helper->next_event_at = *now;
 	}
 	helper->process_id = process_id;
@@ -577,7 +537,7 @@ static resolver_supervisor_send_status resolver_supervisor_helper_request_send(r
 	resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
 	resolver_supervisor_job *job = helper->job;
 	struct timespec deadline;
-	if (!resolver_supervisor_time_add_seconds(now, RESOLVER_SUPERVISOR_QUERY_TIMEOUT_SEC, &deadline)) {
+	if (!timeutil_add_seconds(now, RESOLVER_SUPERVISOR_QUERY_TIMEOUT_SEC, &deadline)) {
 		return RESOLVER_SUPERVISOR_SEND_TIME;
 	}
 	while (true) {
@@ -617,7 +577,7 @@ static bool resolver_supervisor_query_id_allocate(resolver_supervisor *superviso
 static resolver_supervisor_assign_status resolver_supervisor_helper_job_assign(resolver_supervisor *supervisor, size_t helper_index, resolver_supervisor_job *job, const struct timespec *now) {
 	resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
 	uint64_t query_id;
-	if (!resolver_supervisor_time_add_seconds(now, RESOLVER_SUPERVISOR_QUERY_TIMEOUT_SEC, &job->deadline)) {
+	if (!timeutil_add_seconds(now, RESOLVER_SUPERVISOR_QUERY_TIMEOUT_SEC, &job->deadline)) {
 		return RESOLVER_SUPERVISOR_ASSIGN_TIME;
 	}
 	if (!resolver_supervisor_query_id_allocate(supervisor, &query_id)) {
@@ -725,7 +685,7 @@ static void resolver_supervisor_helper_result_finish(resolver_supervisor *superv
 	resolver_ipc_assembly_destroy(job->assembly);
 	job->assembly = NULL;
 	if (!resolver_supervisor_job_timestamp_valid(job, &response.completed_at, now)) {
-		bool timed_out = resolver_supervisor_time_valid(&response.completed_at) && resolver_supervisor_time_compare(&response.completed_at, &job->deadline) > 0;
+		bool timed_out = timeutil_valid(&response.completed_at) && timeutil_compare(&response.completed_at, &job->deadline) > 0;
 		resolver_ipc_assembly_result_destroy(&response);
 		resolver_supervisor_helper_fail(supervisor, helper_index, timed_out ? RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT : RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL, now);
 		return;
@@ -803,10 +763,10 @@ static void resolver_supervisor_helper_drain(resolver_supervisor *supervisor, si
 }
 
 static void resolver_supervisor_timer_candidate(struct timespec *target, bool *available, const struct timespec *candidate) {
-	if (!resolver_supervisor_time_valid(candidate)) {
+	if (!timeutil_valid(candidate)) {
 		return;
 	}
-	if (!*available || resolver_supervisor_time_compare(candidate, target) < 0) {
+	if (!*available || timeutil_compare(candidate, target) < 0) {
 		*target = *candidate;
 		*available = true;
 	}
@@ -865,7 +825,7 @@ static void resolver_supervisor_timers_process_jobs(resolver_supervisor *supervi
 		resolver_supervisor_job *job = supervisor->buckets[bucket];
 		while (job != NULL) {
 			resolver_supervisor_job *next = job->hash_next;
-			if (job->state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT && resolver_supervisor_time_compare(now, &job->retry_at) >= 0) {
+			if (job->state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT && timeutil_compare(now, &job->retry_at) >= 0) {
 				resolver_supervisor_job_queue_append(supervisor, job);
 			}
 			job = next;
@@ -876,7 +836,7 @@ static void resolver_supervisor_timers_process_jobs(resolver_supervisor *supervi
 static void resolver_supervisor_timers_process_helpers(resolver_supervisor *supervisor, const struct timespec *now) {
 	for (size_t helper_index = 0; helper_index < RESOLVER_SUPERVISOR_HELPER_COUNT; helper_index++) {
 		resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
-		if (helper->state == RESOLVER_SUPERVISOR_HELPER_BUSY && helper->job != NULL && resolver_supervisor_time_compare(now, &helper->job->deadline) >= 0) {
+		if (helper->state == RESOLVER_SUPERVISOR_HELPER_BUSY && helper->job != NULL && timeutil_compare(now, &helper->job->deadline) >= 0) {
 			resolver_supervisor_helper_drain(supervisor, helper_index, now);
 			if (helper->state == RESOLVER_SUPERVISOR_HELPER_BUSY && helper->job != NULL) {
 				resolver_supervisor_helper_fail(supervisor, helper_index, RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT, now);
@@ -884,13 +844,13 @@ static void resolver_supervisor_timers_process_helpers(resolver_supervisor *supe
 		}
 		helper = &supervisor->helpers[helper_index];
 		if (helper->failure_count > 0 && (helper->state == RESOLVER_SUPERVISOR_HELPER_IDLE || helper->state == RESOLVER_SUPERVISOR_HELPER_SENDING
-			|| helper->state == RESOLVER_SUPERVISOR_HELPER_BUSY) && resolver_supervisor_time_compare(now, &helper->next_event_at) >= 0) {
+			|| helper->state == RESOLVER_SUPERVISOR_HELPER_BUSY) && timeutil_compare(now, &helper->next_event_at) >= 0) {
 			resolver_supervisor_helper_recovery_reset(helper);
 		}
 		helper = &supervisor->helpers[helper_index];
-		if (helper->state == RESOLVER_SUPERVISOR_HELPER_BACKOFF && resolver_supervisor_time_compare(now, &helper->next_event_at) >= 0) {
+		if (helper->state == RESOLVER_SUPERVISOR_HELPER_BACKOFF && timeutil_compare(now, &helper->next_event_at) >= 0) {
 			resolver_supervisor_helper_spawn(supervisor, helper_index, now);
-		} else if (helper->state == RESOLVER_SUPERVISOR_HELPER_SHUTTING_DOWN && resolver_supervisor_time_compare(now, &helper->next_event_at) >= 0) {
+		} else if (helper->state == RESOLVER_SUPERVISOR_HELPER_SHUTTING_DOWN && timeutil_compare(now, &helper->next_event_at) >= 0) {
 			resolver_supervisor_helper_stop(supervisor, helper, true);
 		}
 	}
@@ -1028,7 +988,7 @@ bool resolver_supervisor_completion_take(resolver_supervisor *supervisor, resolv
 }
 
 resolver_supervisor *resolver_supervisor_create(const sigset_t *helper_signal_mask, const struct timespec *now) {
-	if (helper_signal_mask == NULL || !resolver_supervisor_time_valid(now) || RESOLVER_SUPERVISOR_HELPER_COUNT == 0 || RESOLVER_SUPERVISOR_JOB_LIMIT == 0
+	if (helper_signal_mask == NULL || !timeutil_valid(now) || RESOLVER_SUPERVISOR_HELPER_COUNT == 0 || RESOLVER_SUPERVISOR_JOB_LIMIT == 0
 		|| RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE > RESOLVER_SUPERVISOR_JOB_LIMIT
 		|| RESOLVER_SUPERVISOR_HELPER_COUNT > INT_MAX - 1 || RESOLVER_SUPERVISOR_JITTER_PERCENT > 100 || RESOLVER_SUPERVISOR_QUERY_RETRY_INITIAL_MS == 0
 		|| RESOLVER_SUPERVISOR_QUERY_RETRY_MAX_MS < RESOLVER_SUPERVISOR_QUERY_RETRY_INITIAL_MS || RESOLVER_SUPERVISOR_QUERY_TIMEOUT_SEC == 0
@@ -1287,7 +1247,7 @@ bool resolver_supervisor_shutdown(resolver_supervisor *supervisor, const struct 
 		}
 		resolver_supervisor_process_terminate(helper->process_id, SIGTERM);
 		helper->state = RESOLVER_SUPERVISOR_HELPER_SHUTTING_DOWN;
-		if (!resolver_supervisor_time_add_milliseconds(now, RESOLVER_SUPERVISOR_SHUTDOWN_GRACE_MS, &helper->next_event_at)) {
+		if (!timeutil_add_milliseconds(now, RESOLVER_SUPERVISOR_SHUTDOWN_GRACE_MS, &helper->next_event_at)) {
 			helper->next_event_at = *now;
 		}
 	}
