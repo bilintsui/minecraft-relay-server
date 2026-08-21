@@ -18,6 +18,9 @@
 #include <string.h>
 #include <sys/socket.h>
 
+/* section: headers (project) */
+#include "util.h"
+
 /* section: headers (self) */
 #include "dns.h"
 
@@ -56,19 +59,6 @@ static uint32_t dns_cname_ttl_min(const dns_cname_record *cnames, size_t cname_c
 		}
 	}
 	return result;
-}
-
-static bool dns_name_encloses(const char *zone, const char *name) {
-	if (zone == NULL || name == NULL) {
-		return false;
-	}
-	if (strcmp(zone, ".") == 0) {
-		return true;
-	}
-	size_t name_length = strlen(name);
-	size_t zone_length = strlen(zone);
-	return (name_length == zone_length && strcmp(name, zone) == 0)
-		|| (name_length > zone_length && name[name_length - zone_length - 1] == '.' && strcmp(name + name_length - zone_length, zone) == 0);
 }
 
 static bool dns_name_equal(const char *left, const char *right) {
@@ -271,7 +261,7 @@ static dns_negative_parse_status dns_negative_response_parse(ns_msg *response, c
 		if (!dns_negative_record_parse(response, &authority, &candidate)) {
 			return DNS_NEGATIVE_PARSE_MALFORMED;
 		}
-		if (!dns_name_encloses(candidate.owner, canonical_name)) {
+		if (!resolver_name_encloses(candidate.owner, canonical_name)) {
 			continue;
 		}
 		if (!result->valid || strlen(candidate.owner) > strlen(result->owner)) {

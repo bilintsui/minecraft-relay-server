@@ -19,6 +19,7 @@
 #include "cache.h"
 #include "dns.h"
 #include "ipc.h"
+#include "util.h"
 
 /* section: headers (self) */
 #include "ipc_assembly.h"
@@ -72,72 +73,14 @@ static void resolver_ipc_assembly_data_clear(resolver_ipc_assembly *assembly) {
 	assembly->dynamic_bytes = 0;
 }
 
-static bool resolver_ipc_assembly_name_encloses(const char *zone, const char *name) {
-	if (zone == NULL || name == NULL) {
-		return false;
-	}
-	if (strcmp(zone, ".") == 0) {
-		return true;
-	}
-	size_t name_length = strlen(name);
-	size_t zone_length = strlen(zone);
-	return (name_length == zone_length && strcmp(name, zone) == 0)
-		|| (name_length > zone_length && name[name_length - zone_length - 1] == '.' && strcmp(name + name_length - zone_length, zone) == 0);
-}
-
-static bool resolver_ipc_assembly_name_normalize(const char *source, char target[NS_MAXDNAME]) {
-	if (source == NULL || target == NULL) {
-		return false;
-	}
-	size_t source_length = 0;
-	while (source_length < NS_MAXDNAME && source[source_length] != '\0') {
-		source_length++;
-	}
-	if (source_length == 0 || source_length == NS_MAXDNAME) {
-		return false;
-	}
-	bool terminal_root_removed = source_length > 1 && source[source_length - 1] == '.';
-	if (terminal_root_removed) {
-		source_length--;
-	}
-	if (terminal_root_removed && source[source_length - 1] == '.') {
-		return false;
-	}
-	for (size_t index = 0; index < source_length; index++) {
-		unsigned char character = (unsigned char)source[index];
-		if (character >= 'A' && character <= 'Z') {
-			character = (unsigned char)(character - 'A' + 'a');
-		}
-		target[index] = (char)character;
-	}
-	target[source_length] = '\0';
-	return true;
-}
-
 static bool resolver_ipc_assembly_name_normalized(const char *name) {
 	char normalized[NS_MAXDNAME];
-	return resolver_ipc_assembly_name_normalize(name, normalized) && strcmp(name, normalized) == 0;
+	return resolver_name_normalize(name, normalized) && strcmp(name, normalized) == 0;
 }
 
 static bool resolver_ipc_assembly_result_empty(const resolver_ipc_assembly_result *result) {
 	return result != NULL && result->budget == NULL && result->completed_at.tv_sec == 0 && result->completed_at.tv_nsec == 0 && result->dynamic_bytes == 0 && result->query_id == 0
 		&& result->query_type == 0 && result->status == 0;
-}
-
-static bool resolver_ipc_assembly_size_add(size_t *target, size_t value) {
-	if (*target > SIZE_MAX - value) {
-		return false;
-	}
-	*target += value;
-	return true;
-}
-
-static bool resolver_ipc_assembly_size_multiply(size_t left, size_t right, size_t *result) {
-	if (left != 0 && right > SIZE_MAX / left) {
-		return false;
-	}
-	*result = left * right;
-	return true;
 }
 
 static uint32_t resolver_ipc_assembly_ttl_expected(uint32_t record_ttl, uint32_t chain_ttl) {
@@ -151,12 +94,12 @@ static resolver_ipc_assembly_status resolver_ipc_assembly_arrays_allocate(resolv
 	size_t cname_bytes = 0;
 	size_t record_bytes;
 	size_t record_size = assembly->query_type == ns_t_srv ? sizeof(dns_srv_record) : sizeof(dns_address_record);
-	if ((cname_count > 0 && !resolver_ipc_assembly_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(dns_cname_record), &cname_bytes))
-		|| !resolver_ipc_assembly_size_multiply(record_count, record_size, &record_bytes)) {
+	if ((cname_count > 0 && !resolver_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(dns_cname_record), &cname_bytes))
+		|| !resolver_size_multiply(record_count, record_size, &record_bytes)) {
 		return RESOLVER_IPC_ASSEMBLY_LIMIT;
 	}
 	size_t allocation_size = cname_bytes;
-	if (!resolver_ipc_assembly_size_add(&allocation_size, record_bytes) || allocation_size > (size_t)RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT
+	if (!resolver_size_add(&allocation_size, record_bytes) || allocation_size > (size_t)RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT
 		|| assembly->budget->owned_bytes > (size_t)RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT - allocation_size) {
 		return RESOLVER_IPC_ASSEMBLY_LIMIT;
 	}
@@ -302,7 +245,7 @@ static bool resolver_ipc_assembly_complete_check(const resolver_ipc_assembly *as
 	}
 	uint32_t expected_ttl = negative->minimum < negative->record_ttl ? negative->minimum : negative->record_ttl;
 	expected_ttl = resolver_ipc_assembly_ttl_expected(expected_ttl, assembly->chain_ttl);
-	return resolver_ipc_assembly_name_normalized(negative->owner) && resolver_ipc_assembly_name_encloses(negative->owner, canonical_name)
+	return resolver_ipc_assembly_name_normalized(negative->owner) && resolver_name_encloses(negative->owner, canonical_name)
 		&& negative->effective_ttl == expected_ttl;
 }
 
@@ -331,6 +274,14 @@ static resolver_ipc_assembly_status resolver_ipc_assembly_fail(resolver_ipc_asse
 	return status;
 }
 
+static void resolver_ipc_assembly_record_commit(resolver_ipc_assembly *assembly, void *records, size_t record_size, const void *record) {
+	memcpy((uint8_t *)records + assembly->received_record_count * record_size, record, record_size);
+	assembly->received_record_count++;
+	if (assembly->received_record_count == assembly->declared_record_count) {
+		assembly->state = RESOLVER_IPC_ASSEMBLY_STATE_END;
+	}
+}
+
 static resolver_ipc_assembly_status resolver_ipc_assembly_record_address_consume(resolver_ipc_assembly *assembly, const void *packet, size_t packet_size) {
 	resolver_ipc_response_address response;
 	sa_family_t expected_family = assembly->query_type == ns_t_a ? AF_INET : AF_INET6;
@@ -339,10 +290,7 @@ static resolver_ipc_assembly_status resolver_ipc_assembly_record_address_consume
 		|| response.record.effective_ttl != resolver_ipc_assembly_ttl_expected(response.record.record_ttl, assembly->chain_ttl)) {
 		return RESOLVER_IPC_ASSEMBLY_PROTOCOL;
 	}
-	assembly->payload.address.addresses[assembly->received_record_count++] = response.record;
-	if (assembly->received_record_count == assembly->declared_record_count) {
-		assembly->state = RESOLVER_IPC_ASSEMBLY_STATE_END;
-	}
+	resolver_ipc_assembly_record_commit(assembly, assembly->payload.address.addresses, sizeof(response.record), &response.record);
 	return RESOLVER_IPC_ASSEMBLY_OK;
 }
 
@@ -353,10 +301,7 @@ static resolver_ipc_assembly_status resolver_ipc_assembly_record_srv_consume(res
 		|| response.record.effective_ttl != resolver_ipc_assembly_ttl_expected(response.record.record_ttl, assembly->chain_ttl)) {
 		return RESOLVER_IPC_ASSEMBLY_PROTOCOL;
 	}
-	assembly->payload.srv.records[assembly->received_record_count++] = response.record;
-	if (assembly->received_record_count == assembly->declared_record_count) {
-		assembly->state = RESOLVER_IPC_ASSEMBLY_STATE_END;
-	}
+	resolver_ipc_assembly_record_commit(assembly, assembly->payload.srv.records, sizeof(response.record), &response.record);
 	return RESOLVER_IPC_ASSEMBLY_OK;
 }
 
@@ -393,7 +338,7 @@ resolver_ipc_assembly_status resolver_ipc_assembly_create(resolver_ipc_assembly_
 	}
 	char normalized_name[NS_MAXDNAME];
 	if (budget == NULL || result == NULL || query_class != ns_c_in || (query_type != ns_t_a && query_type != ns_t_aaaa && query_type != ns_t_srv) || query_id == 0
-		|| !resolver_ipc_assembly_name_normalize(query_name, normalized_name)) {
+		|| !resolver_name_normalize(query_name, normalized_name)) {
 		return RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT;
 	}
 	if (sizeof(resolver_ipc_assembly) > (size_t)RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT

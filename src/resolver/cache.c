@@ -14,6 +14,9 @@
 #include <string.h>
 #include <time.h>
 
+/* section: headers (project) */
+#include "util.h"
+
 /* section: headers (self) */
 #include "cache.h"
 
@@ -99,38 +102,9 @@ static uint64_t resolver_cache_hash(const char *name, uint16_t query_type) {
 	return result;
 }
 
-static bool resolver_cache_name_normalize(const char *source, char target[NS_MAXDNAME]) {
-	if (source == NULL || target == NULL) {
-		return false;
-	}
-	size_t source_length = 0;
-	while (source_length < NS_MAXDNAME && source[source_length] != '\0') {
-		source_length++;
-	}
-	if (source_length == 0 || source_length == NS_MAXDNAME) {
-		return false;
-	}
-	bool terminal_root_removed = source_length > 1 && source[source_length - 1] == '.';
-	if (terminal_root_removed) {
-		source_length--;
-	}
-	if (terminal_root_removed && source[source_length - 1] == '.') {
-		return false;
-	}
-	for (size_t index = 0; index < source_length; index++) {
-		unsigned char character = (unsigned char)source[index];
-		if (character >= 'A' && character <= 'Z') {
-			character = (unsigned char)(character - 'A' + 'a');
-		}
-		target[index] = (char)character;
-	}
-	target[source_length] = '\0';
-	return true;
-}
-
 static bool resolver_cache_name_valid(const char *source) {
 	char normalized[NS_MAXDNAME];
-	return resolver_cache_name_normalize(source, normalized);
+	return resolver_name_normalize(source, normalized);
 }
 
 static bool resolver_cache_cnames_valid(const dns_cname_record *cnames, size_t cname_count) {
@@ -158,33 +132,17 @@ static bool resolver_cache_query_type_valid(uint16_t query_type) {
 
 static bool resolver_cache_question_matches(const resolver_cache_entry *entry, const char *question_name) {
 	char normalized[NS_MAXDNAME];
-	return resolver_cache_name_normalize(question_name, normalized) && strcmp(entry->name, normalized) == 0;
-}
-
-static bool resolver_cache_size_add(size_t *target, size_t value) {
-	if (*target > SIZE_MAX - value) {
-		return false;
-	}
-	*target += value;
-	return true;
-}
-
-static bool resolver_cache_size_multiply(size_t left, size_t right, size_t *result) {
-	if (left != 0 && right > SIZE_MAX / left) {
-		return false;
-	}
-	*result = left * right;
-	return true;
+	return resolver_name_normalize(question_name, normalized) && strcmp(entry->name, normalized) == 0;
 }
 
 static bool resolver_cache_address_result_size(const dns_address_result *result, size_t *result_size) {
 	size_t size = sizeof(resolver_cache_payload);
 	size_t array_size;
-	if (!resolver_cache_size_multiply(result->address_count, sizeof(*result->addresses), &array_size) || !resolver_cache_size_add(&size, array_size)) {
+	if (!resolver_size_multiply(result->address_count, sizeof(*result->addresses), &array_size) || !resolver_size_add(&size, array_size)) {
 		return false;
 	}
 	if (result->cnames != NULL
-		&& (!resolver_cache_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(*result->cnames), &array_size) || !resolver_cache_size_add(&size, array_size))) {
+		&& (!resolver_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(*result->cnames), &array_size) || !resolver_size_add(&size, array_size))) {
 		return false;
 	}
 	*result_size = size;
@@ -229,11 +187,11 @@ static bool resolver_cache_address_result_validate(const resolver_cache_entry *e
 static bool resolver_cache_srv_result_size(const dns_srv_result *result, size_t *result_size) {
 	size_t size = sizeof(resolver_cache_payload);
 	size_t array_size;
-	if (!resolver_cache_size_multiply(result->record_count, sizeof(*result->records), &array_size) || !resolver_cache_size_add(&size, array_size)) {
+	if (!resolver_size_multiply(result->record_count, sizeof(*result->records), &array_size) || !resolver_size_add(&size, array_size)) {
 		return false;
 	}
 	if (result->cnames != NULL
-		&& (!resolver_cache_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(*result->cnames), &array_size) || !resolver_cache_size_add(&size, array_size))) {
+		&& (!resolver_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(*result->cnames), &array_size) || !resolver_size_add(&size, array_size))) {
 		return false;
 	}
 	*result_size = size;
@@ -358,7 +316,7 @@ resolver_cache *resolver_cache_create(void) {
 		return NULL;
 	}
 	size_t bucket_bytes;
-	if (!resolver_cache_size_multiply((size_t)RESOLVER_CACHE_ENTRY_LIMIT, sizeof(resolver_cache_entry *), &bucket_bytes)
+	if (!resolver_size_multiply((size_t)RESOLVER_CACHE_ENTRY_LIMIT, sizeof(resolver_cache_entry *), &bucket_bytes)
 		|| sizeof(resolver_cache) > (size_t)RESOLVER_CACHE_OWNED_BYTE_LIMIT || bucket_bytes > (size_t)RESOLVER_CACHE_OWNED_BYTE_LIMIT - sizeof(resolver_cache)) {
 		return NULL;
 	}
@@ -399,7 +357,7 @@ resolver_cache_acquire_status resolver_cache_entry_acquire(resolver_cache *cache
 		*result = NULL;
 	}
 	char normalized[NS_MAXDNAME];
-	if (cache == NULL || result == NULL || !resolver_cache_query_type_valid(query_type) || !resolver_cache_name_normalize(query_name, normalized)) {
+	if (cache == NULL || result == NULL || !resolver_cache_query_type_valid(query_type) || !resolver_name_normalize(query_name, normalized)) {
 		return RESOLVER_CACHE_ACQUIRE_BAD_ARGUMENT;
 	}
 	uint64_t hash = resolver_cache_hash(normalized, query_type);
@@ -561,9 +519,9 @@ bool resolver_cache_result_fits(uint16_t query_type, size_t cname_count, size_t 
 	size_t size = sizeof(resolver_cache_payload);
 	size_t array_size;
 	if (cname_count > 0
-		&& (!resolver_cache_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(dns_cname_record), &array_size) || !resolver_cache_size_add(&size, array_size))) {
+		&& (!resolver_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(dns_cname_record), &array_size) || !resolver_size_add(&size, array_size))) {
 		return false;
 	}
 	size_t record_size = query_type == ns_t_srv ? sizeof(dns_srv_record) : sizeof(dns_address_record);
-	return resolver_cache_size_multiply(record_count, record_size, &array_size) && resolver_cache_size_add(&size, array_size) && size <= (size_t)RESOLVER_CACHE_RESULT_BYTE_LIMIT;
+	return resolver_size_multiply(record_count, record_size, &array_size) && resolver_size_add(&size, array_size) && size <= (size_t)RESOLVER_CACHE_RESULT_BYTE_LIMIT;
 }
