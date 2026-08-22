@@ -139,7 +139,7 @@ static bool modern_message_validate(const uint8_t *data, size_t size) {
 	return true;
 }
 
-static bool packet_roundtrip(client_fixture_kind kind, protocol_version protocol, const uint8_t *source, size_t source_size, uint8_t *target) {
+static bool packet_roundtrip(client_fixture_kind kind, protocol_version protocol, const uint8_t *source, size_t source_size, uint8_t *target, size_t target_capacity) {
 	size_t target_size;
 	if (kind == CLIENT_FIXTURE_LEGACY_LOGIN) {
 		p_login_legacy packet = packet_read_legacy_login(source, source_size, protocol);
@@ -153,12 +153,86 @@ static bool packet_roundtrip(client_fixture_kind kind, protocol_version protocol
 		if (packet.address == NULL) {
 			return false;
 		}
-		target_size = packet_write(target, packet);
+		target_size = packet_write(target, target_capacity, packet);
 		packet_destroy(packet);
 	} else {
 		return false;
 	}
 	return target_size == source_size && memcmp(source, target, source_size) == 0;
+}
+
+static bool packet_write_bounds_test(void) {
+	uint8_t scratch[BUFSIZ * 2];
+	uint8_t *signature = malloc(BUFSIZ);
+	char *long_address = malloc(PROTOHANDSHAKE_ADDRESSMAXLEN + 2U);
+	char *long_username = malloc(PROTOHANDSHAKE_USERNAMEMAXLEN + 2U);
+	p_handshake packet;
+	bool result = false;
+	size_t encoded_size;
+	if (signature == NULL || long_address == NULL || long_username == NULL) {
+		goto cleanup;
+	}
+	memset(signature, 's', BUFSIZ);
+	memset(long_address, 'a', PROTOHANDSHAKE_ADDRESSMAXLEN + 1U);
+	long_address[PROTOHANDSHAKE_ADDRESSMAXLEN + 1U] = '\0';
+	memset(long_username, 'u', PROTOHANDSHAKE_USERNAMEMAXLEN + 1U);
+	long_username[PROTOHANDSHAKE_USERNAMEMAXLEN + 1U] = '\0';
+	memset(&packet, 0, sizeof(packet));
+	packet.address = (void *)"status.example";
+	packet.nextstate = CLIENT_INTENT_LOGIN;
+	packet.port = 25565;
+	packet.version = PVERDB_R_1_20_1 + 1U;
+	packet.username = (void *)"player";
+	packet.signature_data = signature;
+	packet.signature_data_length = 1024;
+	/* An exact destination capacity succeeds while one byte less is rejected. */
+	encoded_size = packet_write(scratch, sizeof(scratch), packet);
+	if (encoded_size == 0 || packet_write(scratch, encoded_size, packet) != encoded_size || packet_write(scratch, encoded_size - 1U, packet) != 0) {
+		goto cleanup;
+	}
+	/* Field limits mirror packet_read: an address beyond PROTOHANDSHAKE_ADDRESSMAXLEN is rejected, one at the limit is not. */
+	packet.address = long_address;
+	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
+		goto cleanup;
+	}
+	long_address[PROTOHANDSHAKE_ADDRESSMAXLEN] = '\0';
+	if (packet_write(scratch, sizeof(scratch), packet) == 0) {
+		goto cleanup;
+	}
+	/* A username beyond PROTOHANDSHAKE_USERNAMEMAXLEN is rejected. */
+	packet.username = long_username;
+	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
+		goto cleanup;
+	}
+	packet.username = (void *)"player";
+	/* The signature bound keeps the second staging buffer within BUFSIZ: the bound itself is accepted, one byte more is rejected. */
+	packet.signature_data_length = BUFSIZ - 6U - 8U;
+	encoded_size = packet_write(scratch, sizeof(scratch), packet);
+	/* Maximum envelope: the largest address plus the largest signature encodes to 9222 bytes and fits the worker rewrite buffer. */
+	if (encoded_size != 9222 || packet_write(scratch, 9222, packet) != 9222 || packet_write(scratch, 9221, packet) != 0) {
+		goto cleanup;
+	}
+	packet.signature_data_length = BUFSIZ - 6U - 8U + 1U;
+	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
+		goto cleanup;
+	}
+	packet.signature_data_length = 1024;
+	/* Missing address or username fields are rejected instead of dereferenced. */
+	packet.address = NULL;
+	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
+		goto cleanup;
+	}
+	packet.address = (void *)"status.example";
+	packet.username = NULL;
+	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
+		goto cleanup;
+	}
+	result = true;
+cleanup:
+	free(signature);
+	free(long_address);
+	free(long_username);
+	return result;
 }
 
 static int path_format(char *target, size_t target_size, const char *directory, const char *filename) {
@@ -246,6 +320,7 @@ int main(int argc, char **argv) {
 	int result = EXIT_FAILURE;
 	CHECK(argc == 2, "raw packet directory is required");
 	CHECK(varint_bounds_test(), "bounded varint decoding failed");
+	CHECK(packet_write_bounds_test(), "bounded packet construction failed");
 
 	for (size_t index = 0; index < sizeof(client_fixtures) / sizeof(client_fixtures[0]); index++) {
 		memset(source, 0, BUFSIZ);
@@ -255,7 +330,7 @@ int main(int argc, char **argv) {
 		CHECK(source_size > 0, "cannot read client fixture");
 		CHECK(protocol_identify(source, (size_t)source_size, NULL) == client_fixtures[index].protocol, "client fixture protocol was identified incorrectly");
 		if (client_fixtures[index].roundtrip) {
-			CHECK(packet_roundtrip(client_fixtures[index].kind, client_fixtures[index].protocol, source, (size_t)source_size, target), "client fixture did not survive an exact round trip");
+			CHECK(packet_roundtrip(client_fixtures[index].kind, client_fixtures[index].protocol, source, (size_t)source_size, target, sizeof(target_storage.bytes) - 1), "client fixture did not survive an exact round trip");
 		}
 	}
 	memset(modern_multibyte_frame + 5, 'a', 123);

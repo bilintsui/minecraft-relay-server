@@ -43,6 +43,7 @@ size_t make_kickreason(void *dst, const void *src);
 size_t make_motd(void *dst, const void *src, varint_t ver, const char *favicon_b64);
 void packet_destroy(p_handshake object);
 p_handshake packet_read(void *src, void *end);
-size_t packet_write(void *dst, const p_handshake src);
+/* Returns the total bytes written and 0 when dst is NULL, src fields are missing or exceed the packet_read limits, memory allocation fails, or the encoded packet does not fit dst_capacity. */
+size_t packet_write(void *dst, size_t dst_capacity, const p_handshake src);
 
 #endif

@@ -200,6 +200,50 @@ static ssize_t message_receive(int socket_fd, void *message, size_t message_size
 	return recv(socket_fd, message, message_size, 0);
 }
 
+static size_t varint_encode(uint8_t *destination, uint32_t value) {
+	uint8_t digits[5];
+	size_t count = 0;
+	size_t size = 0;
+	do {
+		digits[count] = (uint8_t)(value & 0x7F);
+		value >>= 7;
+		count++;
+	} while (value != 0);
+	for (size_t index = 0; index < count; index++) {
+		destination[size++] = index + 1 < count ? (uint8_t)(digits[index] | 0x80) : digits[index];
+	}
+	return size;
+}
+
+/* Builds a modern LOGIN handshake for the given virtual host; the signature tail makes a single-character host packet exactly BUFSIZ bytes. */
+static size_t rewrite_login_build(uint8_t *destination, size_t destination_size, const char *address, in_port_t port) {
+	static const size_t signature_size = 8178;
+	size_t address_length = strlen(address);
+	size_t part1_size = 7 + address_length;
+	size_t part2_size = 3 + signature_size;
+	size_t offset = 0;
+	if (address_length > 127 || destination_size < (part1_size < 128 ? 1 : 2) + part1_size + (part2_size < 128 ? 1 : 2) + part2_size) {
+		return 0;
+	}
+	offset += varint_encode(destination + offset, (uint32_t)part1_size);
+	destination[offset++] = 0x00;
+	offset += varint_encode(destination + offset, 764);
+	offset += varint_encode(destination + offset, (uint32_t)address_length);
+	memcpy(destination + offset, address, address_length);
+	offset += address_length;
+	destination[offset++] = (uint8_t)(port >> 8);
+	destination[offset++] = (uint8_t)port;
+	destination[offset++] = 0x02;
+	offset += varint_encode(destination + offset, (uint32_t)part2_size);
+	destination[offset++] = 0x00;
+	destination[offset++] = 0x01;
+	destination[offset++] = 'u';
+	for (size_t index = 0; index < signature_size; index++) {
+		destination[offset++] = (uint8_t)((index * 7 + 3) % 251 + 2);
+	}
+	return offset;
+}
+
 static int server_accept(int server_fd, int timeout_ms) {
 	struct pollfd poll_fd = {
 		.fd = server_fd,
@@ -518,6 +562,35 @@ static int write_proxy_config(const char *filename, const char *log_filename, in
 	return close(fd);
 }
 
+static int write_rewrite_config(const char *filename, const char *log_filename, in_port_t listener_port, in_port_t upstream_port) {
+	char content[PATH_MAX + 512];
+	int content_length = snprintf(content, sizeof(content),
+		"{\"log\":{\"filename\":\"%s\",\"level\":4},\"listen\":{\"address\":\"127.0.0.1\",\"port\":%u},\"icon\":\"\",\"proxy\":["
+		"{\"vhost\":[\"a\"],\"address\":\"127.0.0.1\",\"port\":%u,\"rewrite\":true}]}\n",
+		log_filename, (unsigned int)listener_port, (unsigned int)upstream_port
+	);
+	if (content_length < 0 || (size_t)content_length >= sizeof(content)) {
+		errno = EOVERFLOW;
+		return -1;
+	}
+	int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd == -1) {
+		return -1;
+	}
+	size_t written = 0;
+	while (written < (size_t)content_length) {
+		ssize_t write_result = write(fd, content + written, (size_t)content_length - written);
+		if (write_result <= 0) {
+			int saved_errno = errno;
+			close(fd);
+			errno = saved_errno;
+			return -1;
+		}
+		written += (size_t)write_result;
+	}
+	return close(fd);
+}
+
 /* section: functions (entry point) */
 int main(int argc, char **argv) {
 	static const worker_fragment_fixture fragment_fixtures[] = {
@@ -764,6 +837,43 @@ int main(int argc, char **argv) {
 			CHECK(kill(listener, 0) == 0, "permanently truncated packet terminated listener");
 		}
 	}
+
+	/* Rewrite regression: a BUFSIZ-sized LOGIN handshake rewritten to a longer destination must stay within the worker rewrite buffer. */
+	CHECK(write_rewrite_config(config_filename, log_filename, listener_port, upstream_port) == 0, "cannot write rewrite configuration");
+	CHECK(kill(listener, SIGUSR1) == 0, "cannot request rewrite configuration reload");
+	ready_length = message_receive(notify_fd, ready_message, sizeof(ready_message) - 1, TEST_TIMEOUT_MS);
+	CHECK(ready_length > 0, "rewrite RELOADING notification is missing");
+	ready_message[ready_length] = '\0';
+	CHECK(strncmp(ready_message, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0, "rewrite RELOADING notification is invalid");
+	ready_length = message_receive(notify_fd, ready_message, sizeof(ready_message) - 1, TEST_TIMEOUT_MS);
+	CHECK(ready_length > 0, "rewrite READY notification is missing");
+	ready_message[ready_length] = '\0';
+	CHECK(strcmp(ready_message, "READY=1") == 0, "rewrite READY notification is invalid");
+	uint8_t rewrite_input[BUFSIZ];
+	uint8_t rewrite_expected[BUFSIZ + 8U];
+	uint8_t rewrite_received[BUFSIZ + 8U];
+	size_t rewrite_input_size = rewrite_login_build(rewrite_input, sizeof(rewrite_input), "a", 25565);
+	size_t rewrite_expected_size = rewrite_login_build(rewrite_expected, sizeof(rewrite_expected), "127.0.0.1", upstream_port);
+	CHECK(rewrite_input_size == sizeof(rewrite_input) && rewrite_expected_size == sizeof(rewrite_expected), "rewrite regression packet builder produced unexpected sizes");
+	client_fd = client_connect(listener_port);
+	CHECK(client_fd != -1, "cannot connect rewrite test client");
+	CHECK(socket_send_all(client_fd, rewrite_input, rewrite_input_size) == 0, "cannot send rewrite test packet");
+	upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
+	CHECK(upstream_client_fd >= 0, "rewritten connection did not reach upstream server");
+	CHECK(child_count(listener) > helper_child_baseline, "rewrite login packet did not fork a worker");
+	size_t rewrite_received_size = 0;
+	while (rewrite_received_size < rewrite_expected_size) {
+		ssize_t receive_result = message_receive(upstream_client_fd, rewrite_received + rewrite_received_size, rewrite_expected_size - rewrite_received_size, TEST_TIMEOUT_MS);
+		CHECK(receive_result > 0, "cannot receive rewritten handshake");
+		rewrite_received_size += (size_t)receive_result;
+	}
+	CHECK(memcmp(rewrite_received, rewrite_expected, rewrite_expected_size) == 0, "rewritten handshake differs from expectation");
+	CHECK(close(upstream_client_fd) == 0, "cannot close rewrite upstream connection");
+	upstream_client_fd = -1;
+	CHECK(close(client_fd) == 0, "cannot close rewrite test client");
+	client_fd = -1;
+	CHECK(child_count_wait(listener, helper_child_baseline, TEST_TIMEOUT_MS) == 0, "rewrite worker did not release its worker");
+	CHECK(kill(listener, 0) == 0, "rewrite regression terminated listener");
 
 	CHECK(kill(listener, SIGTERM) == 0, "cannot stop listener");
 	CHECK(child_wait(listener, TEST_TIMEOUT_MS) == 0, "listener did not exit successfully");

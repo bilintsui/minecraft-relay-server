@@ -27,6 +27,9 @@
 /* section: headers (self) */
 #include "setup_long.h"
 
+/* section: defines */
+#define CONNECTION_SETUP_LONG_REWRITE_BUFFER_SIZE	(BUFSIZ + ROUTE_ENDPOINT_TEXT_SIZE + 32U)
+
 /* section: types */
 typedef struct {
 	const char *address;
@@ -165,10 +168,10 @@ static connection_setup_status connection_setup_long_handle_legacy_login(int soc
 
 static connection_setup_status connection_setup_long_handle_modern_handshake(int socket_in, int *socket_out, net_addrbundle addrinfo_in, const uint8_t *inbound,
 	size_t packlen_inbound, const connection_setup_snapshot *snapshot) {
-	uint8_t rewrited[BUFSIZ];
+	uint8_t rewrited[CONNECTION_SETUP_LONG_REWRITE_BUFFER_SIZE];
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1];
 	size_t packlen_rewrited = 0;
-	memset(rewrited, 0, BUFSIZ);
+	memset(rewrited, 0, sizeof(rewrited));
 	memset(pheader, 0, PROTOPROXY_PACKETMAXLEN + 1);
 	p_handshake inbound_info = packet_read((void *)inbound, (void *)(inbound + packlen_inbound));
 	if (inbound_info.version == 0) {
@@ -221,14 +224,25 @@ static connection_setup_status connection_setup_long_handle_modern_handshake(int
 			}
 			if (proxyinfo.rewrite) {
 				void *inbound_addr_new = realloc(inbound_info.address, strlen(proxyinfo.address) + 1);
+				bool rewrite_done = false;
 				if (inbound_addr_new != NULL) {
 					inbound_info.address = inbound_addr_new;
 					strcpy(inbound_info.address, proxyinfo.address);
 					inbound_info.port = proxyinfo.port;
-					packlen_rewrited = packet_write(rewrited, inbound_info);
+					packlen_rewrited = packet_write(rewrited, sizeof(rewrited), inbound_info);
+					rewrite_done = packlen_rewrited > 0;
+				}
+				if (rewrite_done) {
 					send(*socket_out, rewrited, packlen_rewrited, 0);
 				} else {
-					send(*socket_out, inbound, packlen_inbound, 0);
+					mksysmsg(MKSYS_PREFIX_ON, snapshot->log_filename, snapshot->log_level, MKSYS_LEVEL_WARNING,
+						"src: %s:%d, type: %s, dst: %s:%d, status: reject_rewritefailed, username: %s\n",
+						(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, proxyinfo.address, proxyinfo.port, inbound_info.username
+					);
+					close(*socket_out);
+					close(socket_in);
+					packet_destroy(inbound_info);
+					return CONNECTION_SETUP_EABORT;
 				}
 			} else {
 				send(*socket_out, inbound, packlen_inbound, 0);

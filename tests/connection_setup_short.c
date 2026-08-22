@@ -70,7 +70,7 @@ static size_t connection_setup_short_test_legacy_packet(uint8_t *destination, co
 	return packet_write_legacy_motd(destination, packet);
 }
 
-static size_t connection_setup_short_test_modern_packet(uint8_t *destination, intent_t intent, varint_t version) {
+static size_t connection_setup_short_test_modern_packet(uint8_t *destination, size_t destination_size, intent_t intent, varint_t version) {
 	p_handshake packet;
 	memset(&packet, 0, sizeof(packet));
 	packet.address = (void *)"status.example";
@@ -78,7 +78,7 @@ static size_t connection_setup_short_test_modern_packet(uint8_t *destination, in
 	packet.port = 25565;
 	packet.version = version;
 	packet.username = (void *)"player";
-	return packet_write(destination, packet);
+	return packet_write(destination, destination_size, packet);
 }
 
 static bool connection_setup_short_test_classification(void) {
@@ -105,11 +105,11 @@ static bool connection_setup_short_test_classification(void) {
 	CHECK(plan.request == NULL && plan.response == NULL, "destroy did not clear LEGACYM1 plan");
 	CHECK(connection_setup_short_prepare(&plan, &snapshot, client, legacy_m2, sizeof(legacy_m2)) == CONNECTION_SETUP_SHORT_RESPOND, "LEGACYM2 was not answered locally");
 	connection_setup_short_destroy(&plan);
-	modern_size = connection_setup_short_test_modern_packet(modern, CLIENT_INTENT_LOGIN, PVERDB_R_1_20_1 + 1U);
+	modern_size = connection_setup_short_test_modern_packet(modern, sizeof(modern), CLIENT_INTENT_LOGIN, PVERDB_R_1_20_1 + 1U);
 	CHECK(connection_setup_short_prepare(&plan, &snapshot, client, modern, modern_size) == CONNECTION_SETUP_SHORT_ABORT, "modern LOGIN accepted as short");
-	modern_size = connection_setup_short_test_modern_packet(modern, CLIENT_INTENT_TRANSFER, PVERDB_R_1_20_1 + 1U);
+	modern_size = connection_setup_short_test_modern_packet(modern, sizeof(modern), CLIENT_INTENT_TRANSFER, PVERDB_R_1_20_1 + 1U);
 	CHECK(connection_setup_short_prepare(&plan, &snapshot, client, modern, modern_size) == CONNECTION_SETUP_SHORT_ABORT, "modern TRANSFER accepted as short");
-	modern_size = connection_setup_short_test_modern_packet(modern, CLIENT_INTENT_STATUS, 0);
+	modern_size = connection_setup_short_test_modern_packet(modern, sizeof(modern), CLIENT_INTENT_STATUS, 0);
 	CHECK(connection_setup_short_prepare(&plan, &snapshot, client, modern, modern_size) == CONNECTION_SETUP_SHORT_RESPOND, "modern1 STATUS was not answered locally");
 	connection_setup_short_destroy(&plan);
 	return true;
@@ -142,7 +142,7 @@ static bool connection_setup_short_test_legacy_connect(void) {
 
 static bool connection_setup_short_test_modern_connect(void) {
 	uint8_t initial[BUFSIZ];
-	size_t initial_size = connection_setup_short_test_modern_packet(initial, CLIENT_INTENT_STATUS, PVERDB_R_1_20_1 + 1U);
+	size_t initial_size = connection_setup_short_test_modern_packet(initial, sizeof(initial), CLIENT_INTENT_STATUS, PVERDB_R_1_20_1 + 1U);
 	connection_setup_snapshot snapshot = connection_setup_short_test_snapshot(CONNECTION_SETUP_ROUTE_READY, true, false);
 	net_addrbundle client = connection_setup_short_test_client();
 	connection_setup_short_plan plan;
@@ -175,7 +175,7 @@ static bool connection_setup_short_test_responses(void) {
 	CHECK(connection_setup_short_prepare(&plan, &snapshot, client, initial, initial_size) == CONNECTION_SETUP_SHORT_RESPOND, "legacy unavailable route did not respond");
 	CHECK(plan.request == NULL && plan.response_size == expected_size && memcmp(plan.response, expected, expected_size) == 0, "legacy unavailable response mismatch");
 	connection_setup_short_destroy(&plan);
-	initial_size = connection_setup_short_test_modern_packet(initial, CLIENT_INTENT_STATUS, PVERDB_R_1_20_1 + 1U);
+	initial_size = connection_setup_short_test_modern_packet(initial, sizeof(initial), CLIENT_INTENT_STATUS, PVERDB_R_1_20_1 + 1U);
 	expected_size = make_motd(expected, "[Proxy] Server Temporarily Unavailable.", PVERDB_R_1_20_1 + 1U, snapshot.icon_b64);
 	CHECK(connection_setup_short_prepare(&plan, &snapshot, client, initial, initial_size) == CONNECTION_SETUP_SHORT_RESPOND, "modern unavailable route did not respond");
 	CHECK(plan.request == NULL && plan.response_size == expected_size && memcmp(plan.response, expected, expected_size) == 0, "modern unavailable response mismatch");
@@ -195,7 +195,7 @@ static bool connection_setup_short_test_arguments(void) {
 	CHECK(connection_setup_short_prepare(&plan, &snapshot, client, initial, sizeof(initial)) == CONNECTION_SETUP_SHORT_RESPOND, "legacy local response required route validation");
 	connection_setup_short_destroy(&plan);
 	uint8_t modern[BUFSIZ];
-	size_t modern_size = connection_setup_short_test_modern_packet(modern, CLIENT_INTENT_STATUS, PVERDB_R_1_20_1 + 1U);
+	size_t modern_size = connection_setup_short_test_modern_packet(modern, sizeof(modern), CLIENT_INTENT_STATUS, PVERDB_R_1_20_1 + 1U);
 	CHECK(connection_setup_short_prepare(&plan, &snapshot, client, modern, modern_size) == CONNECTION_SETUP_SHORT_ABORT, "invalid ready endpoint accepted");
 	return true;
 }

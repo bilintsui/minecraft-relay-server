@@ -39,6 +39,14 @@ static size_t make_message(void *dst, const void *src) {
 	return payload_length;
 }
 
+static size_t varint_size(varint_t value) {
+	size_t result = 1;
+	while ((value >>= 7) != 0) {
+		result++;
+	}
+	return result;
+}
+
 /* section: functions (exported) */
 size_t make_kickreason(void *dst, const void *src) {
 	void *input;
@@ -195,20 +203,43 @@ cleanup:
 	return result;
 }
 
-size_t packet_write(void *dst, const p_handshake src) {
+size_t packet_write(void *dst, size_t dst_capacity, const p_handshake src) {
 	uint8_t *part1, *part2, *ptr_dst, *ptr_part1, *ptr_part2;
 	size_t address_length, address_length_pure, size, size_part1, size_part2, username_length;
-	ptr_part1 = part1 = calloc(1, BUFSIZ);
-	ptr_part2 = part2 = calloc(1, BUFSIZ);
-	ptr_dst = dst;
-	ptr_part1 = int2varint(src.id_part1, ptr_part1);
-	ptr_part1 = int2varint(src.version, ptr_part1);
+	if (dst == NULL || src.address == NULL) {
+		return 0;
+	}
 	address_length = address_length_pure = strlen(src.address);
+	if (address_length_pure > PROTOHANDSHAKE_ADDRESSMAXLEN) {
+		return 0;
+	}
 	if (src.version_fml == 1) {
 		address_length += 5;
 	} else if (src.version_fml == 2) {
 		address_length += 6;
 	}
+	username_length = 0;
+	if ((src.nextstate == CLIENT_INTENT_LOGIN) || (src.nextstate == CLIENT_INTENT_TRANSFER)) {
+		if (src.username == NULL) {
+			return 0;
+		}
+		username_length = strlen(src.username);
+		/* The 8-byte reserve covers the id, username-length, and legacy placeholder varints, keeping both staging buffers within BUFSIZ. */
+		if (username_length > PROTOHANDSHAKE_USERNAMEMAXLEN || (src.signature_data_length > 0 && src.signature_data == NULL)
+			|| src.signature_data_length > BUFSIZ - username_length - 8U) {
+			return 0;
+		}
+	}
+	ptr_part1 = part1 = calloc(1, BUFSIZ);
+	ptr_part2 = part2 = calloc(1, BUFSIZ);
+	if (part1 == NULL || part2 == NULL) {
+		free(part1);
+		free(part2);
+		return 0;
+	}
+	ptr_dst = dst;
+	ptr_part1 = int2varint(src.id_part1, ptr_part1);
+	ptr_part1 = int2varint(src.version, ptr_part1);
 	ptr_part1 = int2varint(address_length, ptr_part1);
 	memcpy(ptr_part1, src.address, address_length_pure);
 	if (src.version_fml == 1) {
@@ -223,7 +254,6 @@ size_t packet_write(void *dst, const p_handshake src) {
 	size_part1 = ptr_part1 - part1;
 	ptr_part2 = int2varint(src.id_part2, ptr_part2);
 	if ((src.nextstate == CLIENT_INTENT_LOGIN) || (src.nextstate == CLIENT_INTENT_TRANSFER)) {
-		username_length = strlen(src.username);
 		ptr_part2 = int2varint(username_length, ptr_part2);
 		memcpy(ptr_part2, src.username, username_length);
 		ptr_part2 += username_length;
@@ -236,6 +266,11 @@ size_t packet_write(void *dst, const p_handshake src) {
 		}
 	}
 	size_part2 = ptr_part2 - part2;
+	if (dst_capacity < varint_size(size_part1) + size_part1 + varint_size(size_part2) + size_part2) {
+		free(part1);
+		free(part2);
+		return 0;
+	}
 	ptr_dst = int2varint(size_part1, ptr_dst);
 	memcpy(ptr_dst, part1, size_part1);
 	ptr_dst += size_part1;

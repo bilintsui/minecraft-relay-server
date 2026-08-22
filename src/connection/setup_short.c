@@ -154,7 +154,7 @@ static bool connection_setup_short_plan_request_modern(connection_setup_short_pl
 	const char *destination = connection_setup_destination(&plan->snapshot.endpoint);
 	packet.address = (void *)destination;
 	packet.port = plan->snapshot.endpoint.port;
-	size_t written = packet_write(payload, packet);
+	size_t written = packet_write(payload, CONNECTION_SETUP_SHORT_PACKET_SCRATCH_SIZE, packet);
 	packet.address = old_address;
 	packet.port = old_port;
 	packet_destroy(packet);
