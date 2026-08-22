@@ -112,8 +112,8 @@
 #endif
 
 /* logging macro */
-#define LISTENER_LOG(ctx, lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, (ctx)->log_filename, (ctx)->config->log.level, lvl, __VA_ARGS__)
-#define LISTENER_LOG_TERMINAL(ctx, lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, (ctx)->config->log.level, lvl, __VA_ARGS__)
+#define LISTENER_LOG(ctx, lvl, ...)	MKSYS_LOG((ctx)->log_filename, (ctx)->config->log.level, lvl, __VA_ARGS__)
+#define LISTENER_LOG_TERMINAL(ctx, lvl, ...)	MKSYS_LOG(MKSYS_NOLOGFILE, (ctx)->config->log.level, lvl, __VA_ARGS__)
 
 /* section: types */
 typedef enum {
@@ -311,8 +311,11 @@ static void listener_backoff(void) {
 }
 
 static void listener_bind_success_msg(const listener_context *context) {
-	LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION, "Bind Successful.\n\n");
-	LISTENER_LOG_TERMINAL(context, MKSYS_LEVEL_INFORMATION, "For more information, see log file: %s\n\n", context->config->log.filename);
+	mksysmsg(MKSYS_PREFIX_ON, context->log_filename, context->config->log.level, MKSYS_LEVEL_INFORMATION, MKSYS_PARAGRAPH_END, "Bind Successful.");
+	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, context->config->log.level, MKSYS_LEVEL_INFORMATION, MKSYS_PARAGRAPH_END,
+		"For more information, see log file: %s",
+		context->config->log.filename
+	);
 }
 
 static net_addrbundle listener_client_address_parse(const listener_client_address *addr) {
@@ -925,20 +928,25 @@ static void listener_connection_short_log(const listener_connection *connection,
 	const char *destination = endpoint->target_name[0] == '\0' ? endpoint->configured_address : endpoint->target_name;
 	const char *source = (const char *)&plan->inbound_address.address;
 	if (plan->result == CONNECTION_SETUP_EOLDCLIENT) {
-		mksysmsg(MKSYS_PREFIX_ON, plan->snapshot.log_filename, plan->snapshot.log_level, MKSYS_LEVEL_WARNING,
-			"src: %s:%d, type: motd, status: %s\n", source, plan->inbound_address.port,
-			plan->protocol == PVER_MODERN1 ? "reject_motdrelay_13w41*" : "reject_motdrelay_oldclient");
+		CONNECTION_SETUP_LOG(&plan->snapshot, MKSYS_LEVEL_WARNING,
+			"src: %s:%d, type: motd, status: %s",
+			source, plan->inbound_address.port, plan->protocol == PVER_MODERN1 ? "reject_motdrelay_13w41*" : "reject_motdrelay_oldclient"
+		);
 	} else if (plan->result == CONNECTION_SETUP_ENOVHOST) {
-		mksysmsg(MKSYS_PREFIX_ON, plan->snapshot.log_filename, plan->snapshot.log_level, MKSYS_LEVEL_WARNING,
-			"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid\n", source, plan->inbound_address.port, endpoint->vhost);
+		CONNECTION_SETUP_LOG(&plan->snapshot, MKSYS_LEVEL_WARNING,
+			"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid",
+			source, plan->inbound_address.port, endpoint->vhost
+		);
 	} else if (plan->result == CONNECTION_SETUP_ENORECORD) {
-		mksysmsg(MKSYS_PREFIX_ON, plan->snapshot.log_filename, plan->snapshot.log_level, MKSYS_LEVEL_WARNING,
-			"src: %s:%d, type: motd, vhost: %s, status: reject_dstnoresolve\n", source, plan->inbound_address.port, endpoint->vhost);
+		CONNECTION_SETUP_LOG(&plan->snapshot, MKSYS_LEVEL_WARNING,
+			"src: %s:%d, type: motd, vhost: %s, status: reject_dstnoresolve",
+			source, plan->inbound_address.port, endpoint->vhost
+		);
 	} else if (plan->result == CONNECTION_SETUP_OK) {
-		mksysmsg(MKSYS_PREFIX_ON, plan->snapshot.log_filename, plan->snapshot.log_level,
-			connected ? MKSYS_LEVEL_INFORMATION + 1 : MKSYS_LEVEL_WARNING,
-			"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: %s\n", source, plan->inbound_address.port, endpoint->vhost, destination,
-			endpoint->port, connected ? "accept" : "reject_dstnoconnect");
+		CONNECTION_SETUP_LOG(&plan->snapshot, connected ? MKSYS_LEVEL_INFORMATION + 1 : MKSYS_LEVEL_WARNING,
+			"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: %s",
+			source, plan->inbound_address.port, endpoint->vhost, destination, endpoint->port, connected ? "accept" : "reject_dstnoconnect"
+		);
 	}
 }
 
@@ -1468,8 +1476,10 @@ static bool listener_generation_create(listener_context *context, conf *config, 
 	if (status == ROUTE_GENERATION_CREATE_OK) {
 		return true;
 	}
-	LISTENER_LOG(context, failure_level, "Cannot own prepared proxy route generation: %s%s.\n",
-		status == ROUTE_GENERATION_CREATE_MEMORY ? "memory allocation failed" : "invalid internal generation state", failure_action);
+	LISTENER_LOG(context, failure_level,
+		"Cannot own prepared proxy route generation: %s%s.",
+		status == ROUTE_GENERATION_CREATE_MEMORY ? "memory allocation failed" : "invalid internal generation state", failure_action
+	);
 	return false;
 }
 
@@ -1511,19 +1521,21 @@ static bool listener_hosts_prepare(listener_context *context, mksys_level failur
 	size_t malformed_line_count = 0;
 	hosts_load_status status = hosts_table_load(LISTENER_HOSTS_FILENAME, result, &malformed_line_count);
 	if (status != HOSTS_LOAD_OK && status != HOSTS_LOAD_FILE_ERROR) {
-		LISTENER_LOG(context, failure_level, "Cannot prepare local static host table from %s: %s%s.\n", LISTENER_HOSTS_FILENAME, listener_hosts_load_error(status), failure_action);
+		LISTENER_LOG(context, failure_level, "Cannot prepare local static host table from %s: %s%s.", LISTENER_HOSTS_FILENAME, listener_hosts_load_error(status), failure_action);
 		return false;
 	}
 	if (*result == NULL) {
-		LISTENER_LOG(context, failure_level, "Cannot prepare local static host table from %s: loader returned no table%s.\n", LISTENER_HOSTS_FILENAME, failure_action);
+		LISTENER_LOG(context, failure_level, "Cannot prepare local static host table from %s: loader returned no table%s.", LISTENER_HOSTS_FILENAME, failure_action);
 		return false;
 	}
 	if (status == HOSTS_LOAD_FILE_ERROR) {
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot read local static host table from %s; using guaranteed localhost entries.\n", LISTENER_HOSTS_FILENAME);
+		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot read local static host table from %s; using guaranteed localhost entries.", LISTENER_HOSTS_FILENAME);
 	}
 	if (malformed_line_count > 0) {
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Ignored %zu malformed line%s while loading local static host table from %s.\n", malformed_line_count,
-			malformed_line_count == 1 ? "" : "s", LISTENER_HOSTS_FILENAME);
+		LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
+			"Ignored %zu malformed line%s while loading local static host table from %s.",
+			malformed_line_count, malformed_line_count == 1 ? "" : "s", LISTENER_HOSTS_FILENAME
+		);
 	}
 	return true;
 }
@@ -1570,7 +1582,7 @@ static bool listener_route_bindings_prepare(listener_context *context, const rou
 			reason = "invalid internal binding state";
 			break;
 	}
-	LISTENER_LOG(context, failure_level, "Cannot prepare proxy resolver bindings: %s%s.\n", reason, failure_action);
+	LISTENER_LOG(context, failure_level, "Cannot prepare proxy resolver bindings: %s%s.", reason, failure_action);
 	return false;
 }
 
@@ -1585,7 +1597,7 @@ static listener_route_prepare_status listener_route_resolution_prepare(listener_
 		return LISTENER_ROUTE_PREPARE_OK;
 	}
 	const char *reason = status == ROUTE_RESOLUTION_BUILD_MEMORY ? "memory allocation failed" : "invalid internal resolution state";
-	LISTENER_LOG(context, failure_level, "Cannot prepare proxy route resolution: %s%s.\n", reason, failure_action);
+	LISTENER_LOG(context, failure_level, "Cannot prepare proxy route resolution: %s%s.", reason, failure_action);
 	return LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR;
 }
 
@@ -1599,8 +1611,10 @@ static listener_route_prepare_status listener_generation_prepare(listener_contex
 	route_table *routes = NULL;
 	route_table_build_status route_status = route_table_build(*config, &routes);
 	if (route_status != ROUTE_TABLE_BUILD_OK) {
-		LISTENER_LOG(context, failure_level, "Cannot prepare proxy routes: %s%s.\n",
-			route_status == ROUTE_TABLE_BUILD_MEMORY ? "memory allocation failed" : "invalid internal route state", failure_action);
+		LISTENER_LOG(context, failure_level,
+			"Cannot prepare proxy routes: %s%s.",
+			route_status == ROUTE_TABLE_BUILD_MEMORY ? "memory allocation failed" : "invalid internal route state", failure_action
+		);
 		return LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR;
 	}
 	if (!listener_route_bindings_prepare(context, routes, *hosts, failure_level, failure_action, &bindings)) {
@@ -1658,9 +1672,13 @@ static int listener_route_runtime_ready(listener_context *context, listener_rout
 		fclose(stderr);
 	}
 	if (warmup_complete) {
-		LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION, "Initial proxy route warm-up finished; accepting connections.\n");
+		mksysmsg(MKSYS_PREFIX_ON, context->log_filename, context->config->log.level, MKSYS_LEVEL_INFORMATION, MKSYS_PARAGRAPH_END,
+			"Initial proxy route warm-up finished; accepting connections."
+		);
 	} else {
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Initial proxy route warm-up deadline reached; accepting connections while prewarming continues.\n");
+		mksysmsg(MKSYS_PREFIX_ON, context->log_filename, context->config->log.level, MKSYS_LEVEL_WARNING, MKSYS_PARAGRAPH_END,
+			"Initial proxy route warm-up deadline reached; accepting connections while prewarming continues."
+		);
 	}
 	return 0;
 }
@@ -1674,12 +1692,14 @@ static int listener_route_runtime_schedule(listener_context *context, listener_r
 	}
 	if (status == ROUTE_PREWARM_CAPACITY || status == ROUTE_PREWARM_MEMORY) {
 		if (!runtime->pressure_logged) {
-			LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Proxy route prewarming paused by local resolver %s pressure; it will resume after later resolver activity.\n",
-				status == ROUTE_PREWARM_CAPACITY ? "capacity" : "memory");
+			LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
+				"Proxy route prewarming paused by local resolver %s pressure; it will resume after later resolver activity.",
+				status == ROUTE_PREWARM_CAPACITY ? "capacity" : "memory"
+			);
 			runtime->pressure_logged = true;
 		}
 	} else if (runtime->pressure_logged) {
-		LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION, "Proxy route prewarming resumed after local resolver pressure.\n");
+		LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION, "Proxy route prewarming resumed after local resolver pressure.");
 		runtime->pressure_logged = false;
 	}
 	bool deadline_reached = timeutil_compare(now, &runtime->deadline) >= 0;
@@ -1778,8 +1798,8 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 	int result = 0;
 	char config_logfull_old[PATH_MAX];
 	snprintf(config_logfull_old, sizeof(config_logfull_old), "%s", context->log_filename);
-	mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
-		"Reloading config from file: %s\n",
+	MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
+		"Reloading config from file: %s",
 		context->config_filename
 	);
 	hosts_table *hosts_candidate = NULL;
@@ -1794,22 +1814,22 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 			listener_endpoint candidate_endpoint;
 			listener_endpoint_status endpoint_status = listener_endpoint_prepare(config_candidate, &candidate_endpoint);
 			if (endpoint_status == LISTENER_ENDPOINT_BAD_ADDRESS) {
-				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-					"Error in configurations: Invalid candidate bind address, will keep your old configurations.\n"
+				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+					"Error in configurations: Invalid candidate bind address, will keep your old configurations."
 				);
 				break;
 			}
 			if (endpoint_status == LISTENER_ENDPOINT_BAD_PORT) {
-				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-					"Error in configurations: Invalid candidate bind port, will keep your old configurations.\n"
+				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+					"Error in configurations: Invalid candidate bind port, will keep your old configurations."
 				);
 				break;
 			}
 			char config_logfull_candidate[PATH_MAX];
 			resolve_path(config_candidate->log.filename, context->working_directory, config_logfull_candidate, sizeof(config_logfull_candidate));
 			if (log_file_validate(config_logfull_candidate) == -1) {
-				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-					"Cannot write candidate log to \"%s\", will keep your old configurations.\n",
+				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+					"Cannot write candidate log to \"%s\", will keep your old configurations.",
 					config_candidate->log.filename
 				);
 				break;
@@ -1818,15 +1838,18 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 				break;
 			}
 			if (hosts_candidate == NULL && !hosts_table_clone(context->hosts, &hosts_candidate)) {
-				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-					"Cannot clone the existing local static host table for the candidate generation, will keep your old configurations.\n");
+				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+					"Cannot clone the existing local static host table for the candidate generation, will keep your old configurations."
+				);
 				break;
 			}
 			listener_route_prepare_status prepare_status = listener_generation_prepare(context, &config_candidate, &hosts_candidate, MKSYS_LEVEL_WARNING,
 				", will keep your old configurations", &generation_candidate);
 			if (prepare_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
-				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
-					"Cannot sample the monotonic clock while preparing candidate proxy route resolution: %s\n", strerror(errno));
+				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
+					"Cannot sample the monotonic clock while preparing candidate proxy route resolution: %s",
+					strerror(errno)
+				);
 				result = -1;
 				break;
 			}
@@ -1837,52 +1860,53 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 				net_addrp candidate_address = net_ntop(candidate_endpoint.address.family, &(candidate_endpoint.address.addr), true);
 				listener_socket_replace_status replace_status = listener_socket_replace(listener, &candidate_endpoint, events);
 				if (replace_status == LISTENER_SOCKET_REPLACE_CANDIDATE_ERROR) {
-					mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-						"Cannot activate candidate listening endpoint %s:%d, will keep your old configurations.\n",
+					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+						"Cannot activate candidate listening endpoint %s:%d, will keep your old configurations.",
 						(char *)&candidate_address, candidate_endpoint.port
 					);
 					break;
 				}
 				if (replace_status == LISTENER_SOCKET_REPLACE_ACTIVE_ERROR) {
-					mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
-						"Cannot replace active listening socket: %s\n",
+					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
+						"Cannot replace active listening socket: %s",
 						strerror(errno)
 					);
 					result = -1;
 					break;
 				}
 				if (replace_status == LISTENER_SOCKET_REPLACE_ROLLBACK_ERROR) {
-					mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
-						"Cannot activate candidate listening endpoint %s:%d or restore the active listening socket.\n",
+					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
+						"Cannot activate candidate listening endpoint %s:%d or restore the active listening socket.",
 						(char *)&candidate_address, candidate_endpoint.port
 					);
 					result = -1;
 					break;
 				}
-				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
-					"Listening endpoint changed to %s:%d.\n",
+				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
+					"Listening endpoint changed to %s:%d.",
 					(char *)&candidate_address, candidate_endpoint.port
 				);
 			}
 			route_generation_registry_publish_status publish_status = listener_generation_publish(context, &generation_candidate);
 			if (publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
-				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
-					"Cannot publish the prepared proxy route generation: %s.\n",
-					publish_status == ROUTE_GENERATION_REGISTRY_PUBLISH_BLOCKED ? "a retired generation is still pinned" : "invalid internal generation state");
+				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
+					"Cannot publish the prepared proxy route generation: %s.",
+					publish_status == ROUTE_GENERATION_REGISTRY_PUBLISH_BLOCKED ? "a retired generation is still pinned" : "invalid internal generation state"
+				);
 				result = -1;
 				break;
 			}
 			snprintf(context->log_filename, sizeof(context->log_filename), "%s", config_logfull_candidate);
 			config_cache_commit(context->config_cache, &config_cache_candidate);
 			primary_published = true;
-			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
-				"Configuration reloaded.\n"
+			MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
+				"Configuration reloaded."
 			);
 			break;
 		}
 		case CONF_READ_UNCHANGED:
-			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
-				"Configuration file unchanged.\n"
+			MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
+				"Configuration file unchanged."
 			);
 			break;
 		case CONF_READ_ERROR:
@@ -1895,19 +1919,17 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 				case CONF_ECMEMORY:
 				case CONF_ECLISTENPORT:
 				case CONF_ECPROXY:
-					mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-						"%s%s%s\n",
-						config_errmsg((conf_error)errno),
-						(errno == CONF_EROPENFAIL || errno == CONF_EROPENEMPTY) ? context->config_filename : "",
-						", will keep your old configurations"
+					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+						"%s%s%s",
+						config_errmsg((conf_error)errno), (errno == CONF_EROPENFAIL || errno == CONF_EROPENEMPTY) ? context->config_filename : "", ", will keep your old configurations"
 					);
 					break;
 				case CONF_ECPROXYDUP:
 					config_log_duplicate_error(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING, ", will keep your old configurations");
 					break;
 				default:
-					mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-						"Error in processing configurations: Unknown error occurred, code: %d, will keep your old configurations\n",
+					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+						"Error in processing configurations: Unknown error occurred, code: %d, will keep your old configurations",
 						errno
 					);
 					break;
@@ -1915,8 +1937,9 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 	}
 	if (generation_candidate != NULL) {
 		if (result == 0 && hosts_prepared && hosts_candidate == NULL && !hosts_table_clone(route_generation_hosts(generation_candidate), &hosts_candidate)) {
-			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-				"Cannot preserve the candidate local static host table after route-generation activation failed.\n");
+			MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+				"Cannot preserve the candidate local static host table after route-generation activation failed."
+			);
 		}
 		route_generation_release(generation_candidate);
 		generation_candidate = NULL;
@@ -1926,11 +1949,13 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 	if (result == 0 && !primary_published && ((hosts_prepared && hosts_candidate != NULL) || read_status == CONF_READ_UNCHANGED)) {
 		bool publish_hosts = hosts_prepared && hosts_candidate != NULL;
 		if (!config_clone(context->config, &config_candidate)) {
-			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-				"Cannot clone the active configuration for a replacement route generation, keeping the existing generation.\n");
+			MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+				"Cannot clone the active configuration for a replacement route generation, keeping the existing generation."
+			);
 		} else if (hosts_candidate == NULL && !hosts_table_clone(context->hosts, &hosts_candidate)) {
-			mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-				"Cannot clone the active local static host table for a replacement route generation, keeping the existing generation.\n");
+			MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
+				"Cannot clone the active local static host table for a replacement route generation, keeping the existing generation."
+			);
 		} else {
 			if (read_status == CONF_READ_UNCHANGED) {
 				config_icon_load(config_candidate, config_logfull_old, config_maxlevel, "keeping existing icon");
@@ -1938,18 +1963,21 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 			listener_route_prepare_status prepare_status = listener_generation_prepare(context, &config_candidate, &hosts_candidate, MKSYS_LEVEL_WARNING,
 				", keeping the existing generation", &generation_candidate);
 			if (prepare_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
-				mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
-					"Cannot sample the monotonic clock while preparing local static host route resolution: %s\n", strerror(errno));
+				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
+					"Cannot sample the monotonic clock while preparing local static host route resolution: %s",
+					strerror(errno)
+				);
 				result = -1;
 			} else if (prepare_status == LISTENER_ROUTE_PREPARE_OK) {
 				route_generation_registry_publish_status publish_status = listener_generation_publish(context, &generation_candidate);
 				if (publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
-					mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
-						"Cannot publish the replacement proxy route generation: %s.\n",
-						publish_status == ROUTE_GENERATION_REGISTRY_PUBLISH_BLOCKED ? "a retired generation is still pinned" : "invalid internal generation state");
+					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
+						"Cannot publish the replacement proxy route generation: %s.",
+						publish_status == ROUTE_GENERATION_REGISTRY_PUBLISH_BLOCKED ? "a retired generation is still pinned" : "invalid internal generation state"
+					);
 					result = -1;
 				} else if (publish_hosts) {
-					mksysmsg(MKSYS_PREFIX_ON, config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION, "Local static host table reloaded.\n");
+					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION, "Local static host table reloaded.");
 				}
 			}
 		}
@@ -2055,7 +2083,7 @@ static exit_code listener_worker_run(int client_fd, const listener_client_addres
 	listener_socket_close(listener);
 	listener_resolver_dispose_in_child(context);
 	if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1) {
-		mksysmsg(MKSYS_PREFIX_ON, snapshot->log_filename, snapshot->log_level, MKSYS_LEVEL_WARNING, "Cannot configure worker parent-death signal: %s\n", strerror(errno));
+		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING, "Cannot configure worker parent-death signal: %s", strerror(errno));
 		listener_worker_route_state_dispose(context);
 		return EXITCODE_INTERNAL;
 	}
@@ -2064,7 +2092,7 @@ static exit_code listener_worker_run(int client_fd, const listener_client_addres
 		return EXITCODE_OK;
 	}
 	if (listener_worker_signals_restore(&events->previous_signal_mask) == -1) {
-		mksysmsg(MKSYS_PREFIX_ON, snapshot->log_filename, snapshot->log_level, MKSYS_LEVEL_WARNING, "Cannot restore worker signal state: %s\n", strerror(errno));
+		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING, "Cannot restore worker signal state: %s", strerror(errno));
 		listener_worker_route_state_dispose(context);
 		return EXITCODE_INTERNAL;
 	}
@@ -2083,13 +2111,13 @@ static void listener_connection_dispatch(listener_connection *connections, liste
 	connection_setup_snapshot snapshot;
 	if (!listener_connection_snapshot_prepare(connection, context, &snapshot)
 		|| !listener_connection_route_release(connection, context->resolver, now)) {
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot prepare a self-contained worker handoff.\n");
+		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot prepare a self-contained worker handoff.");
 		connection->closing = true;
 		return;
 	}
 	int socket_flags = fcntl(connection->socket_fd, F_GETFL);
 	if (socket_flags == -1 || fcntl(connection->socket_fd, F_SETFL, socket_flags & ~O_NONBLOCK) == -1) {
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot prepare client connection for worker: %s\n", strerror(errno));
+		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot prepare client connection for worker: %s", strerror(errno));
 		connection->closing = true;
 		return;
 	}
@@ -2101,7 +2129,7 @@ static void listener_connection_dispatch(listener_connection *connections, liste
 	if (worker_pid < 0) {
 		int saved_errno = errno;
 		connection->closing = true;
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot create worker process: %s\n", strerror(saved_errno));
+		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot create worker process: %s", strerror(saved_errno));
 		listener_backoff();
 		return;
 	}
@@ -2146,13 +2174,13 @@ static int listener_connections_route_progress(listener_connection *connections,
 static exit_code listener_loop(listener_context *context, listener_socket *listener) {
 	listener_events events;
 	if (listener_events_init(&events) == -1) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize listener event loop: %s\n", strerror(errno));
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize listener event loop: %s", strerror(errno));
 		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
 	}
 	context->generations = route_generation_registry_create();
 	if (context->generations == NULL) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize proxy route generation ownership: memory allocation failed.\n");
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize proxy route generation ownership: memory allocation failed.");
 		listener_events_destroy(&events);
 		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
@@ -2163,7 +2191,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		return EXITCODE_INTERNAL;
 	}
 	if (listener_resolver_init(context, &events) == -1) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize resolver runtime: %s\n", strerror(errno));
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize resolver runtime: %s", strerror(errno));
 		listener_resolver_destroy(context);
 		listener_events_destroy(&events);
 		listener_socket_close(listener);
@@ -2179,7 +2207,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		&context->route_resolution);
 	if (resolution_status != LISTENER_ROUTE_PREPARE_OK) {
 		if (resolution_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock while preparing proxy route resolution: %s\n", strerror(errno));
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock while preparing proxy route resolution: %s", strerror(errno));
 		}
 		listener_resolver_destroy(context);
 		listener_events_destroy(&events);
@@ -2196,7 +2224,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 	}
 	route_generation_registry_publish_status initial_publish_status = listener_generation_publish(context, &initial_generation);
 	if (initial_publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot publish the initial proxy route generation: invalid internal generation state.\n");
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot publish the initial proxy route generation: invalid internal generation state.");
 		route_generation_release(initial_generation);
 		context->config = NULL;
 		context->hosts = NULL;
@@ -2213,7 +2241,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 	listener_route_runtime route_runtime;
 	if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1 || listener_route_runtime_start(&route_runtime, &events, &route_now) == -1
 		|| listener_route_runtime_schedule(context, &route_runtime, &events, listener, &route_now) == -1) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot start proxy route prewarming: %s\n", strerror(errno));
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot start proxy route prewarming: %s", strerror(errno));
 		listener_resolver_destroy(context);
 		listener_events_destroy(&events);
 		listener_socket_close(listener);
@@ -2229,30 +2257,30 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 	while (1) {
 		listener_requests requests;
 		if (listener_events_wait(&events, &requests) == -1) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Listener event loop failed: %s\n", strerror(errno));
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Listener event loop failed: %s", strerror(errno));
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
 		if (requests.resolver_ready || requests.route_timer_ready) {
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock for route resolution: %s\n", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock for route resolution: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 			if (requests.resolver_ready && listener_resolver_events_process(context, connections, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Resolver event processing failed: %s\n", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Resolver event processing failed: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 			if (requests.route_timer_ready && listener_route_timer_drain(&events) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot consume the route warm-up timer: %s\n", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot consume the route warm-up timer: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 		}
 		if (requests.stop && !shutting_down) {
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock while closing listener connections: %s\n", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock while closing listener connections: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
@@ -2261,7 +2289,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			}
 			connection_count = 0;
 			if (listener_route_timer_set(&events, NULL) == -1 || listener_resolver_shutdown(context) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot shut down resolver runtime: %s\n", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot shut down resolver runtime: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
@@ -2277,7 +2305,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			reload_pending = true;
 		}
 		if (requests.resolver_ready && listener_connections_route_progress(connections, listener, &events, listener_pid, context, &route_now) == -1) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Connection route resolution failed: %s\n", strerror(errno));
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Connection route resolution failed: %s", strerror(errno));
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
@@ -2285,7 +2313,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		bool reload_processed = false;
 		if (route_runtime.ready && reload_pending && route_generation_registry_retired(context->generations) == NULL) {
 			if (listener_notify_reloading() == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot create systemd reload timestamp: %s\n", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot create systemd reload timestamp: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
@@ -2304,14 +2332,14 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		if (route_activity) {
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1
 				|| listener_route_runtime_schedule(context, &route_runtime, &events, listener, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Proxy route prewarming failed: %s\n", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Proxy route prewarming failed: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 		}
 		if (route_runtime.ready && reload_pending && route_generation_registry_retired(context->generations) == NULL) {
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1 || listener_route_timer_set(&events, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot resume a deferred configuration reload: %s\n", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot resume a deferred configuration reload: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
@@ -2319,7 +2347,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		/* Consume socket data before timers from the same epoll batch, then reject only a still-current deadline. */
 		for (int timeout_pass = 0; timeout_pass <= 1; timeout_pass++) {
 			if (timeout_pass == 1 && clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock while processing connection deadlines: %s\n", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock while processing connection deadlines: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				goto cleanup;
 			}
@@ -2352,13 +2380,15 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 					progress = listener_connection_ready(connections, connection, listener, &events, listener_pid, context, &route_now);
 				}
 				if (progress == LISTENER_CONNECTION_FATAL) {
-					LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Connection state processing failed: %s\n", strerror(errno));
+					LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Connection state processing failed: %s", strerror(errno));
 					exitcode = EXITCODE_INTERNAL;
 					goto cleanup;
 				} else if (progress == LISTENER_CONNECTION_ABORT) {
 					net_addrbundle client = listener_client_address_parse(&connection->address);
-					LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "src: %s:%d, status: %s\n", (char *)&client.address, client.port,
-						connection->state == LISTENER_CONNECTION_INITIAL ? "abort_init" : "abort_short");
+					LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
+						"src: %s:%d, status: %s",
+						(char *)&client.address, client.port, connection->state == LISTENER_CONNECTION_INITIAL ? "abort_init" : "abort_short"
+					);
 					connection->closing = true;
 				} else if (progress == LISTENER_CONNECTION_CLOSED) {
 					connection->closing = true;
@@ -2366,7 +2396,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			}
 #ifdef LISTENER_TIMER_REARM_TEST
 			if (timeout_pass == 0 && listener_connection_timer_test_rearm(&requests) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot run the timer rearm regression hook: %s\n", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot run the timer rearm regression hook: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				goto cleanup;
 			}
@@ -2374,7 +2404,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		}
 		size_t destroyed_count = listener_connections_destroy_closed(&connections, &events, context->resolver, &route_now);
 		if (destroyed_count > connection_count) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Listener connection accounting failed.\n");
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Listener connection accounting failed.");
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
@@ -2397,11 +2427,11 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 					continue;
 				}
 				if (errno == EMFILE || errno == ENFILE) {
-					LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot accept client connection: %s\n", strerror(errno));
+					LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot accept client connection: %s", strerror(errno));
 					listener_backoff();
 					break;
 				}
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot accept client connection: %s\n", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot accept client connection: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				goto cleanup;
 			}
@@ -2412,14 +2442,14 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			route_generation *generation = route_generation_registry_active_retain(context->generations);
 			if (generation == NULL) {
 				close(client_fd);
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot retain the active route generation for a client connection.\n");
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot retain the active route generation for a client connection.");
 				exitcode = EXITCODE_INTERNAL;
 				goto cleanup;
 			}
 			listener_connection *connection = listener_connection_create(client_fd, &client_address, &events, generation);
 			if (connection == NULL) {
 				int saved_errno = errno;
-				LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot track client connection: %s\n", strerror(saved_errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot track client connection: %s", strerror(saved_errno));
 				listener_backoff();
 				break;
 			}
@@ -2457,26 +2487,28 @@ exit_code listener_run(conf *config, conf_cache *config_cache, const char *confi
 	listener_socket listener = { .fd = -1 };
 	listener_endpoint_status endpoint_status = listener_endpoint_prepare(context.config, &listener.endpoint);
 	if (endpoint_status == LISTENER_ENDPOINT_BAD_ADDRESS) {
-		LISTENER_LOG(&context, MKSYS_LEVEL_CRITICAL, "Error: Invalid bind address!\n");
+		LISTENER_LOG(&context, MKSYS_LEVEL_CRITICAL, "Error: Invalid bind address!");
 		exitcode = EXITCODE_BINDFAIL;
 		goto cleanup;
 	}
 	if (endpoint_status == LISTENER_ENDPOINT_BAD_PORT) {
-		LISTENER_LOG(&context, MKSYS_LEVEL_CRITICAL, "Error: Invalid bind port!\n");
+		LISTENER_LOG(&context, MKSYS_LEVEL_CRITICAL, "Error: Invalid bind port!");
 		exitcode = EXITCODE_BADPORT;
 		goto cleanup;
 	}
 	route_table_build_status route_status = route_table_build(context.config, &context.routes);
 	if (route_status != ROUTE_TABLE_BUILD_OK) {
-		LISTENER_LOG(&context, MKSYS_LEVEL_CRITICAL, "Cannot prepare proxy routes: %s.\n",
-			route_status == ROUTE_TABLE_BUILD_MEMORY ? "memory allocation failed" : "invalid internal route state");
+		LISTENER_LOG(&context, MKSYS_LEVEL_CRITICAL,
+			"Cannot prepare proxy routes: %s.",
+			route_status == ROUTE_TABLE_BUILD_MEMORY ? "memory allocation failed" : "invalid internal route state"
+		);
 		exitcode = EXITCODE_INTERNAL;
 		goto cleanup;
 	}
 	net_addrp bindaddrp = net_ntop(listener.endpoint.address.family, &(listener.endpoint.address.addr), true);
-	LISTENER_LOG(&context, MKSYS_LEVEL_INFORMATION, "Binding on %s:%d...\n", (char *)&bindaddrp, listener.endpoint.port);
+	LISTENER_LOG(&context, MKSYS_LEVEL_INFORMATION, "Binding on %s:%d...", (char *)&bindaddrp, listener.endpoint.port);
 	if (listener_socket_bind(&listener) == -1) {
-		LISTENER_LOG(&context, MKSYS_LEVEL_CRITICAL, "Bind Failed!\n");
+		LISTENER_LOG(&context, MKSYS_LEVEL_CRITICAL, "Bind Failed!");
 		exitcode = EXITCODE_BINDFAIL;
 		goto cleanup;
 	}

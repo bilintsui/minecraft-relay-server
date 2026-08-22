@@ -25,7 +25,7 @@
 #define DEFAULT_CONFIG_FILE	"/etc/mcrelay/config.json"
 
 /* logging macro */
-#define LOG(lvl, ...)	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, lvl, __VA_ARGS__)
+#define LOG(lvl, ...)	MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, lvl, __VA_ARGS__)
 
 /* section: types */
 typedef enum {
@@ -84,7 +84,7 @@ static exit_code load_config(const char *filename, const char *filename_full, co
 		case CONF_READ_CHANGED:
 			return EXITCODE_OK;
 		case CONF_READ_UNCHANGED:
-			LOG(MKSYS_LEVEL_CRITICAL, "Error in processing configurations: Initial config load unexpectedly reported no change.\n");
+			LOG(MKSYS_LEVEL_CRITICAL, "Error in processing configurations: Initial config load unexpectedly reported no change.");
 			return EXITCODE_INTERNAL;
 		case CONF_READ_ERROR:
 			break;
@@ -93,7 +93,7 @@ static exit_code load_config(const char *filename, const char *filename_full, co
 	switch (config_error) {
 		case CONF_EROPENFAIL:
 		case CONF_EROPENEMPTY:
-			LOG(MKSYS_LEVEL_CRITICAL, "%s%s\n", config_errmsg(config_error), filename);
+			LOG(MKSYS_LEVEL_CRITICAL, "%s%s", config_errmsg(config_error), filename);
 			return EXITCODE_NOCONFFILE;
 		case CONF_EROPENLARGE:
 		case CONF_ERMEMORY:
@@ -101,13 +101,13 @@ static exit_code load_config(const char *filename, const char *filename_full, co
 		case CONF_ERPARSE:
 		case CONF_ECLISTENPORT:
 		case CONF_ECPROXY:
-			LOG(MKSYS_LEVEL_CRITICAL, "%s\n", config_errmsg(config_error));
+			LOG(MKSYS_LEVEL_CRITICAL, "%s", config_errmsg(config_error));
 			return config_exitcode(config_error);
 		case CONF_ECPROXYDUP:
 			config_log_duplicate_error(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "");
 			return config_exitcode(config_error);
 		default:
-			LOG(MKSYS_LEVEL_CRITICAL, "Error in processing configurations: Unknown error occurred, code: %d\n", config_error);
+			LOG(MKSYS_LEVEL_CRITICAL, "Error in processing configurations: Unknown error occurred, code: %d", config_error);
 			return EXITCODE_INTERNAL;
 	}
 }
@@ -119,7 +119,7 @@ static exit_code dump_config(const char *filename) {
 	conf_cache candidate_cache = { 0 };
 	conf *parsed = NULL;
 	if (getcwd(current_directory, sizeof(current_directory)) == NULL) {
-		LOG(MKSYS_LEVEL_CRITICAL, "Error: Cannot determine current working directory.\n");
+		LOG(MKSYS_LEVEL_CRITICAL, "Error: Cannot determine current working directory.");
 		return EXITCODE_INTERNAL;
 	}
 	resolve_path(filename, current_directory, filename_full, sizeof(filename_full));
@@ -317,12 +317,12 @@ int main(int argc, char **argv) {
 	char log_filename[PATH_MAX] = { 0 };
 	char working_directory[PATH_MAX] = { 0 };
 	if (getcwd(working_directory, sizeof(working_directory)) == NULL) {
-		LOG(MKSYS_LEVEL_CRITICAL, "Error: Cannot determine current working directory.\n");
+		LOG(MKSYS_LEVEL_CRITICAL, "Error: Cannot determine current working directory.");
 		return EXITCODE_INTERNAL;
 	}
 	snprintf(config_filename, sizeof(config_filename), "%s", args.configfile);
 	resolve_path(config_filename, working_directory, config_filename_full, sizeof(config_filename_full));
-	LOG(MKSYS_LEVEL_INFORMATION, "Loading configurations from file: %s\n", config_filename);
+	LOG(MKSYS_LEVEL_INFORMATION, "Loading configurations from file: %s", config_filename);
 	conf *config = NULL;
 	conf_cache config_cache_state = { 0 };
 	conf_cache config_cache_candidate = { 0 };
@@ -334,7 +334,7 @@ int main(int argc, char **argv) {
 	}
 	resolve_path(config->log.filename, working_directory, log_filename, sizeof(log_filename));
 	if (log_file_validate(log_filename) == -1) {
-		LOG(MKSYS_LEVEL_CRITICAL, "Error: Cannot write log to \"%s\".\n", config->log.filename);
+		LOG(MKSYS_LEVEL_CRITICAL, "Error: Cannot write log to \"%s\".", config->log.filename);
 		config_destroy(config);
 		config_cache_destroy(&config_cache_candidate);
 		return EXITCODE_CANTCREAT;

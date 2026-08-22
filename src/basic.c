@@ -58,6 +58,59 @@ size_t base64_encode(void *dst, size_t dst_cap, const void *src, size_t src_len)
 	return total_blocks * 4;
 }
 
+const char *escape_default(char *dst, size_t dst_size, const char *src, size_t src_size) {
+	const char hexadecimal[] = "0123456789abcdef";
+	size_t offset = 0;
+	if (dst == NULL || dst_size == 0) {
+		return "";
+	}
+	dst[0] = '\0';
+	if (src == NULL) {
+		return dst;
+	}
+	for (size_t index = 0; index < src_size; index++) {
+		unsigned char character = (unsigned char)src[index];
+		char unit[4];
+		size_t unit_size;
+		switch (character) {
+			case '\n':
+				memcpy(unit, "\\n", 2);
+				unit_size = 2;
+				break;
+			case '\r':
+				memcpy(unit, "\\r", 2);
+				unit_size = 2;
+				break;
+			case '\t':
+				memcpy(unit, "\\t", 2);
+				unit_size = 2;
+				break;
+			case '\\':
+				memcpy(unit, "\\\\", 2);
+				unit_size = 2;
+				break;
+			default:
+				if (character < 0x20 || character >= 0x7F) {
+					unit[0] = '\\';
+					unit[1] = 'x';
+					unit[2] = hexadecimal[character >> 4];
+					unit[3] = hexadecimal[character & 0x0F];
+					unit_size = 4;
+				} else {
+					unit[0] = (char)character;
+					unit_size = 1;
+				}
+		}
+		if (dst_size - offset - 1U < unit_size) {
+			break;
+		}
+		memcpy(dst + offset, unit, unit_size);
+		offset += unit_size;
+	}
+	dst[offset] = '\0';
+	return dst;
+}
+
 ssize_t freadall(const char *filename, void **dst, bool allow_fifo) {
 	freadall_error error_code = FREADALL_ERROR_NONE;
 	FILE *srcfd = NULL;

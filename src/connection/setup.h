@@ -17,8 +17,13 @@
 
 /* section: headers (project) */
 #include "../config.h"
+#include "../log.h"
 #include "../network.h"
 #include "../route/endpoint.h"
+
+/* section: defines */
+/* logging macro */
+#define CONNECTION_SETUP_LOG(snapshot, lvl, ...)	MKSYS_LOG((snapshot)->log_filename, (snapshot)->log_level, lvl, __VA_ARGS__)
 
 /* section: types */
 typedef enum {

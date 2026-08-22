@@ -696,6 +696,37 @@ int main(int argc, char **argv) {
 	CHECK(upstream_client_fd == -1 && errno == ETIMEDOUT, "malformed handshake reached upstream server");
 	CHECK(kill(listener, 0) == 0, "malformed handshake terminated listener");
 
+	/* Log-forging regression: control characters in an untrusted virtual host must arrive escaped in the log file. */
+	const char forged_vhost[] = "evil\n[2099-01-01 00:00:00 UTC+00:00] [CRIT] forged\x1b[31m";
+	uint8_t forged_request[BUFSIZ];
+	size_t forged_size = 0;
+	forged_size += varint_encode(forged_request + forged_size, (uint32_t)(1 + 2 + 1 + strlen(forged_vhost) + 2 + 1));
+	forged_request[forged_size++] = 0x00;
+	forged_size += varint_encode(forged_request + forged_size, 764);
+	forged_size += varint_encode(forged_request + forged_size, (uint32_t)strlen(forged_vhost));
+	memcpy(forged_request + forged_size, forged_vhost, strlen(forged_vhost));
+	forged_size += strlen(forged_vhost);
+	forged_request[forged_size++] = 0x63;
+	forged_request[forged_size++] = 0xDD;
+	forged_request[forged_size++] = 0x01;
+	client_fd = client_connect(listener_port);
+	CHECK(client_fd != -1, "cannot connect log-forging test client");
+	CHECK(socket_send_all(client_fd, forged_request, forged_size) == 0, "cannot send log-forging handshake");
+	uint8_t forged_response[BUFSIZ];
+	CHECK(message_receive(client_fd, forged_response, sizeof(forged_response), TEST_TIMEOUT_MS) > 0, "log-forging handshake was not answered");
+	CHECK(close(client_fd) == 0, "cannot close log-forging test client");
+	client_fd = -1;
+	CHECK(poll(NULL, 0, QUIET_TIMEOUT_MS) == 0, "cannot settle log-forging log write");
+	char log_content[BUFSIZ * 2];
+	ssize_t log_size = file_read(log_filename, log_content, sizeof(log_content) - 1);
+	CHECK(log_size > 0, "cannot read log file after log-forging handshake");
+	log_content[log_size] = '\0';
+	CHECK(strstr(log_content, "vhost: evil\\n[2099-01-01 00:00:00 UTC+00:00] [CRIT] forged\\x1b[31m") != NULL, "forged virtual host was not escaped in the log");
+	CHECK(strstr(log_content, "\n[2099") == NULL, "log forging produced a forged log line");
+	CHECK(memchr(log_content, 0x1b, (size_t)log_size) == NULL, "raw escape character reached the log file");
+	CHECK(log_content[log_size - 1] == '\n', "log file does not end with a line break");
+	CHECK(kill(listener, 0) == 0, "log-forging handshake terminated listener");
+
 	client_fd = client_connect(listener_port);
 	CHECK(client_fd != -1, "cannot connect valid test client");
 	CHECK(socket_send_all(client_fd, valid_request, sizeof(valid_request)) == 0, "cannot send valid handshake");

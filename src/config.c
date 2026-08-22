@@ -475,8 +475,8 @@ bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const ch
 		size_t b64_size = (blocks + (icon_size % 3 > 0)) * 4;
 		if (b64_size > CONF_ICON_B64MAX) {
 			free(icon_raw);
-			mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
-				"Icon too large (base64: %zu > %u bytes), %s.\n",
+			MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING,
+				"Icon too large (base64: %zu > %u bytes), %s.",
 				b64_size, CONF_ICON_B64MAX, failure_action
 			);
 		} else {
@@ -491,8 +491,8 @@ bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const ch
 				return true;
 			} else {
 				free(icon_raw);
-				mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
-					"No memory for icon, %s.\n",
+				MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING,
+					"No memory for icon, %s.",
 					failure_action
 				);
 			}
@@ -500,33 +500,33 @@ bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const ch
 	} else {
 		free(icon_raw);
 		if (icon_size == 0) {
-			mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
-				"Icon file %s is empty, %s.\n",
+			MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING,
+				"Icon file %s is empty, %s.",
 				cfg->icon_path, failure_action
 			);
 		} else if (icon_size == -1) {
 			switch (errno) {
 				case FREADALL_ERFAIL:
-					mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
-						"Cannot open icon file %s, %s.\n",
+					MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING,
+						"Cannot open icon file %s, %s.",
 						cfg->icon_path, failure_action
 					);
 					break;
 				case FREADALL_ELARGE:
-					mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
-						"Icon file %s too large, %s.\n",
+					MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING,
+						"Icon file %s too large, %s.",
 						cfg->icon_path, failure_action
 					);
 					break;
 				case FREADALL_ENOMEM:
-					mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
-						"No memory to read icon file %s, %s.\n",
+					MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING,
+						"No memory to read icon file %s, %s.",
 						cfg->icon_path, failure_action
 					);
 					break;
 				default:
-					mksysmsg(MKSYS_PREFIX_ON, logfile, loglevel, MKSYS_LEVEL_WARNING,
-						"Cannot read icon file %s, %s.\n",
+					MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING,
+						"Cannot read icon file %s, %s.",
 						cfg->icon_path, failure_action
 					);
 					break;
@@ -539,10 +539,10 @@ bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const ch
 void config_log_duplicate_error(const char *logfile, uint8_t maxlevel, mksys_level msglevel, const char *suffix) {
 	const char *base = config_errmsg(CONF_ECPROXYDUP);
 	if (config_duperr[0] != '\0') {
-		mksysmsg(MKSYS_PREFIX_ON, logfile, maxlevel, msglevel, "%s. Affected: \"%s\"%s\n", base, config_duperr, suffix);
+		MKSYS_LOG(logfile, maxlevel, msglevel, "%s. Affected: \"%s\"%s", base, config_duperr, suffix);
 		config_duperr[0] = '\0';
 	} else {
-		mksysmsg(MKSYS_PREFIX_ON, logfile, maxlevel, msglevel, "%s%s\n", base, suffix);
+		MKSYS_LOG(logfile, maxlevel, msglevel, "%s%s", base, suffix);
 	}
 }
 
