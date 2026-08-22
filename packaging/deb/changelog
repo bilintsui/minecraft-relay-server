@@ -1,3 +1,13 @@
+mcrelay (1.2~beta10-1) unstable; urgency=high
+
+  * Fix a remotely triggerable stack buffer overflow when a rewritten
+    modern LOGIN handshake outgrew the worker buffer; packet_write now
+    enforces destination capacity and field limits, and rewrite
+    failures close the connection instead of forwarding the original
+    handshake.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Sat, 22 Aug 2026 23:17:23 +0800
+
 mcrelay (1.2~beta9-1) unstable; urgency=high
 
   * New upstream release: listener-owned DNS resolution, bounded route
