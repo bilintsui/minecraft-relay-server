@@ -36,7 +36,7 @@ typedef enum {
 
 /* section: functions (exported) */
 size_t base64_encode(void *dst, size_t dst_cap, const void *src, size_t src_len);
-/* Returns an always NUL-terminated copy of the first source_size bytes of source containing only visible ASCII characters, with control and non-ASCII bytes escaped. */
+/* Returns NULL when dst or src is NULL or dst_size is zero; otherwise returns dst containing an always NUL-terminated visible-ASCII rendering of the first src_size bytes of src. */
 const char *escape_default(char *dst, size_t dst_size, const char *src, size_t src_size);
 ssize_t freadall(const char *filename, void **dst, bool allow_fifo);
 void *int2varint(varint_t src, void *dst);

@@ -36,14 +36,15 @@ static bool escape_check(const char *source, const char *expected) {
 static bool log_escape_test_arguments(void) {
 	char buffer[64];
 	char small[8];
-	CHECK(strcmp(escape_default(buffer, sizeof(buffer), NULL, 4), "") == 0, "NULL source was not turned into an empty string");
-	CHECK(strcmp(escape_default(NULL, sizeof(buffer), "text", 4), "") == 0, "NULL destination was accepted");
-	CHECK(strcmp(escape_default(small, 0, "text", 4), "") == 0, "zero-size destination was accepted");
+	CHECK(escape_default(buffer, sizeof(buffer), NULL, 4) == NULL, "NULL source did not return NULL");
+	CHECK(escape_default(buffer, sizeof(buffer), NULL, 0) == NULL, "NULL source with zero size did not return NULL");
+	CHECK(escape_default(NULL, sizeof(buffer), "text", 4) == NULL, "NULL destination did not return NULL");
+	CHECK(escape_default(small, 0, "text", 4) == NULL, "zero-size destination did not return NULL");
 	CHECK(strcmp(escape_default(small, sizeof(small), "aaaaaaaa\x01", 9), "aaaaaaa") == 0, "truncation did not stop at an escape boundary");
 	/* The explicit length is authoritative: an embedded NUL inside the window is escaped, not treated as a terminator. */
 	CHECK(strcmp(escape_default(buffer, sizeof(buffer), "a" "\x00" "b", 3), "a\\x00b") == 0, "embedded NUL inside the length window was not escaped");
 	CHECK(strcmp(escape_default(buffer, sizeof(buffer), "abcdef", 3), "abc") == 0, "bytes beyond the length window were read");
-	CHECK(strcmp(escape_default(buffer, sizeof(buffer), "abcdef", 0), "") == 0, "zero length did not produce an empty string");
+	CHECK(strcmp(escape_default(buffer, sizeof(buffer), "", 0), "") == 0, "empty source did not produce an empty string");
 	return true;
 }
 

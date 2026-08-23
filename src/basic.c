@@ -61,13 +61,10 @@ size_t base64_encode(void *dst, size_t dst_cap, const void *src, size_t src_len)
 const char *escape_default(char *dst, size_t dst_size, const char *src, size_t src_size) {
 	const char hexadecimal[] = "0123456789abcdef";
 	size_t offset = 0;
-	if (dst == NULL || dst_size == 0) {
-		return "";
+	if (dst == NULL || dst_size == 0 || src == NULL) {
+		return NULL;
 	}
 	dst[0] = '\0';
-	if (src == NULL) {
-		return dst;
-	}
 	for (size_t index = 0; index < src_size; index++) {
 		unsigned char character = (unsigned char)src[index];
 		char unit[4];

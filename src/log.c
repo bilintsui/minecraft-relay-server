@@ -42,6 +42,9 @@ static void gettime(char *target, size_t target_size) {
 }
 
 static int log_write(bool noprefix, const char *logfile, uint8_t maxlevel, mksys_level msglevel, mksys_line_end line_end, const char *message) {
+	if (message == NULL) {
+		message = "";
+	}
 	char level_str[8];
 	int status = 0;
 	if (msglevel > maxlevel) {
