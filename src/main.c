@@ -19,6 +19,7 @@
 #include "define/global.h"
 #include "listener.h"
 #include "log.h"
+#include "version.h"
 
 /* section: defines */
 /* default */
@@ -213,7 +214,7 @@ static arguments parse_arguments(int argc, char **argv) {
 
 static void print_help(help_topic topic, const char *progname) {
 	fputs(
-		"Minecraft Relay Server [Version " MCRELAY_VERSION_DISPLAY "/"
+		"Minecraft Relay Server [Version " MCRELAY_VERSION_DISPLAY MCRELAY_VERSION_SUFFIX "/"
 		MCRELAY_VERSION_INTERNAL "]\n"
 		"(c) " MCRELAY_COPYYEAR " Bilin Tsui\n\n",
 		stdout
@@ -280,7 +281,7 @@ int main(int argc, char **argv) {
 			print_help(args.help_topic, progname);
 			return EXITCODE_OK;
 		case COMMAND_VERSION:
-			fprintf(stdout, "v%s(%s)\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_INTERNAL);
+			fprintf(stdout, "v%s%s(%s)\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_SUFFIX, MCRELAY_VERSION_INTERNAL);
 			return EXITCODE_OK;
 		case COMMAND_RUN:
 			break;

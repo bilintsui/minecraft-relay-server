@@ -2,15 +2,26 @@ cmake_minimum_required(VERSION 3.10)
 project(mcrelay${EXEC_SUFFIX}
 	VERSION 1.2
 	LANGUAGES C)
+find_package(Git QUIET)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+set(MCRELAY_VERSION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/version.h")
+add_custom_target(version_header ALL
+	COMMAND ${CMAKE_COMMAND}
+		"-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
+		"-DOUTPUT_FILE=${MCRELAY_VERSION_HEADER}"
+		"-DSOURCE_DIRECTORY=${CMAKE_CURRENT_SOURCE_DIR}"
+		-P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.cmake"
+	BYPRODUCTS "${MCRELAY_VERSION_HEADER}"
+	VERBATIM)
 add_executable(mcrelay${EXEC_SUFFIX}
 	src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/log.c src/main.c src/network.c src/timeutil.c
 	src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
 	src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c src/route/table.c src/route/waiter.c
 	src/protocol/common.c src/protocol/handshake.c
 	src/protocol/handshake_legacy.c src/protocol/proxy.c)
+add_dependencies(mcrelay${EXEC_SUFFIX} version_header)
 option(DEBUG_MODE "Allow FIFO as config input (debug)" OFF)
 option(UBSAN_TEST "Build the undefined-behavior sanitizer test" OFF)
 if(DEBUG_MODE)
@@ -18,6 +29,7 @@ if(DEBUG_MODE)
 else()
 	target_compile_definitions(mcrelay${EXEC_SUFFIX} PRIVATE _GNU_SOURCE DEBUG_MODE=false)
 endif()
+target_include_directories(mcrelay${EXEC_SUFFIX} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(mcrelay${EXEC_SUFFIX} -lresolv -lcjson -lsystemd)
 
 include(CTest)
@@ -27,6 +39,16 @@ if(BUILD_TESTING)
 	target_compile_definitions(config_cache_test PRIVATE _GNU_SOURCE DEBUG_MODE=false)
 	target_link_libraries(config_cache_test -lcjson)
 	add_test(NAME config_cache COMMAND config_cache_test)
+	if(GIT_FOUND)
+		add_test(
+			NAME version
+			COMMAND ${CMAKE_COMMAND}
+				"-DGIT_EXECUTABLE=${GIT_EXECUTABLE}"
+				"-DTEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}"
+				"-DVERSION_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.cmake"
+				-P "${CMAKE_CURRENT_SOURCE_DIR}/tests/version.cmake"
+		)
+	endif()
 
 	add_executable(dns_records_test tests/dns_records.c src/resolver/dns.c src/resolver/util.c)
 	target_include_directories(dns_records_test PRIVATE src)
@@ -384,9 +406,11 @@ if(BUILD_TESTING)
 		src/route/table.c src/route/waiter.c
 		src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c
 		tests/connect_pending.c)
+	add_dependencies(listener_short_runtime_daemon version_header)
 	target_compile_definitions(listener_short_runtime_daemon PRIVATE _GNU_SOURCE DEBUG_MODE=false LISTENER_CONNECTION_LIMIT=2 LISTENER_INITIAL_TIMEOUT_SEC=5
 		LISTENER_ROUTE_WARMUP_TIMEOUT_SEC=1 LISTENER_SHORT_CONNECT_TIMEOUT_SEC=10 LISTENER_SHORT_LIFETIME_TIMEOUT_SEC=5
 		LISTENER_SHORT_RELAY_IDLE_TIMEOUT_SEC=10 LISTENER_TIMER_REARM_TEST)
+	target_include_directories(listener_short_runtime_daemon PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 	target_link_libraries(listener_short_runtime_daemon -lresolv -lcjson -lsystemd)
 	target_link_options(listener_short_runtime_daemon PRIVATE -Wl,--wrap=connect)
 	add_executable(listener_short_runtime_test tests/listener_short_runtime.c)

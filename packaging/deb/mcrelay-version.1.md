@@ -13,7 +13,10 @@ mcrelay-version - print the mcrelay version
 # DESCRIPTION
 
 Print the installed **mcrelay** version in a single line, in the form
-`v<display>(<internal>)`, for example `v1.2-beta7(69)`.
+`v<display>[+<commit>[-dirty]](<internal>)`. Builds from a clean tagged
+commit omit the suffix; clean untagged commits include their abbreviated
+commit hash; builds with uncommitted tracked changes append `-dirty` after the hash.
+For example: `v1.2-beta10+b0d4fa4-dirty(72)`.
 
 # SEE ALSO
 
