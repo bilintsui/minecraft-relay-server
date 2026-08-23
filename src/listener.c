@@ -97,6 +97,10 @@
 #define LISTENER_LEGACY_PING_GRACE_MS	100
 #endif
 
+/* process names */
+#define LISTENER_PROCESS_NAME	"mrs-listener"
+#define LISTENER_WORKER_PROCESS_NAME	"worker"
+
 /* short connection */
 #ifndef LISTENER_SHORT_CONNECT_TIMEOUT_SEC
 #define LISTENER_SHORT_CONNECT_TIMEOUT_SEC	5
@@ -2077,6 +2081,9 @@ static int listener_worker_signals_restore(const sigset_t *signal_mask) {
 
 static exit_code listener_worker_run(int client_fd, const listener_client_address *client_address, const uint8_t *inbound, size_t inbound_size,
 	const connection_setup_snapshot *snapshot, listener_socket *listener, const listener_events *events, pid_t listener_pid, listener_context *context) {
+	if (prctl(PR_SET_NAME, LISTENER_WORKER_PROCESS_NAME) == -1) {
+		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING, "Cannot set worker process name: %s", strerror(errno));
+	}
 	close(events->epoll_fd);
 	close(events->route_timer_fd);
 	close(events->signal_fd);
@@ -2482,6 +2489,9 @@ exit_code listener_run(conf *config, conf_cache *config_cache, const char *confi
 		.working_directory = working_directory
 	};
 	snprintf(context.log_filename, sizeof(context.log_filename), "%s", log_filename);
+	if (prctl(PR_SET_NAME, LISTENER_PROCESS_NAME) == -1) {
+		LISTENER_LOG(&context, MKSYS_LEVEL_WARNING, "Cannot set listener process name: %s", strerror(errno));
+	}
 	bool generation_owned;
 	exit_code exitcode;
 	listener_socket listener = { .fd = -1 };

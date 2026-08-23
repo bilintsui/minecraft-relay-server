@@ -158,6 +158,32 @@ static int port_find(in_port_t *result) {
 	return close(fd);
 }
 
+static int process_name_read(pid_t process, char *result, size_t result_size) {
+	if (process <= 0 || result == NULL || result_size == 0) {
+		errno = EINVAL;
+		return -1;
+	}
+	char filename[64];
+	int filename_length = snprintf(filename, sizeof(filename), "/proc/%ld/comm", (long)process);
+	if (filename_length < 0 || (size_t)filename_length >= sizeof(filename)) {
+		errno = EOVERFLOW;
+		return -1;
+	}
+	FILE *name_file = fopen(filename, "r");
+	if (name_file == NULL) {
+		return -1;
+	}
+	bool result_available = fgets(result, (int)result_size, name_file) != NULL;
+	int saved_errno = errno;
+	fclose(name_file);
+	if (!result_available) {
+		errno = saved_errno;
+		return -1;
+	}
+	result[strcspn(result, "\n")] = '\0';
+	return 0;
+}
+
 static int process_signals_read(pid_t process, process_signal_state *result) {
 	char filename[64];
 	int filename_length = snprintf(filename, sizeof(filename), "/proc/%ld/status", (long)process);
@@ -474,6 +500,7 @@ int main(int argc, char **argv) {
 	char log_filename[PATH_MAX] = { 0 };
 	char notify_filename[PATH_MAX] = { 0 };
 	char message[64];
+	char process_name[16];
 	int client_fd = -1;
 	pid_t listener = -1;
 	int notify_fd = -1;
@@ -515,6 +542,7 @@ int main(int argc, char **argv) {
 	listener = child_start(argv[1], config_filename, notify_filename);
 	CHECK(listener > 0, "cannot start mcrelay listener");
 	CHECK(message_receive(notify_fd, message, sizeof(message), TEST_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "listener READY notification is missing");
+	CHECK(process_name_read(listener, process_name, sizeof(process_name)) == 0 && strcmp(process_name, "mrs-listener") == 0, "listener process name was incorrect");
 	client_fd = client_connect(port);
 	CHECK(client_fd != -1, "cannot connect test client");
 	CHECK(socket_send_all(client_fd, login_request, sizeof(login_request)) == 0, "cannot send test login request");
@@ -523,6 +551,7 @@ int main(int argc, char **argv) {
 	worker = worker_find(listener, TEST_TIMEOUT_MS);
 	CHECK(worker > 0, "cannot find worker process");
 	CHECK(worker_ready_wait(worker, TEST_TIMEOUT_MS) == 0, "worker initialization did not complete");
+	CHECK(process_name_read(worker, process_name, sizeof(process_name)) == 0 && strcmp(process_name, "worker") == 0, "worker process name was incorrect");
 
 	process_signal_state signal_state;
 	CHECK(process_signals_read(worker, &signal_state) == 0, "cannot read worker signal state");

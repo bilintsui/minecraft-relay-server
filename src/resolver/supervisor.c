@@ -47,6 +47,9 @@
 /* packet */
 #define RESOLVER_SUPERVISOR_RECEIVE_BYTE_CAPACITY	(RESOLVER_IPC_PACKET_BYTE_LIMIT + 1U)
 
+/* process names */
+#define RESOLVER_SUPERVISOR_PROCESS_NAME_CAPACITY	16U
+
 /* section: types */
 typedef struct resolver_supervisor_job resolver_supervisor_job;
 typedef enum {
@@ -499,9 +502,11 @@ static void resolver_supervisor_helper_fail(resolver_supervisor *supervisor, siz
 
 static int resolver_supervisor_helper_spawn(resolver_supervisor *supervisor, size_t helper_index, const struct timespec *now) {
 	resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
+	char process_name[RESOLVER_SUPERVISOR_PROCESS_NAME_CAPACITY];
+	snprintf(process_name, sizeof(process_name), "resolver-%zu", helper_index);
 	pid_t process_id;
 	int socket_fd;
-	if (resolver_helper_process_start(&supervisor->helper_signal_mask, &process_id, &socket_fd) == -1) {
+	if (resolver_helper_process_start(&supervisor->helper_signal_mask, process_name, &process_id, &socket_fd) == -1) {
 		helper->last_failed_process_id = -1;
 		resolver_supervisor_helper_respawn_schedule(supervisor, helper_index, RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN, now);
 		return -1;

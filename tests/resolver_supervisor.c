@@ -44,6 +44,7 @@
 #define SUPERVISOR_TEST_HELPER_LIMIT	64
 #define SUPERVISOR_TEST_JITTER_QUERY_DOMAIN	UINT8_C(0x51)
 #define SUPERVISOR_TEST_PROCESS_BASE	10000
+#define SUPERVISOR_TEST_PROCESS_NAME_CAPACITY	16U
 
 /* hash */
 #define SUPERVISOR_TEST_FNV_OFFSET	UINT64_C(14695981039346656037)
@@ -56,6 +57,7 @@ typedef struct {
 	int last_signal;
 	int peer_fd;
 	pid_t process_id;
+	char process_name[SUPERVISOR_TEST_PROCESS_NAME_CAPACITY];
 	size_t wait_count;
 } supervisor_test_helper;
 
@@ -66,7 +68,7 @@ static size_t supervisor_start_failures;
 static bool supervisor_use_real_helper;
 
 int __real_kill(pid_t process_id, int signal_number);
-int __real_resolver_helper_process_start(const sigset_t *signal_mask, pid_t *process_id, int *socket_fd);
+int __real_resolver_helper_process_start(const sigset_t *signal_mask, const char *process_name, pid_t *process_id, int *socket_fd);
 pid_t __real_waitpid(pid_t process_id, int *status, int options);
 
 /* section: functions (local) */
@@ -862,6 +864,9 @@ static bool supervisor_test_shutdown(void) {
 		CHECK(resolver_supervisor_helper_view_get(supervisor, helper_index, &view), "shutdown helper could not be prepared");
 		helpers[helper_index] = supervisor_fake_find(view.process_id);
 		CHECK(helpers[helper_index] != NULL, "shutdown fake helper was unavailable");
+		char expected_process_name[SUPERVISOR_TEST_PROCESS_NAME_CAPACITY];
+		snprintf(expected_process_name, sizeof(expected_process_name), "resolver-%zu", helper_index);
+		CHECK(strcmp(helpers[helper_index]->process_name, expected_process_name) == 0, "resolver helper process name was incorrect");
 	}
 	helpers[RESOLVER_SUPERVISOR_HELPER_COUNT - 1U]->close_on_sigterm = false;
 	CHECK(resolver_supervisor_shutdown(supervisor, &now), "orderly shutdown could not start");
@@ -988,16 +993,16 @@ int __wrap_kill(pid_t process_id, int signal_number) {
 	return 0;
 }
 
-int __wrap_resolver_helper_process_start(const sigset_t *signal_mask, pid_t *process_id, int *socket_fd) {
+int __wrap_resolver_helper_process_start(const sigset_t *signal_mask, const char *process_name, pid_t *process_id, int *socket_fd) {
 	if (supervisor_use_real_helper) {
-		return __real_resolver_helper_process_start(signal_mask, process_id, socket_fd);
+		return __real_resolver_helper_process_start(signal_mask, process_name, process_id, socket_fd);
 	}
 	if (supervisor_start_failures > 0) {
 		supervisor_start_failures--;
 		errno = EAGAIN;
 		return -1;
 	}
-	if (signal_mask == NULL || process_id == NULL || socket_fd == NULL || supervisor_helper_count >= SUPERVISOR_TEST_HELPER_LIMIT) {
+	if (signal_mask == NULL || process_name == NULL || process_name[0] == '\0' || process_id == NULL || socket_fd == NULL || supervisor_helper_count >= SUPERVISOR_TEST_HELPER_LIMIT) {
 		errno = EINVAL;
 		return -1;
 	}
@@ -1011,6 +1016,7 @@ int __wrap_resolver_helper_process_start(const sigset_t *signal_mask, pid_t *pro
 	helper->last_signal = 0;
 	helper->peer_fd = sockets[1];
 	helper->process_id = (pid_t)(SUPERVISOR_TEST_PROCESS_BASE + (int)supervisor_helper_count);
+	snprintf(helper->process_name, sizeof(helper->process_name), "%s", process_name);
 	supervisor_helper_count++;
 	*process_id = helper->process_id;
 	*socket_fd = sockets[0];

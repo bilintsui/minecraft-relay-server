@@ -156,10 +156,11 @@ static int resolver_helper_process_signals_restore(const sigset_t *signal_mask) 
 	return sigprocmask(SIG_SETMASK, signal_mask, NULL);
 }
 
-static resolver_helper_status resolver_helper_process_child_run(int socket_fd, pid_t parent_pid, const sigset_t *signal_mask) {
+static resolver_helper_status resolver_helper_process_child_run(int socket_fd, pid_t parent_pid, const sigset_t *signal_mask, const char *process_name) {
 	if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1 || getppid() != parent_pid || resolver_helper_process_signals_restore(signal_mask) == -1) {
 		return RESOLVER_HELPER_INTERNAL;
 	}
+	(void)prctl(PR_SET_NAME, process_name);
 	socket_fd = resolver_helper_process_descriptors_prepare(socket_fd);
 	if (socket_fd == -1) {
 		return RESOLVER_HELPER_INTERNAL;
@@ -318,14 +319,14 @@ static resolver_helper_status resolver_helper_response_srv_send(int socket_fd, c
 }
 
 /* section: functions (exported) */
-int resolver_helper_process_start(const sigset_t *signal_mask, pid_t *process_id, int *socket_fd) {
+int resolver_helper_process_start(const sigset_t *signal_mask, const char *process_name, pid_t *process_id, int *socket_fd) {
 	if (process_id != NULL) {
 		*process_id = -1;
 	}
 	if (socket_fd != NULL) {
 		*socket_fd = -1;
 	}
-	if (signal_mask == NULL || process_id == NULL || socket_fd == NULL) {
+	if (signal_mask == NULL || process_name == NULL || process_name[0] == '\0' || process_id == NULL || socket_fd == NULL) {
 		errno = EINVAL;
 		return -1;
 	}
@@ -344,7 +345,7 @@ int resolver_helper_process_start(const sigset_t *signal_mask, pid_t *process_id
 	}
 	if (child == 0) {
 		close(sockets[0]);
-		_exit((int)resolver_helper_process_child_run(sockets[1], parent_pid, signal_mask));
+		_exit((int)resolver_helper_process_child_run(sockets[1], parent_pid, signal_mask, process_name));
 	}
 	close(sockets[1]);
 	*process_id = child;

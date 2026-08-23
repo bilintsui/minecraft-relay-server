@@ -13,12 +13,14 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -51,6 +53,9 @@
 typedef struct {
 	pid_t process_id;
 } helper_process_transfer;
+
+/* section: global variables */
+static bool helper_process_name_failure;
 
 /* section: functions (local) */
 static pid_t helper_child_start(int *socket_fd) {
@@ -223,6 +228,28 @@ static bool helper_process_descriptor_send(int control_fd, pid_t process_id, int
 	return sent == (ssize_t)sizeof(transfer);
 }
 
+static bool helper_process_name_read(pid_t process_id, char *result, size_t result_size) {
+	if (process_id <= 0 || result == NULL || result_size == 0) {
+		return false;
+	}
+	char filename[64];
+	int filename_length = snprintf(filename, sizeof(filename), "/proc/%ld/comm", (long)process_id);
+	if (filename_length < 0 || (size_t)filename_length >= sizeof(filename)) {
+		return false;
+	}
+	FILE *name_file = fopen(filename, "r");
+	if (name_file == NULL) {
+		return false;
+	}
+	bool result_available = fgets(result, (int)result_size, name_file) != NULL;
+	fclose(name_file);
+	if (!result_available) {
+		return false;
+	}
+	result[strcspn(result, "\n")] = '\0';
+	return true;
+}
+
 static bool helper_request_send(int socket_fd, uint64_t query_id, const char *query_name, uint16_t query_type) {
 	resolver_ipc_request request = {
 		.query_class = ns_c_in,
@@ -280,8 +307,11 @@ static bool helper_test_arguments(void) {
 	int socket_fd = 0;
 	sigset_t signal_mask;
 	sigemptyset(&signal_mask);
-	return resolver_helper_run(-1) == RESOLVER_HELPER_BAD_ARGUMENT && resolver_helper_process_start(NULL, &process_id, &socket_fd) == -1 && process_id == -1 && socket_fd == -1
-		&& resolver_helper_process_start(&signal_mask, NULL, &socket_fd) == -1 && socket_fd == -1 && resolver_helper_process_start(&signal_mask, &process_id, NULL) == -1 && process_id == -1;
+	return resolver_helper_run(-1) == RESOLVER_HELPER_BAD_ARGUMENT && resolver_helper_process_start(NULL, "resolver-test", &process_id, &socket_fd) == -1 && process_id == -1 && socket_fd == -1
+		&& resolver_helper_process_start(&signal_mask, NULL, &process_id, &socket_fd) == -1 && process_id == -1 && socket_fd == -1
+		&& resolver_helper_process_start(&signal_mask, "", &process_id, &socket_fd) == -1 && process_id == -1 && socket_fd == -1
+		&& resolver_helper_process_start(&signal_mask, "resolver-test", NULL, &socket_fd) == -1 && socket_fd == -1
+		&& resolver_helper_process_start(&signal_mask, "resolver-test", &process_id, NULL) == -1 && process_id == -1;
 }
 
 static bool helper_test_parent_death(void) {
@@ -299,7 +329,7 @@ static bool helper_test_parent_death(void) {
 		sigset_t signal_mask;
 		pid_t process_id;
 		int socket_fd;
-		if (sigprocmask(SIG_SETMASK, NULL, &signal_mask) == -1 || resolver_helper_process_start(&signal_mask, &process_id, &socket_fd) == -1
+		if (sigprocmask(SIG_SETMASK, NULL, &signal_mask) == -1 || resolver_helper_process_start(&signal_mask, "resolver-test", &process_id, &socket_fd) == -1
 			|| !helper_process_descriptor_send(control[1], process_id, socket_fd)) {
 			_exit(EXIT_FAILURE);
 		}
@@ -358,7 +388,7 @@ static bool helper_test_process(void) {
 	sigaddset(&blocked_mask, SIGTERM);
 	CHECK(sigprocmask(SIG_BLOCK, &blocked_mask, &previous_mask) == 0, "parent signal mask could not be changed");
 	signal_mask_changed = true;
-	CHECK(resolver_helper_process_start(&previous_mask, &child, &socket_fd) == 0 && child > 0 && socket_fd != -1, "resolver helper process could not be started");
+	CHECK(resolver_helper_process_start(&previous_mask, "resolver-test", &child, &socket_fd) == 0 && child > 0 && socket_fd != -1, "resolver helper process could not be started");
 	CHECK(sigprocmask(SIG_SETMASK, &previous_mask, NULL) == 0, "parent signal mask could not be restored");
 	signal_mask_changed = false;
 	close(sentinel[1]);
@@ -371,6 +401,8 @@ static bool helper_test_process(void) {
 	CHECK(resolver_ipc_assembly_create(budget, "missing.helper.test", ns_c_in, ns_t_a, 20, &assembly) == RESOLVER_IPC_ASSEMBLY_OK, "process response assembly could not be created");
 	CHECK(helper_request_send(socket_fd, 20, "missing.helper.test", ns_t_a) && helper_response_receive(socket_fd, assembly, &result), "spawned helper did not process a request");
 	CHECK(result.status == RESOLVER_IPC_LOOKUP_NOT_FOUND && result.query_id == 20, "spawned helper returned the wrong response");
+	char process_name[16];
+	CHECK(helper_process_name_read(child, process_name, sizeof(process_name)) && strcmp(process_name, "resolver-test") == 0, "spawned helper process name was incorrect");
 	CHECK(kill(child, SIGUSR1) == 0, "reload signal could not be sent to helper");
 	const struct timespec signal_delay = { .tv_nsec = HELPER_TEST_WAIT_INTERVAL_NS };
 	nanosleep(&signal_delay, NULL);
@@ -394,6 +426,28 @@ cleanup:
 	if (sentinel[1] != -1) {
 		close(sentinel[1]);
 	}
+	helper_child_stop(&child, &socket_fd);
+	return test_result;
+}
+
+static bool helper_test_process_name_failure(void) {
+	bool test_result = false;
+	pid_t child = -1;
+	int exit_status;
+	sigset_t signal_mask;
+	int socket_fd = -1;
+	sigemptyset(&signal_mask);
+	helper_process_name_failure = true;
+	CHECK(resolver_helper_process_start(&signal_mask, "resolver-test", &child, &socket_fd) == 0 && child > 0 && socket_fd != -1, "resolver helper with a process-name failure could not be started");
+	helper_process_name_failure = false;
+	CHECK(shutdown(socket_fd, SHUT_WR) == 0, "resolver helper process-name failure channel could not be shut down");
+	CHECK(helper_child_wait(child, HELPER_TEST_TIMEOUT_MS, &exit_status), "resolver helper with a process-name failure did not terminate");
+	child = -1;
+	CHECK(exit_status == RESOLVER_HELPER_OK, "process-name failure terminated the resolver helper");
+	test_result = true;
+
+cleanup:
+	helper_process_name_failure = false;
 	helper_child_stop(&child, &socket_fd);
 	return test_result;
 }
@@ -512,6 +566,8 @@ cleanup:
 }
 
 /* section: functions (exported) */
+int __real_prctl(int option, ...);
+
 dns_address_lookup_status __wrap_dns_address_lookup(const char *hostname, sa_family_t family, dns_address_result *result) {
 	if (hostname == NULL || result == NULL) {
 		return DNS_ADDRESS_LOOKUP_BAD_ARGUMENT;
@@ -575,12 +631,42 @@ dns_srv_lookup_status __wrap_dns_srv_lookup(const char *query_name, dns_srv_resu
 	return DNS_SRV_LOOKUP_OK;
 }
 
+int __wrap_prctl(int option, ...) {
+	va_list arguments;
+	va_start(arguments, option);
+	int result;
+	switch (option) {
+		case PR_SET_NAME: {
+			const char *process_name = va_arg(arguments, const char *);
+			if (helper_process_name_failure) {
+				errno = EIO;
+				result = -1;
+			} else {
+				result = __real_prctl(option, process_name);
+			}
+			break;
+		}
+		case PR_SET_PDEATHSIG: {
+			int signal_number = va_arg(arguments, int);
+			result = __real_prctl(option, signal_number);
+			break;
+		}
+		default:
+			errno = EINVAL;
+			result = -1;
+			break;
+	}
+	va_end(arguments);
+	return result;
+}
+
 /* section: functions (entry point) */
 int main(void) {
 	int test_result = EXIT_FAILURE;
 	CHECK(helper_test_arguments(), "helper argument tests failed");
 	CHECK(helper_test_parent_death(), "helper parent-death tests failed");
 	CHECK(helper_test_process(), "helper process tests failed");
+	CHECK(helper_test_process_name_failure(), "helper process-name failure tests failed");
 	CHECK(helper_test_protocol(), "helper protocol tests failed");
 	CHECK(helper_test_responses(), "helper response tests failed");
 	test_result = EXIT_SUCCESS;
