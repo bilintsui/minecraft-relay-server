@@ -216,9 +216,77 @@ static bool proxy_test_ipv6(void) {
 	return proxy_header_test(AF_INET6, AF_INET6, false, "TCP6", "::1", "::1");
 }
 
+static bool proxy_test_malformed(void) {
+	static const char valid4[] = "PROXY TCP4 127.0.0.1 127.0.0.1 1 2\r\n";
+	static const char valid6[] = "PROXY TCP6 ::1 ::1 3 4\r\n";
+	static const char truncated[] = "PROXY TCP4 \r\n";
+	static const char missing_ports[] = "PROXY TCP4 127.0.0.1 127.0.0.1\r\n";
+	static const char extra_token[] = "PROXY TCP4 127.0.0.1 127.0.0.1 1 2 x\r\n";
+	static const char bad_port[] = "PROXY TCP4 127.0.0.1 127.0.0.1 x 2\r\n";
+	static const char large_port[] = "PROXY TCP4 127.0.0.1 127.0.0.1 70000 2\r\n";
+	static const char trailing_space[] = "PROXY TCP4 127.0.0.1 127.0.0.1 1 2 \r\n";
+	static const char long_address[] = "PROXY TCP4 11111111111111111111111111111111111111111111111111 127.0.0.1 1 2\r\n";
+	static const char bad_separator[] = "PROXY TCP4X127.0.0.1 127.0.0.1 1 2\r\n";
+	/* Embedded NUL: the literal keeps full length; sizeof covers it, strlen would not. */
+	static const char nul_address[] = "PROXY TCP4 127.0.0.1\0junk 127.0.0.1 1 2\r\n";
+	p_proxy parsed = protocol_proxy_read(valid4, sizeof(valid4) - 1U);
+	if ((parsed.family != AF_INET) || (parsed.srcport != 1) || (parsed.dstport != 2)
+		|| (parsed.srcaddr.family != AF_INET) || (parsed.dstaddr.family != AF_INET)) {
+		return false;
+	}
+	char *exact_fit = (char *)malloc(sizeof(valid4) - 1U);
+	if (exact_fit == NULL) {
+		return false;
+	}
+	memcpy(exact_fit, valid4, sizeof(valid4) - 1U);
+	parsed = protocol_proxy_read(exact_fit, sizeof(valid4) - 1U);
+	free(exact_fit);
+	if ((parsed.family != AF_INET) || (parsed.srcport != 1) || (parsed.dstport != 2)) {
+		return false;
+	}
+	parsed = protocol_proxy_read(valid6, sizeof(valid6) - 1U);
+	if ((parsed.family != AF_INET6) || (parsed.srcport != 3) || (parsed.dstport != 4)) {
+		return false;
+	}
+	parsed = protocol_proxy_read(truncated, sizeof(truncated) - 1U);
+	if (parsed.family != AF_UNSPEC) {
+		return false;
+	}
+	parsed = protocol_proxy_read(missing_ports, sizeof(missing_ports) - 1U);
+	if (parsed.family != AF_UNSPEC) {
+		return false;
+	}
+	parsed = protocol_proxy_read(extra_token, sizeof(extra_token) - 1U);
+	if (parsed.family != AF_UNSPEC) {
+		return false;
+	}
+	parsed = protocol_proxy_read(bad_port, sizeof(bad_port) - 1U);
+	if (parsed.family != AF_UNSPEC) {
+		return false;
+	}
+	parsed = protocol_proxy_read(large_port, sizeof(large_port) - 1U);
+	if (parsed.family != AF_UNSPEC) {
+		return false;
+	}
+	parsed = protocol_proxy_read(trailing_space, sizeof(trailing_space) - 1U);
+	if (parsed.family != AF_UNSPEC) {
+		return false;
+	}
+	parsed = protocol_proxy_read(long_address, sizeof(long_address) - 1U);
+	if (parsed.family != AF_UNSPEC) {
+		return false;
+	}
+	parsed = protocol_proxy_read(bad_separator, sizeof(bad_separator) - 1U);
+	if (parsed.family != AF_UNSPEC) {
+		return false;
+	}
+	parsed = protocol_proxy_read(nul_address, (sizeof(nul_address) - 1U));
+	return parsed.family == AF_UNSPEC;
+}
+
 /* section: functions (entry point) */
 int main(void) {
-	if (!proxy_test_arguments() || !proxy_test_declared_family() || !proxy_test_ipv4() || !proxy_test_ipv4_mapped() || !proxy_test_ipv6()) {
+	if (!proxy_test_arguments() || !proxy_test_declared_family() || !proxy_test_ipv4() || !proxy_test_ipv4_mapped() || !proxy_test_ipv6() || !proxy_test_malformed()) {
 		return EXIT_FAILURE;
 	}
 	return EXIT_SUCCESS;

@@ -48,12 +48,51 @@ static bool protocol_proxy_endpoint_read(const struct sockaddr_storage *source, 
 	}
 }
 
+static bool protocol_proxy_field_address(const char **cursor, const char *end, char *dst, size_t dst_size) {
+	const char *space = memchr(*cursor, ' ', (size_t)(end - *cursor));
+	size_t length = (space != NULL) ? (size_t)(space - *cursor) : (size_t)(end - *cursor);
+	if ((space == NULL) || (length == 0) || (length >= dst_size) || (memchr(*cursor, '\0', length) != NULL)) {
+		return false;
+	}
+	memcpy(dst, *cursor, length);
+	dst[length] = '\0';
+	*cursor += length;
+	return true;
+}
+
+static bool protocol_proxy_field_port(const char **cursor, const char *end, in_port_t *dst) {
+	unsigned int value = 0;
+	size_t length = 0;
+	while (((*cursor + length) < end) && ((*cursor)[length] >= '0') && ((*cursor)[length] <= '9')) {
+		value *= 10U;
+		value += (unsigned int)((*cursor)[length] - '0');
+		if (value > 65535U) {
+			return false;
+		}
+		length++;
+	}
+	if (length == 0) {
+		return false;
+	}
+	*dst = (in_port_t)value;
+	*cursor += length;
+	return true;
+}
+
+static bool protocol_proxy_field_space(const char **cursor, const char *end) {
+	if ((*cursor >= end) || (**cursor != ' ')) {
+		return false;
+	}
+	(*cursor)++;
+	return true;
+}
+
 /* section: functions (exported) */
 sa_family_t protocol_proxy_getfamily(const void *src, size_t n) {
 	if (src == NULL) {
 		return AF_UNSPEC;
 	}
-	if (n > PROTOPROXY_PACKETMAXLEN) {
+	if ((n < 11) || (n > PROTOPROXY_PACKETMAXLEN)) {
 		return AF_UNSPEC;
 	}
 	if (memcmp(src, "PROXY TCP", 9)) {
@@ -67,6 +106,9 @@ sa_family_t protocol_proxy_getfamily(const void *src, size_t n) {
 		return AF_UNSPEC;
 	}
 	if (memcmp(src_endptr, "\r\n", 2)) {
+		return AF_UNSPEC;
+	}
+	if ((*((const char *)src + 10) != ' ')) {
 		return AF_UNSPEC;
 	}
 	switch (*((const char *)src + 9)) {
@@ -90,10 +132,26 @@ p_proxy protocol_proxy_read(const void *src, size_t n) {
 	if (result.family == AF_UNSPEC) {
 		return result;
 	}
-	net_addrp srcaddrp, dstaddrp;
-	sscanf((const char *)src + 11, "%s %s %hu %hu\r\n", (char *)&srcaddrp, (char *)&dstaddrp, &(result.srcport), &(result.dstport));
-	result.srcaddr = net_addr_parse((char *)&srcaddrp);
-	result.dstaddr = net_addr_parse((char *)&dstaddrp);
+	const char *cursor = (const char *)src + 11;
+	const char *end = (const char *)src + n - 2;
+	char source_text[INET6_ADDRSTRLEN + 2] = { 0 };
+	char dest_text[INET6_ADDRSTRLEN + 2] = { 0 };
+	in_port_t source_port = 0;
+	in_port_t dest_port = 0;
+	if ((cursor >= end) || !protocol_proxy_field_address(&cursor, end, source_text, sizeof(source_text))
+		|| !protocol_proxy_field_space(&cursor, end)
+		|| !protocol_proxy_field_address(&cursor, end, dest_text, sizeof(dest_text))
+		|| !protocol_proxy_field_space(&cursor, end)
+		|| !protocol_proxy_field_port(&cursor, end, &source_port)
+		|| !protocol_proxy_field_space(&cursor, end)
+		|| !protocol_proxy_field_port(&cursor, end, &dest_port) || (cursor != end)) {
+		result.family = AF_UNSPEC;
+		return result;
+	}
+	result.srcaddr = net_addr_parse(source_text);
+	result.dstaddr = net_addr_parse(dest_text);
+	result.srcport = source_port;
+	result.dstport = dest_port;
 	if (result.srcaddr.err || result.dstaddr.err || result.srcaddr.family != result.family || result.dstaddr.family != result.family) {
 		result.family = AF_UNSPEC;
 	}
