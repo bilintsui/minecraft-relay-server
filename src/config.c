@@ -62,53 +62,78 @@ static void config_proxy_vhost_namelist_destroy(char **vhost_namelist, int vhost
 }
 
 static cJSON *config_proxy_parse(cJSON *src) {
-	cJSON *single = NULL;
-	cJSON_ArrayForEach(single, src) {
+	cJSON *single = src->child;
+	while (single != NULL) {
+		cJSON *single_next = single->next;
+		bool single_valid = true;
 		cJSON *single_vhost = cJSON_GetObjectItemCaseSensitive(single, "vhost");
 		if (single_vhost == NULL) {
-			cJSON_DetachItemViaPointer(src, single);
-			continue;
-		}
-		if (!cJSON_IsArray(single_vhost)) {
+			single_valid = false;
+		} else if (!cJSON_IsArray(single_vhost)) {
 			if (!cJSON_IsString(single_vhost)) {
-				cJSON_DetachItemViaPointer(src, single);
-				continue;
+				single_valid = false;
+			} else {
+				char *vhost = (char *)malloc(strlen(single_vhost->valuestring) + 1);
+				if (vhost == NULL) {
+					errno = CONF_ECMEMORY;
+					return NULL;
+				}
+				strcpy(vhost, single_vhost->valuestring);
+				cJSON_DeleteItemFromObjectCaseSensitive(single, "vhost");
+				single_vhost = cJSON_AddArrayToObject(single, "vhost");
+				cJSON *item_vhost = cJSON_CreateString(vhost);
+				free(vhost);
+				if ((single_vhost == NULL) || (item_vhost == NULL) || (!cJSON_AddItemToArray(single_vhost, item_vhost))) {
+					cJSON_Delete(item_vhost);
+					errno = CONF_ECMEMORY;
+					return NULL;
+				}
 			}
-			char *vhost = (char *)malloc(strlen(single_vhost->valuestring) + 1);
-			if (vhost == NULL) {
-				errno = CONF_ECMEMORY;
-				return NULL;
+		} else {
+			cJSON *single_member = NULL;
+			cJSON_ArrayForEach(single_member, single_vhost) {
+				if (!cJSON_IsString(single_member)) {
+					single_valid = false;
+				}
 			}
-			strcpy(vhost, single_vhost->valuestring);
-			cJSON_DeleteItemFromObjectCaseSensitive(single, "vhost");
-			single_vhost = cJSON_AddArrayToObject(single, "vhost");
-			cJSON *item_vhost = cJSON_CreateString(vhost);
-			free(vhost);
-			cJSON_AddItemToArray(single_vhost, item_vhost);
+			if (!cJSON_GetArraySize(single_vhost)) {
+				single_valid = false;
+			}
 		}
-		cJSON *single_address = cJSON_GetObjectItemCaseSensitive(single, "address");
-		if (single_address == NULL) {
+		if (single_valid) {
+			cJSON *single_address = cJSON_GetObjectItemCaseSensitive(single, "address");
+			if ((single_address == NULL) || (!cJSON_IsString(single_address))) {
+				single_valid = false;
+			}
+		}
+		if (single_valid) {
+			cJSON *single_port = cJSON_GetObjectItemCaseSensitive(single, "port");
+			if (single_port != NULL) {
+				if (!cJSON_IsNumber(single_port)) {
+					single_valid = false;
+				} else {
+					int port = single_port->valueint;
+					if ((port < 0) || (port > 65535)) {
+						single_valid = false;
+					}
+				}
+			}
+		}
+		if (!single_valid) {
 			cJSON_DetachItemViaPointer(src, single);
-			continue;
+			cJSON_Delete(single);
 		}
-		if (!cJSON_IsString(single_address)) {
-			cJSON_DetachItemViaPointer(src, single);
-			continue;
-		}
-		cJSON *single_port = cJSON_GetObjectItemCaseSensitive(single, "port");
-		if (single_port != NULL) {
-			if (!cJSON_IsNumber(single_port)) {
-				cJSON_DetachItemViaPointer(src, single);
-				continue;
-			}
-			int port = single_port->valueint;
-			if ((port < 0) || (port > 65535)) {
-				cJSON_DetachItemViaPointer(src, single);
-				continue;
-			}
-		}
+		single = single_next;
+	}
+	if (src->child == NULL) {
+		errno = CONF_ECPROXY;
+		return NULL;
 	}
 	cJSON *result = cJSON_Duplicate(src, 1);
+	if (result == NULL) {
+		errno = CONF_ECMEMORY;
+		return NULL;
+	}
 	int dupdet_count = 0;
 	char **vhost_namelist = NULL;
 	cJSON *rec_result = NULL;
@@ -254,9 +279,13 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 		result->icon_path = NULL;
 	}
 	result->icon_b64 = NULL;
-	cJSON *config_json_proxy = cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(config_json, "proxy"), 1);
-	if (config_json_proxy == NULL) {
+	cJSON *config_json_proxy_source = cJSON_GetObjectItemCaseSensitive(config_json, "proxy");
+	if (config_json_proxy_source == NULL) {
 		return config_parse_failure(config_json, result, CONF_ECPROXY);
+	}
+	cJSON *config_json_proxy = cJSON_Duplicate(config_json_proxy_source, 1);
+	if (config_json_proxy == NULL) {
+		return config_parse_failure(config_json, result, CONF_ECMEMORY);
 	}
 	cJSON_Delete(config_json);
 	if (!cJSON_IsArray(config_json_proxy)) {
