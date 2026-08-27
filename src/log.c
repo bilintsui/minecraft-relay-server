@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -41,6 +42,32 @@ static void gettime(char *target, size_t target_size) {
 	target[target_length - 2] = ':';
 }
 
+/* Opens filename append-only and safely: the final path component must not be a symlink, only regular files pass, and a FIFO without a reader fails instead of blocking. The caller owns the descriptor. */
+static int log_fd_open(const char *filename) {
+	int fd;
+	struct stat file_status;
+	if (filename == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+	fd = open(filename, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0666);
+	if (fd == -1) {
+		return -1;
+	}
+	if (fstat(fd, &file_status) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	if (!S_ISREG(file_status.st_mode)) {
+		close(fd);
+		errno = EIO;
+		return -1;
+	}
+	return fd;
+}
+
 static int log_write(bool noprefix, const char *logfile, uint8_t maxlevel, mksys_level msglevel, mksys_line_end line_end, const char *message) {
 	if (message == NULL) {
 		message = "";
@@ -65,13 +92,21 @@ static int log_write(bool noprefix, const char *logfile, uint8_t maxlevel, mksys
 	if (strcmp(logfile, MKSYS_NOLOGFILE) != 0) {
 		char time_str[32];
 		gettime(time_str, sizeof(time_str));
-		FILE *logfd = fopen(logfile, "a");
-		if (logfd != NULL) {
-			if (noprefix == MKSYS_PREFIX_ON) {
-				fprintf(logfd, "[%s] [%s] ", time_str, level_str);
+		int logfd = log_fd_open(logfile);
+		if (logfd != -1) {
+			FILE *log_stream = fdopen(logfd, "a");
+			if (log_stream == NULL) {
+				close(logfd);
+				status = -1;
+			} else {
+				if (noprefix == MKSYS_PREFIX_ON) {
+					fprintf(log_stream, "[%s] [%s] ", time_str, level_str);
+				}
+				status = fprintf(log_stream, "%s\n", message);
+				if ((fclose(log_stream) != 0) && (status >= 0)) {
+					status = -1;
+				}
 			}
-			status = fprintf(logfd, "%s\n", message);
-			fclose(logfd);
 		}
 	}
 	if (noprefix == MKSYS_PREFIX_OFF && !isatty(STDOUT_FILENO)) {
@@ -96,23 +131,9 @@ static int log_write(bool noprefix, const char *logfile, uint8_t maxlevel, mksys
 
 /* section: functions (exported) */
 int log_file_validate(const char *filename) {
-	bool created = false;
-	int fd = open(filename, O_WRONLY | O_APPEND);
-	if (fd == -1 && errno == ENOENT) {
-		fd = open(filename, O_WRONLY | O_APPEND | O_CREAT | O_EXCL, 0666);
-		if (fd != -1) {
-			created = true;
-		} else if (errno == EEXIST) {
-			fd = open(filename, O_WRONLY | O_APPEND);
-		}
-	}
+	/* The safe open creates and keeps an empty regular file in place; the previous create-then-unlink probe left a symlink swap window. */
+	int fd = log_fd_open(filename);
 	if (fd == -1) {
-		return -1;
-	}
-	if (created && unlink(filename) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
 		return -1;
 	}
 	return close(fd);

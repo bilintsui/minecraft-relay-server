@@ -6,6 +6,10 @@
      * Optional, string (default: "/var/log/mcrelay/access.log")
      *
      * The file where logs are saved
+     *
+     * The path itself must not be a symbolic link: mcrelay refuses to open
+     * one (parent directories may still contain them). Use logrotate to
+     * rotate the file instead of replacing it with a link.
      */
     "filename": "/var/log/mcrelay/access.log",
 
