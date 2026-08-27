@@ -145,6 +145,7 @@ void packet_destroy(p_handshake object) {
 
 p_handshake packet_read(void *src, void *end) {
 	p_handshake result;
+	const char *address_end;
 	void *part2_start;
 	varint_t address_length, size_part1, size_part2, username_length;
 	memset(&result, 0, sizeof(result));
@@ -170,22 +171,26 @@ p_handshake packet_read(void *src, void *end) {
 	if (address_length == 0) {
 		goto cleanup;
 	}
-	if ((char *)src + address_length > (char *)end) {
+	if ((size_t)((const char *)end - (const char *)src) < address_length) {
 		goto cleanup;
 	}
-	if ((*((char *)src + address_length - 1)) == '\0') {
+	address_end = (const char *)src + address_length;
+	if (address_end[-1] == '\0') {
 		result.address = malloc(strlen(src) + 1);
 		if (result.address == NULL) {
 			goto cleanup;
 		}
 		strcpy(result.address, src);
 		src = (char *)src + strlen(src);
-		if (memcmp(src, "\0FML\0", 5) == 0) {
+		size_t suffix_size = (size_t)(address_end - (const char *)src);
+		if (suffix_size == 5U && memcmp(src, "\0FML\0", 5) == 0) {
 			result.version_fml = 1;
 			src = (char *)src + 5;
-		} else if (memcmp(src, "\0FML2\0", 6) == 0) {
+		} else if (suffix_size == 6U && memcmp(src, "\0FML2\0", 6) == 0) {
 			result.version_fml = 2;
 			src = (char *)src + 6;
+		} else {
+			goto cleanup;
 		}
 	} else {
 		result.version_fml = 0;
@@ -194,7 +199,7 @@ p_handshake packet_read(void *src, void *end) {
 			goto cleanup;
 		}
 		memcpy(result.address, src, address_length);
-		src = (char *)src + address_length;
+		src = (void *)address_end;
 	}
 	if ((char *)src + sizeof(in_port_t) > (char *)end) {
 		goto cleanup;
@@ -235,7 +240,7 @@ p_handshake packet_read(void *src, void *end) {
 		}
 		result.signature_data_length = size_part2 - ((char *)src - (char *)part2_start);
 		if (result.signature_data_length) {
-			if (((result.version <= PVERDB_R_1_20_1) || ((result.version & PVERDB_SNAPMASK) <= PVERDB_S_1_20_1_RC1)) && (*((char *)src) == 1)) {
+			if (((result.version <= PVERDB_R_1_20_1) || ((result.version & PVERDB_SNAPMASK) <= PVERDB_S_1_20_1_RC1)) && (char *)src < (char *)end && (*((char *)src) == 1)) {
 				result.signature_data_length--;
 				src = (char *)src + 1;
 			}

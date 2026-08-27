@@ -178,6 +178,81 @@ static bool modern_message_validate(const uint8_t *data, size_t size) {
 	return true;
 }
 
+static bool packet_read_bounds_test(void) {
+	/* Both flush cases end at an ASan-protected object boundary; the cross-field case keeps bytes available but outside the declared address. */
+	static const uint8_t fml_cross_field[] = { 0x0C, 0x00, 0x2F, 0x02, 'x', '\0', 'F', 'M', 'L', '\0', 0x63, 0xDD, 0x01 };
+	static const uint8_t fml_flush[] = { 0x0A, 0x00, 0x2F, 0x03, 't', 'e', '\0' };
+	static const uint8_t signature[] = { 0xA5, 0x5A };
+	static const uint8_t signature_flush[] = { 0x10, 0x00, 0x2F, 0x04, 't', 'e', 's', 't', 0x63, 0xDD, 0x02, 0x06, 0x00, 0x03, 'a', 'b', 'c' };
+	uint8_t packet_buffer[64];
+	p_handshake packet;
+	size_t offset;
+	packet = packet_read((void *)fml_cross_field, (void *)(fml_cross_field + sizeof(fml_cross_field)));
+	if (packet.address != NULL) {
+		packet_destroy(packet);
+		return false;
+	}
+	packet = packet_read((void *)fml_flush, (void *)(fml_flush + sizeof(fml_flush)));
+	if (packet.address != NULL) {
+		packet_destroy(packet);
+		return false;
+	}
+	packet = packet_read((void *)signature_flush, (void *)(signature_flush + sizeof(signature_flush)));
+	if (packet.address != NULL) {
+		packet_destroy(packet);
+		return false;
+	}
+	offset = 0;
+	packet_buffer[offset++] = 15U;
+	packet_buffer[offset++] = 0x00;
+	packet_buffer[offset++] = 0x2F;
+	packet_buffer[offset++] = 0x09;
+	memcpy(packet_buffer + offset, "host\0FML\0", 9U);
+	offset += 9U;
+	packet_buffer[offset++] = 0x63;
+	packet_buffer[offset++] = 0xDD;
+	packet_buffer[offset++] = 0x01;
+	packet = packet_read((void *)packet_buffer, (void *)(packet_buffer + offset));
+	if (packet.address == NULL || packet.version_fml != 1 || strcmp(packet.address, "host") != 0 || packet.port != 25565 || packet.nextstate != CLIENT_INTENT_STATUS) {
+		packet_destroy(packet);
+		return false;
+	}
+	packet_destroy(packet);
+	offset = 0;
+	packet_buffer[offset++] = 16U;
+	packet_buffer[offset++] = 0x00;
+	packet_buffer[offset++] = 0x2F;
+	packet_buffer[offset++] = 0x0A;
+	memcpy(packet_buffer + offset, "host\0FML2\0", 10U);
+	offset += 10U;
+	packet_buffer[offset++] = 0x63;
+	packet_buffer[offset++] = 0xDD;
+	packet_buffer[offset++] = 0x01;
+	packet = packet_read((void *)packet_buffer, (void *)(packet_buffer + offset));
+	if (packet.address == NULL || packet.version_fml != 2 || strcmp(packet.address, "host") != 0 || packet.port != 25565 || packet.nextstate != CLIENT_INTENT_STATUS) {
+		packet_destroy(packet);
+		return false;
+	}
+	packet_destroy(packet);
+	p_handshake source = { 0 };
+	source.address = (void *)"host";
+	source.nextstate = CLIENT_INTENT_LOGIN;
+	source.port = 25565;
+	source.signature_data = (void *)signature;
+	source.signature_data_length = sizeof(signature);
+	source.username = (void *)"player";
+	source.version = PVERDB_R_1_20_1;
+	size_t packet_size = packet_write(packet_buffer, sizeof(packet_buffer), source);
+	packet = packet_read(packet_buffer, packet_buffer + packet_size);
+	if (packet_size == 0 || packet.address == NULL || packet.username == NULL || strcmp(packet.address, "host") != 0 || strcmp(packet.username, "player") != 0
+		|| packet.signature_data_length != sizeof(signature) || packet.signature_data == NULL || memcmp(packet.signature_data, signature, sizeof(signature)) != 0) {
+		packet_destroy(packet);
+		return false;
+	}
+	packet_destroy(packet);
+	return true;
+}
+
 static bool packet_roundtrip(client_fixture_kind kind, protocol_version protocol, const uint8_t *source, size_t source_size, uint8_t *target, size_t target_capacity) {
 	size_t target_size;
 	if (kind == CLIENT_FIXTURE_LEGACY_LOGIN) {
@@ -359,6 +434,7 @@ int main(int argc, char **argv) {
 	int result = EXIT_FAILURE;
 	CHECK(argc == 2, "raw packet directory is required");
 	CHECK(kickreason_bounds_test(), "bounded kick response construction failed");
+	CHECK(packet_read_bounds_test(), "bounded handshake packet reading failed");
 	CHECK(varint_bounds_test(), "bounded varint decoding failed");
 	CHECK(packet_write_bounds_test(), "bounded packet construction failed");
 
