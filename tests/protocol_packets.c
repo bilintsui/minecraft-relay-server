@@ -70,6 +70,45 @@ static ssize_t file_read(const char *filename, void *data, size_t capacity) {
 	return (ssize_t)size;
 }
 
+static bool kickreason_bounds_test(void) {
+	static const char message[] = "Capacity test";
+	uint8_t output[256];
+	memset(output, 0xA5, sizeof(output));
+	size_t modern_size = make_kickreason(output, sizeof(output), message);
+	if (modern_size == 0 || modern_size > sizeof(output)) {
+		return false;
+	}
+	memset(output, 0xA5, sizeof(output));
+	if (make_kickreason(output, modern_size - 1U, message) != 0) {
+		return false;
+	}
+	for (size_t index = 0; index < sizeof(output); index++) {
+		if (output[index] != 0xA5) {
+			return false;
+		}
+	}
+	if (make_kickreason(output, modern_size, message) != modern_size || make_kickreason(NULL, modern_size, message) != 0
+		|| make_kickreason(output, sizeof(output), NULL) != 0) {
+		return false;
+	}
+	memset(output, 0xA5, sizeof(output));
+	size_t legacy_size = make_kickreason_legacy(output, sizeof(output), message);
+	if (legacy_size == 0 || legacy_size > sizeof(output)) {
+		return false;
+	}
+	memset(output, 0xA5, sizeof(output));
+	if (make_kickreason_legacy(output, legacy_size - 1U, message) != 0) {
+		return false;
+	}
+	for (size_t index = 0; index < sizeof(output); index++) {
+		if (output[index] != 0xA5) {
+			return false;
+		}
+	}
+	return make_kickreason_legacy(output, legacy_size, message) == legacy_size && make_kickreason_legacy(NULL, legacy_size, message) == 0
+		&& make_kickreason_legacy(output, sizeof(output), NULL) == 0;
+}
+
 static bool legacy_message_validate(const uint8_t *data, size_t size, size_t *field_count) {
 	if (data == NULL || field_count == NULL || size < 3 || data[0] != 0xFF) {
 		return false;
@@ -319,6 +358,7 @@ int main(int argc, char **argv) {
 	char filename[BUFSIZ];
 	int result = EXIT_FAILURE;
 	CHECK(argc == 2, "raw packet directory is required");
+	CHECK(kickreason_bounds_test(), "bounded kick response construction failed");
 	CHECK(varint_bounds_test(), "bounded varint decoding failed");
 	CHECK(packet_write_bounds_test(), "bounded packet construction failed");
 
@@ -371,7 +411,7 @@ int main(int argc, char **argv) {
 		CHECK(source_size > 0, "cannot read legacy login response");
 		size_t source_fields, target_fields;
 		CHECK(legacy_message_validate(source, (size_t)source_size, &source_fields), "captured legacy login response is malformed");
-		size_t target_size = make_kickreason_legacy(target, "Outdated server!");
+		size_t target_size = make_kickreason_legacy(target, sizeof(target_storage.bytes) - 1U, "Outdated server!");
 		CHECK(legacy_message_validate(target, target_size, &target_fields), "constructed legacy login response is malformed");
 		CHECK(source_fields == target_fields && target_size == (size_t)source_size && memcmp(source, target, target_size) == 0, "constructed legacy login response differs from capture");
 	}
@@ -382,7 +422,7 @@ int main(int argc, char **argv) {
 	ssize_t source_size = file_read(filename, source, BUFSIZ);
 	CHECK(source_size > 0, "cannot read modern login response");
 	CHECK(modern_message_validate(source, (size_t)source_size), "captured modern login response is malformed");
-	size_t target_size = make_kickreason(target, "Outdated server! I'm still on 13w41b");
+	size_t target_size = make_kickreason(target, sizeof(target_storage.bytes) - 1U, "Outdated server! I'm still on 13w41b");
 	CHECK(modern_message_validate(target, target_size), "constructed modern login response is malformed");
 
 	memset(source, 0, BUFSIZ);

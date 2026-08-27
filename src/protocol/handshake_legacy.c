@@ -41,8 +41,22 @@ static size_t make_message_legacy(void *dst, const void *src, size_t n) {
 }
 
 /* section: functions (exported) */
-size_t make_kickreason_legacy(void *dst, const void *src) {
-	return make_message_legacy(dst, src, strlen(src));
+size_t make_kickreason_legacy(void *dst, size_t dst_capacity, const void *src) {
+	if (dst == NULL || dst_capacity < 3U || src == NULL) {
+		return 0;
+	}
+	size_t source_size = strlen(src);
+	if (source_size > UINT16_MAX || source_size > (SIZE_MAX - 3U) / 2U || dst_capacity < 3U + source_size * 2U) {
+		return 0;
+	}
+	uint8_t *destination = dst;
+	destination[0] = 0xFF;
+	protocol_uint16_write(destination + 1, (uint16_t)source_size);
+	const uint8_t *source = src;
+	for (size_t index = 0; index < source_size; index++) {
+		protocol_uint16_write(destination + 3U + index * 2U, source[index]);
+	}
+	return 3U + source_size * 2U;
 }
 
 size_t make_motd_legacy(void *dst, const void *src, protocol_version motd_version, uint8_t version) {

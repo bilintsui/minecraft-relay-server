@@ -39,7 +39,8 @@ typedef struct {
 } p_handshake;
 
 /* section: functions (exported) */
-size_t make_kickreason(void *dst, const void *src);
+/* Encodes a login disconnect packet containing src. Returns zero when the arguments or capacity are invalid. */
+size_t make_kickreason(void *dst, size_t dst_capacity, const void *src);
 size_t make_motd(void *dst, const void *src, varint_t ver, const char *favicon_b64);
 void packet_destroy(p_handshake object);
 p_handshake packet_read(void *src, void *end);

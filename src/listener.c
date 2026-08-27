@@ -95,8 +95,14 @@
 #ifndef LISTENER_WORKER_LOG_INTERVAL_SEC
 #define LISTENER_WORKER_LOG_INTERVAL_SEC	10
 #endif
+#ifndef LISTENER_WORKER_REFUSAL_TIMEOUT_SEC
+#define LISTENER_WORKER_REFUSAL_TIMEOUT_SEC	1
+#endif
 #if LISTENER_WORKER_LIMIT < 1
 #error "LISTENER_WORKER_LIMIT must be positive"
+#endif
+#if LISTENER_WORKER_REFUSAL_TIMEOUT_SEC < 1
+#error "LISTENER_WORKER_REFUSAL_TIMEOUT_SEC must be positive"
 #endif
 
 /* initial packet */
@@ -154,7 +160,8 @@ typedef enum {
 	LISTENER_CONNECTION_ROUTE_WAITING,
 	LISTENER_CONNECTION_SHORT_CONNECTING,
 	LISTENER_CONNECTION_SHORT_RELAYING,
-	LISTENER_CONNECTION_SHORT_RESPONDING
+	LISTENER_CONNECTION_SHORT_RESPONDING,
+	LISTENER_CONNECTION_WORKER_REFUSING
 } listener_connection_state;
 typedef enum {
 	LISTENER_CONNECTION_TIMER_ASSEMBLY,
@@ -162,7 +169,8 @@ typedef enum {
 	LISTENER_CONNECTION_TIMER_ROUTE,
 	LISTENER_CONNECTION_TIMER_SHORT_CONNECT,
 	LISTENER_CONNECTION_TIMER_SHORT_IDLE,
-	LISTENER_CONNECTION_TIMER_SHORT_LIFETIME
+	LISTENER_CONNECTION_TIMER_SHORT_LIFETIME,
+	LISTENER_CONNECTION_TIMER_WORKER_REFUSAL
 } listener_connection_timer;
 typedef enum {
 	LISTENER_EVENT_CLIENT,
@@ -233,6 +241,7 @@ struct listener_connection {
 	listener_event_source timer_source;
 	listener_connection_timer timer;
 	listener_connection_buffer upstream_buffer;
+	bool upstream_buffer_owned;
 	uint32_t upstream_events;
 	int upstream_fd;
 	bool upstream_read_closed;
@@ -549,7 +558,7 @@ static int listener_connection_interest_update(const listener_events *events, in
 
 static int listener_connection_interests_update(listener_connection *connection, const listener_events *events) {
 	uint32_t client_flags = 0;
-	if (connection->state == LISTENER_CONNECTION_SHORT_RESPONDING) {
+	if (connection->state == LISTENER_CONNECTION_SHORT_RESPONDING || connection->state == LISTENER_CONNECTION_WORKER_REFUSING) {
 		if (connection->upstream_buffer.size > 0) {
 			client_flags |= EPOLLOUT;
 		}
@@ -683,7 +692,9 @@ static void listener_connection_destroy(listener_connection **connections, liste
 		close(target->upstream_fd);
 	}
 	connection_setup_short_destroy(&target->short_plan);
-	free(target->upstream_buffer.data);
+	if (target->upstream_buffer_owned) {
+		free(target->upstream_buffer.data);
+	}
 	route_waiter_destroy(target->waiter, supervisor, now);
 	route_generation_release(target->generation);
 	free(target);
@@ -934,6 +945,7 @@ static bool listener_connection_short_buffer_prepare(listener_connection *connec
 	}
 	connection->upstream_buffer.capacity = LISTENER_SHORT_RELAY_BUFFER_BYTES;
 	connection->upstream_buffer.size = connection->short_plan.response_size;
+	connection->upstream_buffer_owned = true;
 	memcpy(connection->upstream_buffer.data, connection->short_plan.response, connection->short_plan.response_size);
 	free(connection->short_plan.response);
 	connection->short_plan.response = NULL;
@@ -991,14 +1003,14 @@ static listener_connection_progress listener_connection_short_drive(listener_con
 	if (timeutil_compare(now, &connection->lifetime_deadline) >= 0) {
 		return LISTENER_CONNECTION_CLOSED;
 	}
-	if (connection->state == LISTENER_CONNECTION_SHORT_RESPONDING) {
+	if (connection->state == LISTENER_CONNECTION_SHORT_RESPONDING || connection->state == LISTENER_CONNECTION_WORKER_REFUSING) {
 		if (listener_connection_buffer_send(&connection->upstream_buffer, connection->socket_fd, &activity) == -1) {
 			return LISTENER_CONNECTION_CLOSED;
 		}
 		if (connection->upstream_buffer.size == 0) {
 			return LISTENER_CONNECTION_CLOSED;
 		}
-		if (activity > 0 && listener_connection_timer_arm_short(connection, LISTENER_CONNECTION_TIMER_SHORT_IDLE, now,
+		if (connection->state == LISTENER_CONNECTION_SHORT_RESPONDING && activity > 0 && listener_connection_timer_arm_short(connection, LISTENER_CONNECTION_TIMER_SHORT_IDLE, now,
 			LISTENER_SHORT_RELAY_IDLE_TIMEOUT_SEC) == -1) {
 			return LISTENER_CONNECTION_ABORT;
 		}
@@ -1050,6 +1062,42 @@ static listener_connection_progress listener_connection_short_drive(listener_con
 	return listener_connection_interests_update(connection, events) == -1 ? LISTENER_CONNECTION_FATAL : LISTENER_CONNECTION_PENDING;
 }
 
+static listener_connection_progress listener_connection_refusal_start(listener_connection *connection, const listener_events *events, resolver_supervisor *supervisor,
+	const struct timespec *now) {
+	static const char notice[] = "[Proxy] Proxy is full, try again later.";
+	size_t packet_size;
+	switch (protocol_identify(connection->inbound, connection->inbound_size, NULL)) {
+		case PVER_LEGACYL1:
+		case PVER_LEGACYL2:
+		case PVER_LEGACYL3:
+		case PVER_LEGACYL4:
+			packet_size = make_kickreason_legacy(connection->inbound, sizeof(connection->inbound), notice);
+			break;
+		case PVER_MODERN1:
+		case PVER_MODERN2:
+			packet_size = make_kickreason(connection->inbound, sizeof(connection->inbound), notice);
+			break;
+		case PVER_ORIGPRO:
+		case PVER_UNIDENT:
+		default:
+			return LISTENER_CONNECTION_CLOSED;
+	}
+	if (packet_size == 0 || !listener_connection_route_release(connection, supervisor, now)) {
+		return LISTENER_CONNECTION_ABORT;
+	}
+	connection->inbound_size = 0;
+	connection->state = LISTENER_CONNECTION_WORKER_REFUSING;
+	connection->upstream_buffer.capacity = sizeof(connection->inbound);
+	connection->upstream_buffer.data = connection->inbound;
+	connection->upstream_buffer.offset = 0;
+	connection->upstream_buffer.size = packet_size;
+	connection->upstream_buffer_owned = false;
+	if (listener_connection_timer_arm_short(connection, LISTENER_CONNECTION_TIMER_WORKER_REFUSAL, now, LISTENER_WORKER_REFUSAL_TIMEOUT_SEC) == -1) {
+		return LISTENER_CONNECTION_ABORT;
+	}
+	return listener_connection_short_drive(connection, events, now, 0);
+}
+
 static listener_connection_progress listener_connection_short_failure(listener_connection *connection, const listener_events *events, const struct timespec *now) {
 	if (timeutil_compare(now, &connection->lifetime_deadline) >= 0) {
 		return LISTENER_CONNECTION_CLOSED;
@@ -1089,7 +1137,8 @@ static listener_connection_progress listener_connection_short_event(listener_con
 		if (event_flags & EPOLLERR) {
 			return LISTENER_CONNECTION_CLOSED;
 		}
-		if (connection->state != LISTENER_CONNECTION_SHORT_RESPONDING && (event_flags & (EPOLLIN | EPOLLHUP | EPOLLRDHUP))
+		if (connection->state != LISTENER_CONNECTION_SHORT_RESPONDING && connection->state != LISTENER_CONNECTION_WORKER_REFUSING
+			&& (event_flags & (EPOLLIN | EPOLLHUP | EPOLLRDHUP))
 			&& listener_connection_buffer_receive(&connection->client_buffer, connection->socket_fd, &connection->client_read_closed, &activity) == -1) {
 			return LISTENER_CONNECTION_CLOSED;
 		}
@@ -1200,7 +1249,8 @@ static listener_connection_progress listener_connection_timeout(listener_connect
 	if (connection->timer == LISTENER_CONNECTION_TIMER_SHORT_CONNECT) {
 		return listener_connection_short_failure(connection, events, &current_now);
 	}
-	if (connection->timer == LISTENER_CONNECTION_TIMER_SHORT_IDLE || connection->timer == LISTENER_CONNECTION_TIMER_SHORT_LIFETIME) {
+	if (connection->timer == LISTENER_CONNECTION_TIMER_SHORT_IDLE || connection->timer == LISTENER_CONNECTION_TIMER_SHORT_LIFETIME
+		|| connection->timer == LISTENER_CONNECTION_TIMER_WORKER_REFUSAL) {
 		return LISTENER_CONNECTION_CLOSED;
 	}
 	return connection->timer == LISTENER_CONNECTION_TIMER_GRACE && protocol_identify(connection->inbound, connection->inbound_size, NULL) != PVER_UNIDENT
@@ -2181,33 +2231,32 @@ static int listener_workers_reap(listener_context *context) {
 	return 0;
 }
 
-static void listener_connection_dispatch(listener_connection *connections, listener_connection *connection, listener_socket *listener, const listener_events *events,
+static listener_connection_progress listener_connection_dispatch(listener_connection *connections, listener_connection *connection, listener_socket *listener, const listener_events *events,
 	pid_t listener_pid, listener_context *context, const struct timespec *now) {
 	if (context->workers.count >= LISTENER_WORKER_LIMIT) {
 		listener_worker_refusal_log(context);
-		connection->closing = true;
-		return;
+		return listener_connection_refusal_start(connection, events, context->resolver, now);
 	}
 	connection_setup_snapshot snapshot;
 	if (!listener_connection_snapshot_prepare(connection, context, &snapshot)
 		|| !listener_connection_route_release(connection, context->resolver, now)) {
 		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot prepare a self-contained worker handoff.");
 		connection->closing = true;
-		return;
+		return LISTENER_CONNECTION_PENDING;
 	}
 	pid_t worker_pid = fork();
 	if (worker_pid > 0) {
 		context->workers.pids[context->workers.count] = worker_pid;
 		context->workers.count++;
 		connection->closing = true;
-		return;
+		return LISTENER_CONNECTION_PENDING;
 	}
 	if (worker_pid < 0) {
 		int saved_errno = errno;
 		connection->closing = true;
 		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot create worker process: %s", strerror(saved_errno));
 		listener_backoff();
-		return;
+		return LISTENER_CONNECTION_PENDING;
 	}
 	listener_connections_close_except(connections, connection);
 	_exit(listener_worker_run(connection->socket_fd, &connection->address, connection->inbound, connection->inbound_size, &snapshot, listener, events, listener_pid, context));
@@ -2219,8 +2268,7 @@ static listener_connection_progress listener_connection_ready(listener_connectio
 		return listener_connection_short_start(connection, events, context, now);
 	}
 	if (connection->dispatch == LISTENER_CONNECTION_ROUTE_WORKER_BYPASS || connection->dispatch == LISTENER_CONNECTION_ROUTE_WORKER_WAIT) {
-		listener_connection_dispatch(connections, connection, listener, events, listener_pid, context, now);
-		return LISTENER_CONNECTION_PENDING;
+		return listener_connection_dispatch(connections, connection, listener, events, listener_pid, context, now);
 	}
 	return LISTENER_CONNECTION_ABORT;
 }

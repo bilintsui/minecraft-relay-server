@@ -6,6 +6,7 @@
  */
 
 /* section: headers (library) */
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -21,6 +22,37 @@
 #include "handshake.h"
 
 /* section: functions (local) */
+static size_t varint_size(varint_t value) {
+	size_t result = 1;
+	while ((value >>= 7) != 0) {
+		result++;
+	}
+	return result;
+}
+
+static bool handshake_varint_write(uint8_t **destination, size_t *remaining, varint_t value) {
+	if (destination == NULL || *destination == NULL || remaining == NULL) {
+		return false;
+	}
+	size_t encoded_size = varint_size(value);
+	if (*remaining < encoded_size) {
+		return false;
+	}
+	uint8_t *cursor = *destination;
+	size_t index = 0;
+	do {
+		uint8_t byte = (uint8_t)(value & 0x7FU);
+		value >>= 7;
+		if (value != 0) {
+			byte |= 0x80U;
+		}
+		cursor[index++] = byte;
+	} while (value != 0);
+	*destination += encoded_size;
+	*remaining -= encoded_size;
+	return true;
+}
+
 static size_t make_message(void *dst, const void *src) {
 	uint8_t *tmp, *ptr_dst, *ptr_tmp;
 	size_t dst_length, payload_length, src_length;
@@ -39,23 +71,47 @@ static size_t make_message(void *dst, const void *src) {
 	return payload_length;
 }
 
-static size_t varint_size(varint_t value) {
-	size_t result = 1;
-	while ((value >>= 7) != 0) {
-		result++;
-	}
-	return result;
-}
-
 /* section: functions (exported) */
-size_t make_kickreason(void *dst, const void *src) {
-	void *input;
-	size_t payload_length;
-	input = calloc(1, BUFSIZ);
-	sprintf(input, "{\"extra\":[{\"text\":\"%s\"}],\"text\":\"\"}", (const char *)src);
-	payload_length = make_message(dst, input);
-	free(input);
-	return payload_length;
+size_t make_kickreason(void *dst, size_t dst_capacity, const void *src) {
+	static const char json_prefix[] = "{\"extra\":[{\"text\":\"";
+	static const char json_suffix[] = "\"}],\"text\":\"\"}";
+	if (dst == NULL || dst_capacity == 0 || src == NULL) {
+		return 0;
+	}
+	size_t prefix_size = sizeof(json_prefix) - 1U;
+	size_t suffix_size = sizeof(json_suffix) - 1U;
+	size_t source_size = strlen(src);
+	if (source_size > SIZE_MAX - prefix_size || source_size + prefix_size > SIZE_MAX - suffix_size) {
+		return 0;
+	}
+	size_t json_size = prefix_size + source_size + suffix_size;
+	if (json_size > UINT32_MAX) {
+		return 0;
+	}
+	size_t string_length_size = varint_size((varint_t)json_size);
+	if (json_size > SIZE_MAX - string_length_size - 1U) {
+		return 0;
+	}
+	size_t frame_size = 1U + string_length_size + json_size;
+	if (frame_size > UINT32_MAX) {
+		return 0;
+	}
+	size_t frame_length_size = varint_size((varint_t)frame_size);
+	if (frame_size > SIZE_MAX - frame_length_size || dst_capacity < frame_length_size + frame_size) {
+		return 0;
+	}
+	uint8_t *cursor = dst;
+	size_t remaining = dst_capacity;
+	if (!handshake_varint_write(&cursor, &remaining, (varint_t)frame_size) || !handshake_varint_write(&cursor, &remaining, 0)
+		|| !handshake_varint_write(&cursor, &remaining, (varint_t)json_size) || remaining < json_size) {
+		return 0;
+	}
+	memcpy(cursor, json_prefix, prefix_size);
+	cursor += prefix_size;
+	memcpy(cursor, src, source_size);
+	cursor += source_size;
+	memcpy(cursor, json_suffix, suffix_size);
+	return frame_length_size + frame_size;
 }
 
 size_t make_motd(void *dst, const void *src, varint_t ver, const char *favicon_b64) {

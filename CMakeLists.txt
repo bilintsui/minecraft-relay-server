@@ -430,13 +430,13 @@ if(BUILD_TESTING)
 		src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c
 		src/route/table.c src/route/waiter.c
 		src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c
-		tests/connect_pending.c)
+		tests/connect_pending.c tests/refusal_partial.c)
 	add_dependencies(worker_cap_daemon version_header)
 	target_compile_definitions(worker_cap_daemon PRIVATE _GNU_SOURCE CONNECTION_SETUP_LONG_CONNECT_TIMEOUT_SEC=1 DEBUG_MODE=false
 		LISTENER_CONNECTION_LIMIT=3 LISTENER_WORKER_LIMIT=2)
 	target_include_directories(worker_cap_daemon PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 	target_link_libraries(worker_cap_daemon -lresolv -lcjson -lsystemd)
-	set_target_properties(worker_cap_daemon PROPERTIES LINK_FLAGS "-Wl,--wrap=connect")
+	set_target_properties(worker_cap_daemon PROPERTIES LINK_FLAGS "-Wl,--wrap=connect -Wl,--wrap=send")
 	add_executable(worker_cap_test tests/worker_cap.c)
 	target_compile_definitions(worker_cap_test PRIVATE _GNU_SOURCE)
 	add_test(NAME worker_cap COMMAND worker_cap_test $<TARGET_FILE:worker_cap_daemon> $<TARGET_FILE:worker_cap_daemon>)

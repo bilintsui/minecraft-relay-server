@@ -242,7 +242,7 @@ static connection_setup_status connection_setup_long_handle_legacy_login(int soc
 			"src: %s:%d, type: game, status: reject_gamerelay_oldclient",
 			(char *)&(addrinfo_in.address), addrinfo_in.port
 		);
-		packlen_rewrited = make_kickreason_legacy(rewrited, "Proxy: Unsupported client, use 12w04a or later!");
+		packlen_rewrited = make_kickreason_legacy(rewrited, sizeof(rewrited), "Proxy: Unsupported client, use 12w04a or later!");
 		connection_setup_long_send_client(socket_in, rewrited, packlen_rewrited);
 		close(socket_in);
 		return CONNECTION_SETUP_EOLDCLIENT;
@@ -252,7 +252,7 @@ static connection_setup_status connection_setup_long_handle_legacy_login(int soc
 			"src: %s:%d, type: game, status: reject_gamerelay_12w17a",
 			(char *)&(addrinfo_in.address), addrinfo_in.port
 		);
-		packlen_rewrited = make_kickreason_legacy(rewrited, "Proxy: Unsupported client, use 12w18a or later!");
+		packlen_rewrited = make_kickreason_legacy(rewrited, sizeof(rewrited), "Proxy: Unsupported client, use 12w18a or later!");
 		connection_setup_long_send_client(socket_in, rewrited, packlen_rewrited);
 		close(socket_in);
 		return CONNECTION_SETUP_EOLDCLIENT;
@@ -268,7 +268,7 @@ static connection_setup_status connection_setup_long_handle_legacy_login(int soc
 			"src: %s:%d, type: game, vhost: %s, status: reject_vhostinvalid, username: %s",
 			(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, inbound_info.username
 		);
-		packlen_rewrited = make_kickreason_legacy(rewrited, "Proxy: Please use a legit name to connect!");
+		packlen_rewrited = make_kickreason_legacy(rewrited, sizeof(rewrited), "Proxy: Please use a legit name to connect!");
 		connection_setup_long_send_client(socket_in, rewrited, packlen_rewrited);
 		close(socket_in);
 		return CONNECTION_SETUP_ENOVHOST;
@@ -311,13 +311,13 @@ static connection_setup_status connection_setup_long_handle_legacy_login(int soc
 			"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s",
 			(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 		);
-		packlen_rewrited = make_kickreason_legacy(rewrited, "Proxy(Internal): Temporarily failed to resolve the address for the target server, please try again later.");
+		packlen_rewrited = make_kickreason_legacy(rewrited, sizeof(rewrited), "Proxy(Internal): Temporarily failed to resolve the address for the target server, please try again later.");
 	} else {
 		CONNECTION_SETUP_LOG(snapshot, outmsg_level,
 			"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s",
 			(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 		);
-		packlen_rewrited = make_kickreason_legacy(rewrited, "Proxy(Internal): Failed to connect to the target server, please try again later.");
+		packlen_rewrited = make_kickreason_legacy(rewrited, sizeof(rewrited), "Proxy(Internal): Failed to connect to the target server, please try again later.");
 	}
 	connection_setup_long_send_client(socket_in, rewrited, packlen_rewrited);
 	close(socket_in);
@@ -347,7 +347,7 @@ static connection_setup_status connection_setup_long_handle_modern_handshake(int
 			"src: %s:%d, type: game, status: reject_gamerelay_13w41*",
 			(char *)&(addrinfo_in.address), addrinfo_in.port
 		);
-		packlen_rewrited = make_kickreason(rewrited, "Proxy: Unsupported client, use 13w42a or later!");
+		packlen_rewrited = make_kickreason(rewrited, sizeof(rewrited), "Proxy: Unsupported client, use 13w42a or later!");
 		connection_setup_long_send_client(socket_in, rewrited, packlen_rewrited);
 		packet_destroy(inbound_info);
 		close(socket_in);
@@ -365,7 +365,7 @@ static connection_setup_status connection_setup_long_handle_modern_handshake(int
 			"src: %s:%d, type: %s, vhost: %s, status: reject_vhostinvalid, username: %s",
 			(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, inbound_info.address, inbound_info.username
 		);
-		packlen_rewrited = make_kickreason(rewrited, "Proxy: Please use a legit name to connect!");
+		packlen_rewrited = make_kickreason(rewrited, sizeof(rewrited), "Proxy: Please use a legit name to connect!");
 		connection_setup_long_send_client(socket_in, rewrited, packlen_rewrited);
 		packet_destroy(inbound_info);
 		close(socket_in);
@@ -427,13 +427,13 @@ static connection_setup_status connection_setup_long_handle_modern_handshake(int
 			"src: %s:%d, type: %s, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s",
 			(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 		);
-		packlen_rewrited = make_kickreason(rewrited, "Proxy(Internal): Temporarily failed to resolve the address for the target server, please try again later.");
+		packlen_rewrited = make_kickreason(rewrited, sizeof(rewrited), "Proxy(Internal): Temporarily failed to resolve the address for the target server, please try again later.");
 	} else {
 		CONNECTION_SETUP_LOG(snapshot, outmsg_level,
 			"src: %s:%d, type: %s, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s",
 			(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 		);
-		packlen_rewrited = make_kickreason(rewrited, "Proxy(Internal): Failed to connect to the target server, please try again later.");
+		packlen_rewrited = make_kickreason(rewrited, sizeof(rewrited), "Proxy(Internal): Failed to connect to the target server, please try again later.");
 	}
 	connection_setup_long_send_client(socket_in, rewrited, packlen_rewrited);
 	close(socket_in);

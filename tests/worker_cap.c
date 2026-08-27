@@ -59,8 +59,10 @@ static int child_snapshot_wait(pid_t parent, size_t expected_workers, int timeou
 static int client_connect(in_port_t port);
 static void client_drop(int *socket_fd);
 static int connection_cap_probe(in_port_t port);
-static pid_t daemon_start(const char *binary, const char *config_filename, const char *notify_filename, bool pending_connect);
+static pid_t daemon_start(const char *binary, const char *config_filename, const char *notify_filename, bool pending_connect, const char *refusal_marker_filename);
 static void daemon_stop(pid_t *process);
+static bool deadline_create(struct timespec *deadline, int timeout_ms);
+static int deadline_remaining_ms(const struct timespec *deadline);
 static int file_message_count(const char *filename, const char *message);
 static size_t handshake_build(uint8_t *destination, const char *vhost, in_port_t port, uint32_t next_state);
 static int log_count_wait(const char *filename, const char *message, int minimum, int timeout_ms);
@@ -70,7 +72,8 @@ static ssize_t notification_receive(int notify_fd, char *message, size_t capacit
 static int notification_reload(int notify_fd, int timeout_ms);
 static int pending_connect_test(const char *binary);
 static int process_wait(pid_t process, int timeout_ms);
-static int refusal_probe(in_port_t port, const uint8_t *packet, size_t packet_size);
+static int refusal_probe(in_port_t port, const uint8_t *packet, size_t packet_size, bool legacy);
+static bool refusal_response_validate(const uint8_t *response, size_t response_size, bool legacy);
 static int run_cap_test(const char *binary);
 static int server_open(in_port_t *port);
 static int socket_expect_close(int socket_fd, int timeout_ms);
@@ -244,7 +247,7 @@ static int connection_cap_probe(in_port_t port) {
 	return result;
 }
 
-static pid_t daemon_start(const char *binary, const char *config_filename, const char *notify_filename, bool pending_connect) {
+static pid_t daemon_start(const char *binary, const char *config_filename, const char *notify_filename, bool pending_connect, const char *refusal_marker_filename) {
 	struct sigaction ignored_action = { 0 };
 	struct sigaction previous_action;
 	ignored_action.sa_handler = SIG_IGN;
@@ -257,7 +260,8 @@ static pid_t daemon_start(const char *binary, const char *config_filename, const
 		int devnull_fd = open("/dev/null", O_RDWR | O_CLOEXEC);
 		if (devnull_fd == -1 || dup2(devnull_fd, STDOUT_FILENO) == -1 || dup2(devnull_fd, STDERR_FILENO) == -1
 			|| setenv("NOTIFY_SOCKET", notify_filename, 1) == -1
-			|| (pending_connect && setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1)) {
+			|| (pending_connect && setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1)
+			|| (refusal_marker_filename != NULL && setenv("MCRELAY_TEST_REFUSAL_PARTIAL", refusal_marker_filename, 1) == -1)) {
 			_exit(EXIT_FAILURE);
 		}
 		if (devnull_fd > STDERR_FILENO) {
@@ -290,6 +294,40 @@ static void daemon_stop(pid_t *process) {
 		waitpid(*process, NULL, 0);
 	}
 	*process = -1;
+}
+
+static bool deadline_create(struct timespec *deadline, int timeout_ms) {
+	if (deadline == NULL || timeout_ms < 1 || clock_gettime(CLOCK_MONOTONIC, deadline) == -1) {
+		return false;
+	}
+	deadline->tv_sec += timeout_ms / 1000;
+	deadline->tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+	if (deadline->tv_nsec >= 1000000000L) {
+		deadline->tv_sec++;
+		deadline->tv_nsec -= 1000000000L;
+	}
+	return true;
+}
+
+static int deadline_remaining_ms(const struct timespec *deadline) {
+	struct timespec now;
+	if (deadline == NULL || clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+		return -1;
+	}
+	int64_t seconds = (int64_t)deadline->tv_sec - (int64_t)now.tv_sec;
+	int64_t nanoseconds = (int64_t)deadline->tv_nsec - (int64_t)now.tv_nsec;
+	if (nanoseconds < 0) {
+		seconds--;
+		nanoseconds += INT64_C(1000000000);
+	}
+	if (seconds < 0 || (seconds == 0 && nanoseconds == 0)) {
+		return 0;
+	}
+	if (seconds > INT_MAX / 1000) {
+		return INT_MAX;
+	}
+	int64_t milliseconds = seconds * INT64_C(1000) + (nanoseconds + INT64_C(999999)) / INT64_C(1000000);
+	return milliseconds > INT_MAX ? INT_MAX : (int)milliseconds;
 }
 
 static int file_message_count(const char *filename, const char *message) {
@@ -475,7 +513,7 @@ static int pending_connect_test(const char *binary) {
 	CHECK(strlen(notify_filename) < sizeof(notify_address.sun_path), "pending notification path is too long");
 	strcpy(notify_address.sun_path, notify_filename);
 	CHECK(bind(notify_fd, (const struct sockaddr *)&notify_address, sizeof(notify_address)) == 0, "cannot bind pending notification socket");
-	listener_pid = daemon_start(binary, config_filename, notify_filename, true);
+	listener_pid = daemon_start(binary, config_filename, notify_filename, true, NULL);
 	CHECK(listener_pid > 0, "cannot start pending-connect daemon");
 	char message[256];
 	CHECK(notification_receive(notify_fd, message, sizeof(message), WORKER_CAP_TEST_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0,
@@ -536,7 +574,7 @@ static int process_wait(pid_t process, int timeout_ms) {
 	return -1;
 }
 
-static int refusal_probe(in_port_t port, const uint8_t *packet, size_t packet_size) {
+static int refusal_probe(in_port_t port, const uint8_t *packet, size_t packet_size, bool legacy) {
 	int socket_fd = client_connect(port);
 	if (socket_fd == -1) {
 		return -1;
@@ -549,14 +587,92 @@ static int refusal_probe(in_port_t port, const uint8_t *packet, size_t packet_si
 			return -1;
 		}
 	}
-	int result = socket_expect_close(socket_fd, WORKER_CAP_CLOSE_TIMEOUT_MS);
+	uint8_t received[BUFSIZ];
+	size_t total = 0;
+	bool closed = false;
+	struct timespec deadline;
+	if (!deadline_create(&deadline, WORKER_CAP_CLOSE_TIMEOUT_MS)) {
+		int saved_errno = errno;
+		close(socket_fd);
+		errno = saved_errno;
+		return -1;
+	}
+	while (!closed) {
+		int remaining_ms = deadline_remaining_ms(&deadline);
+		if (remaining_ms <= 0) {
+			errno = remaining_ms == 0 ? ETIMEDOUT : errno;
+			break;
+		}
+		struct pollfd event = { .fd = socket_fd, .events = POLLIN | POLLRDHUP };
+		int poll_result = poll(&event, 1, remaining_ms);
+		if (poll_result == -1 && errno == EINTR) {
+			continue;
+		}
+		if (poll_result == -1) {
+			break;
+		}
+		if (poll_result == 0) {
+			errno = ETIMEDOUT;
+			break;
+		}
+		if (total >= sizeof(received)) {
+			errno = EMSGSIZE;
+			break;
+		}
+		ssize_t received_size = recv(socket_fd, received + total, sizeof(received) - total, MSG_DONTWAIT);
+		if (received_size == 0 || (received_size == -1 && (errno == ECONNRESET || errno == ENOTCONN))) {
+			closed = true;
+			break;
+		}
+		if (received_size > 0) {
+			total += (size_t)received_size;
+			continue;
+		}
+		if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+			break;
+		}
+	}
+	bool response_valid = closed && refusal_response_validate(received, total, legacy);
+	int result = response_valid ? 0 : -1;
+	if (closed && !response_valid) {
+		errno = EPROTO;
+	} else if (!closed && errno == 0) {
+		errno = ETIMEDOUT;
+	}
 	int saved_errno = errno;
 	close(socket_fd);
 	errno = saved_errno;
 	return result;
 }
 
+static bool refusal_response_validate(const uint8_t *response, size_t response_size, bool legacy) {
+	static const char notice[] = "[Proxy] Proxy is full, try again later.";
+	static const char modern_json[] = "{\"extra\":[{\"text\":\"[Proxy] Proxy is full, try again later.\"}],\"text\":\"\"}";
+	if (response == NULL) {
+		return false;
+	}
+	if (legacy) {
+		size_t notice_size = sizeof(notice) - 1U;
+		if (response_size != 3U + notice_size * sizeof(uint16_t) || response[0] != 0xFF
+			|| response[1] != (uint8_t)(notice_size >> 8) || response[2] != (uint8_t)notice_size) {
+			return false;
+		}
+		for (size_t index = 0; index < notice_size; index++) {
+			if (response[3U + index * 2U] != 0 || response[4U + index * 2U] != (uint8_t)notice[index]) {
+				return false;
+			}
+		}
+		return true;
+	}
+	size_t message_size = sizeof(modern_json) - 1U;
+	return message_size + 2U <= 0x7FU && response_size == message_size + 3U && response[0] == (uint8_t)(message_size + 2U) && response[1] == 0
+		&& response[2] == (uint8_t)message_size && memcmp(response + 3U, modern_json, message_size) == 0;
+}
+
 static int run_cap_test(const char *binary) {
+	static const uint8_t legacy_login_packet[] = {
+		0x02, 0x00, 0x09, 0x00, 0x74, 0x00, 0x65, 0x00, 0x73, 0x00, 0x74, 0x00, 0x75, 0x00, 0x73, 0x00, 0x65, 0x00, 0x72, 0x00, 0x31
+	};
 	static const char vhost[] = "test.example";
 	static const char username[] = "captest01";
 	static const char worker_limit_message[] = "Worker process limit reached";
@@ -564,6 +680,7 @@ static int run_cap_test(const char *binary) {
 	char config_filename[PATH_MAX] = { 0 };
 	char log_filename[PATH_MAX] = { 0 };
 	char notify_filename[PATH_MAX] = { 0 };
+	char refusal_marker_filename[PATH_MAX] = { 0 };
 	uint8_t login_packet[BUFSIZ];
 	uint8_t transfer_packet[BUFSIZ];
 	uint8_t status_packet[BUFSIZ];
@@ -591,6 +708,8 @@ static int run_cap_test(const char *binary) {
 	CHECK(filename_length > 0 && (size_t)filename_length < sizeof(log_filename), "cannot format log path");
 	filename_length = snprintf(notify_filename, sizeof(notify_filename), "%s/notify.sock", temporary_directory);
 	CHECK(filename_length > 0 && (size_t)filename_length < sizeof(notify_filename), "cannot format notification path");
+	filename_length = snprintf(refusal_marker_filename, sizeof(refusal_marker_filename), "%s/refusal-partial.marker", temporary_directory);
+	CHECK(filename_length > 0 && (size_t)filename_length < sizeof(refusal_marker_filename), "cannot format refusal marker path");
 	upstream_server_fd = server_open(&upstream_port);
 	CHECK(upstream_server_fd >= 0, "cannot open fake upstream server");
 	int reservation_fd = server_open(&listener_port);
@@ -609,7 +728,7 @@ static int run_cap_test(const char *binary) {
 	CHECK(strlen(notify_filename) < sizeof(notify_address.sun_path), "notification path is too long");
 	strcpy(notify_address.sun_path, notify_filename);
 	CHECK(bind(notify_fd, (const struct sockaddr *)&notify_address, sizeof(notify_address)) == 0, "cannot bind notification socket");
-	listener_pid = daemon_start(binary, config_filename, notify_filename, false);
+	listener_pid = daemon_start(binary, config_filename, notify_filename, false, refusal_marker_filename);
 	CHECK(listener_pid > 0, "cannot start worker-cap daemon");
 	char message[256];
 	CHECK(notification_receive(notify_fd, message, sizeof(message), WORKER_CAP_TEST_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0,
@@ -650,13 +769,15 @@ static int run_cap_test(const char *binary) {
 
 	int initial_refusals = file_message_count(log_filename, worker_limit_message);
 	CHECK(initial_refusals >= 0, "cannot count initial worker-cap log entries");
-	CHECK(refusal_probe(listener_port, login_packet, login_size) == 0, "third LOGIN was not promptly refused");
-	CHECK(refusal_probe(listener_port, transfer_packet, transfer_size) == 0, "TRANSFER was not promptly refused");
+	CHECK(refusal_probe(listener_port, login_packet, login_size, false) == 0, "third LOGIN did not receive a complete refusal");
+	CHECK(access(refusal_marker_filename, F_OK) == 0, "partial-send/EAGAIN refusal injection was not consumed");
+	CHECK(refusal_probe(listener_port, transfer_packet, transfer_size, false) == 0, "TRANSFER did not receive a complete refusal");
+	CHECK(refusal_probe(listener_port, legacy_login_packet, sizeof(legacy_login_packet), true) == 0, "legacy LOGIN did not receive a complete refusal");
 	CHECK(log_count_wait(log_filename, worker_limit_message, initial_refusals + 1, WORKER_CAP_LOG_TIMEOUT_MS) >= initial_refusals + 1,
 		"worker-cap refusal was not logged");
 	for (int refusal_index = 0; refusal_index < 4; refusal_index++) {
 		CHECK(refusal_probe(listener_port, refusal_index % 2 == 0 ? login_packet : transfer_packet,
-			refusal_index % 2 == 0 ? login_size : transfer_size) == 0, "repeated worker-cap refusal was not prompt");
+			refusal_index % 2 == 0 ? login_size : transfer_size, false) == 0, "repeated worker-cap refusal was incomplete");
 	}
 	int refusal_count = file_message_count(log_filename, worker_limit_message);
 	CHECK(refusal_count == initial_refusals + 1, "worker-cap refusal log was not rate limited");
@@ -734,6 +855,7 @@ cleanup:
 	unlink(config_filename);
 	unlink(log_filename);
 	unlink(notify_filename);
+	unlink(refusal_marker_filename);
 	rmdir(temporary_directory);
 	return result;
 }
