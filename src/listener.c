@@ -822,7 +822,7 @@ static listener_connection_route listener_connection_route_parse(listener_connec
 			route = LISTENER_CONNECTION_ROUTE_WORKER_WAIT;
 			break;
 		case PVER_LEGACYM3:
-			legacy_motd = packet_read_legacy_motd(connection->inbound);
+			legacy_motd = packet_read_legacy_motd(connection->inbound, connection->inbound_size);
 			source = legacy_motd.address;
 			route = LISTENER_CONNECTION_ROUTE_SHORT_WAIT;
 			break;

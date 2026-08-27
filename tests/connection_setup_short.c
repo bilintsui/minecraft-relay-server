@@ -131,7 +131,7 @@ static bool connection_setup_short_test_legacy_connect(void) {
 	CHECK(protocol_packet_length(plan.request + plan.pheader_size, plan.request_size - plan.pheader_size, &request_packet_size) == PROTOCOL_PACKET_COMPLETE
 		&& request_packet_size < plan.request_size - plan.pheader_size && memcmp(plan.request + plan.pheader_size + request_packet_size, initial + initial_packet_size, 2) == 0,
 		"LEGACYM3 trailing bytes changed");
-	p_motd_legacy request = packet_read_legacy_motd(plan.request + plan.pheader_size);
+	p_motd_legacy request = packet_read_legacy_motd(plan.request + plan.pheader_size, request_packet_size);
 	CHECK(request.address != NULL && strcmp(request.address, "backend.example") == 0 && request.port == 25570, "LEGACYM3 request was not rewritten");
 	packet_destroy_legacy_motd(request);
 	snprintf(snapshot.endpoint.target_name, sizeof(snapshot.endpoint.target_name), "%s", "changed.example");

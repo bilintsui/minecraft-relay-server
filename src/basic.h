@@ -42,7 +42,12 @@ ssize_t freadall(const char *filename, void **dst, bool allow_fifo);
 void *int2varint(varint_t src, void *dst);
 size_t memcat(void *dst, size_t dst_size, const void *src, size_t src_size);
 size_t packetexpand(const void *source, size_t source_length, void *target);
-size_t packetshrink(const void *source, size_t source_length, void *target);
+/*
+ * Copies every non-zero source byte into target, writing at most target_capacity bytes.  Returns the copied
+ * byte count; zero is returned when the arguments are invalid or nothing fits, and an all-zero source also
+ * produces zero.
+ */
+size_t packetshrink(const void *source, size_t source_length, void *target, size_t target_capacity);
 void resolve_path(const char *path, const char *cwd, char *out, size_t out_size);
 char *strtok_head(char *dst, size_t dst_size, char *src, char delim);
 size_t strtok_tail(char *dst, size_t dst_size, const char *src, size_t src_size, char delim);

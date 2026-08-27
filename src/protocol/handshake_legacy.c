@@ -103,7 +103,7 @@ p_login_legacy packet_read_legacy_login(const void *sourcepacket, size_t sourcep
 	memset(source, 0, BUFSIZ);
 	memset(result.username, 0, 128);
 	memset(result.address, 0, 128);
-	packetshrink(sourcepacket, sourcepacket_length, source);
+	packetshrink(sourcepacket, sourcepacket_length, source, sizeof(source));
 	if (login_version == PVER_LEGACYL2) {
 		char login_field[512];
 		char *ptr_login_field = login_field;
@@ -156,20 +156,28 @@ p_login_legacy packet_read_legacy_login(const void *sourcepacket, size_t sourcep
 	return result;
 }
 
-p_motd_legacy packet_read_legacy_motd(const void *src) {
+p_motd_legacy packet_read_legacy_motd(const void *src, size_t src_size) {
 	p_motd_legacy result;
-	result.version = *((const uint8_t *)src + 0x1D);
-	const uint8_t *ptr_src = (const uint8_t *)src + 0x1E;
-	size_t address_length = protocol_uint16_read(ptr_src);
-	ptr_src += sizeof(uint16_t);
-	result.address = calloc(1, address_length + 1);
-	uint8_t *ptr_address = result.address;
-	for (size_t i = 0; i < address_length; i++) {
-		*ptr_address = (uint8_t)protocol_uint16_read(ptr_src);
-		ptr_src += sizeof(uint16_t);
-		ptr_address++;
+	const uint8_t *ptr_src = src;
+	size_t address_length, recidx;
+	memset(&result, 0, sizeof(result));
+	if ((src == NULL) || (src_size < 0x24U)) {
+		return result;
 	}
-	result.port = (in_port_t)protocol_uint32_read(ptr_src);
+	result.version = ptr_src[0x1D];
+	address_length = protocol_uint16_read(ptr_src + 0x1E);
+	if (address_length > (src_size - 0x24U) / 2U) {
+		return result;
+	}
+	result.address = calloc(1, address_length + 1U);
+	if (result.address == NULL) {
+		return result;
+	}
+	ptr_src += 0x20;
+	for (recidx = 0; recidx < address_length; recidx++) {
+		((uint8_t *)result.address)[recidx] = (uint8_t)protocol_uint16_read(ptr_src + recidx * 2U);
+	}
+	result.port = (in_port_t)protocol_uint32_read(ptr_src + address_length * 2U);
 	return result;
 }
 

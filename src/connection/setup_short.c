@@ -80,7 +80,7 @@ static bool connection_setup_short_plan_request_legacy(connection_setup_short_pl
 	if (packet_size > initial_size) {
 		return false;
 	}
-	p_motd_legacy packet = packet_read_legacy_motd(initial);
+	p_motd_legacy packet = packet_read_legacy_motd(initial, packet_size);
 	if (packet.address == NULL || strlen(packet.address) >= ROUTE_ENDPOINT_TEXT_SIZE) {
 		packet_destroy_legacy_motd(packet);
 		return false;
@@ -290,7 +290,7 @@ connection_setup_short_action connection_setup_short_prepare(connection_setup_sh
 	uint8_t legacy_version = 0;
 	varint_t modern_version = 0;
 	if (plan->protocol == PVER_LEGACYM3) {
-		p_motd_legacy packet = packet_read_legacy_motd(initial);
+		p_motd_legacy packet = packet_read_legacy_motd(initial, packet_size);
 		if (packet.address == NULL || strlen(packet.address) >= ROUTE_ENDPOINT_TEXT_SIZE) {
 			packet_destroy_legacy_motd(packet);
 			return CONNECTION_SETUP_SHORT_ABORT;

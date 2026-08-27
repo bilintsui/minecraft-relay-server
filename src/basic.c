@@ -215,18 +215,30 @@ size_t packetexpand(const void *source, size_t source_length, void *target) {
 	return size;
 }
 
-size_t packetshrink(const void *source, size_t source_length, void *target) {
-	size_t size, recidx;
+size_t packetshrink(const void *source, size_t source_length, void *target, size_t target_capacity) {
+	size_t written, needed, recidx;
 	const uint8_t *ptr_source = source;
 	uint8_t *ptr_target = target;
+	if ((source == NULL) || (target == NULL)) {
+		return 0;
+	}
+	needed = 0;
 	for (recidx = 0; recidx < source_length; recidx++) {
 		if (ptr_source[recidx] != 0) {
-			*ptr_target = ptr_source[recidx];
-			ptr_target++;
+			needed++;
 		}
 	}
-	size = ptr_target - (uint8_t *)target;
-	return size;
+	if (needed > target_capacity) {
+		return 0;
+	}
+	written = 0;
+	for (recidx = 0; recidx < source_length; recidx++) {
+		if (ptr_source[recidx] != 0) {
+			ptr_target[written] = ptr_source[recidx];
+			written++;
+		}
+	}
+	return written;
 }
 
 void resolve_path(const char *path, const char *cwd, char *out, size_t out_size) {

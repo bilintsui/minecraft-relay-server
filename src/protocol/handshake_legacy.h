@@ -36,7 +36,11 @@ size_t make_kickreason_legacy(void *dst, size_t dst_capacity, const void *src);
 size_t make_motd_legacy(void *dst, const void *src, protocol_version motd_version, uint8_t version);
 void packet_destroy_legacy_motd(p_motd_legacy object);
 p_login_legacy packet_read_legacy_login(const void *sourcepacket, size_t sourcepacket_length, protocol_version login_version);
-p_motd_legacy packet_read_legacy_motd(const void *src);
+/*
+ * Parses an M3 ping from src[0 .. src_size) into version, address, and port.  Returns a zeroed structure with a
+ * NULL address when the arguments are invalid, the declared fields exceed src_size, or allocation fails.
+ */
+p_motd_legacy packet_read_legacy_motd(const void *src, size_t src_size);
 size_t packet_write_legacy_login(p_login_legacy source, void *target);
 size_t packet_write_legacy_motd(void *dst, p_motd_legacy src);
 

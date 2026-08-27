@@ -129,6 +129,67 @@ static bool legacy_message_validate(const uint8_t *data, size_t size, size_t *fi
 	return true;
 }
 
+static int path_format(char *target, size_t target_size, const char *directory, const char *filename) {
+	int length = snprintf(target, target_size, "%s/%s", directory, filename);
+	if (length < 0 || (size_t)length >= target_size) {
+		errno = EOVERFLOW;
+		return -1;
+	}
+	return 0;
+}
+
+static bool legacy_motd_bounds_test(const char *directory) {
+	char filename[BUFSIZ];
+	uint8_t data[BUFSIZ];
+	static const uint8_t short_packet[] = { '\xFE', '\x01', '\xFA' };
+	uint8_t saved_length[2];
+	p_motd_legacy packet;
+	size_t declared_length, needed_size;
+	ssize_t source_size;
+	if (directory == NULL || path_format(filename, sizeof(filename), directory, "status/status_3-1.6.1.bin") != 0) {
+		return false;
+	}
+	source_size = file_read(filename, data, sizeof(data));
+	if (source_size <= 0x24 || protocol_identify(data, (size_t)source_size, NULL) != PVER_LEGACYM3) {
+		return false;
+	}
+	declared_length = protocol_uint16_read(data + 0x1E);
+	if ((size_t)source_size < 0x24U + declared_length * 2U) {
+		return false;
+	}
+	packet = packet_read_legacy_motd(data, (size_t)source_size);
+	if (packet.address == NULL) {
+		return false;
+	}
+	packet_destroy_legacy_motd(packet);
+	/* One byte short of the declared field layout is rejected instead of over-read. */
+	needed_size = 0x24U + declared_length * 2U;
+	packet = packet_read_legacy_motd(data, needed_size - 1U);
+	if (packet.address != NULL) {
+		packet_destroy_legacy_motd(packet);
+		return false;
+	}
+	/* An oversized declared length is rejected without touching bytes beyond the buffer. */
+	saved_length[0] = data[0x1E];
+	saved_length[1] = data[0x1F];
+	data[0x1E] = 0xFF;
+	data[0x1F] = 0xFF;
+	packet = packet_read_legacy_motd(data, (size_t)source_size);
+	if (packet.address != NULL) {
+		packet_destroy_legacy_motd(packet);
+		return false;
+	}
+	data[0x1E] = saved_length[0];
+	data[0x1F] = saved_length[1];
+	/* Buffers shorter than the fixed framing are rejected before any field is read. */
+	packet = packet_read_legacy_motd(short_packet, sizeof(short_packet));
+	if (packet.address != NULL) {
+		packet_destroy_legacy_motd(packet);
+		return false;
+	}
+	return true;
+}
+
 static bool modern_varint_read(const uint8_t **cursor, const uint8_t *end, uint32_t *value) {
 	if (cursor == NULL || *cursor == NULL || end == NULL || value == NULL) {
 		return false;
@@ -259,7 +320,7 @@ static bool packet_roundtrip(client_fixture_kind kind, protocol_version protocol
 		p_login_legacy packet = packet_read_legacy_login(source, source_size, protocol);
 		target_size = packet_write_legacy_login(packet, target);
 	} else if (kind == CLIENT_FIXTURE_LEGACY_STATUS) {
-		p_motd_legacy packet = packet_read_legacy_motd(source);
+		p_motd_legacy packet = packet_read_legacy_motd(source, source_size);
 		target_size = packet_write_legacy_motd(target, packet);
 		packet_destroy_legacy_motd(packet);
 	} else if (kind == CLIENT_FIXTURE_MODERN) {
@@ -349,13 +410,34 @@ cleanup:
 	return result;
 }
 
-static int path_format(char *target, size_t target_size, const char *directory, const char *filename) {
-	int length = snprintf(target, target_size, "%s/%s", directory, filename);
-	if (length < 0 || (size_t)length >= target_size) {
-		errno = EOVERFLOW;
-		return -1;
+static bool packetshrink_bounds_test(void) {
+	static const uint8_t mixed[] = { 0x00, 'a', 0x00, 'b', 'c' };
+	static const uint8_t zeros[] = { 0x00, 0x00 };
+	uint8_t target[8];
+	memset(target, 0xA5, sizeof(target));
+	if (packetshrink(mixed, sizeof(mixed), target, sizeof(target)) != 3 || memcmp(target, "abc", 3) != 0 || target[3] != 0xA5) {
+		return false;
 	}
-	return 0;
+	/* An exact destination capacity succeeds while one byte less is rejected without touching the target. */
+	if (packetshrink(mixed, sizeof(mixed), target, 3U) != 3 || target[2] != 'c' || target[3] != 0xA5) {
+		return false;
+	}
+	memset(target, 0xA5, sizeof(target));
+	if (packetshrink(mixed, sizeof(mixed), target, 2U) != 0) {
+		return false;
+	}
+	for (size_t index = 0; index < sizeof(target); index++) {
+		if (target[index] != 0xA5) {
+			return false;
+		}
+	}
+	if (packetshrink(zeros, sizeof(zeros), target, sizeof(target)) != 0) {
+		return false;
+	}
+	if (packetshrink(NULL, 1U, target, sizeof(target)) != 0 || packetshrink(mixed, sizeof(mixed), NULL, sizeof(target)) != 0) {
+		return false;
+	}
+	return true;
 }
 
 static bool varint_bounds_test(void) {
@@ -434,9 +516,11 @@ int main(int argc, char **argv) {
 	int result = EXIT_FAILURE;
 	CHECK(argc == 2, "raw packet directory is required");
 	CHECK(kickreason_bounds_test(), "bounded kick response construction failed");
+	CHECK(legacy_motd_bounds_test(argv[1]), "bounded legacy M3 parsing failed");
 	CHECK(packet_read_bounds_test(), "bounded handshake packet reading failed");
 	CHECK(varint_bounds_test(), "bounded varint decoding failed");
 	CHECK(packet_write_bounds_test(), "bounded packet construction failed");
+	CHECK(packetshrink_bounds_test(), "bounded packet shrinking failed");
 
 	for (size_t index = 0; index < sizeof(client_fixtures) / sizeof(client_fixtures[0]); index++) {
 		memset(source, 0, BUFSIZ);
