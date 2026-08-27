@@ -29,6 +29,7 @@
 #include <sys/socket.h>
 #include <sys/timerfd.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <systemd/sd-daemon.h>
 #include <time.h>
 #include <unistd.h>
@@ -87,6 +88,15 @@
 #endif
 #ifndef LISTENER_ROUTE_WARMUP_TIMEOUT_SEC
 #define LISTENER_ROUTE_WARMUP_TIMEOUT_SEC	10
+#endif
+#ifndef LISTENER_WORKER_LIMIT
+#define LISTENER_WORKER_LIMIT	256
+#endif
+#ifndef LISTENER_WORKER_LOG_INTERVAL_SEC
+#define LISTENER_WORKER_LOG_INTERVAL_SEC	10
+#endif
+#if LISTENER_WORKER_LIMIT < 1
+#error "LISTENER_WORKER_LIMIT must be positive"
 #endif
 
 /* initial packet */
@@ -235,6 +245,12 @@ struct listener_connection {
 	char vhost[ROUTE_ENDPOINT_TEXT_SIZE];
 };
 typedef struct {
+	size_t count;
+	bool refusal_logged;
+	struct timespec refusal_logged_at;
+	pid_t pids[LISTENER_WORKER_LIMIT];
+} listener_workers;
+typedef struct {
 	conf *config;
 	conf_cache *config_cache;
 	const char *config_filename;
@@ -249,6 +265,7 @@ typedef struct {
 	route_resolution *route_resolution;
 	route_table *routes;
 	const char *working_directory;
+	listener_workers workers;
 } listener_context;
 typedef struct {
 	net_addr address;
@@ -274,6 +291,7 @@ typedef struct {
 } listener_ready_event;
 typedef struct {
 	bool accept_ready;
+	bool child_ready;
 	listener_ready_event ready[LISTENER_EVENT_BATCH];
 	size_t ready_count;
 	bool reload;
@@ -1297,15 +1315,16 @@ static int listener_events_init(listener_events *events) {
 	events->resolver_source.kind = LISTENER_EVENT_RESOLVER;
 	events->route_timer_source.kind = LISTENER_EVENT_ROUTE_TIMER;
 	events->signal_source.kind = LISTENER_EVENT_SIGNAL;
-	struct sigaction child_action;
-	memset(&child_action, 0, sizeof(child_action));
+	struct sigaction child_action = { 0 };
 	sigemptyset(&child_action.sa_mask);
-	child_action.sa_handler = SIG_IGN;
+	child_action.sa_flags = SA_NOCLDSTOP;
+	child_action.sa_handler = SIG_DFL;
 	if (sigaction(SIGCHLD, &child_action, NULL) == -1) {
 		return -1;
 	}
 	sigset_t signal_mask;
 	sigemptyset(&signal_mask);
+	sigaddset(&signal_mask, SIGCHLD);
 	sigaddset(&signal_mask, SIGINT);
 	sigaddset(&signal_mask, SIGTERM);
 	sigaddset(&signal_mask, SIGUSR1);
@@ -1357,6 +1376,9 @@ static int listener_signals_read(int signal_fd, listener_requests *requests) {
 		ssize_t bytes = read(signal_fd, &signal_info, sizeof(signal_info));
 		if (bytes == (ssize_t)sizeof(signal_info)) {
 			switch (signal_info.ssi_signo) {
+				case SIGCHLD:
+					requests->child_ready = true;
+					break;
 				case SIGINT:
 				case SIGTERM:
 					requests->stop = true;
@@ -1672,8 +1694,16 @@ static int listener_route_runtime_ready(listener_context *context, listener_rout
 	runtime->ready = true;
 	listener_notify_ready();
 	if (!isatty(STDOUT_FILENO)) {
-		fclose(stdout);
-		fclose(stderr);
+		fflush(stdout);
+		fflush(stderr);
+		int null_fd = open("/dev/null", O_RDWR | O_CLOEXEC);
+		if (null_fd != -1) {
+			dup2(null_fd, STDOUT_FILENO);
+			dup2(null_fd, STDERR_FILENO);
+			if (null_fd > STDERR_FILENO) {
+				close(null_fd);
+			}
+		}
 	}
 	if (warmup_complete) {
 		mksysmsg(MKSYS_PREFIX_ON, context->log_filename, context->config->log.level, MKSYS_LEVEL_INFORMATION, MKSYS_PARAGRAPH_END,
@@ -2052,6 +2082,22 @@ static int listener_resolver_shutdown(listener_context *context) {
 	return 0;
 }
 
+static void listener_worker_refusal_log(listener_context *context) {
+	listener_workers *workers = &context->workers;
+	struct timespec now;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+		return;
+	}
+	struct timespec next_log;
+	if (workers->refusal_logged && timeutil_add_seconds(&workers->refusal_logged_at, LISTENER_WORKER_LOG_INTERVAL_SEC, &next_log)
+		&& timeutil_compare(&now, &next_log) < 0) {
+		return;
+	}
+	LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Worker process limit reached; refusing a new LOGIN or TRANSFER connection until a worker exits.");
+	workers->refusal_logged = true;
+	workers->refusal_logged_at = now;
+}
+
 static void listener_worker_route_state_dispose(listener_context *context) {
 	route_generation_registry_dispose_in_child(context->generations);
 	context->generations = NULL;
@@ -2105,16 +2151,43 @@ static exit_code listener_worker_run(int client_fd, const listener_client_addres
 	}
 	listener_worker_route_state_dispose(context);
 	net_addrbundle addrbundle_inbound_client = listener_client_address_parse(client_address);
+	uint8_t seed[CONNECTION_SETUP_LONG_PENDING_MAX];
+	size_t seed_size;
 	int socket_outbound;
-	connection_setup_status setup_status = connection_setup_long_prepared(client_fd, &socket_outbound, snapshot, addrbundle_inbound_client, inbound, inbound_size);
+	connection_setup_status setup_status = connection_setup_long_prepared(client_fd, &socket_outbound, snapshot, addrbundle_inbound_client, inbound, inbound_size, seed, &seed_size);
 	if (setup_status == CONNECTION_SETUP_OK) {
-		net_relay(client_fd, socket_outbound);
+		net_relay(client_fd, socket_outbound, seed, seed_size);
 	}
 	return EXITCODE_OK;
 }
 
+static int listener_workers_reap(listener_context *context) {
+	listener_workers *workers = &context->workers;
+	for (size_t index = 0; index < workers->count;) {
+		pid_t result;
+		do {
+			result = waitpid(workers->pids[index], NULL, WNOHANG);
+		} while (result == -1 && errno == EINTR);
+		if (result == workers->pids[index] || (result == -1 && errno == ECHILD)) {
+			workers->count--;
+			workers->pids[index] = workers->pids[workers->count];
+			continue;
+		}
+		if (result == -1) {
+			return -1;
+		}
+		index++;
+	}
+	return 0;
+}
+
 static void listener_connection_dispatch(listener_connection *connections, listener_connection *connection, listener_socket *listener, const listener_events *events,
 	pid_t listener_pid, listener_context *context, const struct timespec *now) {
+	if (context->workers.count >= LISTENER_WORKER_LIMIT) {
+		listener_worker_refusal_log(context);
+		connection->closing = true;
+		return;
+	}
 	connection_setup_snapshot snapshot;
 	if (!listener_connection_snapshot_prepare(connection, context, &snapshot)
 		|| !listener_connection_route_release(connection, context->resolver, now)) {
@@ -2122,14 +2195,10 @@ static void listener_connection_dispatch(listener_connection *connections, liste
 		connection->closing = true;
 		return;
 	}
-	int socket_flags = fcntl(connection->socket_fd, F_GETFL);
-	if (socket_flags == -1 || fcntl(connection->socket_fd, F_SETFL, socket_flags & ~O_NONBLOCK) == -1) {
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot prepare client connection for worker: %s", strerror(errno));
-		connection->closing = true;
-		return;
-	}
 	pid_t worker_pid = fork();
 	if (worker_pid > 0) {
+		context->workers.pids[context->workers.count] = worker_pid;
+		context->workers.count++;
 		connection->closing = true;
 		return;
 	}
@@ -2284,6 +2353,11 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
+		}
+		if (requests.child_ready && listener_workers_reap(context) == -1) {
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot reap a worker process: %s", strerror(errno));
+			exitcode = EXITCODE_INTERNAL;
+			break;
 		}
 		if (requests.stop && !shutting_down) {
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
@@ -2442,7 +2516,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				exitcode = EXITCODE_INTERNAL;
 				goto cleanup;
 			}
-			if (connection_count >= connection_limit) {
+			if (connection_count >= connection_limit || context->workers.count >= connection_limit - connection_count) {
 				close(client_fd);
 				continue;
 			}

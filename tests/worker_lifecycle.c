@@ -59,7 +59,9 @@ static pid_t child_start(const char *binary, const char *config_filename, const 
 	if (devnull_fd == -1 || dup2(devnull_fd, STDOUT_FILENO) == -1 || dup2(devnull_fd, STDERR_FILENO) == -1 || setenv("NOTIFY_SOCKET", notify_socket, 1) == -1) {
 		_exit(EXIT_FAILURE);
 	}
-	close(devnull_fd);
+	if (devnull_fd > STDERR_FILENO) {
+		close(devnull_fd);
+	}
 	execl(binary, binary, "run", "-c", config_filename, (char *)NULL);
 	_exit(EXIT_FAILURE);
 }
@@ -388,7 +390,7 @@ static bool worker_descriptors_valid(pid_t worker) {
 		}
 	}
 	closedir(directory);
-	return result && eventpoll_count == 1;
+	return result && eventpoll_count == 0;
 }
 
 static pid_t worker_find(pid_t listener, int timeout_ms) {
@@ -423,7 +425,9 @@ static pid_t worker_find(pid_t listener, int timeout_ms) {
 				}
 			}
 			fclose(status);
-			if (parent == (long)listener && worker_descriptors_valid((pid_t)process)) {
+			char process_name[16];
+			if (parent == (long)listener && process_name_read((pid_t)process, process_name, sizeof(process_name)) == 0 && strcmp(process_name, "worker") == 0
+				&& worker_descriptors_valid((pid_t)process)) {
 				closedir(processes);
 				return (pid_t)process;
 			}

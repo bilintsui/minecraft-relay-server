@@ -10,10 +10,27 @@
 #define _MRS_NETWORK_H_INCLUDED_
 
 /* section: headers (library) */
+#include <limits.h>
 #include <netinet/in.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <sys/socket.h>
+
+/* section: defines */
+#ifndef NET_RELAY_BUFFER_BYTES
+#define NET_RELAY_BUFFER_BYTES	16384U
+#endif
+#ifndef NET_RELAY_IDLE_TIMEOUT_SEC
+#define NET_RELAY_IDLE_TIMEOUT_SEC	300
+#endif
+
+#if NET_RELAY_BUFFER_BYTES < 1
+#error "The relay buffer size must be positive."
+#endif
+#if NET_RELAY_IDLE_TIMEOUT_SEC < 1 || NET_RELAY_IDLE_TIMEOUT_SEC > INT_MAX
+#error "The relay idle timeout must be between 1 and INT_MAX seconds."
+#endif
 
 /* section: types */
 typedef enum {
@@ -54,6 +71,11 @@ typedef enum {
 	NET_CONNECT_INTERNAL
 } net_connect_status;
 typedef enum {
+	NET_RELAY_CLOSED,
+	NET_RELAY_ERROR,
+	NET_RELAY_IDLE
+} net_relay_status;
+typedef enum {
 	NETSOCK_BIND,
 	NETSOCK_CONN
 } net_socket_action;
@@ -63,7 +85,8 @@ net_addr net_addr_parse(const char *address);
 net_connect_status net_connect_nonblocking(const net_addr *address, in_port_t port, int *socket_fd);
 net_connect_status net_connect_nonblocking_complete(int socket_fd);
 net_addrp net_ntop(sa_family_t family, const void *src, bool v6addition);
-int net_relay(int socket_in, int socket_out);
+/* Takes ownership of both socket descriptors and closes them on every return path. */
+net_relay_status net_relay(int socket_in, int socket_out, const void *pending_out, size_t pending_size);
 int net_socket(net_socket_action action, sa_family_t family, const void *address, in_port_t port, bool reuseaddr);
 
 #endif

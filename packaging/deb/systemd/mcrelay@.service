@@ -11,6 +11,7 @@ Group=mcrelay
 KillMode=control-group
 Restart=on-failure
 RestartSec=5s
+TasksMax=512
 ExecStart=/usr/bin/mcrelay run --config /etc/mcrelay/%i.json
 ExecReload=/bin/kill -USR1 $MAINPID
 

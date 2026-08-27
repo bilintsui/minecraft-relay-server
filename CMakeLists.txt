@@ -100,6 +100,11 @@ if(BUILD_TESTING)
 	target_compile_definitions(network_connect_test PRIVATE _GNU_SOURCE)
 	set_target_properties(network_connect_test PROPERTIES LINK_FLAGS "-Wl,--wrap=connect")
 	add_test(NAME network_connect COMMAND network_connect_test)
+	add_executable(network_relay_test tests/network_relay.c src/network.c)
+	target_include_directories(network_relay_test PRIVATE src)
+	target_compile_definitions(network_relay_test PRIVATE _GNU_SOURCE NET_RELAY_IDLE_TIMEOUT_SEC=1)
+	set_target_properties(network_relay_test PROPERTIES LINK_FLAGS "-Wl,--wrap=send")
+	add_test(NAME network_relay COMMAND network_relay_test)
 	add_executable(protocol_packets_test tests/protocol_packets.c src/basic.c src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c)
 	target_compile_definitions(protocol_packets_test PRIVATE _GNU_SOURCE)
 	target_link_libraries(protocol_packets_test -lcjson)
@@ -257,6 +262,14 @@ if(BUILD_TESTING)
 		set_target_properties(network_connect_ubsan_test PROPERTIES LINK_FLAGS "-Wl,--wrap=connect")
 		add_test(NAME network_connect_ubsan COMMAND network_connect_ubsan_test)
 		set_tests_properties(network_connect_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+		add_executable(network_relay_ubsan_test tests/network_relay.c src/network.c)
+		target_include_directories(network_relay_ubsan_test PRIVATE src)
+		target_compile_definitions(network_relay_ubsan_test PRIVATE _GNU_SOURCE NET_RELAY_IDLE_TIMEOUT_SEC=1)
+		target_compile_options(network_relay_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
+		target_link_libraries(network_relay_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all)
+		set_target_properties(network_relay_ubsan_test PROPERTIES LINK_FLAGS "-Wl,--wrap=send")
+		add_test(NAME network_relay_ubsan COMMAND network_relay_ubsan_test)
+		set_tests_properties(network_relay_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 
 		add_executable(protocol_packets_ubsan_test tests/protocol_packets.c src/basic.c src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c)
 		target_compile_definitions(protocol_packets_ubsan_test PRIVATE _GNU_SOURCE)
@@ -411,6 +424,22 @@ if(BUILD_TESTING)
 	add_executable(worker_protocol_test tests/worker_protocol.c)
 	target_compile_definitions(worker_protocol_test PRIVATE _GNU_SOURCE)
 	add_test(NAME worker_protocol COMMAND worker_protocol_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}> "${CMAKE_CURRENT_SOURCE_DIR}/tests/rawpackets")
+	add_executable(worker_cap_daemon
+		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/log.c src/main.c src/network.c src/timeutil.c
+		src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
+		src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c
+		src/route/table.c src/route/waiter.c
+		src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c
+		tests/connect_pending.c)
+	add_dependencies(worker_cap_daemon version_header)
+	target_compile_definitions(worker_cap_daemon PRIVATE _GNU_SOURCE CONNECTION_SETUP_LONG_CONNECT_TIMEOUT_SEC=1 DEBUG_MODE=false
+		LISTENER_CONNECTION_LIMIT=3 LISTENER_WORKER_LIMIT=2)
+	target_include_directories(worker_cap_daemon PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+	target_link_libraries(worker_cap_daemon -lresolv -lcjson -lsystemd)
+	set_target_properties(worker_cap_daemon PROPERTIES LINK_FLAGS "-Wl,--wrap=connect")
+	add_executable(worker_cap_test tests/worker_cap.c)
+	target_compile_definitions(worker_cap_test PRIVATE _GNU_SOURCE)
+	add_test(NAME worker_cap COMMAND worker_cap_test $<TARGET_FILE:worker_cap_daemon> $<TARGET_FILE:worker_cap_daemon>)
 	add_executable(listener_short_runtime_daemon
 		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/log.c src/main.c src/network.c src/timeutil.c
 		src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
@@ -424,7 +453,7 @@ if(BUILD_TESTING)
 		LISTENER_SHORT_RELAY_IDLE_TIMEOUT_SEC=10 LISTENER_TIMER_REARM_TEST)
 	target_include_directories(listener_short_runtime_daemon PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 	target_link_libraries(listener_short_runtime_daemon -lresolv -lcjson -lsystemd)
-	target_link_options(listener_short_runtime_daemon PRIVATE -Wl,--wrap=connect)
+	set_target_properties(listener_short_runtime_daemon PROPERTIES LINK_FLAGS "-Wl,--wrap=connect")
 	add_executable(listener_short_runtime_test tests/listener_short_runtime.c)
 	target_compile_definitions(listener_short_runtime_test PRIVATE _GNU_SOURCE)
 	add_test(NAME listener_short_runtime COMMAND listener_short_runtime_test $<TARGET_FILE:listener_short_runtime_daemon>)
