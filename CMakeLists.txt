@@ -3,6 +3,16 @@ project(mcrelay${EXEC_SUFFIX}
 	VERSION 1.2
 	LANGUAGES C)
 find_package(Git QUIET)
+# Hardening baseline: stack protector, PIE, full RELRO, and non-executable stack for every target. _FORTIFY_SOURCE
+# applies to optimized build types only; Debug stays unfortified because the macro is a no-op without optimization.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+	set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type." FORCE)
+endif()
+add_compile_options(-fstack-protector-strong -fPIE
+	$<$<CONFIG:Release>:-D_FORTIFY_SOURCE=2>
+	$<$<CONFIG:RelWithDebInfo>:-D_FORTIFY_SOURCE=2>
+	$<$<CONFIG:MinSizeRel>:-D_FORTIFY_SOURCE=2>)
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack")
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
