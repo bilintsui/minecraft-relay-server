@@ -105,6 +105,8 @@ int main(void) {
 		"{\"vhost\":42,\"address\":\"z\"},"
 		"{\"vhost\":[],\"address\":\"w\"},"
 		"{\"vhost\":[7,\"kept3\"],\"address\":\"v\"},"
+		"{\"vhost\":\"fractional\",\"address\":\"frac.example\",\"port\":1.5},"
+		"{\"vhost\":\"negativefractional\",\"address\":\"negfrac.example\",\"port\":-0.5},"
 		"{\"vhost\":\"kept3\",\"address\":\"up3.example\"},"
 		"{\"vhost\":\"kept4\",\"address\":123},"
 		"{\"vhost\":\"negport\",\"address\":\"up4.example\",\"port\":-1},"
@@ -113,6 +115,11 @@ int main(void) {
 	static const char config_filtered_empty[] = "{\"proxy\":[{\"port\":\"bad\"},{\"vhost\":[]},{\"address\":\"only\"}]}";
 	static const char config_literal_empty[] = "{\"proxy\":[]}";
 	static const char config_duplicate[] = "{\"proxy\":[{\"vhost\":\"dup.example\",\"address\":\"a.example\",\"port\":1},{\"vhost\":\"DUP.example\",\"address\":\"b.example\",\"port\":2}]}";
+	static const char *config_invalid_listen[] = {
+		"{\"listen\":{\"port\":1.5},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}",
+		"{\"listen\":{\"port\":-0.5},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}",
+		"{\"listen\":{\"port\":\"25565\"},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}"
+	};
 	char filename[] = "/tmp/mcrelay-config-parse-XXXXXX";
 	int fd = -1;
 	int result = EXIT_FAILURE;
@@ -160,6 +167,14 @@ int main(void) {
 	CHECK(errno == CONF_ECPROXYDUP, "duplicate vhosts returned the wrong error");
 	CHECK(parsed == NULL, "duplicate vhosts returned an object");
 	config_cache_destroy(&candidate_cache);
+	for (size_t index = 0; index < sizeof(config_invalid_listen) / sizeof(config_invalid_listen[0]); index++) {
+		CHECK(write_config(fd, config_invalid_listen[index]) == 0, "cannot write invalid listen-port configuration");
+		status = config_read(filename, &active_cache, &candidate_cache, &parsed);
+		CHECK(status == CONF_READ_ERROR, "invalid listen port was accepted");
+		CHECK(errno == CONF_ECLISTENPORT, "invalid listen port returned the wrong error");
+		CHECK(parsed == NULL, "invalid listen port returned an object");
+		config_cache_destroy(&candidate_cache);
+	}
 
 	cJSON_InitHooks(&config_hooks);
 	CHECK(write_config(fd, config_mixed) == 0, "cannot rewrite mixed configuration");

@@ -54,6 +54,19 @@ static conf *config_parse_failure(cJSON *config_json, conf *result, conf_error e
 	return NULL;
 }
 
+static bool config_port_extract(const cJSON *item, int *port) {
+	if (item == NULL || !cJSON_IsNumber(item) || port == NULL) {
+		return false;
+	}
+	/* cJSON valueint truncates fractions, so validate the original number before converting it. */
+	const double value = item->valuedouble;
+	if (!(value >= 0.0) || value > 65535.0 || (double)(int)value != value) {
+		return false;
+	}
+	*port = (int)value;
+	return true;
+}
+
 static void config_proxy_vhost_namelist_destroy(char **vhost_namelist, int vhost_count) {
 	for (int index = 0; index < vhost_count; index++) {
 		free(vhost_namelist[index]);
@@ -109,13 +122,9 @@ static cJSON *config_proxy_parse(cJSON *src) {
 		if (single_valid) {
 			cJSON *single_port = cJSON_GetObjectItemCaseSensitive(single, "port");
 			if (single_port != NULL) {
-				if (!cJSON_IsNumber(single_port)) {
+				int port;
+				if (!config_port_extract(single_port, &port)) {
 					single_valid = false;
-				} else {
-					int port = single_port->valueint;
-					if ((port < 0) || (port > 65535)) {
-						single_valid = false;
-					}
 				}
 			}
 		}
@@ -259,13 +268,11 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 		}
 		cJSON *config_json_listen_port = cJSON_GetObjectItemCaseSensitive(config_json_listen, "port");
 		if (config_json_listen_port != NULL) {
-			if (cJSON_IsNumber(config_json_listen_port)) {
-				int port = config_json_listen_port->valueint;
-				if ((port < 0) || (port > 65535)) {
-					return config_parse_failure(config_json, result, CONF_ECLISTENPORT);
-				}
-				result->listen.port = port;
+			int port;
+			if (!config_port_extract(config_json_listen_port, &port)) {
+				return config_parse_failure(config_json, result, CONF_ECLISTENPORT);
 			}
+			result->listen.port = (in_port_t)port;
 		}
 	}
 	cJSON *config_json_icon = cJSON_GetObjectItemCaseSensitive(config_json, "icon");
