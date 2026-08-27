@@ -313,6 +313,9 @@ int main(int argc, char **argv) {
 			fprintf(stderr, "Try '%s help' for more information.\n", progname);
 			return EXITCODE_BADARG;
 	}
+	if (geteuid() == 0) {
+		LOG(MKSYS_LEVEL_WARNING, "Running as root is unsafe and entirely at your own risk; use an unprivileged account instead.");
+	}
 	char config_filename[PATH_MAX] = { 0 };
 	char config_filename_full[PATH_MAX] = { 0 };
 	char log_filename[PATH_MAX] = { 0 };
