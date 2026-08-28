@@ -51,6 +51,7 @@ typedef struct {
 	size_t question_class_offset;
 	size_t question_name_offset;
 	size_t question_type_offset;
+	char question_name[NS_MAXDNAME];
 	size_t size;
 } dns_message_builder;
 typedef struct {
@@ -188,8 +189,8 @@ static bool dns_builder_response_start(dns_message_builder *builder, const char 
 	}
 	memset(builder, 0, sizeof(*builder));
 	builder->size = NS_HFIXEDSZ;
-	builder->data[0] = 0x12;
-	builder->data[1] = 0x34;
+	builder->data[0] = (uint8_t)(DNS_TEST_QUERY_ID >> 8);
+	builder->data[1] = (uint8_t)DNS_TEST_QUERY_ID;
 	builder->data[2] = 0x81;
 	builder->data[3] = 0x80;
 	builder->data[5] = 1;
@@ -202,6 +203,9 @@ static bool dns_builder_response_start(dns_message_builder *builder, const char 
 		return false;
 	}
 	builder->question_class_offset = builder->question_type_offset + 2;
+	if (snprintf(builder->question_name, sizeof(builder->question_name), "%s", question_name) < 0) {
+		return false;
+	}
 	return true;
 }
 
@@ -286,7 +290,7 @@ static bool dns_test_aliases(void) {
 	CHECK(dns_builder_wire_name_create("middle.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode initial SRV alias");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 300, wire_name, wire_name_size), "cannot add initial SRV alias");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 250, wire_name, wire_name_size), "cannot add duplicate initial SRV alias");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_OK, "cannot parse aliased SRV response");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_OK, "cannot parse aliased SRV response");
 	CHECK(strcmp(result.question_name, "_minecraft._tcp.alias.example") == 0 && strcmp(result.canonical_name, "final.example") == 0, "aliased SRV names were normalized incorrectly");
 	CHECK(result.cname_count == 2 && result.record_count == 1, "aliased SRV response returned the wrong record counts");
 	CHECK(strcmp(result.cnames[0].owner, "_minecraft._tcp.alias.example") == 0 && strcmp(result.cnames[0].target, "middle.example") == 0 && result.cnames[0].ttl == 250,
@@ -307,13 +311,14 @@ static bool dns_test_arguments(void) {
 	dns_srv_result result = { 0 };
 	int test_result = false;
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.arguments.example", ns_t_srv), "cannot start SRV argument response");
-	CHECK(dns_srv_response_parse(NULL, builder.size, &result) == DNS_SRV_PARSE_BAD_ARGUMENT, "NULL SRV message was accepted");
-	CHECK(dns_srv_response_parse(builder.data, (size_t)INT_MAX + 1, &result) == DNS_SRV_PARSE_BAD_ARGUMENT, "oversized SRV message was accepted");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, NULL) == DNS_SRV_PARSE_BAD_ARGUMENT, "NULL SRV result was accepted");
+	CHECK(dns_srv_response_parse(NULL, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_BAD_ARGUMENT, "NULL SRV message was accepted");
+	CHECK(dns_srv_response_parse(builder.data, (size_t)INT_MAX + 1, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_BAD_ARGUMENT, "oversized SRV message was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, NULL) == DNS_SRV_PARSE_BAD_ARGUMENT, "NULL SRV result was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, NULL, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_BAD_ARGUMENT, "NULL expected name was accepted");
 	result.question_name[0] = 'x';
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_BAD_ARGUMENT, "non-empty SRV result was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_BAD_ARGUMENT, "non-empty SRV result was accepted");
 	dns_srv_result_destroy(&result);
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_NODATA, "destroyed SRV result could not be reused");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_NODATA, "destroyed SRV result could not be reused");
 	dns_srv_result_destroy(&result);
 	dns_srv_result_destroy(&result);
 	dns_srv_result_destroy(NULL);
@@ -524,46 +529,46 @@ static bool dns_test_malformed(void) {
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.bad.example", ns_t_srv), "cannot start malformed SRV response");
 	uint8_t short_rdata[6] = { 0 };
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_srv, ns_c_in, 30, short_rdata, sizeof(short_rdata)), "cannot add short SRV record");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_MALFORMED, "short SRV record was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "short SRV record was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.bad.example", ns_t_srv), "cannot restart malformed SRV response");
 	CHECK(dns_builder_wire_srv_create(0, 0, 25565, "target.example", wire_srv, sizeof(wire_srv), &wire_srv_size), "cannot encode malformed SRV target");
 	wire_srv[wire_srv_size++] = 0;
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_srv, ns_c_in, 30, wire_srv, wire_srv_size), "cannot add SRV record with trailing data");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_MALFORMED, "SRV target with trailing data was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "SRV target with trailing data was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.bad.example", ns_t_srv), "cannot restart invalid-pointer SRV response");
 	uint8_t bad_pointer_rdata[8] = { 0, 0, 0, 0, 0x63, 0xDD, 0xFF, 0xFF };
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_srv, ns_c_in, 30, bad_pointer_rdata, sizeof(bad_pointer_rdata)), "cannot add invalid SRV target pointer");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_MALFORMED, "invalid SRV target pointer was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "invalid SRV target pointer was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.bad.example", ns_t_srv), "cannot restart conflicting SRV response");
 	CHECK(dns_builder_wire_name_create("target.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode conflicting SRV alias");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size), "cannot add conflicting SRV alias");
 	CHECK(dns_builder_wire_srv_create(0, 0, 25565, "node.example", wire_srv, sizeof(wire_srv), &wire_srv_size), "cannot encode conflicting SRV record");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_srv, ns_c_in, 30, wire_srv, wire_srv_size), "cannot add conflicting SRV record");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_MALFORMED, "CNAME and SRV record at the same owner were accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "CNAME and SRV record at the same owner were accepted");
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.bad.example", ns_t_srv), "cannot restart conflicting-alias SRV response");
 	CHECK(dns_builder_wire_name_create("first.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode first conflicting SRV alias");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size), "cannot add first conflicting SRV alias");
 	CHECK(dns_builder_wire_name_create("second.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode second conflicting SRV alias");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size), "cannot add second conflicting SRV alias");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_MALFORMED, "conflicting SRV alias targets were accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "conflicting SRV alias targets were accepted");
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.loop.example", ns_t_srv), "cannot start looping SRV response");
 	CHECK(dns_builder_wire_name_create("middle.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode forward SRV loop alias");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size), "cannot add forward SRV loop alias");
 	CHECK(dns_builder_wire_name_create("_minecraft._tcp.loop.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode reverse SRV loop alias");
 	CHECK(dns_builder_record_add(&builder, "middle.example", DNS_TEST_NO_POINTER, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size), "cannot add reverse SRV loop alias");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_MALFORMED, "looping SRV alias chain was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "looping SRV alias chain was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.limit.example", ns_t_srv), "cannot start excessive SRV response");
 	CHECK(dns_builder_wire_srv_create(0, 0, 25565, ".", wire_srv, sizeof(wire_srv), &wire_srv_size), "cannot encode excessive SRV record");
 	for (size_t index = 0; index < DNS_SRV_RECORD_LIMIT + 1; index++) {
 		CHECK(dns_builder_record_add(&builder, "unrelated.example", DNS_TEST_NO_POINTER, ns_t_srv, ns_c_in, 30, wire_srv, wire_srv_size), "cannot add excessive SRV record");
 	}
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_LIMIT, "excessive SRV answer count was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_LIMIT, "excessive SRV answer count was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "depth0.example", ns_t_srv), "cannot start excessive SRV alias chain");
 	for (size_t index = 0; index < DNS_CNAME_DEPTH_LIMIT + 1; index++) {
@@ -575,17 +580,17 @@ static bool dns_test_malformed(void) {
 		CHECK(dns_builder_wire_name_create(target, wire_name, sizeof(wire_name), &wire_name_size), "cannot encode SRV alias depth target");
 		CHECK(dns_builder_record_add(&builder, owner, DNS_TEST_NO_POINTER, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size), "cannot add SRV alias depth record");
 	}
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_LIMIT, "excessive SRV CNAME depth was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_LIMIT, "excessive SRV CNAME depth was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.negative.example", ns_t_srv), "cannot start short SRV SOA response");
 	uint8_t short_soa[19] = { 0 };
 	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, short_soa, sizeof(short_soa)), "cannot add short SRV SOA record");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_MALFORMED, "short SRV SOA record was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "short SRV SOA record was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.negative.example", ns_t_srv), "cannot start invalid-pointer SRV SOA response");
 	uint8_t invalid_soa[24] = { 0xFF, 0xFF };
 	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, invalid_soa, sizeof(invalid_soa)), "cannot add invalid-pointer SRV SOA record");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_MALFORMED, "invalid SRV SOA compression pointer was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "invalid SRV SOA compression pointer was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.negative.example", ns_t_srv), "cannot start trailing-data SRV SOA response");
 	uint8_t trailing_soa[NS_MAXCDNAME * 2 + 21];
@@ -593,21 +598,39 @@ static bool dns_test_malformed(void) {
 	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 30, trailing_soa, sizeof(trailing_soa), &trailing_soa_size), "cannot encode trailing-data SRV SOA record");
 	trailing_soa[trailing_soa_size++] = 0;
 	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, trailing_soa, trailing_soa_size), "cannot add trailing-data SRV SOA record");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_MALFORMED, "SRV SOA record with trailing data was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "SRV SOA record with trailing data was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.negative.example", ns_t_srv), "cannot start excessive SRV authority response");
 	for (size_t index = 0; index <= DNS_AUTHORITY_RECORD_LIMIT; index++) {
 		CHECK(dns_builder_authority_add(&builder, NULL, builder.question_name_offset, ns_t_txt, ns_c_in, 1, NULL, 0), "cannot add excessive SRV authority record");
 	}
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_LIMIT, "excessive SRV authority count was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_LIMIT, "excessive SRV authority count was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.contradictory.example", ns_t_srv), "cannot start contradictory SRV NXDOMAIN response");
 	CHECK(dns_builder_wire_srv_create(0, 0, 25565, "target.example", wire_srv, sizeof(wire_srv), &wire_srv_size), "cannot encode contradictory NXDOMAIN SRV record");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_srv, ns_c_in, 30, wire_srv, wire_srv_size), "cannot add contradictory NXDOMAIN SRV record");
 	builder.data[3] = (uint8_t)((builder.data[3] & 0xF0) | ns_r_nxdomain);
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_MALFORMED, "NXDOMAIN response with terminal SRV data was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "NXDOMAIN response with terminal SRV data was accepted");
 
 	dns_srv_result_destroy(&result);
+	/* Responses are bound to their queries: TXID, question name, and question count must match exactly. */
+	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.bad.example", ns_t_srv), "cannot start TXID response");
+	CHECK(dns_builder_wire_srv_create(0, 0, 25565, "target.example", wire_srv, sizeof(wire_srv), &wire_srv_size), "cannot encode TXID response record");
+	CHECK(dns_builder_record_add(&builder, "_minecraft._tcp.bad.example", builder.question_name_offset, ns_t_srv, ns_c_in, 30, wire_srv, wire_srv_size), "cannot add TXID response record");
+	builder.data[1] ^= 0xFF;
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "wrong TXID was accepted");
+	builder.data[1] ^= 0xFF;
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_OK, "correct TXID response failed");
+	dns_srv_result_destroy(&result);
+	CHECK(dns_srv_response_parse(builder.data, builder.size, "_minecraft._tcp.other.example", DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "wrong question name was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, "_minecraft._tcp.bad.example.", DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_OK, "trailing-dot question name failed");
+	dns_srv_result_destroy(&result);
+	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.bad.example", ns_t_srv), "cannot restart qdcount response");
+	builder.data[5] = 0;
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "zero question count was accepted");
+	builder.data[5] = 2;
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "two question count was accepted");
+
 	test_result = true;
 
 cleanup:
@@ -626,25 +649,25 @@ static bool dns_test_negative(void) {
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.nodata.example", ns_t_srv), "cannot start authoritative SRV NODATA response");
 	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 120, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode SRV NODATA SOA record");
 	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 300, wire_soa, wire_soa_size), "cannot add SRV NODATA SOA record");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_NODATA, "cannot parse authoritative SRV NODATA response");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_NODATA, "cannot parse authoritative SRV NODATA response");
 	CHECK(result.negative.valid && strcmp(result.negative.owner, "example") == 0 && result.negative.record_ttl == 300 && result.negative.minimum == 120 && result.negative.effective_ttl == 120,
 		"SRV NODATA negative metadata was parsed incorrectly");
 	dns_srv_result_destroy(&result);
 	for (size_t prefix_size = 0; prefix_size < builder.size; prefix_size++) {
-		dns_srv_parse_status status = dns_srv_response_parse(builder.data, prefix_size, &result);
+		dns_srv_parse_status status = dns_srv_response_parse(builder.data, prefix_size, builder.question_name, DNS_TEST_QUERY_ID, &result);
 		CHECK(!dns_srv_status_complete(status), "truncated authoritative SRV NODATA response was accepted");
 		dns_srv_result_destroy(&result);
 	}
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.absent.example", ns_t_srv), "cannot start SRV NODATA response without SOA");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_NODATA, "cannot parse SRV NODATA response without SOA");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_NODATA, "cannot parse SRV NODATA response without SOA");
 	CHECK(!result.negative.valid, "SRV NODATA response without SOA produced authoritative negative metadata");
 	dns_srv_result_destroy(&result);
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.missing.example", ns_t_srv), "cannot start SRV NODATA response with unrelated SOA");
 	CHECK(dns_builder_wire_soa_create("ns.other.example", "hostmaster.other.example", 1, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode unrelated-only SRV SOA record");
 	CHECK(dns_builder_authority_add(&builder, "other.example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 1, wire_soa, wire_soa_size), "cannot add unrelated-only SRV SOA record");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_NODATA, "cannot parse SRV NODATA response with unrelated SOA");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_NODATA, "cannot parse SRV NODATA response with unrelated SOA");
 	CHECK(!result.negative.valid, "unrelated SOA produced authoritative SRV negative metadata");
 	dns_srv_result_destroy(&result);
 
@@ -654,7 +677,7 @@ static bool dns_test_negative(void) {
 	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 120, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode SRV NXDOMAIN SOA record");
 	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 300, wire_soa, wire_soa_size), "cannot add SRV NXDOMAIN SOA record");
 	builder.data[3] = (uint8_t)((builder.data[3] & 0xF0) | ns_r_nxdomain);
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_NXDOMAIN, "cannot parse aliased SRV NXDOMAIN response");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_NXDOMAIN, "cannot parse aliased SRV NXDOMAIN response");
 	CHECK(result.cname_count == 1 && strcmp(result.canonical_name, "_minecraft._tcp.missing.sub.example") == 0, "SRV NXDOMAIN response lost its CNAME chain");
 	CHECK(result.negative.valid && result.negative.effective_ttl == 20, "SRV NXDOMAIN negative TTL did not include the CNAME TTL");
 	dns_srv_result_destroy(&result);
@@ -668,7 +691,7 @@ static bool dns_test_negative(void) {
 	CHECK(dns_builder_authority_add(&builder, "sub.example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 100, wire_soa, wire_soa_size), "cannot add closest SRV SOA record");
 	CHECK(dns_builder_wire_soa_create("ns.sub.example", "hostmaster.sub.example", 200, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode duplicate SRV SOA record");
 	CHECK(dns_builder_authority_add(&builder, "SUB.EXAMPLE.", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, wire_soa, wire_soa_size), "cannot add duplicate SRV SOA record");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_NODATA, "cannot parse closest-zone SRV NODATA response");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_NODATA, "cannot parse closest-zone SRV NODATA response");
 	CHECK(result.negative.valid && strcmp(result.negative.owner, "sub.example") == 0 && result.negative.record_ttl == 30 && result.negative.minimum == 80 && result.negative.effective_ttl == 30,
 		"closest or duplicate SRV SOA selection was incorrect");
 	dns_srv_result_destroy(&result);
@@ -676,7 +699,7 @@ static bool dns_test_negative(void) {
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.zero.example", ns_t_srv), "cannot start zero-TTL SRV NODATA response");
 	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 0, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode zero-TTL SRV SOA record");
 	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 300, wire_soa, wire_soa_size), "cannot add zero-TTL SRV SOA record");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_NODATA, "cannot parse zero-TTL SRV NODATA response");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_NODATA, "cannot parse zero-TTL SRV NODATA response");
 	CHECK(result.negative.valid && result.negative.effective_ttl == 0, "valid zero SRV negative TTL was not distinguished from absent metadata");
 	dns_srv_result_destroy(&result);
 
@@ -688,7 +711,7 @@ static bool dns_test_negative(void) {
 	memset(wire_soa + 4, 0, 20);
 	wire_soa[23] = 40;
 	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 50, wire_soa, 24), "cannot add compressed SRV SOA record");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_NODATA, "cannot parse compressed SRV SOA response");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_NODATA, "cannot parse compressed SRV SOA response");
 	CHECK(result.negative.valid && result.negative.minimum == 40 && result.negative.effective_ttl == 40, "compressed SRV SOA names or fields were parsed incorrectly");
 	test_result = true;
 
@@ -737,7 +760,7 @@ static bool dns_test_records(void) {
 	CHECK(dns_builder_wire_srv_create(5, 0, 25566, "second.example", wire_srv, sizeof(wire_srv), &wire_srv_size), "cannot encode second SRV record");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_srv, ns_c_in, 30, wire_srv, wire_srv_size), "cannot add second SRV record");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_srv, ns_c_chaos, 1, NULL, 0), "cannot add ignored non-IN SRV record");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_OK, "cannot parse SRV RRset");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_OK, "cannot parse SRV RRset");
 	CHECK(strcmp(result.question_name, "_minecraft._tcp.example") == 0 && strcmp(result.canonical_name, "_minecraft._tcp.example") == 0, "SRV owner was normalized incorrectly");
 	CHECK(result.cname_count == 0 && result.record_count == 2, "SRV response returned the wrong record counts");
 	CHECK(result.records[0].priority == 10 && result.records[0].weight == 20 && result.records[0].port == 25565 && strcmp(result.records[0].target, "first.example") == 0,
@@ -751,7 +774,7 @@ static bool dns_test_records(void) {
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.unavailable.example", ns_t_srv), "cannot start unavailable SRV response");
 	CHECK(dns_builder_wire_srv_create(0, 0, 0, ".", wire_srv, sizeof(wire_srv), &wire_srv_size), "cannot encode unavailable SRV record");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_srv, ns_c_in, 15, wire_srv, wire_srv_size), "cannot add unavailable SRV record");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_OK, "cannot parse unavailable SRV response");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_OK, "cannot parse unavailable SRV response");
 	CHECK(result.record_count == 1 && strcmp(result.records[0].target, ".") == 0 && result.records[0].port == 0, "unavailable SRV target was not preserved");
 	test_result = true;
 
@@ -806,48 +829,48 @@ static bool dns_test_statuses(void) {
 	size_t wire_name_size;
 	int test_result = false;
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.status.example", ns_t_srv), "cannot start SRV NODATA response");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_NODATA, "SRV NODATA response was not identified");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_NODATA, "SRV NODATA response was not identified");
 	CHECK(strcmp(result.question_name, "_minecraft._tcp.status.example") == 0 && strcmp(result.canonical_name, "_minecraft._tcp.status.example") == 0, "SRV NODATA names were not retained");
 	dns_srv_result_destroy(&result);
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.status.example", ns_t_srv), "cannot start SRV alias-only response");
 	CHECK(dns_builder_wire_name_create("_minecraft._tcp.target.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode SRV alias-only target");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 50, wire_name, wire_name_size), "cannot add SRV alias-only record");
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_ALIAS_ONLY, "SRV alias-only response was not identified");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_ALIAS_ONLY, "SRV alias-only response was not identified");
 	CHECK(result.cname_count == 1 && result.record_count == 0 && strcmp(result.canonical_name, "_minecraft._tcp.target.example") == 0, "SRV alias-only result was incomplete");
 	dns_srv_result_destroy(&result);
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.status.example", ns_t_srv), "cannot start SRV NXDOMAIN response");
 	builder.data[3] = (uint8_t)((builder.data[3] & 0xF0) | ns_r_nxdomain);
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_NXDOMAIN, "SRV NXDOMAIN response was not identified");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_NXDOMAIN, "SRV NXDOMAIN response was not identified");
 	CHECK(result.rcode == ns_r_nxdomain && strcmp(result.question_name, "_minecraft._tcp.status.example") == 0, "SRV NXDOMAIN metadata was not retained");
 	dns_srv_result_destroy(&result);
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.status.example", ns_t_srv), "cannot start SRV SERVFAIL response");
 	builder.data[3] = (uint8_t)((builder.data[3] & 0xF0) | ns_r_servfail);
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_RCODE_ERROR, "SRV SERVFAIL response was not identified");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_RCODE_ERROR, "SRV SERVFAIL response was not identified");
 	CHECK(result.rcode == ns_r_servfail, "SRV SERVFAIL rcode was not retained");
 	dns_srv_result_destroy(&result);
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.status.example", ns_t_srv), "cannot start truncated SRV response");
 	builder.data[2] |= 0x02;
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_TRUNCATED, "SRV truncated flag was ignored");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_TRUNCATED, "SRV truncated flag was ignored");
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.status.example", ns_t_srv), "cannot start request-shaped SRV response");
 	builder.data[2] &= 0x7F;
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_MALFORMED, "request-shaped SRV message was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "request-shaped SRV message was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.status.example", ns_t_srv), "cannot start SRV opcode response");
 	builder.data[2] |= 0x08;
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_MALFORMED, "non-query SRV opcode was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "non-query SRV opcode was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.status.example", ns_t_srv), "cannot start wrong-type SRV response");
 	builder.data[builder.question_type_offset + 1] = ns_t_a;
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_MALFORMED, "wrong SRV question type was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "wrong SRV question type was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "_minecraft._tcp.status.example", ns_t_srv), "cannot start wrong-class SRV response");
 	builder.data[builder.question_class_offset + 1] = ns_c_chaos;
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_MALFORMED, "wrong SRV question class was accepted");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_MALFORMED, "wrong SRV question class was accepted");
 	test_result = true;
 
 cleanup:
@@ -865,11 +888,11 @@ static bool dns_test_truncation(void) {
 	CHECK(dns_builder_wire_srv_create(0, 0, 25565, "target.example", wire_srv, sizeof(wire_srv), &wire_srv_size), "cannot encode SRV truncation record");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_srv, ns_c_in, 30, wire_srv, wire_srv_size), "cannot add SRV truncation record");
 	for (size_t prefix_size = 0; prefix_size < builder.size; prefix_size++) {
-		dns_srv_parse_status status = dns_srv_response_parse(builder.data, prefix_size, &result);
+		dns_srv_parse_status status = dns_srv_response_parse(builder.data, prefix_size, builder.question_name, DNS_TEST_QUERY_ID, &result);
 		CHECK(!dns_srv_status_complete(status), "truncated SRV prefix was accepted as a complete response");
 		dns_srv_result_destroy(&result);
 	}
-	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_OK, "complete SRV response failed after truncation checks");
+	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_OK, "complete SRV response failed after truncation checks");
 	test_result = true;
 
 cleanup:

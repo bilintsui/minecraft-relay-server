@@ -52,6 +52,7 @@ typedef struct {
 	size_t question_class_offset;
 	size_t question_name_offset;
 	size_t question_type_offset;
+	char question_name[NS_MAXDNAME];
 	size_t size;
 } dns_message_builder;
 typedef struct {
@@ -197,8 +198,8 @@ static bool dns_builder_response_start(dns_message_builder *builder, const char 
 	}
 	memset(builder, 0, sizeof(*builder));
 	builder->size = NS_HFIXEDSZ;
-	builder->data[0] = 0x12;
-	builder->data[1] = 0x34;
+	builder->data[0] = (uint8_t)(DNS_TEST_QUERY_ID >> 8);
+	builder->data[1] = (uint8_t)DNS_TEST_QUERY_ID;
 	builder->data[2] = 0x81;
 	builder->data[3] = 0x80;
 	builder->data[5] = 1;
@@ -211,6 +212,9 @@ static bool dns_builder_response_start(dns_message_builder *builder, const char 
 		return false;
 	}
 	builder->question_class_offset = builder->question_type_offset + 2;
+	if (snprintf(builder->question_name, sizeof(builder->question_name), "%s", question_name) < 0) {
+		return false;
+	}
 	return true;
 }
 
@@ -286,7 +290,7 @@ static bool dns_test_aliases(void) {
 	CHECK(dns_builder_record_add(&builder, "middle.example", DNS_TEST_NO_POINTER, ns_t_cname, ns_c_in, 120, wire_name, wire_name_size, NULL), "cannot add final alias");
 	CHECK(dns_builder_wire_name_create("middle.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode middle alias name");
 	CHECK(dns_builder_record_add(&builder, "alias.example", DNS_TEST_NO_POINTER, ns_t_cname, ns_c_in, 300, wire_name, wire_name_size, NULL), "cannot add initial alias");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "cannot parse multi-level alias response");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "cannot parse multi-level alias response");
 	CHECK(strcmp(result.question_name, "alias.example") == 0 && strcmp(result.canonical_name, "final.example") == 0, "alias names were normalized incorrectly");
 	CHECK(result.cname_count == 2 && result.address_count == 2, "alias response returned the wrong record counts");
 	CHECK(strcmp(result.cnames[0].owner, "alias.example") == 0 && strcmp(result.cnames[0].target, "middle.example") == 0 && result.cnames[0].ttl == 300, "initial alias was parsed incorrectly");
@@ -300,7 +304,7 @@ static bool dns_test_aliases(void) {
 	size_t target_offset;
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 45, wire_name, wire_name_size, &target_offset), "cannot add compressed alias");
 	CHECK(dns_builder_record_add(&builder, NULL, target_offset, ns_t_a, ns_c_in, 90, address_first, sizeof(address_first), NULL), "cannot add compressed-owner address");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "cannot parse compressed alias response");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "cannot parse compressed alias response");
 	CHECK(result.cname_count == 1 && result.address_count == 1 && result.addresses[0].effective_ttl == 45, "compressed alias response was parsed incorrectly");
 	dns_address_result_destroy(&result);
 
@@ -309,7 +313,7 @@ static bool dns_test_aliases(void) {
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 80, wire_name, wire_name_size, NULL), "cannot add first duplicate alias");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 20, wire_name, wire_name_size, NULL), "cannot add second duplicate alias");
 	CHECK(dns_builder_record_add(&builder, "target.example", DNS_TEST_NO_POINTER, ns_t_a, ns_c_in, 100, address_first, sizeof(address_first), NULL), "cannot add duplicate-alias address");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "cannot parse duplicate alias response");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "cannot parse duplicate alias response");
 	CHECK(result.cname_count == 1 && result.cnames[0].ttl == 20 && result.addresses[0].effective_ttl == 20, "duplicate aliases did not use the minimum TTL");
 
 	test_result = true;
@@ -324,14 +328,15 @@ static bool dns_test_arguments(void) {
 	dns_address_result result = { 0 };
 	int test_result = false;
 	CHECK(dns_builder_response_start(&builder, "arguments.example", ns_t_a), "cannot start argument response");
-	CHECK(dns_address_response_parse(NULL, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_BAD_ARGUMENT, "NULL message was accepted");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_UNSPEC, &result) == DNS_ADDRESS_PARSE_BAD_ARGUMENT, "invalid family was accepted");
-	CHECK(dns_address_response_parse(builder.data, (size_t)INT_MAX + 1, AF_INET, &result) == DNS_ADDRESS_PARSE_BAD_ARGUMENT, "oversized message was accepted");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, NULL) == DNS_ADDRESS_PARSE_BAD_ARGUMENT, "NULL result was accepted");
+	CHECK(dns_address_response_parse(NULL, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_BAD_ARGUMENT, "NULL message was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_UNSPEC, &result) == DNS_ADDRESS_PARSE_BAD_ARGUMENT, "invalid family was accepted");
+	CHECK(dns_address_response_parse(builder.data, (size_t)INT_MAX + 1, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_BAD_ARGUMENT, "oversized message was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, NULL) == DNS_ADDRESS_PARSE_BAD_ARGUMENT, "NULL result was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, NULL, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_BAD_ARGUMENT, "NULL expected name was accepted");
 	result.question_name[0] = 'x';
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_BAD_ARGUMENT, "non-empty result was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_BAD_ARGUMENT, "non-empty result was accepted");
 	dns_address_result_destroy(&result);
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "destroyed result could not be reused");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "destroyed result could not be reused");
 	dns_address_result_destroy(&result);
 	dns_address_result_destroy(&result);
 	dns_address_result_destroy(NULL);
@@ -539,49 +544,49 @@ static bool dns_test_malformed(void) {
 	int test_result = false;
 	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot start malformed address response");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_a, ns_c_in, 30, address, 3, NULL), "cannot add malformed address");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "short A record was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "short A record was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_aaaa), "cannot start malformed IPv6 response");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_aaaa, ns_c_in, 30, address, 15, NULL), "cannot add malformed IPv6 address");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET6, &result) == DNS_ADDRESS_PARSE_MALFORMED, "short AAAA record was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET6, &result) == DNS_ADDRESS_PARSE_MALFORMED, "short AAAA record was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot restart malformed alias response");
 	CHECK(dns_builder_wire_name_create("target.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode malformed alias target");
 	wire_name[wire_name_size++] = 0;
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add alias with trailing data");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "CNAME with trailing data was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "CNAME with trailing data was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot restart malformed pointer response");
 	uint8_t bad_pointer[2] = { 0xFF, 0xFF };
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, bad_pointer, sizeof(bad_pointer), NULL), "cannot add invalid compression pointer");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result)
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result)
 		 == DNS_ADDRESS_PARSE_MALFORMED, "out-of-range compression pointer was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot restart self-pointer response");
 	size_t self_pointer_offset = builder.size + 2 + 10;
 	uint8_t self_pointer[2] = { (uint8_t)(0xC0 | (self_pointer_offset >> 8)), (uint8_t)self_pointer_offset };
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, self_pointer, sizeof(self_pointer), NULL), "cannot add self compression pointer");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "self compression pointer was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "self compression pointer was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "a.example", ns_t_a), "cannot start semantic alias loop");
 	CHECK(dns_builder_wire_name_create("b.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode loop target b");
 	CHECK(dns_builder_record_add(&builder, "a.example", DNS_TEST_NO_POINTER, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add loop alias a");
 	CHECK(dns_builder_wire_name_create("a.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode loop target a");
 	CHECK(dns_builder_record_add(&builder, "b.example", DNS_TEST_NO_POINTER, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add loop alias b");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "semantic CNAME loop was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "semantic CNAME loop was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "conflict.example", ns_t_a), "cannot start conflicting alias response");
 	CHECK(dns_builder_wire_name_create("first.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode first conflicting target");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add first conflicting alias");
 	CHECK(dns_builder_wire_name_create("second.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode second conflicting target");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add second conflicting alias");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "conflicting CNAME targets were accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "conflicting CNAME targets were accepted");
 
 	CHECK(dns_builder_response_start(&builder, "mixed.example", ns_t_a), "cannot start mixed alias response");
 	CHECK(dns_builder_wire_name_create("target.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode mixed alias target");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add mixed alias");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_a, ns_c_in, 30, address, sizeof(uint32_t), NULL), "cannot add mixed address");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result)
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result)
 		 == DNS_ADDRESS_PARSE_MALFORMED, "CNAME and address at the same owner were accepted");
 
 	CHECK(dns_builder_response_start(&builder, "n0.example", ns_t_a), "cannot start excessive alias chain");
@@ -593,23 +598,23 @@ static bool dns_test_malformed(void) {
 		CHECK(dns_builder_wire_name_create(target, wire_name, sizeof(wire_name), &wire_name_size), "cannot encode excessive alias target");
 		CHECK(dns_builder_record_add(&builder, owner, DNS_TEST_NO_POINTER, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add excessive alias");
 	}
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_LIMIT, "excessive CNAME chain was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_LIMIT, "excessive CNAME chain was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "limit.example", ns_t_a), "cannot start excessive answer response");
 	for (size_t index = 0; index <= DNS_ADDRESS_RECORD_LIMIT; index++) {
 		CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_txt, ns_c_in, 1, NULL, 0, NULL), "cannot add excessive answer");
 	}
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_LIMIT, "excessive answer count was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_LIMIT, "excessive answer count was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "negative.example", ns_t_a), "cannot start short SOA response");
 	uint8_t short_soa[19] = { 0 };
 	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, short_soa, sizeof(short_soa)), "cannot add short SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "short SOA record was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "short SOA record was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "negative.example", ns_t_a), "cannot start invalid-pointer SOA response");
 	uint8_t invalid_soa[24] = { 0xFF, 0xFF };
 	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, invalid_soa, sizeof(invalid_soa)), "cannot add invalid-pointer SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "invalid SOA compression pointer was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "invalid SOA compression pointer was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "negative.example", ns_t_a), "cannot start trailing-data SOA response");
 	uint8_t trailing_soa[NS_MAXCDNAME * 2 + 21];
@@ -617,19 +622,36 @@ static bool dns_test_malformed(void) {
 	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 30, trailing_soa, sizeof(trailing_soa), &trailing_soa_size), "cannot encode trailing-data SOA record");
 	trailing_soa[trailing_soa_size++] = 0;
 	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, trailing_soa, trailing_soa_size), "cannot add trailing-data SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "SOA record with trailing data was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "SOA record with trailing data was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "negative.example", ns_t_a), "cannot start excessive-authority response");
 	for (size_t index = 0; index <= DNS_AUTHORITY_RECORD_LIMIT; index++) {
 		CHECK(dns_builder_authority_add(&builder, NULL, builder.question_name_offset, ns_t_txt, ns_c_in, 1, NULL, 0), "cannot add excessive authority record");
 	}
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_LIMIT, "excessive authority count was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_LIMIT, "excessive authority count was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "contradictory.example", ns_t_a), "cannot start contradictory NXDOMAIN response");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_a, ns_c_in, 30, address, sizeof(uint32_t), NULL), "cannot add contradictory NXDOMAIN address");
 	builder.data[3] = (uint8_t)((builder.data[3] & 0xF0) | ns_r_nxdomain);
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result)
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result)
 		 == DNS_ADDRESS_PARSE_MALFORMED, "NXDOMAIN response with terminal address data was accepted");
+
+	/* Responses are bound to their queries: TXID, question name, and question count must match exactly. */
+	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot start TXID response");
+	CHECK(dns_builder_record_add(&builder, "bad.example", builder.question_name_offset, ns_t_a, ns_c_in, 30, address, 4, NULL), "cannot add TXID response address");
+	builder.data[1] ^= 0xFF;
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "wrong TXID was accepted");
+	builder.data[1] ^= 0xFF;
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "correct TXID response failed");
+	dns_address_result_destroy(&result);
+	CHECK(dns_address_response_parse(builder.data, builder.size, "other.example", DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "wrong question name was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, "bad.example.", DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "trailing-dot question name failed");
+	dns_address_result_destroy(&result);
+	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot restart qdcount response");
+	builder.data[5] = 0;
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "zero question count was accepted");
+	builder.data[5] = 2;
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "two question count was accepted");
 
 	test_result = true;
 
@@ -649,25 +671,25 @@ static bool dns_test_negative(void) {
 	CHECK(dns_builder_response_start(&builder, "nodata.example", ns_t_a), "cannot start NODATA SOA response");
 	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 120, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode NODATA SOA record");
 	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 300, wire_soa, wire_soa_size), "cannot add NODATA SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse authoritative NODATA response");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse authoritative NODATA response");
 	CHECK(result.negative.valid && strcmp(result.negative.owner, "example") == 0 && result.negative.record_ttl == 300 && result.negative.minimum == 120 && result.negative.effective_ttl == 120,
 		"NODATA negative metadata was parsed incorrectly");
 	dns_address_result_destroy(&result);
 	for (size_t prefix_size = 0; prefix_size < builder.size; prefix_size++) {
-		dns_address_parse_status status = dns_address_response_parse(builder.data, prefix_size, AF_INET, &result);
+		dns_address_parse_status status = dns_address_response_parse(builder.data, prefix_size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result);
 		CHECK(!dns_status_complete(status), "truncated authoritative NODATA response was accepted");
 		dns_address_result_destroy(&result);
 	}
 
 	CHECK(dns_builder_response_start(&builder, "absent.example", ns_t_a), "cannot start NODATA response without SOA");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse NODATA response without SOA");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse NODATA response without SOA");
 	CHECK(!result.negative.valid, "NODATA response without SOA produced authoritative negative metadata");
 	dns_address_result_destroy(&result);
 
 	CHECK(dns_builder_response_start(&builder, "missing.example", ns_t_a), "cannot start NODATA response with unrelated SOA");
 	CHECK(dns_builder_wire_soa_create("ns.other.example", "hostmaster.other.example", 1, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode unrelated-only SOA record");
 	CHECK(dns_builder_authority_add(&builder, "other.example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 1, wire_soa, wire_soa_size), "cannot add unrelated-only SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse NODATA response with unrelated SOA");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse NODATA response with unrelated SOA");
 	CHECK(!result.negative.valid, "unrelated SOA produced authoritative negative metadata");
 	dns_address_result_destroy(&result);
 
@@ -677,7 +699,7 @@ static bool dns_test_negative(void) {
 	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 120, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode NXDOMAIN SOA record");
 	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 300, wire_soa, wire_soa_size), "cannot add NXDOMAIN SOA record");
 	builder.data[3] = (uint8_t)((builder.data[3] & 0xF0) | ns_r_nxdomain);
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_NXDOMAIN, "cannot parse aliased NXDOMAIN response");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NXDOMAIN, "cannot parse aliased NXDOMAIN response");
 	CHECK(result.cname_count == 1 && strcmp(result.canonical_name, "missing.sub.example") == 0, "NXDOMAIN response lost its CNAME chain");
 	CHECK(result.negative.valid && result.negative.effective_ttl == 20, "NXDOMAIN negative TTL did not include the CNAME TTL");
 	dns_address_result_destroy(&result);
@@ -693,7 +715,7 @@ static bool dns_test_negative(void) {
 	CHECK(dns_builder_authority_add(&builder, "SUB.EXAMPLE.", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, wire_soa, wire_soa_size), "cannot add duplicate SOA record");
 	CHECK(dns_builder_wire_soa_create("ns.other.example", "hostmaster.other.example", 1, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode unrelated SOA record");
 	CHECK(dns_builder_authority_add(&builder, "other.example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 1, wire_soa, wire_soa_size), "cannot add unrelated SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse closest-zone NODATA response");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse closest-zone NODATA response");
 	CHECK(result.negative.valid && strcmp(result.negative.owner, "sub.example") == 0 && result.negative.record_ttl == 30 && result.negative.minimum == 80 && result.negative.effective_ttl == 30,
 		"closest or duplicate SOA selection was incorrect");
 	dns_address_result_destroy(&result);
@@ -701,7 +723,7 @@ static bool dns_test_negative(void) {
 	CHECK(dns_builder_response_start(&builder, "zero.example", ns_t_a), "cannot start zero-TTL NODATA response");
 	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 0, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode zero-TTL SOA record");
 	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 300, wire_soa, wire_soa_size), "cannot add zero-TTL SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse zero-TTL NODATA response");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse zero-TTL NODATA response");
 	CHECK(result.negative.valid && result.negative.effective_ttl == 0, "valid zero negative TTL was not distinguished from absent metadata");
 	dns_address_result_destroy(&result);
 
@@ -713,7 +735,7 @@ static bool dns_test_negative(void) {
 	memset(wire_soa + 4, 0, 20);
 	wire_soa[23] = 40;
 	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 50, wire_soa, 24), "cannot add compressed SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse compressed SOA response");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse compressed SOA response");
 	CHECK(result.negative.valid && result.negative.minimum == 40 && result.negative.effective_ttl == 40, "compressed SOA names or fields were parsed incorrectly");
 	test_result = true;
 
@@ -757,7 +779,7 @@ static bool dns_test_records(void) {
 	uint8_t address_second[4] = { 198, 51, 100, 2 };
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_a, ns_c_in, 300, address_first, sizeof(address_first), NULL), "cannot add first IPv4 address");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_a, ns_c_in, 30, address_second, sizeof(address_second), NULL), "cannot add second IPv4 address");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "cannot parse IPv4 RRset");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "cannot parse IPv4 RRset");
 	CHECK(result.address_count == 2 && result.cname_count == 0, "IPv4 RRset returned the wrong record counts");
 	CHECK(strcmp(result.question_name, "multi.example") == 0 && strcmp(result.canonical_name, "multi.example") == 0, "direct IPv4 names were parsed incorrectly");
 	CHECK(dns_result_address_equal(&result.addresses[0], "192.0.2.1") && result.addresses[0].record_ttl == 300 && result.addresses[0].effective_ttl == 300, "first IPv4 address was parsed incorrectly");
@@ -770,7 +792,7 @@ static bool dns_test_records(void) {
 	CHECK(inet_pton(AF_INET6, "2001:db8::1", address_v6_first) == 1 && inet_pton(AF_INET6, "2001:db8::2", address_v6_second) == 1, "cannot create IPv6 test addresses");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_aaaa, ns_c_in, 400, address_v6_first, sizeof(address_v6_first), NULL), "cannot add first IPv6 address");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_aaaa, ns_c_in, 40, address_v6_second, sizeof(address_v6_second), NULL), "cannot add second IPv6 address");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET6, &result) == DNS_ADDRESS_PARSE_OK, "cannot parse IPv6 RRset");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET6, &result) == DNS_ADDRESS_PARSE_OK, "cannot parse IPv6 RRset");
 	CHECK(result.address_count == 2 && dns_result_address_equal(&result.addresses[0], "2001:db8::1") && dns_result_address_equal(&result.addresses[1], "2001:db8::2"), "IPv6 addresses did not preserve DNS order");
 	CHECK(result.addresses[0].effective_ttl == 400 && result.addresses[1].effective_ttl == 40, "IPv6 TTLs were parsed incorrectly");
 
@@ -825,49 +847,49 @@ static bool dns_test_statuses(void) {
 	size_t wire_name_size;
 	int test_result = false;
 	CHECK(dns_builder_response_start(&builder, "status.example", ns_t_a), "cannot start NODATA response");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "NODATA response was not identified");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "NODATA response was not identified");
 	CHECK(strcmp(result.question_name, "status.example") == 0 && strcmp(result.canonical_name, "status.example") == 0, "NODATA names were not retained");
 	dns_address_result_destroy(&result);
 
 	CHECK(dns_builder_response_start(&builder, "status.example", ns_t_a), "cannot start alias-only response");
 	CHECK(dns_builder_wire_name_create("target.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode alias-only target");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 50, wire_name, wire_name_size, NULL), "cannot add alias-only record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_ALIAS_ONLY, "alias-only response was not identified");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_ALIAS_ONLY, "alias-only response was not identified");
 	CHECK(result.cname_count == 1 && result.address_count == 0 && strcmp(result.canonical_name, "target.example") == 0, "alias-only result was incomplete");
 	dns_address_result_destroy(&result);
 
 	CHECK(dns_builder_response_start(&builder, "status.example", ns_t_a), "cannot start NXDOMAIN response");
 	builder.data[3] = (uint8_t)((builder.data[3] & 0xF0) | ns_r_nxdomain);
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_NXDOMAIN, "NXDOMAIN response was not identified");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NXDOMAIN, "NXDOMAIN response was not identified");
 	CHECK(result.rcode == ns_r_nxdomain && strcmp(result.question_name, "status.example") == 0, "NXDOMAIN metadata was not retained");
 	dns_address_result_destroy(&result);
 
 	CHECK(dns_builder_response_start(&builder, "status.example", ns_t_a), "cannot start SERVFAIL response");
 	builder.data[3] = (uint8_t)((builder.data[3] & 0xF0) | ns_r_servfail);
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_RCODE_ERROR, "SERVFAIL response was not identified");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_RCODE_ERROR, "SERVFAIL response was not identified");
 	CHECK(result.rcode == ns_r_servfail, "SERVFAIL rcode was not retained");
 	dns_address_result_destroy(&result);
 
 	CHECK(dns_builder_response_start(&builder, "status.example", ns_t_a), "cannot start truncated response");
 	builder.data[2] |= 0x02;
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_TRUNCATED, "truncated flag was ignored");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_TRUNCATED, "truncated flag was ignored");
 
 	CHECK(dns_builder_response_start(&builder, "status.example", ns_t_a), "cannot start request-shaped response");
 	builder.data[2] &= 0x7F;
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result)
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result)
 		 == DNS_ADDRESS_PARSE_MALFORMED, "request-shaped message was accepted as a response");
 
 	CHECK(dns_builder_response_start(&builder, "status.example", ns_t_a), "cannot start opcode response");
 	builder.data[2] |= 0x08;
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "non-query opcode was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "non-query opcode was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "status.example", ns_t_a), "cannot start wrong-type response");
 	builder.data[builder.question_type_offset + 1] = ns_t_aaaa;
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "wrong question type was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "wrong question type was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "status.example", ns_t_a), "cannot start wrong-class response");
 	builder.data[builder.question_class_offset + 1] = ns_c_chaos;
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "wrong question class was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "wrong question class was accepted");
 
 	test_result = true;
 
@@ -884,11 +906,11 @@ static bool dns_test_truncation(void) {
 	uint8_t address[4] = { 203, 0, 113, 1 };
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_a, ns_c_in, 30, address, sizeof(address), NULL), "cannot add truncation address");
 	for (size_t prefix_size = 0; prefix_size < builder.size; prefix_size++) {
-		dns_address_parse_status status = dns_address_response_parse(builder.data, prefix_size, AF_INET, &result);
+		dns_address_parse_status status = dns_address_response_parse(builder.data, prefix_size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result);
 		CHECK(!dns_status_complete(status), "truncated prefix was accepted as a complete response");
 		dns_address_result_destroy(&result);
 	}
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "complete response failed after truncation checks");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "complete response failed after truncation checks");
 	test_result = true;
 
 cleanup:

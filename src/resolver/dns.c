@@ -279,12 +279,15 @@ static dns_negative_parse_status dns_negative_response_parse(ns_msg *response, c
 	return DNS_NEGATIVE_PARSE_OK;
 }
 
-static dns_query_exact_status dns_query_exact(res_state resolver, const char *name, int type, unsigned char *response, int response_capacity, int *response_size) {
-	unsigned char query[NS_MAXMSG];
+static dns_query_exact_status dns_query_exact(res_state resolver, const char *name, int type, unsigned char *response, int response_capacity, int *response_size, uint16_t *query_id) {
+	/* Single-question QUERY without EDNS0: 12-byte header + 255-byte maximum name + type and class fit NS_PACKETSZ. */
+	unsigned char query[NS_PACKETSZ];
 	int query_size = res_nmkquery(resolver, ns_o_query, name, ns_c_in, type, NULL, 0, NULL, query, (int)sizeof(query));
 	if (query_size <= 0 || query_size > (int)sizeof(query)) {
 		return DNS_QUERY_EXACT_PERMANENT_ERROR;
 	}
+	/* The TXID is fixed by res_nmkquery() and left untouched by res_nsend(); responses must carry exactly it. */
+	*query_id = ns_get16(query);
 	int result;
 	/* glibc res_nsend() leaves res_h_errno untouched on transport failures (verified on 2.35); classify by errno instead. */
 	errno = 0;
@@ -660,7 +663,8 @@ dns_address_lookup_status dns_address_lookup(const char *hostname, sa_family_t f
 	while (true) {
 		int query_type = family == AF_INET ? ns_t_a : ns_t_aaaa;
 		int response_size = 0;
-		dns_query_exact_status query_status = dns_query_exact(&resolver, query_name, query_type, response, NS_MAXMSG, &response_size);
+		uint16_t query_id = 0;
+		dns_query_exact_status query_status = dns_query_exact(&resolver, query_name, query_type, response, NS_MAXMSG, &response_size, &query_id);
 		if (query_status != DNS_QUERY_EXACT_OK) {
 			switch (query_status) {
 				case DNS_QUERY_EXACT_MEMORY:
@@ -684,7 +688,7 @@ dns_address_lookup_status dns_address_lookup(const char *hostname, sa_family_t f
 			break;
 		}
 		dns_address_result partial = { 0 };
-		dns_address_parse_status parse_status = dns_address_response_parse(response, (size_t)response_size, family, &partial);
+		dns_address_parse_status parse_status = dns_address_response_parse(response, (size_t)response_size, query_name, query_id, family, &partial);
 		if (partial.question_name[0] != '\0' && !dns_name_equal(partial.question_name, query_name)) {
 			dns_address_result_destroy(&partial);
 			lookup_status = DNS_ADDRESS_LOOKUP_MALFORMED;
@@ -748,12 +752,16 @@ dns_address_lookup_status dns_address_lookup(const char *hostname, sa_family_t f
 	return lookup_status;
 }
 
-dns_address_parse_status dns_address_response_parse(const void *message, size_t message_size, sa_family_t family, dns_address_result *result) {
-	if (message == NULL || message_size > INT_MAX || (family != AF_INET && family != AF_INET6) || result == NULL || !dns_address_result_empty(result)) {
+dns_address_parse_status dns_address_response_parse(const void *message, size_t message_size, const char *expected_name, uint16_t expected_id, sa_family_t family,
+	dns_address_result *result) {
+	if (message == NULL || message_size > INT_MAX || expected_name == NULL || (family != AF_INET && family != AF_INET6) || result == NULL || !dns_address_result_empty(result)) {
 		return DNS_ADDRESS_PARSE_BAD_ARGUMENT;
 	}
 	ns_msg response;
 	if (ns_initparse(message, (int)message_size, &response) != 0) {
+		return DNS_ADDRESS_PARSE_MALFORMED;
+	}
+	if (ns_msg_id(response) != expected_id) {
 		return DNS_ADDRESS_PARSE_MALFORMED;
 	}
 	if (!ns_msg_getflag(response, ns_f_qr) || ns_msg_getflag(response, ns_f_opcode) != ns_o_query || ns_msg_count(response, ns_s_qd) != 1) {
@@ -766,6 +774,10 @@ dns_address_parse_status dns_address_response_parse(const void *message, size_t 
 	ns_type question_type = family == AF_INET ? ns_t_a : ns_t_aaaa;
 	if (ns_parserr(&response, ns_s_qd, 0, &question) != 0 || ns_rr_class(question) != ns_c_in || ns_rr_type(question) != question_type
 		|| !dns_name_normalize(ns_rr_name(question), result->question_name, sizeof(result->question_name))) {
+		memset(result, 0, sizeof(*result));
+		return DNS_ADDRESS_PARSE_MALFORMED;
+	}
+	if (!dns_name_equal(result->question_name, expected_name)) {
 		memset(result, 0, sizeof(*result));
 		return DNS_ADDRESS_PARSE_MALFORMED;
 	}
@@ -846,7 +858,8 @@ dns_srv_lookup_status dns_srv_lookup(const char *query_name, dns_srv_result *res
 	dns_srv_lookup_status lookup_status = DNS_SRV_LOOKUP_PERMANENT_ERROR;
 	while (true) {
 		int response_size = 0;
-		dns_query_exact_status query_status = dns_query_exact(&resolver, current_name, ns_t_srv, response, NS_MAXMSG, &response_size);
+		uint16_t query_id = 0;
+		dns_query_exact_status query_status = dns_query_exact(&resolver, current_name, ns_t_srv, response, NS_MAXMSG, &response_size, &query_id);
 		if (query_status != DNS_QUERY_EXACT_OK) {
 			switch (query_status) {
 				case DNS_QUERY_EXACT_MEMORY:
@@ -870,7 +883,7 @@ dns_srv_lookup_status dns_srv_lookup(const char *query_name, dns_srv_result *res
 			break;
 		}
 		dns_srv_result partial = { 0 };
-		dns_srv_parse_status parse_status = dns_srv_response_parse(response, (size_t)response_size, &partial);
+		dns_srv_parse_status parse_status = dns_srv_response_parse(response, (size_t)response_size, current_name, query_id, &partial);
 		if (partial.question_name[0] != '\0' && !dns_name_equal(partial.question_name, current_name)) {
 			dns_srv_result_destroy(&partial);
 			lookup_status = DNS_SRV_LOOKUP_MALFORMED;
@@ -934,12 +947,15 @@ dns_srv_lookup_status dns_srv_lookup(const char *query_name, dns_srv_result *res
 	return lookup_status;
 }
 
-dns_srv_parse_status dns_srv_response_parse(const void *message, size_t message_size, dns_srv_result *result) {
-	if (message == NULL || message_size > INT_MAX || result == NULL || !dns_srv_result_empty(result)) {
+dns_srv_parse_status dns_srv_response_parse(const void *message, size_t message_size, const char *expected_name, uint16_t expected_id, dns_srv_result *result) {
+	if (message == NULL || message_size > INT_MAX || expected_name == NULL || result == NULL || !dns_srv_result_empty(result)) {
 		return DNS_SRV_PARSE_BAD_ARGUMENT;
 	}
 	ns_msg response;
 	if (ns_initparse(message, (int)message_size, &response) != 0) {
+		return DNS_SRV_PARSE_MALFORMED;
+	}
+	if (ns_msg_id(response) != expected_id) {
 		return DNS_SRV_PARSE_MALFORMED;
 	}
 	if (!ns_msg_getflag(response, ns_f_qr) || ns_msg_getflag(response, ns_f_opcode) != ns_o_query || ns_msg_count(response, ns_s_qd) != 1) {
@@ -951,6 +967,10 @@ dns_srv_parse_status dns_srv_response_parse(const void *message, size_t message_
 	ns_rr question;
 	if (ns_parserr(&response, ns_s_qd, 0, &question) != 0 || ns_rr_class(question) != ns_c_in || ns_rr_type(question) != ns_t_srv
 		|| !dns_name_normalize(ns_rr_name(question), result->question_name, sizeof(result->question_name))) {
+		memset(result, 0, sizeof(*result));
+		return DNS_SRV_PARSE_MALFORMED;
+	}
+	if (!dns_name_equal(result->question_name, expected_name)) {
 		memset(result, 0, sizeof(*result));
 		return DNS_SRV_PARSE_MALFORMED;
 	}
