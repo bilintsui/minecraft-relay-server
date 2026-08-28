@@ -1,3 +1,13 @@
+mcrelay (1.2~beta11-1) unstable; urgency=high
+
+  * New upstream release: bounded long-lived worker resource usage and
+    relay timeouts, hardened configuration and protocol handling, and
+    DNS responses bound to their queries.
+  * Breaking change: the configured log file itself must not be a symbolic
+    link; use logrotate's rename/create workflow to rotate it instead.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Sat, 29 Aug 2026 03:37:54 +0800
+
 mcrelay (1.2~beta10-1) unstable; urgency=high
 
   * Fix a remotely triggerable stack buffer overflow when a rewritten
