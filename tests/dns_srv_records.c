@@ -41,6 +41,7 @@
 #define DNS_TEST_QUERY_SIZE	4
 #define DNS_TEST_QUERY_TOKEN_FIRST	0x4D
 #define DNS_TEST_QUERY_TOKEN_SECOND	0x52
+#define DNS_TEST_QUERY_ID	((DNS_TEST_QUERY_TOKEN_FIRST << 8) | DNS_TEST_QUERY_TOKEN_SECOND)
 
 /* section: types */
 typedef struct {
@@ -53,7 +54,9 @@ typedef struct {
 	size_t size;
 } dns_message_builder;
 typedef struct {
-	int error;
+	bool fail;
+	int failure_errno;
+	int failure_return;
 	const char *name;
 	const dns_message_builder *response;
 } dns_query_fixture;
@@ -346,7 +349,7 @@ static bool dns_test_lookup(void) {
 	CHECK(dns_builder_wire_srv_create(30, 40, 25566, "second.example", wire_srv, sizeof(wire_srv), &wire_srv_size), "cannot encode second lookup SRV record");
 	CHECK(dns_builder_record_add(&record_response, NULL, record_response.question_name_offset, ns_t_srv, ns_c_in, 30, wire_srv, wire_srv_size), "cannot add second lookup SRV record");
 	dns_test_query_reset();
-	dns_query_fixtures[0] = (dns_query_fixture){ 0, "_minecraft._tcp.lookup.example.", &record_response };
+	dns_query_fixtures[0] = (dns_query_fixture){ .name = "_minecraft._tcp.lookup.example.", .response = &record_response };
 	dns_query_fixture_count = 1;
 	CHECK(dns_srv_lookup("_minecraft._tcp.lookup.example.", &result) == DNS_SRV_LOOKUP_OK, "cannot look up SRV RRset");
 	CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "SRV lookup issued the wrong query");
@@ -359,7 +362,7 @@ static bool dns_test_lookup(void) {
 	CHECK(dns_builder_wire_srv_create(0, 0, 25565, "target.example", wire_srv, sizeof(wire_srv), &wire_srv_size), "cannot encode mismatched-question SRV lookup record");
 	CHECK(dns_builder_record_add(&record_response, NULL, record_response.question_name_offset, ns_t_srv, ns_c_in, 30, wire_srv, wire_srv_size), "cannot add mismatched-question SRV lookup record");
 	dns_test_query_reset();
-	dns_query_fixtures[0] = (dns_query_fixture){ 0, "_minecraft._tcp.expected.lookup", &record_response };
+	dns_query_fixtures[0] = (dns_query_fixture){ .name = "_minecraft._tcp.expected.lookup", .response = &record_response };
 	dns_query_fixture_count = 1;
 	CHECK(dns_srv_lookup("_minecraft._tcp.expected.lookup", &result) == DNS_SRV_LOOKUP_MALFORMED, "SRV lookup accepted a response for a different question");
 	CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "mismatched-question SRV lookup issued the wrong exact query");
@@ -371,8 +374,8 @@ static bool dns_test_lookup(void) {
 	CHECK(dns_builder_wire_srv_create(0, 1, 25565, "target.example", wire_srv, sizeof(wire_srv), &wire_srv_size), "cannot encode aliased lookup SRV record");
 	CHECK(dns_builder_record_add(&record_response, NULL, record_response.question_name_offset, ns_t_srv, ns_c_in, 60, wire_srv, wire_srv_size), "cannot add aliased lookup SRV record");
 	dns_test_query_reset();
-	dns_query_fixtures[0] = (dns_query_fixture){ 0, "_minecraft._tcp.alias.lookup", &alias_response };
-	dns_query_fixtures[1] = (dns_query_fixture){ 0, "_minecraft._tcp.target.lookup", &record_response };
+	dns_query_fixtures[0] = (dns_query_fixture){ .name = "_minecraft._tcp.alias.lookup", .response = &alias_response };
+	dns_query_fixtures[1] = (dns_query_fixture){ .name = "_minecraft._tcp.target.lookup", .response = &record_response };
 	dns_query_fixture_count = 2;
 	CHECK(dns_srv_lookup("_minecraft._tcp.alias.lookup", &result) == DNS_SRV_LOOKUP_OK, "cannot follow CNAME-only SRV lookup response");
 	CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "aliased SRV lookup issued the wrong queries");
@@ -389,8 +392,8 @@ static bool dns_test_lookup(void) {
 	CHECK(dns_builder_authority_add(&record_response, "lookup", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 90, wire_soa, wire_soa_size), "cannot add raw SRV NXDOMAIN lookup SOA");
 	record_response.data[3] = (uint8_t)((record_response.data[3] & 0xF0) | ns_r_nxdomain);
 	dns_test_query_reset();
-	dns_query_fixtures[0] = (dns_query_fixture){ 0, "_minecraft._tcp.negative.alias.lookup", &alias_response };
-	dns_query_fixtures[1] = (dns_query_fixture){ 0, "_minecraft._tcp.negative.target.lookup", &record_response };
+	dns_query_fixtures[0] = (dns_query_fixture){ .name = "_minecraft._tcp.negative.alias.lookup", .response = &alias_response };
+	dns_query_fixtures[1] = (dns_query_fixture){ .name = "_minecraft._tcp.negative.target.lookup", .response = &record_response };
 	dns_query_fixture_count = 2;
 	CHECK(dns_srv_lookup("_minecraft._tcp.negative.alias.lookup", &result) == DNS_SRV_LOOKUP_NOT_FOUND, "cannot retain raw SRV NXDOMAIN lookup response");
 	CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "negative SRV lookup issued the wrong exact queries");
@@ -403,7 +406,7 @@ static bool dns_test_lookup(void) {
 	CHECK(dns_builder_wire_soa_create("ns.lookup", "hostmaster.lookup", 40, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode raw SRV NODATA lookup SOA");
 	CHECK(dns_builder_authority_add(&record_response, "lookup", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 80, wire_soa, wire_soa_size), "cannot add raw SRV NODATA lookup SOA");
 	dns_test_query_reset();
-	dns_query_fixtures[0] = (dns_query_fixture){ 0, "_minecraft._tcp.nodata.lookup", &record_response };
+	dns_query_fixtures[0] = (dns_query_fixture){ .name = "_minecraft._tcp.nodata.lookup", .response = &record_response };
 	dns_query_fixture_count = 1;
 	CHECK(dns_srv_lookup("_minecraft._tcp.nodata.lookup", &result) == DNS_SRV_LOOKUP_NODATA, "cannot retain raw SRV NODATA lookup response");
 	CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count && result.negative.valid && result.negative.effective_ttl == 40,
@@ -417,35 +420,46 @@ static bool dns_test_lookup(void) {
 	CHECK(dns_builder_wire_name_create("_minecraft._tcp.a.lookup", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode cross-response SRV loop a");
 	CHECK(dns_builder_record_add(&record_response, NULL, record_response.question_name_offset, ns_t_cname, ns_c_in, 15, wire_name, wire_name_size), "cannot add cross-response SRV loop b");
 	dns_test_query_reset();
-	dns_query_fixtures[0] = (dns_query_fixture){ 0, "_minecraft._tcp.a.lookup", &alias_response };
-	dns_query_fixtures[1] = (dns_query_fixture){ 0, "_minecraft._tcp.b.lookup", &record_response };
+	dns_query_fixtures[0] = (dns_query_fixture){ .name = "_minecraft._tcp.a.lookup", .response = &alias_response };
+	dns_query_fixtures[1] = (dns_query_fixture){ .name = "_minecraft._tcp.b.lookup", .response = &record_response };
 	dns_query_fixture_count = 2;
 	CHECK(dns_srv_lookup("_minecraft._tcp.a.lookup", &result) == DNS_SRV_LOOKUP_MALFORMED, "cross-response SRV CNAME loop was accepted");
 	CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "looping SRV lookup issued the wrong queries");
 	CHECK(result.records == NULL && result.cnames == NULL, "failed SRV lookup returned partial records");
 
 	static const struct {
-		int resolver_error;
+		int failure_errno;
+		int failure_return;
 		dns_srv_lookup_status status;
-	} resolver_errors[] = {
-		{ HOST_NOT_FOUND, DNS_SRV_LOOKUP_NOT_FOUND },
-		{ NO_DATA, DNS_SRV_LOOKUP_NODATA },
-		{ NO_RECOVERY, DNS_SRV_LOOKUP_PERMANENT_ERROR },
-		{ TRY_AGAIN, DNS_SRV_LOOKUP_TEMPORARY_ERROR }
+	} transport_failures[] = {
+		{ ETIMEDOUT, -1, DNS_SRV_LOOKUP_TEMPORARY_ERROR },
+		{ ECONNREFUSED, -1, DNS_SRV_LOOKUP_TEMPORARY_ERROR },
+		{ ECONNRESET, -1, DNS_SRV_LOOKUP_TEMPORARY_ERROR },
+		{ ENETUNREACH, -1, DNS_SRV_LOOKUP_TEMPORARY_ERROR },
+		{ EHOSTUNREACH, -1, DNS_SRV_LOOKUP_TEMPORARY_ERROR },
+		{ EPIPE, -1, DNS_SRV_LOOKUP_TEMPORARY_ERROR },
+		{ 999, -1, DNS_SRV_LOOKUP_TEMPORARY_ERROR },
+		{ 0, 0, DNS_SRV_LOOKUP_TEMPORARY_ERROR },
+		{ ENOMEM, -1, DNS_SRV_LOOKUP_MEMORY },
+		{ EMSGSIZE, -1, DNS_SRV_LOOKUP_MALFORMED },
+		{ ESRCH, -1, DNS_SRV_LOOKUP_PERMANENT_ERROR },
+		{ EINVAL, -1, DNS_SRV_LOOKUP_PERMANENT_ERROR },
+		{ EACCES, -1, DNS_SRV_LOOKUP_PERMANENT_ERROR }
 	};
-	for (size_t index = 0; index < sizeof(resolver_errors) / sizeof(resolver_errors[0]); index++) {
+	for (size_t index = 0; index < sizeof(transport_failures) / sizeof(transport_failures[0]); index++) {
 		dns_test_query_reset();
-		dns_query_fixtures[0] = (dns_query_fixture){ resolver_errors[index].resolver_error, "_minecraft._tcp.error.lookup", NULL };
+		dns_query_fixtures[0] = (dns_query_fixture){ .fail = true, .failure_errno = transport_failures[index].failure_errno,
+			.failure_return = transport_failures[index].failure_return, .name = "_minecraft._tcp.error.lookup", .response = NULL };
 		dns_query_fixture_count = 1;
-		CHECK(dns_srv_lookup("_minecraft._tcp.error.lookup", &result) == resolver_errors[index].status, "SRV resolver failure returned the wrong status");
-		CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "SRV resolver failure issued the wrong query");
+		CHECK(dns_srv_lookup("_minecraft._tcp.error.lookup", &result) == transport_failures[index].status, "SRV transport failure returned the wrong status");
+		CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "SRV transport failure issued the wrong query");
 		dns_srv_result_destroy(&result);
 	}
 
 	CHECK(dns_builder_response_start(&record_response, "_minecraft._tcp.error.lookup", ns_t_srv), "cannot start SRV DNS error response");
 	record_response.data[3] = (uint8_t)((record_response.data[3] & 0xF0) | ns_r_servfail);
 	dns_test_query_reset();
-	dns_query_fixtures[0] = (dns_query_fixture){ 0, "_minecraft._tcp.error.lookup", &record_response };
+	dns_query_fixtures[0] = (dns_query_fixture){ .name = "_minecraft._tcp.error.lookup", .response = &record_response };
 	dns_query_fixture_count = 1;
 	CHECK(dns_srv_lookup("_minecraft._tcp.error.lookup", &result) == DNS_SRV_LOOKUP_TEMPORARY_ERROR, "SRV SERVFAIL response was not treated as temporary");
 	CHECK(result.rcode == ns_r_servfail, "SRV lookup did not retain SERVFAIL rcode");
@@ -484,7 +498,7 @@ static bool dns_test_lookup_depth(void) {
 		CHECK(dns_builder_response_start(&responses[index], query_names[index], ns_t_srv), "cannot start cross-response SRV depth fixture");
 		CHECK(dns_builder_wire_name_create(query_names[index + 1], wire_name, sizeof(wire_name), &wire_name_size), "cannot encode cross-response SRV depth target");
 		CHECK(dns_builder_record_add(&responses[index], NULL, responses[index].question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size), "cannot add cross-response SRV depth alias");
-		dns_query_fixtures[index] = (dns_query_fixture){ 0, query_names[index], &responses[index] };
+		dns_query_fixtures[index] = (dns_query_fixture){ .name = query_names[index], .response = &responses[index] };
 	}
 	dns_query_fixture_count = DNS_CNAME_DEPTH_LIMIT + 1;
 	CHECK(dns_srv_lookup(query_names[0], &result) == DNS_SRV_LOOKUP_LIMIT, "cross-response SRV CNAME depth limit was not enforced");
@@ -592,6 +606,8 @@ static bool dns_test_malformed(void) {
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_srv, ns_c_in, 30, wire_srv, wire_srv_size), "cannot add contradictory NXDOMAIN SRV record");
 	builder.data[3] = (uint8_t)((builder.data[3] & 0xF0) | ns_r_nxdomain);
 	CHECK(dns_srv_response_parse(builder.data, builder.size, &result) == DNS_SRV_PARSE_MALFORMED, "NXDOMAIN response with terminal SRV data was accepted");
+
+	dns_srv_result_destroy(&result);
 	test_result = true;
 
 cleanup:
@@ -694,9 +710,9 @@ static int dns_test_query_response(res_state resolver, const unsigned char *quer
 	}
 	dns_query_pending = false;
 	const dns_query_fixture *fixture = &dns_query_fixtures[dns_query_fixture_index++];
-	if (fixture->error != 0) {
-		resolver->res_h_errno = fixture->error;
-		return -1;
+	if (fixture->fail) {
+		errno = fixture->failure_errno;
+		return fixture->failure_return;
 	}
 	if (fixture->response == NULL || fixture->response->size > (size_t)answer_size) {
 		dns_query_mismatch = true;
@@ -765,7 +781,7 @@ static bool dns_test_resolver_limits(void) {
 		size_t close_count = dns_resolver.close_count;
 		size_t init_count = dns_resolver.init_count;
 		dns_test_query_reset();
-		dns_query_fixtures[0] = (dns_query_fixture){ 0, "_minecraft._tcp.limits.example", &builder };
+		dns_query_fixtures[0] = (dns_query_fixture){ .name = "_minecraft._tcp.limits.example", .response = &builder };
 		dns_query_fixture_count = 1;
 		CHECK(dns_srv_lookup("_minecraft._tcp.limits.example", &result) == DNS_SRV_LOOKUP_OK, "resolver limits broke SRV lookup");
 		CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "SRV lookup applied the wrong resolver limits");

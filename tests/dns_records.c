@@ -42,6 +42,7 @@
 #define DNS_TEST_QUERY_SIZE	4
 #define DNS_TEST_QUERY_TOKEN_FIRST	0x4D
 #define DNS_TEST_QUERY_TOKEN_SECOND	0x52
+#define DNS_TEST_QUERY_ID	((DNS_TEST_QUERY_TOKEN_FIRST << 8) | DNS_TEST_QUERY_TOKEN_SECOND)
 
 /* section: types */
 typedef struct {
@@ -54,7 +55,9 @@ typedef struct {
 	size_t size;
 } dns_message_builder;
 typedef struct {
-	int error;
+	bool fail;
+	int failure_errno;
+	int failure_return;
 	const char *name;
 	const dns_message_builder *response;
 	int type;
@@ -362,7 +365,7 @@ static bool dns_test_lookup(void) {
 	CHECK(dns_builder_record_add(&address_response, NULL, address_response.question_name_offset, ns_t_a, ns_c_in, 90, address_first, sizeof(address_first), NULL), "cannot add first lookup address");
 	CHECK(dns_builder_record_add(&address_response, NULL, address_response.question_name_offset, ns_t_a, ns_c_in, 30, address_second, sizeof(address_second), NULL), "cannot add second lookup address");
 	dns_test_query_reset();
-	dns_query_fixtures[0] = (dns_query_fixture){ 0, "lookup.example", &address_response, ns_t_a };
+	dns_query_fixtures[0] = (dns_query_fixture){ .name = "lookup.example", .response = &address_response, .type = ns_t_a };
 	dns_query_fixture_count = 1;
 	CHECK(dns_address_lookup("lookup.example", AF_INET, &result) == DNS_ADDRESS_LOOKUP_OK, "cannot look up IPv4 RRset");
 	CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "IPv4 lookup issued the wrong query");
@@ -373,7 +376,7 @@ static bool dns_test_lookup(void) {
 	CHECK(dns_builder_response_start(&address_response, "unexpected.lookup", ns_t_a), "cannot start mismatched-question lookup response");
 	CHECK(dns_builder_record_add(&address_response, NULL, address_response.question_name_offset, ns_t_a, ns_c_in, 30, address_first, sizeof(address_first), NULL), "cannot add mismatched-question lookup address");
 	dns_test_query_reset();
-	dns_query_fixtures[0] = (dns_query_fixture){ 0, "expected.lookup", &address_response, ns_t_a };
+	dns_query_fixtures[0] = (dns_query_fixture){ .name = "expected.lookup", .response = &address_response, .type = ns_t_a };
 	dns_query_fixture_count = 1;
 	CHECK(dns_address_lookup("expected.lookup", AF_INET, &result) == DNS_ADDRESS_LOOKUP_MALFORMED, "lookup accepted a response for a different question");
 	CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "mismatched-question lookup issued the wrong exact query");
@@ -384,8 +387,8 @@ static bool dns_test_lookup(void) {
 	CHECK(dns_builder_response_start(&address_response, "target.lookup", ns_t_a), "cannot start aliased lookup response");
 	CHECK(dns_builder_record_add(&address_response, NULL, address_response.question_name_offset, ns_t_a, ns_c_in, 60, address_first, sizeof(address_first), NULL), "cannot add aliased lookup address");
 	dns_test_query_reset();
-	dns_query_fixtures[0] = (dns_query_fixture){ 0, "alias.lookup", &alias_response, ns_t_a };
-	dns_query_fixtures[1] = (dns_query_fixture){ 0, "target.lookup", &address_response, ns_t_a };
+	dns_query_fixtures[0] = (dns_query_fixture){ .name = "alias.lookup", .response = &alias_response, .type = ns_t_a };
+	dns_query_fixtures[1] = (dns_query_fixture){ .name = "target.lookup", .response = &address_response, .type = ns_t_a };
 	dns_query_fixture_count = 2;
 	CHECK(dns_address_lookup("alias.lookup", AF_INET, &result) == DNS_ADDRESS_LOOKUP_OK, "cannot follow CNAME-only lookup response");
 	CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "aliased lookup issued the wrong queries");
@@ -402,8 +405,8 @@ static bool dns_test_lookup(void) {
 	CHECK(dns_builder_authority_add(&address_response, "lookup", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 90, wire_soa, wire_soa_size), "cannot add raw NXDOMAIN lookup SOA");
 	address_response.data[3] = (uint8_t)((address_response.data[3] & 0xF0) | ns_r_nxdomain);
 	dns_test_query_reset();
-	dns_query_fixtures[0] = (dns_query_fixture){ 0, "negative.alias.lookup", &alias_response, ns_t_a };
-	dns_query_fixtures[1] = (dns_query_fixture){ 0, "negative.target.lookup", &address_response, ns_t_a };
+	dns_query_fixtures[0] = (dns_query_fixture){ .name = "negative.alias.lookup", .response = &alias_response, .type = ns_t_a };
+	dns_query_fixtures[1] = (dns_query_fixture){ .name = "negative.target.lookup", .response = &address_response, .type = ns_t_a };
 	dns_query_fixture_count = 2;
 	CHECK(dns_address_lookup("negative.alias.lookup", AF_INET, &result) == DNS_ADDRESS_LOOKUP_NOT_FOUND, "cannot retain raw NXDOMAIN lookup response");
 	CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "negative lookup issued the wrong exact queries");
@@ -416,7 +419,7 @@ static bool dns_test_lookup(void) {
 	CHECK(dns_builder_wire_soa_create("ns.lookup", "hostmaster.lookup", 40, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode raw NODATA lookup SOA");
 	CHECK(dns_builder_authority_add(&address_response, "lookup", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 80, wire_soa, wire_soa_size), "cannot add raw NODATA lookup SOA");
 	dns_test_query_reset();
-	dns_query_fixtures[0] = (dns_query_fixture){ 0, "nodata.lookup", &address_response, ns_t_a };
+	dns_query_fixtures[0] = (dns_query_fixture){ .name = "nodata.lookup", .response = &address_response, .type = ns_t_a };
 	dns_query_fixture_count = 1;
 	CHECK(dns_address_lookup("nodata.lookup", AF_INET, &result) == DNS_ADDRESS_LOOKUP_NODATA, "cannot retain raw NODATA lookup response");
 	CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count && result.negative.valid && result.negative.effective_ttl == 40,
@@ -430,35 +433,50 @@ static bool dns_test_lookup(void) {
 	CHECK(dns_builder_wire_name_create("a.lookup", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode cross-response loop a");
 	CHECK(dns_builder_record_add(&address_response, NULL, address_response.question_name_offset, ns_t_cname, ns_c_in, 15, wire_name, wire_name_size, NULL), "cannot add cross-response loop b");
 	dns_test_query_reset();
-	dns_query_fixtures[0] = (dns_query_fixture){ 0, "a.lookup", &alias_response, ns_t_a };
-	dns_query_fixtures[1] = (dns_query_fixture){ 0, "b.lookup", &address_response, ns_t_a };
+	dns_query_fixtures[0] = (dns_query_fixture){ .name = "a.lookup", .response = &alias_response, .type = ns_t_a };
+	dns_query_fixtures[1] = (dns_query_fixture){ .name = "b.lookup", .response = &address_response, .type = ns_t_a };
 	dns_query_fixture_count = 2;
 	CHECK(dns_address_lookup("a.lookup", AF_INET, &result) == DNS_ADDRESS_LOOKUP_MALFORMED, "cross-response CNAME loop was accepted");
 	CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "looping lookup issued the wrong queries");
 	CHECK(result.addresses == NULL && result.cnames == NULL, "failed lookup returned partial records");
 
 	static const struct {
-		int resolver_error;
+		int failure_errno;
+		int failure_return;
 		dns_address_lookup_status status;
-	} resolver_errors[] = {
-		{ HOST_NOT_FOUND, DNS_ADDRESS_LOOKUP_NOT_FOUND },
-		{ NO_DATA, DNS_ADDRESS_LOOKUP_NODATA },
-		{ NO_RECOVERY, DNS_ADDRESS_LOOKUP_PERMANENT_ERROR },
-		{ TRY_AGAIN, DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR }
+	} transport_failures[] = {
+		{ ETIMEDOUT, -1, DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR },
+		{ ECONNREFUSED, -1, DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR },
+		{ ECONNRESET, -1, DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR },
+		{ ENETUNREACH, -1, DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR },
+		{ EHOSTUNREACH, -1, DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR },
+		{ EPIPE, -1, DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR },
+		{ 999, -1, DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR },
+		{ 0, 0, DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR },
+		{ ENOMEM, -1, DNS_ADDRESS_LOOKUP_MEMORY },
+		{ EMSGSIZE, -1, DNS_ADDRESS_LOOKUP_MALFORMED },
+		{ ESRCH, -1, DNS_ADDRESS_LOOKUP_PERMANENT_ERROR },
+		{ EINVAL, -1, DNS_ADDRESS_LOOKUP_PERMANENT_ERROR },
+		{ EACCES, -1, DNS_ADDRESS_LOOKUP_PERMANENT_ERROR }
 	};
-	for (size_t index = 0; index < sizeof(resolver_errors) / sizeof(resolver_errors[0]); index++) {
-		dns_test_query_reset();
-		dns_query_fixtures[0] = (dns_query_fixture){ resolver_errors[index].resolver_error, "error.lookup", NULL, ns_t_a };
-		dns_query_fixture_count = 1;
-		CHECK(dns_address_lookup("error.lookup", AF_INET, &result) == resolver_errors[index].status, "resolver failure returned the wrong status");
-		CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "resolver failure issued the wrong query");
-		dns_address_result_destroy(&result);
+	for (size_t index = 0; index < sizeof(transport_failures) / sizeof(transport_failures[0]); index++) {
+		for (size_t family_index = 0; family_index < 2; family_index++) {
+			sa_family_t family = family_index == 0 ? AF_INET : AF_INET6;
+			dns_test_query_reset();
+			dns_query_fixtures[0] = (dns_query_fixture){ .fail = true, .failure_errno = transport_failures[index].failure_errno,
+				.failure_return = transport_failures[index].failure_return, .name = "error.lookup", .response = NULL,
+				.type = family == AF_INET ? ns_t_a : ns_t_aaaa };
+			dns_query_fixture_count = 1;
+			CHECK(dns_address_lookup("error.lookup", family, &result) == transport_failures[index].status, "transport failure returned the wrong status");
+			CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "transport failure issued the wrong query");
+			dns_address_result_destroy(&result);
+		}
 	}
 
 	CHECK(dns_builder_response_start(&address_response, "error.lookup", ns_t_a), "cannot start DNS error response");
 	address_response.data[3] = (uint8_t)((address_response.data[3] & 0xF0) | ns_r_servfail);
 	dns_test_query_reset();
-	dns_query_fixtures[0] = (dns_query_fixture){ 0, "error.lookup", &address_response, ns_t_a };
+	dns_query_fixtures[0] = (dns_query_fixture){ .name = "error.lookup", .response = &address_response, .type = ns_t_a };
 	dns_query_fixture_count = 1;
 	CHECK(dns_address_lookup("error.lookup", AF_INET, &result) == DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR, "SERVFAIL response was not treated as temporary");
 	CHECK(result.rcode == ns_r_servfail, "lookup did not retain SERVFAIL rcode");
@@ -497,7 +515,7 @@ static bool dns_test_lookup_depth(void) {
 		CHECK(dns_builder_wire_name_create(query_names[index + 1], wire_name, sizeof(wire_name), &wire_name_size), "cannot encode cross-response depth target");
 		CHECK(dns_builder_record_add(&responses[index], NULL, responses[index].question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL),
 			"cannot add cross-response depth alias");
-		dns_query_fixtures[index] = (dns_query_fixture){ 0, query_names[index], &responses[index], ns_t_a };
+		dns_query_fixtures[index] = (dns_query_fixture){ .name = query_names[index], .response = &responses[index], .type = ns_t_a };
 	}
 	dns_query_fixture_count = DNS_CNAME_DEPTH_LIMIT + 1;
 	CHECK(dns_address_lookup(query_names[0], AF_INET, &result) == DNS_ADDRESS_LOOKUP_LIMIT, "cross-response CNAME depth limit was not enforced");
@@ -536,7 +554,8 @@ static bool dns_test_malformed(void) {
 	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot restart malformed pointer response");
 	uint8_t bad_pointer[2] = { 0xFF, 0xFF };
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, bad_pointer, sizeof(bad_pointer), NULL), "cannot add invalid compression pointer");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "out-of-range compression pointer was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result)
+		 == DNS_ADDRESS_PARSE_MALFORMED, "out-of-range compression pointer was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot restart self-pointer response");
 	size_t self_pointer_offset = builder.size + 2 + 10;
@@ -562,7 +581,8 @@ static bool dns_test_malformed(void) {
 	CHECK(dns_builder_wire_name_create("target.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode mixed alias target");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add mixed alias");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_a, ns_c_in, 30, address, sizeof(uint32_t), NULL), "cannot add mixed address");
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "CNAME and address at the same owner were accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result)
+		 == DNS_ADDRESS_PARSE_MALFORMED, "CNAME and address at the same owner were accepted");
 
 	CHECK(dns_builder_response_start(&builder, "n0.example", ns_t_a), "cannot start excessive alias chain");
 	for (size_t index = 0; index <= DNS_CNAME_DEPTH_LIMIT; index++) {
@@ -608,7 +628,8 @@ static bool dns_test_malformed(void) {
 	CHECK(dns_builder_response_start(&builder, "contradictory.example", ns_t_a), "cannot start contradictory NXDOMAIN response");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_a, ns_c_in, 30, address, sizeof(uint32_t), NULL), "cannot add contradictory NXDOMAIN address");
 	builder.data[3] = (uint8_t)((builder.data[3] & 0xF0) | ns_r_nxdomain);
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "NXDOMAIN response with terminal address data was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result)
+		 == DNS_ADDRESS_PARSE_MALFORMED, "NXDOMAIN response with terminal address data was accepted");
 
 	test_result = true;
 
@@ -714,9 +735,9 @@ static int dns_test_query_response(res_state resolver, const unsigned char *quer
 	}
 	dns_query_pending = false;
 	const dns_query_fixture *fixture = &dns_query_fixtures[dns_query_fixture_index++];
-	if (fixture->error != 0) {
-		resolver->res_h_errno = fixture->error;
-		return -1;
+	if (fixture->fail) {
+		errno = fixture->failure_errno;
+		return fixture->failure_return;
 	}
 	if (fixture->response == NULL || fixture->response->size > (size_t)answer_size) {
 		dns_query_mismatch = true;
@@ -779,7 +800,7 @@ static bool dns_test_resolver_limits(void) {
 		size_t close_count = dns_resolver.close_count;
 		size_t init_count = dns_resolver.init_count;
 		dns_test_query_reset();
-		dns_query_fixtures[0] = (dns_query_fixture){ 0, "limits.example", &builder, ns_t_a };
+		dns_query_fixtures[0] = (dns_query_fixture){ .name = "limits.example", .response = &builder, .type = ns_t_a };
 		dns_query_fixture_count = 1;
 		CHECK(dns_address_lookup("limits.example", AF_INET, &result) == DNS_ADDRESS_LOOKUP_OK, "resolver limits broke address lookup");
 		CHECK(!dns_query_mismatch && dns_query_fixture_index == dns_query_fixture_count, "address lookup applied the wrong resolver limits");
@@ -833,7 +854,8 @@ static bool dns_test_statuses(void) {
 
 	CHECK(dns_builder_response_start(&builder, "status.example", ns_t_a), "cannot start request-shaped response");
 	builder.data[2] &= 0x7F;
-	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "request-shaped message was accepted as a response");
+	CHECK(dns_address_response_parse(builder.data, builder.size, AF_INET, &result)
+		 == DNS_ADDRESS_PARSE_MALFORMED, "request-shaped message was accepted as a response");
 
 	CHECK(dns_builder_response_start(&builder, "status.example", ns_t_a), "cannot start opcode response");
 	builder.data[2] |= 0x08;

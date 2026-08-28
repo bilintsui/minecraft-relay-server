@@ -7,6 +7,7 @@
 
 /* section: headers (library) */
 #include <arpa/nameser.h>
+#include <errno.h>
 #include <limits.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -35,6 +36,13 @@ typedef enum {
 	DNS_NEGATIVE_PARSE_LIMIT,
 	DNS_NEGATIVE_PARSE_MALFORMED
 } dns_negative_parse_status;
+typedef enum {
+	DNS_QUERY_EXACT_OK,
+	DNS_QUERY_EXACT_MEMORY,
+	DNS_QUERY_EXACT_MALFORMED,
+	DNS_QUERY_EXACT_PERMANENT_ERROR,
+	DNS_QUERY_EXACT_TEMPORARY_ERROR
+} dns_query_exact_status;
 typedef struct {
 	char owner[NS_MAXDNAME];
 	in_port_t port;
@@ -189,20 +197,6 @@ static dns_address_lookup_status dns_lookup_parse_status(dns_address_parse_statu
 	return DNS_ADDRESS_LOOKUP_MALFORMED;
 }
 
-static dns_address_lookup_status dns_lookup_resolver_status(int resolver_error) {
-	switch (resolver_error) {
-		case HOST_NOT_FOUND:
-			return DNS_ADDRESS_LOOKUP_NOT_FOUND;
-		case NO_DATA:
-			return DNS_ADDRESS_LOOKUP_NODATA;
-		case TRY_AGAIN:
-			return DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR;
-		case NO_RECOVERY:
-		default:
-			return DNS_ADDRESS_LOOKUP_PERMANENT_ERROR;
-	}
-}
-
 static bool dns_lookup_status_keeps_result(dns_address_lookup_status status) {
 	return status == DNS_ADDRESS_LOOKUP_OK || status == DNS_ADDRESS_LOOKUP_NODATA || status == DNS_ADDRESS_LOOKUP_NOT_FOUND || status == DNS_ADDRESS_LOOKUP_PERMANENT_ERROR
 		|| status == DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR;
@@ -285,14 +279,37 @@ static dns_negative_parse_status dns_negative_response_parse(ns_msg *response, c
 	return DNS_NEGATIVE_PARSE_OK;
 }
 
-static int dns_query_exact(res_state resolver, const char *name, int type, unsigned char *response, int response_capacity) {
+static dns_query_exact_status dns_query_exact(res_state resolver, const char *name, int type, unsigned char *response, int response_capacity, int *response_size) {
 	unsigned char query[NS_MAXMSG];
 	int query_size = res_nmkquery(resolver, ns_o_query, name, ns_c_in, type, NULL, 0, NULL, query, (int)sizeof(query));
 	if (query_size <= 0 || query_size > (int)sizeof(query)) {
-		resolver->res_h_errno = NO_RECOVERY;
-		return -1;
+		return DNS_QUERY_EXACT_PERMANENT_ERROR;
 	}
-	return res_nsend(resolver, query, query_size, response, response_capacity);
+	int result;
+	/* glibc res_nsend() leaves res_h_errno untouched on transport failures (verified on 2.35); classify by errno instead. */
+	errno = 0;
+	result = res_nsend(resolver, query, query_size, response, response_capacity);
+	int failure_errno = errno;
+	if (result <= 0) {
+		switch (failure_errno) {
+			case ENOMEM:
+				return DNS_QUERY_EXACT_MEMORY;
+			case EMSGSIZE:
+				return DNS_QUERY_EXACT_MALFORMED;
+			case ESRCH:
+			case EINVAL:
+			case EAFNOSUPPORT:
+			case EPROTONOSUPPORT:
+			case EACCES:
+			case EPERM:
+				return DNS_QUERY_EXACT_PERMANENT_ERROR;
+			default:
+				/* Network and resource errors, plus an undocumented errno == 0 failure, are retried conservatively. */
+				return DNS_QUERY_EXACT_TEMPORARY_ERROR;
+		}
+	}
+	*response_size = result;
+	return DNS_QUERY_EXACT_OK;
 }
 
 static bool dns_resolver_init(res_state resolver) {
@@ -481,20 +498,6 @@ static dns_srv_lookup_status dns_srv_lookup_parse_status(dns_srv_parse_status pa
 	return DNS_SRV_LOOKUP_MALFORMED;
 }
 
-static dns_srv_lookup_status dns_srv_lookup_resolver_status(int resolver_error) {
-	switch (resolver_error) {
-		case HOST_NOT_FOUND:
-			return DNS_SRV_LOOKUP_NOT_FOUND;
-		case NO_DATA:
-			return DNS_SRV_LOOKUP_NODATA;
-		case TRY_AGAIN:
-			return DNS_SRV_LOOKUP_TEMPORARY_ERROR;
-		case NO_RECOVERY:
-		default:
-			return DNS_SRV_LOOKUP_PERMANENT_ERROR;
-	}
-}
-
 static bool dns_srv_lookup_status_keeps_result(dns_srv_lookup_status status) {
 	return status == DNS_SRV_LOOKUP_OK || status == DNS_SRV_LOOKUP_NODATA || status == DNS_SRV_LOOKUP_NOT_FOUND || status == DNS_SRV_LOOKUP_PERMANENT_ERROR
 		|| status == DNS_SRV_LOOKUP_TEMPORARY_ERROR;
@@ -656,9 +659,24 @@ dns_address_lookup_status dns_address_lookup(const char *hostname, sa_family_t f
 	dns_address_lookup_status lookup_status = DNS_ADDRESS_LOOKUP_PERMANENT_ERROR;
 	while (true) {
 		int query_type = family == AF_INET ? ns_t_a : ns_t_aaaa;
-		int response_size = dns_query_exact(&resolver, query_name, query_type, response, NS_MAXMSG);
-		if (response_size < 0) {
-			lookup_status = dns_lookup_resolver_status(resolver.res_h_errno);
+		int response_size = 0;
+		dns_query_exact_status query_status = dns_query_exact(&resolver, query_name, query_type, response, NS_MAXMSG, &response_size);
+		if (query_status != DNS_QUERY_EXACT_OK) {
+			switch (query_status) {
+				case DNS_QUERY_EXACT_MEMORY:
+					lookup_status = DNS_ADDRESS_LOOKUP_MEMORY;
+					break;
+				case DNS_QUERY_EXACT_MALFORMED:
+					lookup_status = DNS_ADDRESS_LOOKUP_MALFORMED;
+					break;
+				case DNS_QUERY_EXACT_PERMANENT_ERROR:
+					lookup_status = DNS_ADDRESS_LOOKUP_PERMANENT_ERROR;
+					break;
+				case DNS_QUERY_EXACT_TEMPORARY_ERROR:
+				default:
+					lookup_status = DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR;
+					break;
+			}
 			break;
 		}
 		if (response_size > NS_MAXMSG) {
@@ -827,9 +845,24 @@ dns_srv_lookup_status dns_srv_lookup(const char *query_name, dns_srv_result *res
 	uint32_t chain_ttl = UINT32_MAX;
 	dns_srv_lookup_status lookup_status = DNS_SRV_LOOKUP_PERMANENT_ERROR;
 	while (true) {
-		int response_size = dns_query_exact(&resolver, current_name, ns_t_srv, response, NS_MAXMSG);
-		if (response_size < 0) {
-			lookup_status = dns_srv_lookup_resolver_status(resolver.res_h_errno);
+		int response_size = 0;
+		dns_query_exact_status query_status = dns_query_exact(&resolver, current_name, ns_t_srv, response, NS_MAXMSG, &response_size);
+		if (query_status != DNS_QUERY_EXACT_OK) {
+			switch (query_status) {
+				case DNS_QUERY_EXACT_MEMORY:
+					lookup_status = DNS_SRV_LOOKUP_MEMORY;
+					break;
+				case DNS_QUERY_EXACT_MALFORMED:
+					lookup_status = DNS_SRV_LOOKUP_MALFORMED;
+					break;
+				case DNS_QUERY_EXACT_PERMANENT_ERROR:
+					lookup_status = DNS_SRV_LOOKUP_PERMANENT_ERROR;
+					break;
+				case DNS_QUERY_EXACT_TEMPORARY_ERROR:
+				default:
+					lookup_status = DNS_SRV_LOOKUP_TEMPORARY_ERROR;
+					break;
+			}
 			break;
 		}
 		if (response_size > NS_MAXMSG) {
