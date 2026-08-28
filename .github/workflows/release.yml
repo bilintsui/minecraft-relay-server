@@ -5,6 +5,9 @@ on:
     types:
       - published
 
+permissions:
+  contents: write
+
 jobs:
   build_mcrelay:
     name: Build Minecraft Relay Server
@@ -75,7 +78,6 @@ jobs:
           done
           cp packaging/deb/out/*.deb build/
       - name: Upload artifacts
-        uses: AButler/upload-release-assets@v4.0.0
-        with:
-          files: 'build/*'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" build/* --clobber
