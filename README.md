@@ -48,6 +48,16 @@ Additionally, if you want cross-compiling, the following CMake properties will b
 * <code>-DCMAKE_C_COMPILER</code>: Specify an alternative compiler, CMake uses <code>cc</code> by default.
 * <code>-DEXEC_SUFFIX</code>: Add a suffix to the final binary file, the file will be generated called <code>mcrelay</code>.
 
+### Resolver helper capacity
+By default, mcrelay starts two resolver helper processes, and each helper performs at most one blocking DNS lookup at a time. Configured destinations are normally prewarmed before mcrelay reports readiness, but a large startup or reload configuration, or a burst of distinct uncached names, can contend for the two helpers and each connection's independent default 10-second route-wait deadline.
+
+The helper count is a compile-time limit rather than a runtime configuration option. Deployments that need more parallel DNS lookups must rebuild with a larger <code>RESOLVER_SUPERVISOR_HELPER_COUNT</code>, for example:
+
+<pre>
+cmake -B build -DCMAKE_C_FLAGS=-DRESOLVER_SUPERVISOR_HELPER_COUNT=4
+cmake --build build
+</pre>
+
 ## Usage
 <pre>
 mcrelay dumpconfig [-c &lt;config_file&gt; | --config &lt;config_file&gt;]
