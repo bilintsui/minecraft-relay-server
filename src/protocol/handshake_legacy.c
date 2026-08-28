@@ -20,24 +20,9 @@
 #include "handshake_legacy.h"
 
 /* section: functions (local) */
-static size_t make_message_legacy(void *dst, const void *src, size_t n) {
-	void *tmp = malloc(BUFSIZ);
-	const uint8_t *ptr_src = src;
-	uint8_t *ptr_tmp = tmp;
-	for (size_t i = 0; i < n; i++) {
-		protocol_uint16_write(ptr_tmp, *ptr_src);
-		ptr_src++;
-		ptr_tmp += sizeof(uint16_t);
-	}
-	uint8_t *ptr_dst = dst;
-	*ptr_dst++ = 0xFF;
-	protocol_uint16_write(ptr_dst, (uint16_t)n);
-	ptr_dst += sizeof(uint16_t);
-	size_t tmp_length = ptr_tmp - (uint8_t *)tmp;
-	memcpy(ptr_dst, tmp, tmp_length);
-	size_t dst_length = (size_t)(ptr_dst - (uint8_t *)dst) + tmp_length;
-	free(tmp);
-	return dst_length;
+static uint8_t *legacy_char_write(uint8_t *cursor, uint8_t value) {
+	protocol_uint16_write(cursor, value);
+	return cursor + sizeof(uint16_t);
 }
 
 /* section: functions (exported) */
@@ -59,33 +44,74 @@ size_t make_kickreason_legacy(void *dst, size_t dst_capacity, const void *src) {
 	return 3U + source_size * 2U;
 }
 
-size_t make_motd_legacy(void *dst, const void *src, protocol_version motd_version, uint8_t version) {
-	void *tmp = malloc(BUFSIZ);
-	size_t tmp_length = 0;
+size_t make_motd_legacy(void *dst, size_t dst_capacity, const void *src, protocol_version motd_version, uint8_t version) {
+	static const uint8_t section_open[] = { 0xA7, '1', '\0' };
+	static const uint8_t section_split[] = { '\0', '\0' };
+	static const uint8_t section_tail[] = { '0', '\0', '0' };
+	static const uint8_t section_zero[] = { 0xA7, '0', 0xA7, '0' };
+	uint8_t version_digits[3];
+	size_t digit_count = 0;
+	size_t character_count, message_length, overhead;
+	uint8_t *cursor;
+	uint8_t remaining_version = version;
+	if ((dst == NULL) || (dst_capacity < 3U) || (src == NULL)) {
+		return 0;
+	}
+	message_length = strlen(src);
 	switch (motd_version) {
 		case PVER_LEGACYM1:
-			strcpy(tmp, src);
-			tmp_length = memcat(tmp, strlen(tmp), "\xA7", 1);
-			tmp_length = memcat(tmp, tmp_length, "0", 1);
-			tmp_length = memcat(tmp, tmp_length, "\xA7", 1);
-			tmp_length = memcat(tmp, tmp_length, "0", 1);
+			overhead = sizeof(section_zero);
 			break;
 		case PVER_LEGACYM2:
 		case PVER_LEGACYM3:
-			memset(tmp, 0xA7, 1);
-			tmp_length = memcat(tmp, 1, "1\0", 2);
-			tmp_length = tmp_length + sprintf((char *)tmp + tmp_length, "%d", version) + 1;
-			tmp_length = memcat(tmp, tmp_length, "", 1);
-			tmp_length = memcat(tmp, tmp_length, src, strlen(src) + 1);
-			tmp_length = memcat(tmp, tmp_length, "0\0", 2);
-			tmp_length = memcat(tmp, tmp_length, "0", 1);
+			do {
+				version_digits[digit_count++] = (uint8_t)('0' + (remaining_version % 10U));
+				remaining_version = (uint8_t)(remaining_version / 10U);
+			} while (remaining_version != 0);
+			overhead = digit_count + sizeof(section_open) + sizeof(section_split) + sizeof(section_tail) + 1U;
 			break;
 		default:
+			return 0;
+	}
+	if (message_length > UINT16_MAX - overhead) {
+		return 0;
+	}
+	character_count = message_length + overhead;
+	if (character_count > (dst_capacity - 3U) / 2U) {
+		return 0;
+	}
+	cursor = dst;
+	cursor[0] = 0xFF;
+	protocol_uint16_write(cursor + 1, (uint16_t)character_count);
+	cursor += 3U;
+	switch (motd_version) {
+		case PVER_LEGACYM1:
+			for (size_t index = 0; index < message_length; index++) {
+				cursor = legacy_char_write(cursor, ((const uint8_t *)src)[index]);
+			}
+			for (size_t index = 0; index < sizeof(section_zero); index++) {
+				cursor = legacy_char_write(cursor, section_zero[index]);
+			}
+			break;
+		default:
+			for (size_t index = 0; index < sizeof(section_open); index++) {
+				cursor = legacy_char_write(cursor, section_open[index]);
+			}
+			for (size_t index = 0; index < digit_count; index++) {
+				cursor = legacy_char_write(cursor, version_digits[digit_count - 1U - index]);
+			}
+			for (size_t index = 0; index < sizeof(section_split); index++) {
+				cursor = legacy_char_write(cursor, section_split[index]);
+			}
+			for (size_t index = 0; index <= message_length; index++) {
+				cursor = legacy_char_write(cursor, (index < message_length) ? ((const uint8_t *)src)[index] : '\0');
+			}
+			for (size_t index = 0; index < sizeof(section_tail); index++) {
+				cursor = legacy_char_write(cursor, section_tail[index]);
+			}
 			break;
 	}
-	size_t dst_length = make_message_legacy(dst, tmp, tmp_length);
-	free(tmp);
-	return dst_length;
+	return 3U + character_count * 2U;
 }
 
 void packet_destroy_legacy_motd(p_motd_legacy object) {

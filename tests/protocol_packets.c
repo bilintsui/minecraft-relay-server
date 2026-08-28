@@ -239,6 +239,152 @@ static bool modern_message_validate(const uint8_t *data, size_t size) {
 	return true;
 }
 
+static bool motd_bounds_test(void) {
+	static const char modern_json_47[] = "{\"version\":{\"name\":\"\",\"protocol\":47},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},"
+		"\"description\":{\"text\":\"A Minecraft Server\"},\"favicon\":\"data:image/png;base64,\"}";
+	static const char modern_json_0[] = "{\"version\":{\"name\":\"\",\"protocol\":0},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},"
+		"\"description\":{\"text\":\"A Minecraft Server\"},\"favicon\":\"data:image/png;base64,\"}";
+	static const char modern_json_max[] = "{\"version\":{\"name\":\"\",\"protocol\":4294967295},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},"
+		"\"description\":{\"text\":\"A Minecraft Server\"},\"favicon\":\"data:image/png;base64,\"}";
+	static const uint8_t modern_prefix_47[] = { 0xA2, 0x01, 0x00, 0x9F, 0x01 };
+	static const uint8_t modern_prefix_0[] = { 0xA1, 0x01, 0x00, 0x9E, 0x01 };
+	static const uint8_t modern_prefix_max[] = { 0xAA, 0x01, 0x00, 0xA7, 0x01 };
+	static const uint8_t golden_m1[] = { 0xFF, 0x00, 0x06, 0x00, 0x68, 0x00, 0x69, 0x00, 0xA7, 0x00, 0x30, 0x00, 0xA7, 0x00, 0x30 };
+	static const uint8_t golden_m2[] = {
+		0xFF, 0x00, 0x0D, 0x00, 0xA7, 0x00, 0x31, 0x00, 0x00, 0x00, 0x34, 0x00, 0x37, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x68, 0x00, 0x69, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x30
+	};
+	static const uint8_t golden_m3[] = {
+		0xFF, 0x00, 0x0E, 0x00, 0xA7, 0x00, 0x31, 0x00, 0x00, 0x00, 0x32, 0x00, 0x35, 0x00, 0x35, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x68, 0x00, 0x69, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x30
+	};
+	static const uint8_t golden_m3empty[] = { 0xFF, 0x00, 0x0A, 0x00, 0xA7, 0x00, 0x31, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x30 };
+	uint8_t target[BUFSIZ];
+	uint8_t target_other[BUFSIZ];
+	size_t size, other_size, maximum_message;
+	if (strlen(modern_json_47) != 159U || strlen(modern_json_0) != 158U || strlen(modern_json_max) != 167U) {
+		return false;
+	}
+	size = make_motd(target, sizeof(target), "A Minecraft Server", 47, "");
+	if (size != sizeof(modern_prefix_47) + strlen(modern_json_47) || memcmp(target, modern_prefix_47, sizeof(modern_prefix_47)) != 0
+		|| memcmp(target + sizeof(modern_prefix_47), modern_json_47, strlen(modern_json_47)) != 0) {
+		return false;
+	}
+	size = make_motd(target, sizeof(target), "A Minecraft Server", 0, "");
+	if (size != sizeof(modern_prefix_0) + strlen(modern_json_0) || memcmp(target, modern_prefix_0, sizeof(modern_prefix_0)) != 0
+		|| memcmp(target + sizeof(modern_prefix_0), modern_json_0, strlen(modern_json_0)) != 0) {
+		return false;
+	}
+	size = make_motd(target, sizeof(target), "A Minecraft Server", UINT32_MAX, "");
+	if (size != sizeof(modern_prefix_max) + strlen(modern_json_max) || memcmp(target, modern_prefix_max, sizeof(modern_prefix_max)) != 0
+		|| memcmp(target + sizeof(modern_prefix_max), modern_json_max, strlen(modern_json_max)) != 0) {
+		return false;
+	}
+	/* NULL favicon selects the built-in icon; both calls must produce identical bytes. */
+	other_size = make_motd(target_other, sizeof(target_other), "A Minecraft Server", 47, NULL);
+	size = make_motd(target, sizeof(target), "A Minecraft Server", 47, FAVICON_BASE64);
+	if (size == 0 || size != other_size || memcmp(target, target_other, size) != 0) {
+		return false;
+	}
+	/* Capacity boundaries: exact fit succeeds, one byte less is rejected without touching the destination. */
+	memset(target, 0xA5, sizeof(target));
+	if (make_motd(target, size - 1U, "A Minecraft Server", 47, FAVICON_BASE64) != 0) {
+		return false;
+	}
+	for (size_t index = 0; index < sizeof(target); index++) {
+		if (target[index] != 0xA5) {
+			return false;
+		}
+	}
+	if (make_motd(target, size, "A Minecraft Server", 47, FAVICON_BASE64) != size) {
+		return false;
+	}
+	if (make_motd(NULL, sizeof(target), "A Minecraft Server", 47, FAVICON_BASE64) != 0) {
+		return false;
+	}
+	if (make_motd(target, 0, "A Minecraft Server", 47, FAVICON_BASE64) != 0) {
+		return false;
+	}
+	if (make_motd(target, sizeof(target), NULL, 47, FAVICON_BASE64) != 0) {
+		return false;
+	}
+	/* Legacy goldens for M1/M2/M3 captured from the previous encoder. */
+	if (make_motd_legacy(target, sizeof(target), "hi", PVER_LEGACYM1, 77) != sizeof(golden_m1)
+		|| memcmp(target, golden_m1, sizeof(golden_m1)) != 0) {
+		return false;
+	}
+	if (make_motd_legacy(target_other, sizeof(target_other), "hi", PVER_LEGACYM1, 255) != sizeof(golden_m1)
+		|| memcmp(target, target_other, sizeof(golden_m1)) != 0) {
+		return false;
+	}
+	if (make_motd_legacy(target, sizeof(target), "hi", PVER_LEGACYM2, 47) != sizeof(golden_m2)
+		|| memcmp(target, golden_m2, sizeof(golden_m2)) != 0) {
+		return false;
+	}
+	if (make_motd_legacy(target, sizeof(target), "hi", PVER_LEGACYM3, 255) != sizeof(golden_m3)
+		|| memcmp(target, golden_m3, sizeof(golden_m3)) != 0) {
+		return false;
+	}
+	if (make_motd_legacy(target, sizeof(target), "", PVER_LEGACYM3, 0) != sizeof(golden_m3empty)
+		|| memcmp(target, golden_m3empty, sizeof(golden_m3empty)) != 0) {
+		return false;
+	}
+	/* Legacy capacity and argument failures must leave the destination untouched. */
+	memset(target, 0xA5, sizeof(target));
+	if (make_motd_legacy(target, sizeof(golden_m3) - 1U, "hi", PVER_LEGACYM3, 255) != 0) {
+		return false;
+	}
+	for (size_t index = 0; index < sizeof(target); index++) {
+		if (target[index] != 0xA5) {
+			return false;
+		}
+	}
+	if (make_motd_legacy(target, sizeof(golden_m3), "hi", PVER_LEGACYM3, 255) != sizeof(golden_m3)
+		|| memcmp(target, golden_m3, sizeof(golden_m3)) != 0) {
+		return false;
+	}
+	memset(target, 0xA5, sizeof(target));
+	if (make_motd_legacy(NULL, sizeof(target), "hi", PVER_LEGACYM3, 255) != 0
+		|| make_motd_legacy(target, 0, "hi", PVER_LEGACYM3, 255) != 0
+		|| make_motd_legacy(target, sizeof(target), NULL, PVER_LEGACYM3, 255) != 0) {
+		return false;
+	}
+	if (make_motd_legacy(target, sizeof(target), "hi", PVER_LEGACYL1, 47) != 0) {
+		return false;
+	}
+	for (size_t index = 0; index < sizeof(target); index++) {
+		if (target[index] != 0xA5) {
+			return false;
+		}
+	}
+	/* Legacy character counts near UINT16_MAX: the exact maximum is accepted, one more character is rejected. */
+	maximum_message = UINT16_MAX - 12U;
+	char *long_message = malloc(maximum_message + 2U);
+	uint8_t *long_target = malloc(3U + (UINT16_MAX * 2U));
+	if (long_message == NULL || long_target == NULL) {
+		free(long_message);
+		free(long_target);
+		return false;
+	}
+	memset(long_message, 'a', maximum_message + 1U);
+	long_message[maximum_message] = '\0';
+	if (make_motd_legacy(long_target, 3U + (UINT16_MAX * 2U), long_message, PVER_LEGACYM3, 255) != 3U + (UINT16_MAX * 2U)) {
+		free(long_message);
+		free(long_target);
+		return false;
+	}
+	long_message[maximum_message] = 'a';
+	long_message[maximum_message + 1U] = '\0';
+	if (make_motd_legacy(long_target, 3U + (UINT16_MAX * 2U), long_message, PVER_LEGACYM3, 255) != 0) {
+		free(long_message);
+		free(long_target);
+		return false;
+	}
+	free(long_message);
+	free(long_target);
+	return true;
+}
+
 static bool packet_read_bounds_test(void) {
 	/* Both flush cases end at an ASan-protected object boundary; the cross-field case keeps bytes available but outside the declared address. */
 	static const uint8_t fml_cross_field[] = { 0x0C, 0x00, 0x2F, 0x02, 'x', '\0', 'F', 'M', 'L', '\0', 0x63, 0xDD, 0x01 };
@@ -517,6 +663,7 @@ int main(int argc, char **argv) {
 	CHECK(argc == 2, "raw packet directory is required");
 	CHECK(kickreason_bounds_test(), "bounded kick response construction failed");
 	CHECK(legacy_motd_bounds_test(argv[1]), "bounded legacy M3 parsing failed");
+	CHECK(motd_bounds_test(), "bounded MOTD encoding failed");
 	CHECK(packet_read_bounds_test(), "bounded handshake packet reading failed");
 	CHECK(varint_bounds_test(), "bounded varint decoding failed");
 	CHECK(packet_write_bounds_test(), "bounded packet construction failed");
@@ -530,7 +677,8 @@ int main(int argc, char **argv) {
 		CHECK(source_size > 0, "cannot read client fixture");
 		CHECK(protocol_identify(source, (size_t)source_size, NULL) == client_fixtures[index].protocol, "client fixture protocol was identified incorrectly");
 		if (client_fixtures[index].roundtrip) {
-			CHECK(packet_roundtrip(client_fixtures[index].kind, client_fixtures[index].protocol, source, (size_t)source_size, target, sizeof(target_storage.bytes) - 1), "client fixture did not survive an exact round trip");
+			CHECK(packet_roundtrip(client_fixtures[index].kind, client_fixtures[index].protocol, source,
+				(size_t)source_size, target, sizeof(target_storage.bytes) - 1), "client fixture did not survive an exact round trip");
 		}
 	}
 	memset(modern_multibyte_frame + 5, 'a', 123);
@@ -591,7 +739,7 @@ int main(int argc, char **argv) {
 	source_size = file_read(filename, source, BUFSIZ);
 	CHECK(source_size > 0, "cannot read modern status response");
 	CHECK(modern_message_validate(source, (size_t)source_size), "captured modern status response is malformed");
-	target_size = make_motd(target, "A Minecraft Server", 0, NULL);
+	target_size = make_motd(target, sizeof(target_storage.bytes) - 1U, "A Minecraft Server", 0, NULL);
 	CHECK(modern_message_validate(target, target_size), "constructed modern status response is malformed");
 
 	for (size_t index = 0; index < sizeof(legacy_status_responses) / sizeof(legacy_status_responses[0]); index++) {
@@ -602,7 +750,7 @@ int main(int argc, char **argv) {
 		CHECK(source_size > 0, "cannot read legacy status response");
 		size_t source_fields, target_fields;
 		CHECK(legacy_message_validate(source, (size_t)source_size, &source_fields), "captured legacy status response is malformed");
-		target_size = make_motd_legacy(target, "A Minecraft Server", PVER_LEGACYM3, legacy_status_responses[index].version);
+		target_size = make_motd_legacy(target, sizeof(target_storage.bytes) - 1U, "A Minecraft Server", PVER_LEGACYM3, legacy_status_responses[index].version);
 		CHECK(legacy_message_validate(target, target_size, &target_fields), "constructed legacy status response is malformed");
 		CHECK(source_fields == 6 && target_fields == source_fields, "constructed legacy status response has an incompatible field structure");
 	}

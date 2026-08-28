@@ -33,7 +33,11 @@ typedef struct {
 /* section: functions (exported) */
 /* Encodes a legacy login disconnect packet containing src. Returns zero when the arguments or capacity are invalid. */
 size_t make_kickreason_legacy(void *dst, size_t dst_capacity, const void *src);
-size_t make_motd_legacy(void *dst, const void *src, protocol_version motd_version, uint8_t version);
+/*
+ * Encodes a legacy status MOTD response containing src for M1/M2/M3. Returns zero when the arguments, protocol version,
+ * or capacity are invalid; dst is written only on success and no heap allocation is performed.
+ */
+size_t make_motd_legacy(void *dst, size_t dst_capacity, const void *src, protocol_version motd_version, uint8_t version);
 void packet_destroy_legacy_motd(p_motd_legacy object);
 p_login_legacy packet_read_legacy_login(const void *sourcepacket, size_t sourcepacket_length, protocol_version login_version);
 /*

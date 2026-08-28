@@ -53,24 +53,6 @@ static bool handshake_varint_write(uint8_t **destination, size_t *remaining, var
 	return true;
 }
 
-static size_t make_message(void *dst, const void *src) {
-	uint8_t *tmp, *ptr_dst, *ptr_tmp;
-	size_t dst_length, payload_length, src_length;
-	tmp = calloc(1, BUFSIZ);
-	ptr_tmp = int2varint(0, tmp);
-	src_length = strlen(src);
-	ptr_tmp = int2varint(src_length, ptr_tmp);
-	memcpy(ptr_tmp, src, src_length);
-	ptr_tmp += src_length;
-	dst_length = ptr_tmp - tmp;
-	ptr_dst = int2varint(dst_length, dst);
-	memcpy(ptr_dst, tmp, dst_length);
-	ptr_dst += dst_length;
-	payload_length = ptr_dst - (uint8_t *)dst;
-	free(tmp);
-	return payload_length;
-}
-
 /* section: functions (exported) */
 size_t make_kickreason(void *dst, size_t dst_capacity, const void *src) {
 	static const char json_prefix[] = "{\"extra\":[{\"text\":\"";
@@ -114,18 +96,66 @@ size_t make_kickreason(void *dst, size_t dst_capacity, const void *src) {
 	return frame_length_size + frame_size;
 }
 
-size_t make_motd(void *dst, const void *src, varint_t ver, const char *favicon_b64) {
-	void *input;
-	size_t payload_length;
-	const char *icon = favicon_b64 ? favicon_b64 : FAVICON_BASE64;
-	input = calloc(1, BUFSIZ);
-	sprintf(input,
-		"{\"version\":{\"name\":\"\",\"protocol\":%u},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},\"description\":{\"text\":\"%s\"},\"favicon\":\"data:image/png;base64,%s\"}",
-		ver, (const char *)src, icon
-	);
-	payload_length = make_message(dst, input);
-	free(input);
-	return payload_length;
+size_t make_motd(void *dst, size_t dst_capacity, const void *src, varint_t ver, const char *favicon_b64) {
+	static const char version_prefix[] = "{\"version\":{\"name\":\"\",\"protocol\":";
+	static const char players_middle[] = "},\"players\":{\"max\":0,\"online\":0,\"sample\":[]},\"description\":{\"text\":\"";
+	static const char favicon_prefix[] = "\"},\"favicon\":\"data:image/png;base64,";
+	static const char json_suffix[] = "\"}";
+	const char *icon = (favicon_b64 != NULL) ? favicon_b64 : FAVICON_BASE64;
+	char version_text[11];
+	size_t json_size, frame_size, frame_length_size, string_length_size;
+	int version_length;
+	if ((dst == NULL) || (dst_capacity == 0) || (src == NULL)) {
+		return 0;
+	}
+	version_length = snprintf(version_text, sizeof(version_text), "%u", ver);
+	if ((version_length <= 0) || ((size_t)version_length >= sizeof(version_text))) {
+		return 0;
+	}
+	size_t fixed_size = (sizeof(version_prefix) - 1U) + (sizeof(players_middle) - 1U) + (sizeof(favicon_prefix) - 1U) + (sizeof(json_suffix) - 1U);
+	size_t version_size = (size_t)version_length;
+	size_t message_size = strlen(src);
+	size_t icon_size = strlen(icon);
+	json_size = fixed_size;
+	if ((message_size > SIZE_MAX - json_size) || (version_size > SIZE_MAX - json_size - message_size) || (icon_size > SIZE_MAX - json_size - message_size - version_size)) {
+		return 0;
+	}
+	json_size += message_size + version_size + icon_size;
+	if (json_size > UINT32_MAX) {
+		return 0;
+	}
+	string_length_size = varint_size((varint_t)json_size);
+	if (json_size > SIZE_MAX - string_length_size - 1U) {
+		return 0;
+	}
+	frame_size = 1U + string_length_size + json_size;
+	if (frame_size > UINT32_MAX) {
+		return 0;
+	}
+	frame_length_size = varint_size((varint_t)frame_size);
+	if (frame_size > SIZE_MAX - frame_length_size || dst_capacity < frame_length_size + frame_size) {
+		return 0;
+	}
+	uint8_t *cursor = dst;
+	size_t remaining = dst_capacity;
+	if (!handshake_varint_write(&cursor, &remaining, (varint_t)frame_size) || !handshake_varint_write(&cursor, &remaining, 0)
+		|| !handshake_varint_write(&cursor, &remaining, (varint_t)json_size) || remaining < json_size) {
+		return 0;
+	}
+	memcpy(cursor, version_prefix, sizeof(version_prefix) - 1U);
+	cursor += sizeof(version_prefix) - 1U;
+	memcpy(cursor, version_text, version_size);
+	cursor += version_size;
+	memcpy(cursor, players_middle, sizeof(players_middle) - 1U);
+	cursor += sizeof(players_middle) - 1U;
+	memcpy(cursor, src, message_size);
+	cursor += message_size;
+	memcpy(cursor, favicon_prefix, sizeof(favicon_prefix) - 1U);
+	cursor += sizeof(favicon_prefix) - 1U;
+	memcpy(cursor, icon, icon_size);
+	cursor += icon_size;
+	memcpy(cursor, json_suffix, sizeof(json_suffix) - 1U);
+	return frame_length_size + frame_size;
 }
 
 void packet_destroy(p_handshake object) {

@@ -41,7 +41,11 @@ typedef struct {
 /* section: functions (exported) */
 /* Encodes a login disconnect packet containing src. Returns zero when the arguments or capacity are invalid. */
 size_t make_kickreason(void *dst, size_t dst_capacity, const void *src);
-size_t make_motd(void *dst, const void *src, varint_t ver, const char *favicon_b64);
+/*
+ * Encodes a status MOTD response containing src. NULL favicon_b64 selects the built-in icon. Returns zero when the arguments
+ * or capacity are invalid; dst is written only on success and no heap allocation is performed.
+ */
+size_t make_motd(void *dst, size_t dst_capacity, const void *src, varint_t ver, const char *favicon_b64);
 void packet_destroy(p_handshake object);
 p_handshake packet_read(void *src, void *end);
 /* Returns the total bytes written and 0 when dst is NULL, src fields are missing or exceed the packet_read limits, memory allocation fails, or the encoded packet does not fit dst_capacity. */

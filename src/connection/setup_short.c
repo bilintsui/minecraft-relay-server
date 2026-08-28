@@ -201,7 +201,7 @@ static bool connection_setup_short_plan_response_legacy(connection_setup_short_p
 	if (response == NULL) {
 		return false;
 	}
-	size_t response_size = make_motd_legacy(response, message, motd_version, version);
+	size_t response_size = make_motd_legacy(response, BUFSIZ, message, motd_version, version);
 	if (response_size == 0) {
 		free(response);
 		return false;
@@ -217,7 +217,7 @@ static bool connection_setup_short_plan_response_modern(connection_setup_short_p
 	if (response == NULL) {
 		return false;
 	}
-	size_t response_size = make_motd(response, message, version, plan->snapshot.icon_b64);
+	size_t response_size = make_motd(response, BUFSIZ, message, version, plan->snapshot.icon_b64);
 	if (response_size == 0) {
 		free(response);
 		return false;
