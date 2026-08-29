@@ -558,7 +558,9 @@ static int listener_connection_interest_update(const listener_events *events, in
 
 static int listener_connection_interests_update(listener_connection *connection, const listener_events *events) {
 	uint32_t client_flags = 0;
-	if (connection->state == LISTENER_CONNECTION_SHORT_RESPONDING || connection->state == LISTENER_CONNECTION_WORKER_REFUSING) {
+	if (connection->state == LISTENER_CONNECTION_ROUTE_WAITING) {
+		client_flags = EPOLLRDHUP;
+	} else if (connection->state == LISTENER_CONNECTION_SHORT_RESPONDING || connection->state == LISTENER_CONNECTION_WORKER_REFUSING) {
 		if (connection->upstream_buffer.size > 0) {
 			client_flags |= EPOLLOUT;
 		}
@@ -803,6 +805,11 @@ static listener_connection_progress listener_connection_receive(listener_connect
 	return LISTENER_CONNECTION_ABORT;
 }
 
+static bool listener_connection_route_cancelled(const listener_connection *connection, listener_event_kind kind, uint32_t event_flags) {
+	return connection != NULL && connection->state == LISTENER_CONNECTION_ROUTE_WAITING && kind == LISTENER_EVENT_CLIENT
+		&& (event_flags & (EPOLLERR | EPOLLHUP | EPOLLRDHUP));
+}
+
 static listener_connection_route listener_connection_route_parse(listener_connection *connection) {
 	intent_t intent;
 	protocol_version protocol = protocol_identify(connection->inbound, connection->inbound_size, &intent);
@@ -927,10 +934,9 @@ static listener_connection_progress listener_connection_route_start(listener_con
 	}
 	struct timespec deadline;
 	if (!route_waiter_deadline(connection->waiter, &deadline) || listener_connection_timer_set(connection, LISTENER_CONNECTION_TIMER_ROUTE, &deadline) == -1
-		|| listener_events_remove(events, connection->socket_fd) == -1) {
+		|| listener_connection_interests_update(connection, events) == -1) {
 		return LISTENER_CONNECTION_FATAL;
 	}
-	connection->client_registered = false;
 	return LISTENER_CONNECTION_PENDING;
 }
 
@@ -2385,6 +2391,13 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
+		/* Client cancellation wins when route completion and peer shutdown are ready in the same epoll batch. */
+		for (size_t ready_index = 0; ready_index < requests.ready_count; ready_index++) {
+			const listener_ready_event *ready = &requests.ready[ready_index];
+			if (listener_connection_route_cancelled(ready->source->connection, ready->source->kind, ready->flags)) {
+				ready->source->connection->closing = true;
+			}
+		}
 		if (requests.resolver_ready || requests.route_timer_ready) {
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock for route resolution: %s", strerror(errno));
@@ -2497,13 +2510,17 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				} else if (connection->state == LISTENER_CONNECTION_INITIAL) {
 					progress = kind == LISTENER_EVENT_CLIENT ? listener_connection_receive(connection, requests.ready[ready_index].flags) : LISTENER_CONNECTION_PENDING;
 				} else if (connection->state == LISTENER_CONNECTION_ROUTE_WAITING) {
-					progress = LISTENER_CONNECTION_PENDING;
+					progress = listener_connection_route_cancelled(connection, kind, requests.ready[ready_index].flags)
+						? LISTENER_CONNECTION_CLOSED : LISTENER_CONNECTION_PENDING;
 				} else {
 					progress = listener_connection_short_event(connection, kind, requests.ready[ready_index].flags,
 						requests.ready[ready_index].source_generation, &events, &route_now);
 				}
 				if (progress == LISTENER_CONNECTION_READY && connection->state == LISTENER_CONNECTION_INITIAL) {
 					progress = listener_connection_route_start(connection, &events, context->resolver, &route_now);
+				}
+				if (progress == LISTENER_CONNECTION_PENDING && listener_connection_route_cancelled(connection, kind, requests.ready[ready_index].flags)) {
+					progress = LISTENER_CONNECTION_CLOSED;
 				}
 				if (progress == LISTENER_CONNECTION_READY) {
 					progress = listener_connection_ready(connections, connection, listener, &events, listener_pid, context, &route_now);

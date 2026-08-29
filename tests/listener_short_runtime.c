@@ -35,6 +35,7 @@
 	} while (0)
 
 /* timeout */
+#define LISTENER_ROUTE_CANCEL_TEST_TIMEOUT_MS	2000
 #define LISTENER_SHORT_TEST_TIMEOUT_MS	5000
 #define LISTENER_SHORT_TEST_POLL_MS	100
 
@@ -217,6 +218,7 @@ static int short_test_fixture_start(short_fixture *fixture, const char *binary, 
 		int devnull_fd = open("/dev/null", O_WRONLY);
 		if (devnull_fd == -1 || dup2(devnull_fd, STDOUT_FILENO) == -1 || dup2(devnull_fd, STDERR_FILENO) == -1
 			|| setenv("NOTIFY_SOCKET", fixture->notify_filename, 1) == -1
+			|| (strcmp(suffix, "route-cancel") == 0 && setenv("MCRELAY_TEST_DNS_PENDING", "1", 1) == -1)
 			|| (strcmp(suffix, "deadline") == 0 && (setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1
 				|| setenv("MCRELAY_TEST_TIMER_REARM_RACE", "1", 1) == -1))) {
 			_exit(EXIT_FAILURE);
@@ -715,6 +717,37 @@ cleanup:
 	return test_result;
 }
 
+static bool short_test_route_cancel(const char *binary, const char *directory) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int client_fd = -1;
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "route-cancel", "route-wait.example", 25565) == 0,
+		"could not start route-cancellation listener");
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0, "could not connect route-cancellation client");
+	CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send route-cancellation request");
+	struct timespec delay = { .tv_nsec = 100000000L };
+	while (nanosleep(&delay, &delay) == -1) {
+		CHECK(errno == EINTR, "could not wait for pending route resolution");
+	}
+	CHECK(shutdown(client_fd, SHUT_WR) == 0, "could not half-close route-cancellation client");
+	uint8_t response;
+	size_t response_size = 0;
+	CHECK(short_test_receive_until_close(client_fd, &response, sizeof(response), &response_size, LISTENER_ROUTE_CANCEL_TEST_TIMEOUT_MS) == 0
+		&& response_size == 0, "route wait did not treat client half-close as cancellation");
+	CHECK(kill(fixture.listener, 0) == 0, "route cancellation terminated listener");
+	test_result = true;
+
+cleanup:
+	if (client_fd >= 0) {
+		close(client_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
 static bool short_test_stop(const char *binary, const char *directory) {
 	bool test_result = false;
 	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
@@ -775,7 +808,7 @@ int main(int argc, char **argv) {
 	test_result = short_test_admission(argv[1], temp_directory) && short_test_deadline(argv[1], temp_directory)
 		&& short_test_lifetime(argv[1], temp_directory) && short_test_refusal(argv[1], temp_directory)
 		&& short_test_relay(argv[1], temp_directory) && short_test_relay_upstream_first(argv[1], temp_directory)
-		&& short_test_stop(argv[1], temp_directory);
+		&& short_test_route_cancel(argv[1], temp_directory) && short_test_stop(argv[1], temp_directory);
 	if (rmdir(temp_directory) == -1 && errno != ENOENT) {
 		test_result = false;
 	}
