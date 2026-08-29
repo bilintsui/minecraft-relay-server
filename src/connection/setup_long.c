@@ -223,14 +223,6 @@ static bool connection_setup_long_send_client(int socket_fd, const void *data, s
 	return true;
 }
 
-static bool connection_setup_long_set_nonblocking(int socket_fd) {
-	int flags = fcntl(socket_fd, F_GETFL);
-	if (flags == -1) {
-		return false;
-	}
-	return fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK) != -1;
-}
-
 static connection_setup_status connection_setup_long_handle_legacy_login(int socket_in, int *socket_out, net_addrbundle addrinfo_in, const uint8_t *inbound,
 	size_t inbound_size, const connection_setup_snapshot *snapshot, uint8_t *seed, size_t *seed_size) {
 	uint8_t rewrited[BUFSIZ];
@@ -335,24 +327,6 @@ static connection_setup_status connection_setup_long_handle_modern_handshake(int
 		close(socket_in);
 		return CONNECTION_SETUP_EABORT;
 	}
-	if (inbound_info.version == 0) {
-		intent_t intent;
-		protocol_identify(inbound, inbound_size, &intent);
-		if (intent != CLIENT_INTENT_LOGIN) {
-			packet_destroy(inbound_info);
-			close(socket_in);
-			return CONNECTION_SETUP_EABORT;
-		}
-		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING,
-			"src: %s:%d, type: game, status: reject_gamerelay_13w41*",
-			(char *)&(addrinfo_in.address), addrinfo_in.port
-		);
-		packlen_rewrited = make_kickreason(rewrited, sizeof(rewrited), "Proxy: Unsupported client, use 13w42a or later!");
-		connection_setup_long_send_client(socket_in, rewrited, packlen_rewrited);
-		packet_destroy(inbound_info);
-		close(socket_in);
-		return CONNECTION_SETUP_EOLDCLIENT;
-	}
 	if ((inbound_info.nextstate != CLIENT_INTENT_LOGIN && inbound_info.nextstate != CLIENT_INTENT_TRANSFER) || inbound_info.username == NULL) {
 		packet_destroy(inbound_info);
 		close(socket_in);
@@ -441,6 +415,28 @@ static connection_setup_status connection_setup_long_handle_modern_handshake(int
 	return connect_status == NET_ENORECORD ? CONNECTION_SETUP_ENORECORD : CONNECTION_SETUP_ENOCONNECT;
 }
 
+static connection_setup_status connection_setup_long_reject_modern1(int socket_in, net_addrbundle addrinfo_in, const connection_setup_snapshot *snapshot) {
+	uint8_t rewrited[BUFSIZ];
+	size_t packlen_rewrited = 0;
+	memset(rewrited, 0, sizeof(rewrited));
+	CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING,
+		"src: %s:%d, type: game, status: reject_gamerelay_13w41*",
+		(char *)&(addrinfo_in.address), addrinfo_in.port
+	);
+	packlen_rewrited = make_kickreason(rewrited, sizeof(rewrited), "Proxy: Unsupported client, use 13w42a or later!");
+	connection_setup_long_send_client(socket_in, rewrited, packlen_rewrited);
+	close(socket_in);
+	return CONNECTION_SETUP_EOLDCLIENT;
+}
+
+static bool connection_setup_long_set_nonblocking(int socket_fd) {
+	int flags = fcntl(socket_fd, F_GETFL);
+	if (flags == -1) {
+		return false;
+	}
+	return fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK) != -1;
+}
+
 static connection_setup_status connection_setup_long_prepared_run(int socket_in, int *socket_out, net_addrbundle addrinfo_in, const uint8_t *inbound,
 	size_t inbound_size, const connection_setup_snapshot *snapshot, uint8_t *seed, size_t *seed_size) {
 	if (socket_out == NULL || seed == NULL || seed_size == NULL || inbound == NULL || inbound_size == 0 || inbound_size > BUFSIZ) {
@@ -470,6 +466,11 @@ static connection_setup_status connection_setup_long_prepared_run(int socket_in,
 		case PVER_LEGACYL4:
 			return connection_setup_long_handle_legacy_login(socket_in, socket_out, addrinfo_in, inbound, inbound_size, snapshot, seed, seed_size);
 		case PVER_MODERN1:
+			/* The 13w41a handshake frames its port as a varint, so it is identified and rejected without ever being parsed. */
+			if (intent == CLIENT_INTENT_LOGIN || intent == CLIENT_INTENT_TRANSFER) {
+				return connection_setup_long_reject_modern1(socket_in, addrinfo_in, snapshot);
+			}
+			break;
 		case PVER_MODERN2:
 			if (intent == CLIENT_INTENT_LOGIN || intent == CLIENT_INTENT_TRANSFER) {
 				return connection_setup_long_handle_modern_handshake(socket_in, socket_out, addrinfo_in, inbound, inbound_size, snapshot, seed, seed_size);

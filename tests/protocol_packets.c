@@ -391,6 +391,13 @@ static bool packet_read_bounds_test(void) {
 	static const uint8_t fml_flush[] = { 0x0A, 0x00, 0x2F, 0x03, 't', 'e', '\0' };
 	static const uint8_t signature[] = { 0xA5, 0x5A };
 	static const uint8_t signature_flush[] = { 0x10, 0x00, 0x2F, 0x04, 't', 'e', 's', 't', 0x63, 0xDD, 0x02, 0x06, 0x00, 0x03, 'a', 'b', 'c' };
+	static const uint8_t frame1_overdeclared[] = { 0x20, 0x00, 0x2F, 0x02, 'h', 'i', 0x63, 0xDD, 0x01 };
+	static const uint8_t frame1_underdeclared[] = { 0x05, 0x00, 0x2F, 0x04, 'h', 'o', 's', 't', 0x63, 0xDD, 0x01 };
+	static const uint8_t frame1_padding[] = { 0x0A, 0x00, 0x2F, 0x02, 'h', 'i', 0x63, 0xDD, 0x01, 0x00, 0x00 };
+	static const uint8_t frame1_modern1_padding[] = { 0x0A, 0x00, 0x00, 0x02, 'h', 'i', 0x90, 0x3F, 0x01, 0x00, 0x00 };
+	static const uint8_t modern1_varint_port[] = { 0x10, 0x00, 0x00, 0x09, 'l', 'o', 'c', 'a', 'l', 'h', 'o', 's', 't', 0xDD, 0xC7, 0x01, 0x02 };
+	static const uint8_t frame2_overdeclared[] = { 0x08, 0x00, 0x2F, 0x02, 'h', 'i', 0x63, 0xDD, 0x02, 0x30, 0x00, 0x03, 'a', 'b', 'c' };
+	static const uint8_t frame2_exact[] = { 0x08, 0x00, 0x2F, 0x02, 'h', 'i', 0x63, 0xDD, 0x02, 0x06, 0x00, 0x03, 'a', 'b', 'c', 0xA5, 0x99 };
 	uint8_t packet_buffer[64];
 	p_handshake packet;
 	size_t offset;
@@ -409,6 +416,50 @@ static bool packet_read_bounds_test(void) {
 		packet_destroy(packet);
 		return false;
 	}
+	/* A declared frame size must cover its fields exactly: an over-declared frame cannot exceed the buffer, an under-declared one cannot
+	 * truncate its fields, and padding inside the first frame is malformed instead of being skipped, version zero included. */
+	packet = packet_read((void *)frame1_overdeclared, (void *)(frame1_overdeclared + sizeof(frame1_overdeclared)));
+	if (packet.address != NULL) {
+		packet_destroy(packet);
+		return false;
+	}
+	packet = packet_read((void *)frame1_underdeclared, (void *)(frame1_underdeclared + sizeof(frame1_underdeclared)));
+	if (packet.address != NULL) {
+		packet_destroy(packet);
+		return false;
+	}
+	packet = packet_read((void *)frame1_padding, (void *)(frame1_padding + sizeof(frame1_padding)));
+	if (packet.address != NULL) {
+		packet_destroy(packet);
+		return false;
+	}
+	packet = packet_read((void *)frame1_modern1_padding, (void *)(frame1_modern1_padding + sizeof(frame1_modern1_padding)));
+	if (packet.address != NULL) {
+		packet_destroy(packet);
+		return false;
+	}
+	packet_destroy(packet);
+	/* 13w41a frames its port as a varint; the strict fixed-width parser rejects it, and the relay kicks such clients from protocol
+	 * identification before any parsing happens. */
+	packet = packet_read((void *)modern1_varint_port, (void *)(modern1_varint_port + sizeof(modern1_varint_port)));
+	if (packet.address != NULL) {
+		packet_destroy(packet);
+		return false;
+	}
+	packet_destroy(packet);
+	packet = packet_read((void *)frame2_overdeclared, (void *)(frame2_overdeclared + sizeof(frame2_overdeclared)));
+	if (packet.address != NULL) {
+		packet_destroy(packet);
+		return false;
+	}
+	/* A second frame declared to cover exactly its signature byte parses normally; bytes beyond the declared frame belong to the next frame. */
+	packet = packet_read((void *)frame2_exact, (void *)(frame2_exact + sizeof(frame2_exact)));
+	if (packet.address == NULL || packet.username == NULL || strcmp(packet.address, "hi") != 0 || strcmp(packet.username, "abc") != 0
+		|| packet.signature_data_length != 1 || packet.signature_data == NULL || memcmp(packet.signature_data, "\xA5", 1) != 0) {
+		packet_destroy(packet);
+		return false;
+	}
+	packet_destroy(packet);
 	offset = 0;
 	packet_buffer[offset++] = 15U;
 	packet_buffer[offset++] = 0x00;
