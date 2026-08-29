@@ -8,6 +8,7 @@
 /* section: headers (library) */
 #include <errno.h>
 #include <limits.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -213,11 +214,11 @@ static arguments parse_arguments(int argc, char **argv) {
 }
 
 static void print_help(help_topic topic, const char *progname) {
-	fputs(
-		"Minecraft Relay Server [Version " MCRELAY_VERSION_DISPLAY MCRELAY_VERSION_SUFFIX "/"
-		MCRELAY_VERSION_INTERNAL "]\n"
-		"(c) " MCRELAY_COPYYEAR " Bilin Tsui\n\n",
-		stdout
+	bool internal_assigned = MCRELAY_VERSION_INTERNAL[0] != '\0';
+	fprintf(stdout,
+		"Minecraft Relay Server [Version %s%s%s%s]\n"
+		"(c) %s Bilin Tsui\n\n",
+		MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_SUFFIX, internal_assigned ? "/" : "", MCRELAY_VERSION_INTERNAL, MCRELAY_COPYYEAR
 	);
 	switch (topic) {
 		case HELP_DUMPCONFIG:
@@ -280,9 +281,15 @@ int main(int argc, char **argv) {
 		case COMMAND_HELP:
 			print_help(args.help_topic, progname);
 			return EXITCODE_OK;
-		case COMMAND_VERSION:
-			fprintf(stdout, "v%s%s(%s)\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_SUFFIX, MCRELAY_VERSION_INTERNAL);
+		case COMMAND_VERSION: {
+			bool internal_assigned = MCRELAY_VERSION_INTERNAL[0] != '\0';
+			if (internal_assigned) {
+				fprintf(stdout, "v%s%s(%s)\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_SUFFIX, MCRELAY_VERSION_INTERNAL);
+			} else {
+				fprintf(stdout, "v%s%s\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_SUFFIX);
+			}
 			return EXITCODE_OK;
+		}
 		case COMMAND_RUN:
 			break;
 		case COMMAND_INVALID:

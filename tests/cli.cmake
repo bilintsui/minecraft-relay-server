@@ -98,6 +98,7 @@ endfunction()
 run_cli(0 help)
 assert_empty("${CLI_STDERR}" "general help stderr")
 assert_contains("${CLI_STDOUT}" "Minecraft Relay Server [Version " "general help banner")
+assert_not_contains("${CLI_STDOUT}" "/]" "general help empty internal delimiter")
 assert_contains("${CLI_STDOUT}" "Usage: ${program_name} <command> ..." "general help usage")
 assert_contains(
 	"${CLI_STDOUT}"
@@ -129,8 +130,7 @@ assert_contains("${CLI_STDOUT}" "Usage: ${program_name} help [<command>]" "help 
 run_cli(0 version)
 assert_empty("${CLI_STDERR}" "version stderr")
 assert_contains("${CLI_STDOUT}" "v" "version prefix")
-assert_contains("${CLI_STDOUT}" "(" "version internal opening delimiter")
-assert_contains("${CLI_STDOUT}" ")" "version internal closing delimiter")
+assert_not_contains("${CLI_STDOUT}" "()" "version empty internal delimiter")
 
 string(RANDOM LENGTH 16 ALPHABET 0123456789abcdef random_suffix)
 set(hostname_config "${TEST_DIRECTORY}/mcrelay-cli-hostname-${random_suffix}.json")

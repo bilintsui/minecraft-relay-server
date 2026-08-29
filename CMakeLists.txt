@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 project(mcrelay${EXEC_SUFFIX}
-	VERSION 1.2
+	VERSION 1.3
 	LANGUAGES C)
 find_package(Git QUIET)
 # Hardening baseline: stack protector, PIE, full RELRO, and non-executable stack for every target. _FORTIFY_SOURCE
