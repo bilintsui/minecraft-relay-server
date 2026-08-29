@@ -1,3 +1,9 @@
+mcrelay (1.2~rc1-1) unstable; urgency=medium
+
+  * Prepare the first release candidate for 1.2.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Sat, 29 Aug 2026 17:17:26 +0800
+
 mcrelay (1.2~beta11-1) unstable; urgency=high
 
   * New upstream release: bounded long-lived worker resource usage and
