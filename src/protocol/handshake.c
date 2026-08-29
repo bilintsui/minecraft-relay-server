@@ -176,22 +176,27 @@ void packet_destroy(p_handshake object) {
 p_handshake packet_read(void *src, void *end) {
 	p_handshake result;
 	const char *address_end;
-	void *part2_start;
+	char *frame1_end;
+	char *part2_end;
 	varint_t address_length, size_part1, size_part2, username_length;
 	memset(&result, 0, sizeof(result));
 	src = varint2int(src, end, &size_part1, NULL);
 	if (src == NULL) {
 		goto cleanup;
 	}
-	src = varint2int(src, end, &result.id_part1, NULL);
+	if ((size_t)((char *)end - (char *)src) < size_part1) {
+		goto cleanup;
+	}
+	frame1_end = (char *)src + size_part1;
+	src = varint2int(src, frame1_end, &result.id_part1, NULL);
 	if (src == NULL) {
 		goto cleanup;
 	}
-	src = varint2int(src, end, &result.version, NULL);
+	src = varint2int(src, frame1_end, &result.version, NULL);
 	if (src == NULL) {
 		goto cleanup;
 	}
-	src = varint2int(src, end, &address_length, NULL);
+	src = varint2int(src, frame1_end, &address_length, NULL);
 	if (src == NULL) {
 		goto cleanup;
 	}
@@ -201,7 +206,7 @@ p_handshake packet_read(void *src, void *end) {
 	if (address_length == 0) {
 		goto cleanup;
 	}
-	if ((size_t)((const char *)end - (const char *)src) < address_length) {
+	if ((size_t)(frame1_end - (const char *)src) < address_length) {
 		goto cleanup;
 	}
 	address_end = (const char *)src + address_length;
@@ -231,32 +236,40 @@ p_handshake packet_read(void *src, void *end) {
 		memcpy(result.address, src, address_length);
 		src = (void *)address_end;
 	}
-	if ((char *)src + sizeof(in_port_t) > (char *)end) {
+	if (frame1_end - (const char *)src < (ptrdiff_t)sizeof(in_port_t)) {
 		goto cleanup;
 	}
 	result.port = protocol_uint16_read(src);
 	src = (uint8_t *)src + sizeof(uint16_t);
-	src = varint2int(src, end, &result.nextstate, NULL);
+	src = varint2int(src, frame1_end, &result.nextstate, NULL);
 	if (src == NULL) {
 		goto cleanup;
 	}
+	/* A handshake frame covers its fields exactly; declared padding or spill into the next frame is malformed. */
+	if ((char *)src != frame1_end) {
+		goto cleanup;
+	}
 	if ((result.nextstate == CLIENT_INTENT_LOGIN) || (result.nextstate == CLIENT_INTENT_TRANSFER)) {
-		part2_start = src = varint2int(src, end, &size_part2, NULL);
+		src = varint2int(src, end, &size_part2, NULL);
 		if (src == NULL) {
 			goto cleanup;
 		}
-		src = varint2int(src, end, &result.id_part2, NULL);
+		if ((size_t)((char *)end - (char *)src) < size_part2) {
+			goto cleanup;
+		}
+		part2_end = (char *)src + size_part2;
+		src = varint2int(src, part2_end, &result.id_part2, NULL);
 		if (src == NULL) {
 			goto cleanup;
 		}
-		src = varint2int(src, end, &username_length, NULL);
+		src = varint2int(src, part2_end, &username_length, NULL);
 		if (src == NULL) {
 			goto cleanup;
 		}
 		if (username_length > PROTOHANDSHAKE_USERNAMEMAXLEN) {
 			goto cleanup;
 		}
-		if ((char *)src + username_length > (char *)end) {
+		if ((size_t)(part2_end - (const char *)src) < username_length) {
 			goto cleanup;
 		}
 		result.username = calloc(1, username_length + 1);
@@ -265,17 +278,12 @@ p_handshake packet_read(void *src, void *end) {
 		}
 		memcpy(result.username, src, username_length);
 		src = (char *)src + username_length;
-		if ((size_t)((char *)src - (char *)part2_start) > size_part2) {
-			goto cleanup;
-		}
-		result.signature_data_length = size_part2 - ((char *)src - (char *)part2_start);
+		/* The signature data is the declared remainder of the second frame, never bytes beyond it. */
+		result.signature_data_length = (size_t)(part2_end - (char *)src);
 		if (result.signature_data_length) {
-			if (((result.version <= PVERDB_R_1_20_1) || ((result.version & PVERDB_SNAPMASK) <= PVERDB_S_1_20_1_RC1)) && (char *)src < (char *)end && (*((char *)src) == 1)) {
+			if (((result.version <= PVERDB_R_1_20_1) || ((result.version & PVERDB_SNAPMASK) <= PVERDB_S_1_20_1_RC1)) && (char *)src < part2_end && (*((char *)src) == 1)) {
 				result.signature_data_length--;
 				src = (char *)src + 1;
-			}
-			if ((char *)src + result.signature_data_length > (char *)end) {
-				goto cleanup;
 			}
 			result.signature_data = malloc(result.signature_data_length);
 			if (result.signature_data == NULL) {
@@ -283,8 +291,6 @@ p_handshake packet_read(void *src, void *end) {
 			}
 			memcpy(result.signature_data, src, result.signature_data_length);
 			src = (char *)src + result.signature_data_length;
-		} else {
-			result.signature_data_length = 0;
 		}
 	}
 	return result;
