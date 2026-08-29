@@ -7,6 +7,7 @@
 
 /* section: headers (library) */
 #include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -15,6 +16,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 /* section: headers (project) */
 #include "define/global.h"
@@ -110,26 +112,35 @@ const char *escape_default(char *dst, size_t dst_size, const char *src, size_t s
 
 ssize_t freadall(const char *filename, void **dst, bool allow_fifo) {
 	freadall_error error_code = FREADALL_ERROR_NONE;
-	FILE *srcfd = NULL;
+	int open_flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW;
+	int srcfd = -1;
+	FILE *srcstream = NULL;
 	void *result = NULL;
 	if ((filename == NULL) || (dst == NULL)) {
 		error_code = FREADALL_EINVAL;
 		goto cleanup;
 	}
+	/* A caller that does not opt into FIFO input opens nonblocking so an unexpected FIFO cannot stall before fstat validates the descriptor.
+	 * An allowed FIFO deliberately retains the blocking open semantics used by debug-mode configuration input. */
+	if (!allow_fifo) {
+		open_flags |= O_NONBLOCK;
+	}
+	srcfd = open(filename, open_flags);
+	if (srcfd == -1) {
+		error_code = FREADALL_ERFAIL;
+		goto cleanup;
+	}
 	struct stat st;
-	if ((stat(filename, &st) != 0) || !(S_ISREG(st.st_mode) || (allow_fifo && S_ISFIFO(st.st_mode)))) {
+	if ((fstat(srcfd, &st) != 0) || !(S_ISREG(st.st_mode) || (allow_fifo && S_ISFIFO(st.st_mode)))) {
 		error_code = FREADALL_ERFAIL;
 		goto cleanup;
 	}
-	srcfd = fopen(filename, "rb");
-	if (srcfd == NULL) {
+	srcstream = fdopen(srcfd, "rb");
+	if (srcstream == NULL) {
 		error_code = FREADALL_ERFAIL;
 		goto cleanup;
 	}
-	if ((fstat(fileno(srcfd), &st) != 0) || !(S_ISREG(st.st_mode) || (allow_fifo && S_ISFIFO(st.st_mode)))) {
-		error_code = FREADALL_ERFAIL;
-		goto cleanup;
-	}
+	srcfd = -1;
 	result = malloc(FREADALL_SLIMIT);
 	if (result == NULL) {
 		error_code = FREADALL_ENOMEM;
@@ -137,7 +148,7 @@ ssize_t freadall(const char *filename, void **dst, bool allow_fifo) {
 	}
 	size_t bytes_read = 0, bytes_total = 0;
 	while (bytes_total < FREADALL_SLIMIT) {
-		bytes_read = fread((uint8_t *)result + bytes_total, 1, FREADALL_SLIMIT - bytes_total, srcfd);
+		bytes_read = fread((uint8_t *)result + bytes_total, 1, FREADALL_SLIMIT - bytes_total, srcstream);
 		if (bytes_read == 0) {
 			break;
 		}
@@ -145,17 +156,17 @@ ssize_t freadall(const char *filename, void **dst, bool allow_fifo) {
 	}
 	if (bytes_total == FREADALL_SLIMIT) {
 		uint8_t extrabyte;
-		if (fread(&extrabyte, 1, sizeof(extrabyte), srcfd)) {
+		if (fread(&extrabyte, 1, sizeof(extrabyte), srcstream)) {
 			error_code = FREADALL_ELARGE;
 			goto cleanup;
 		}
 	}
-	if (ferror(srcfd)) {
+	if (ferror(srcstream)) {
 		error_code = FREADALL_ERFAIL;
 		goto cleanup;
 	}
-	fclose(srcfd);
-	srcfd = NULL;
+	fclose(srcstream);
+	srcstream = NULL;
 	if (bytes_total > 0) {
 		void *result_final = realloc(result, bytes_total);
 		if (result_final != NULL) {
@@ -167,11 +178,15 @@ ssize_t freadall(const char *filename, void **dst, bool allow_fifo) {
 	}
 	*dst = result;
 	errno = 0;
-	return bytes_total;
+	return (ssize_t)bytes_total;
 cleanup:
-	if (srcfd != NULL) {
-		fclose(srcfd);
-		srcfd = NULL;
+	if (srcstream != NULL) {
+		fclose(srcstream);
+		srcstream = NULL;
+	}
+	if (srcfd != -1) {
+		close(srcfd);
+		srcfd = -1;
 	}
 	if (result != NULL) {
 		free(result);
