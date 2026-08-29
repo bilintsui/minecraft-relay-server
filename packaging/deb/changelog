@@ -1,3 +1,10 @@
+mcrelay (1.2~rc2-1) unstable; urgency=medium
+
+  * Open file inputs descriptor-first to close path replacement races.
+  * Enforce declared modern handshake frame boundaries.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Sat, 29 Aug 2026 22:32:21 +0800
+
 mcrelay (1.2~rc1-1) unstable; urgency=medium
 
   * Prepare the first release candidate for 1.2.
