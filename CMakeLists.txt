@@ -161,9 +161,11 @@ if(BUILD_TESTING)
 		tests/resolver_supervisor.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c
 		src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c)
 	target_include_directories(resolver_supervisor_test PRIVATE src)
-	target_compile_definitions(resolver_supervisor_test PRIVATE _GNU_SOURCE RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE=1 RESOLVER_SUPERVISOR_JOB_LIMIT=4)
+	target_compile_definitions(resolver_supervisor_test PRIVATE _GNU_SOURCE RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE=1 RESOLVER_SUPERVISOR_INTEREST_COUNT_LIMIT=2
+		RESOLVER_SUPERVISOR_JOB_LIMIT=4)
 	target_link_libraries(resolver_supervisor_test -lresolv)
-	set_target_properties(resolver_supervisor_test PROPERTIES LINK_FLAGS "-Wl,--wrap=dns_address_lookup -Wl,--wrap=kill -Wl,--wrap=resolver_helper_process_start -Wl,--wrap=waitpid")
+	set_target_properties(resolver_supervisor_test PROPERTIES
+		LINK_FLAGS "-Wl,--wrap=dns_address_lookup -Wl,--wrap=epoll_ctl -Wl,--wrap=kill -Wl,--wrap=resolver_helper_process_start -Wl,--wrap=send -Wl,--wrap=timerfd_settime -Wl,--wrap=waitpid")
 	add_test(NAME resolver_supervisor COMMAND resolver_supervisor_test)
 	add_executable(route_bindings_test tests/route_bindings.c src/network.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/hosts.c src/resolver/util.c src/route/bindings.c src/route/table.c)
 	target_include_directories(route_bindings_test PRIVATE src)
@@ -344,10 +346,12 @@ if(BUILD_TESTING)
 			tests/resolver_supervisor.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c
 			src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c)
 		target_include_directories(resolver_supervisor_ubsan_test PRIVATE src)
-		target_compile_definitions(resolver_supervisor_ubsan_test PRIVATE _GNU_SOURCE RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE=1 RESOLVER_SUPERVISOR_JOB_LIMIT=4)
+		target_compile_definitions(resolver_supervisor_ubsan_test PRIVATE _GNU_SOURCE RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE=1 RESOLVER_SUPERVISOR_INTEREST_COUNT_LIMIT=2
+			RESOLVER_SUPERVISOR_JOB_LIMIT=4)
 		target_compile_options(resolver_supervisor_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
 		target_link_libraries(resolver_supervisor_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all -lresolv)
-		set_target_properties(resolver_supervisor_ubsan_test PROPERTIES LINK_FLAGS "-Wl,--wrap=dns_address_lookup -Wl,--wrap=kill -Wl,--wrap=resolver_helper_process_start -Wl,--wrap=waitpid")
+		set_target_properties(resolver_supervisor_ubsan_test PROPERTIES
+			LINK_FLAGS "-Wl,--wrap=dns_address_lookup -Wl,--wrap=epoll_ctl -Wl,--wrap=kill -Wl,--wrap=resolver_helper_process_start -Wl,--wrap=send -Wl,--wrap=timerfd_settime -Wl,--wrap=waitpid")
 		add_test(NAME resolver_supervisor_ubsan COMMAND resolver_supervisor_ubsan_test)
 		set_tests_properties(resolver_supervisor_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(route_bindings_ubsan_test tests/route_bindings.c src/network.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/hosts.c src/resolver/util.c src/route/bindings.c src/route/table.c)

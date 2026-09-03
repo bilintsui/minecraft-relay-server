@@ -17,7 +17,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/timerfd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -58,17 +60,24 @@ typedef struct {
 	int peer_fd;
 	pid_t process_id;
 	char process_name[SUPERVISOR_TEST_PROCESS_NAME_CAPACITY];
+	int supervisor_fd;
 	size_t wait_count;
 } supervisor_test_helper;
 
 /* section: global variables */
 static supervisor_test_helper supervisor_helpers[SUPERVISOR_TEST_HELPER_LIMIT];
+static size_t supervisor_epoll_failures;
 static size_t supervisor_helper_count;
+static bool supervisor_send_blocked;
 static size_t supervisor_start_failures;
+static size_t supervisor_timer_failures;
 static bool supervisor_use_real_helper;
 
+int __real_epoll_ctl(int epoll_fd, int operation, int fd, struct epoll_event *event);
 int __real_kill(pid_t process_id, int signal_number);
 int __real_resolver_helper_process_start(const sigset_t *signal_mask, const char *process_name, pid_t *process_id, int *socket_fd);
+ssize_t __real_send(int socket_fd, const void *buffer, size_t length, int flags);
+int __real_timerfd_settime(int fd, int flags, const struct itimerspec *new_value, struct itimerspec *old_value);
 pid_t __real_waitpid(pid_t process_id, int *status, int options);
 
 /* section: functions (local) */
@@ -108,9 +117,13 @@ static void supervisor_fake_reset(void) {
 	memset(supervisor_helpers, 0, sizeof(supervisor_helpers));
 	for (size_t index = 0; index < SUPERVISOR_TEST_HELPER_LIMIT; index++) {
 		supervisor_helpers[index].peer_fd = -1;
+		supervisor_helpers[index].supervisor_fd = -1;
 	}
+	supervisor_epoll_failures = 0;
 	supervisor_helper_count = 0;
+	supervisor_send_blocked = false;
 	supervisor_start_failures = 0;
+	supervisor_timer_failures = 0;
 	supervisor_use_real_helper = false;
 }
 
@@ -329,8 +342,17 @@ static bool supervisor_test_arguments(void) {
 		&& resolver_supervisor_entry_schedule(supervisor, NULL, &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT
 		&& resolver_supervisor_entry_schedule_interactive(NULL, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT
 		&& resolver_supervisor_entry_schedule_interactive(supervisor, NULL, &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT, "invalid schedule arguments were accepted");
-	CHECK(!resolver_supervisor_entry_interactive_release(NULL, entry, &now) && !resolver_supervisor_entry_interactive_release(supervisor, NULL, &now),
-		"invalid interactive-interest release succeeded");
+	CHECK(resolver_supervisor_entry_background_release(NULL, entry, &now) == RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT
+		&& resolver_supervisor_entry_background_release(supervisor, NULL, &now) == RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT
+		&& resolver_supervisor_entry_background_release(supervisor, entry, NULL) == RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT
+		&& resolver_supervisor_entry_interactive_release(NULL, entry, &now) == RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT
+		&& resolver_supervisor_entry_interactive_release(supervisor, NULL, &now) == RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT,
+		"invalid interest release was accepted");
+	CHECK(resolver_supervisor_entry_background_release(supervisor, entry, &now) == RESOLVER_SUPERVISOR_RELEASE_SATISFIED
+		&& resolver_supervisor_entry_interactive_release(supervisor, entry, &now) == RESOLVER_SUPERVISOR_RELEASE_SATISFIED,
+		"release after an already satisfied or absent job was rejected");
+	CHECK(resolver_supervisor_entry_background_release(supervisor, entry, &invalid_time) == RESOLVER_SUPERVISOR_RELEASE_TIME,
+		"invalid release timestamp was accepted");
 	CHECK(resolver_supervisor_events_process(supervisor, &invalid_time) == RESOLVER_SUPERVISOR_EVENT_TIME, "invalid event timestamp was accepted");
 	CHECK(!resolver_supervisor_completion_take(supervisor, &completion) && !resolver_supervisor_helper_view_get(supervisor, RESOLVER_SUPERVISOR_HELPER_COUNT, &(resolver_supervisor_helper_view){ 0 }),
 		"invalid supervisor inspection succeeded");
@@ -368,19 +390,27 @@ static bool supervisor_test_capacity(void) {
 	for (size_t index = 0; index < background_limit; index++) {
 		CHECK(resolver_supervisor_entry_schedule(supervisor, entries[index], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "capacity-test job could not be scheduled");
 	}
+	resolver_supervisor_job_view job_view;
 	CHECK(resolver_supervisor_job_count(supervisor) == background_limit
 		&& resolver_supervisor_entry_schedule(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED
+		&& resolver_supervisor_entry_view(supervisor, entries[0], &job_view) && job_view.background_interest_count == 2
+		&& resolver_supervisor_entry_schedule(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_LIMIT
+		&& resolver_supervisor_entry_view(supervisor, entries[0], &job_view) && job_view.background_interest_count == 2
 		&& resolver_supervisor_entry_schedule(supervisor, entries[background_limit], &now) == RESOLVER_SUPERVISOR_SCHEDULE_LIMIT,
-		"background capacity or coalescing was not enforced");
+		"background capacity, coalescing, or interest overflow was not enforced");
 	CHECK(resolver_supervisor_entry_schedule_interactive(supervisor, entries[background_limit], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
 		&& resolver_supervisor_job_count(supervisor) == RESOLVER_SUPERVISOR_JOB_LIMIT
 		&& resolver_supervisor_entry_schedule_interactive(supervisor, entries[RESOLVER_SUPERVISOR_JOB_LIMIT], &now) == RESOLVER_SUPERVISOR_SCHEDULE_LIMIT,
 		"interactive reserve was not available above the background boundary");
-	resolver_supervisor_job_view job_view;
 	CHECK(resolver_supervisor_entry_schedule_interactive(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED
+		&& resolver_supervisor_entry_schedule_interactive(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED
 		&& resolver_supervisor_entry_view(supervisor, entries[0], &job_view) && job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE
-		&& job_view.interactive_interest_count == 1 && resolver_supervisor_entry_interactive_release(supervisor, entries[0], &now),
-		"existing-key interactive coalescing did not bypass admission or release cleanly");
+		&& job_view.interactive_interest_count == 2
+		&& resolver_supervisor_entry_schedule_interactive(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_LIMIT
+		&& resolver_supervisor_entry_view(supervisor, entries[0], &job_view) && job_view.interactive_interest_count == 2
+		&& resolver_supervisor_entry_interactive_release(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_RELEASE_OK
+		&& resolver_supervisor_entry_interactive_release(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_RELEASE_OK,
+		"existing-key interactive coalescing did not bypass admission, enforce interest overflow, or release cleanly");
 	CHECK(resolver_supervisor_entry_cancel(supervisor, entries[background_limit], &now)
 		&& resolver_supervisor_entry_schedule_interactive(supervisor, entries[RESOLVER_SUPERVISOR_JOB_LIMIT], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
 		"cancelled interactive capacity was not reusable");
@@ -413,7 +443,10 @@ static bool supervisor_test_cancel(void) {
 	CHECK(resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "cancel-test job could not be scheduled");
 	resolver_supervisor_job_view job_view;
 	CHECK(resolver_supervisor_entry_view(supervisor, entry, &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_DISPATCHED
-		&& resolver_supervisor_entry_cancel(supervisor, entry, &now), "dispatched job could not be marked cancelled");
+		&& resolver_supervisor_entry_cancel(supervisor, entry, &now)
+		&& resolver_supervisor_entry_background_release(supervisor, entry, &now) == RESOLVER_SUPERVISOR_RELEASE_OK
+		&& resolver_supervisor_entry_view(supervisor, entry, &job_view) && job_view.orphaned,
+		"cancelled dispatched job could not become zero-interest orphaned work");
 	int peer_fd = supervisor_fake_peer(supervisor, 0);
 	resolver_ipc_request request;
 	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "cancel-test request was not received");
@@ -423,7 +456,35 @@ static bool supervisor_test_cancel(void) {
 	resolver_cache_view cache_view;
 	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_job_count(supervisor) == 0
 		&& !resolver_supervisor_completion_take(supervisor, &completion) && resolver_cache_entry_view(entry, &now, &cache_view)
-		&& cache_view.status == RESOLVER_CACHE_VIEW_EMPTY, "cancelled response was not drained and discarded");
+		&& cache_view.status == RESOLVER_CACHE_VIEW_EMPTY, "cancel-then-orphan response was not drained and discarded");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
+		&& resolver_supervisor_entry_view(supervisor, entry, &job_view), "orphan-then-cancel job could not be scheduled");
+	peer_fd = supervisor_fake_peer(supervisor, 0);
+	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request)
+		&& resolver_supervisor_entry_background_release(supervisor, entry, &now) == RESOLVER_SUPERVISOR_RELEASE_OK
+		&& resolver_supervisor_entry_cancel(supervisor, entry, &now), "orphaned job could not be cancelled");
+	completed_at = supervisor_time_add(&job_view.dispatched_at, 1, 0);
+	CHECK(supervisor_response_address_send(peer_fd, &request, &completed_at, 30), "orphan-then-cancel response could not be sent");
+	now = completed_at;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_job_count(supervisor) == 0
+		&& !resolver_supervisor_completion_take(supervisor, &completion) && resolver_cache_entry_view(entry, &now, &cache_view)
+		&& cache_view.status == RESOLVER_CACHE_VIEW_EMPTY, "orphan-then-cancel response was not discarded");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
+		&& resolver_supervisor_entry_view(supervisor, entry, &job_view), "cancelled orphan reclaim job could not be scheduled");
+	uint64_t query_id = job_view.query_id;
+	peer_fd = supervisor_fake_peer(supervisor, 0);
+	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request)
+		&& resolver_supervisor_entry_background_release(supervisor, entry, &now) == RESOLVER_SUPERVISOR_RELEASE_OK
+		&& resolver_supervisor_entry_cancel(supervisor, entry, &now)
+		&& resolver_supervisor_entry_schedule_interactive(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED
+		&& resolver_supervisor_entry_view(supervisor, entry, &job_view) && !job_view.orphaned && job_view.query_id == query_id
+		&& job_view.interactive_interest_count == 1, "cancelled orphan was not reclaimed in place");
+	completed_at = supervisor_time_add(&job_view.dispatched_at, 1, 0);
+	CHECK(supervisor_response_address_send(peer_fd, &request, &completed_at, 30), "reclaimed cancel-test response could not be sent");
+	now = completed_at;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_completion_take(supervisor, &completion)
+		&& resolver_cache_entry_view(entry, &now, &cache_view) && cache_view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE,
+		"reclaimed cancelled orphan did not restore normal completion semantics");
 	test_result = true;
 
 cleanup:
@@ -554,6 +615,168 @@ cleanup:
 	return test_result;
 }
 
+static bool supervisor_test_interest_release(void) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 325 };
+	resolver_supervisor *supervisor = NULL;
+	resolver_cache *cache = NULL;
+	resolver_cache_entry *entries[4] = { 0 };
+	resolver_supervisor_completion completion = { 0 };
+	supervisor_fake_reset();
+	supervisor = resolver_supervisor_create(&signal_mask, &now);
+	cache = resolver_cache_create();
+	entries[0] = supervisor_cache_entry_create(cache, "release-retry.supervisor.test", ns_t_a);
+	entries[1] = supervisor_cache_entry_create(cache, "release-sending-a.supervisor.test", ns_t_a);
+	entries[2] = supervisor_cache_entry_create(cache, "release-sending-b.supervisor.test", ns_t_a);
+	entries[3] = supervisor_cache_entry_create(cache, "release-queued.supervisor.test", ns_t_a);
+	CHECK(supervisor != NULL && cache != NULL && entries[0] != NULL && entries[1] != NULL && entries[2] != NULL && entries[3] != NULL,
+		"interest-release test state could not be created");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
+		"retry-wait release job could not be scheduled");
+	resolver_supervisor_job_view job_view;
+	CHECK(resolver_supervisor_entry_view(supervisor, entries[0], &job_view) && job_view.background_interest_count == 1
+		&& job_view.state == RESOLVER_SUPERVISOR_JOB_DISPATCHED, "retry-wait release job was not dispatched with one background interest");
+	int peer_fd = supervisor_fake_peer(supervisor, 0);
+	resolver_ipc_request request;
+	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "retry-wait release request was not received");
+	struct timespec completed_at = supervisor_time_add(&job_view.dispatched_at, 1, 0);
+	CHECK(supervisor_response_temporary_send(peer_fd, &request, &completed_at), "retry-wait release response could not be sent");
+	now = completed_at;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK
+		&& resolver_supervisor_entry_view(supervisor, entries[0], &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT
+		&& resolver_supervisor_entry_background_release(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_RELEASE_OK
+		&& !resolver_supervisor_entry_view(supervisor, entries[0], &job_view), "last retry-wait interest did not destroy the job");
+	supervisor_send_blocked = true;
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entries[1], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
+		&& resolver_supervisor_entry_schedule(supervisor, entries[2], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
+		&& resolver_supervisor_entry_schedule(supervisor, entries[3], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
+		"sending and queued release jobs could not be scheduled");
+	supervisor_send_blocked = false;
+	CHECK(resolver_supervisor_entry_view(supervisor, entries[1], &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_SENDING
+		&& resolver_supervisor_entry_view(supervisor, entries[2], &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_SENDING
+		&& resolver_supervisor_entry_view(supervisor, entries[3], &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_QUEUED,
+		"blocked sends did not produce the expected SENDING and QUEUED states");
+	CHECK(resolver_supervisor_entry_background_release(supervisor, entries[3], &now) == RESOLVER_SUPERVISOR_RELEASE_OK
+		&& !resolver_supervisor_entry_view(supervisor, entries[3], &job_view), "last queued interest did not destroy the job");
+	CHECK(resolver_supervisor_entry_background_release(supervisor, entries[1], &now) == RESOLVER_SUPERVISOR_RELEASE_OK
+		&& !resolver_supervisor_entry_view(supervisor, entries[1], &job_view)
+		&& resolver_supervisor_entry_background_release(supervisor, entries[2], &now) == RESOLVER_SUPERVISOR_RELEASE_OK
+		&& !resolver_supervisor_entry_view(supervisor, entries[2], &job_view), "last sending interest did not detach and destroy the jobs");
+	CHECK(!resolver_supervisor_completion_take(supervisor, &completion) && resolver_supervisor_job_count(supervisor) == 0,
+		"released work left a completion or live job behind");
+	test_result = true;
+
+cleanup:
+	supervisor_completion_clear(&completion);
+	resolver_supervisor_destroy(supervisor);
+	for (size_t index = 0; index < 4; index++) {
+		resolver_cache_entry_release(entries[index]);
+	}
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
+static bool supervisor_test_orphan(void) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 340 };
+	resolver_supervisor *supervisor = NULL;
+	resolver_cache *cache = NULL;
+	resolver_cache_entry *complete_entry = NULL;
+	resolver_cache_entry *success_entry = NULL;
+	resolver_cache_entry *temporary_entry = NULL;
+	resolver_supervisor_completion completion = { 0 };
+	supervisor_fake_reset();
+	supervisor = resolver_supervisor_create(&signal_mask, &now);
+	cache = resolver_cache_create();
+	complete_entry = supervisor_cache_entry_create(cache, "orphan-complete.supervisor.test", ns_t_a);
+	success_entry = supervisor_cache_entry_create(cache, "orphan-success.supervisor.test", ns_t_a);
+	temporary_entry = supervisor_cache_entry_create(cache, "orphan-temporary.supervisor.test", ns_t_a);
+	CHECK(supervisor != NULL && cache != NULL && complete_entry != NULL && success_entry != NULL && temporary_entry != NULL,
+		"orphan test state could not be created");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, success_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
+		"orphan-success job could not be scheduled");
+	resolver_supervisor_job_view job_view;
+	CHECK(resolver_supervisor_entry_view(supervisor, success_entry, &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_DISPATCHED
+		&& job_view.background_interest_count == 1 && !job_view.orphaned, "orphan-success job did not start with one owner");
+	uint64_t query_id = job_view.query_id;
+	int peer_fd = supervisor_fake_peer(supervisor, 0);
+	resolver_ipc_request request;
+	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request)
+		&& resolver_supervisor_entry_interactive_release(supervisor, success_entry, &now) == RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT
+		&& resolver_supervisor_entry_background_release(supervisor, success_entry, &now) == RESOLVER_SUPERVISOR_RELEASE_OK
+		&& resolver_supervisor_entry_view(supervisor, success_entry, &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_DISPATCHED
+		&& job_view.background_interest_count == 0 && job_view.interactive_interest_count == 0 && job_view.orphaned && job_view.query_id == query_id,
+		"last dispatched interest did not create an in-place orphan or detect a mismatched release");
+	CHECK(resolver_supervisor_entry_schedule_interactive(supervisor, success_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED
+		&& resolver_supervisor_entry_view(supervisor, success_entry, &job_view) && !job_view.orphaned && job_view.query_id == query_id
+		&& job_view.interactive_interest_count == 1 && job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE
+		&& resolver_supervisor_entry_interactive_release(supervisor, success_entry, &now) == RESOLVER_SUPERVISOR_RELEASE_OK
+		&& resolver_supervisor_entry_view(supervisor, success_entry, &job_view) && job_view.orphaned && job_view.query_id == query_id,
+		"orphaned query was not reclaimed and released without restarting its attempt");
+	struct timespec completed_at = supervisor_time_add(&job_view.dispatched_at, 1, 0);
+	CHECK(supervisor_response_address_send(peer_fd, &request, &completed_at, 30), "orphan-success response could not be sent");
+	now = completed_at;
+	resolver_cache_view cache_view;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK
+		&& resolver_cache_entry_view(success_entry, &now, &cache_view) && cache_view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE
+		&& !resolver_supervisor_entry_view(supervisor, success_entry, &job_view) && !resolver_supervisor_completion_take(supervisor, &completion),
+		"orphaned success was not cached and retired without completion delivery");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, temporary_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
+		&& resolver_supervisor_entry_view(supervisor, temporary_entry, &job_view), "orphan-temporary job could not be scheduled");
+	peer_fd = supervisor_fake_peer(supervisor, 0);
+	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request)
+		&& resolver_supervisor_entry_background_release(supervisor, temporary_entry, &now) == RESOLVER_SUPERVISOR_RELEASE_OK,
+		"orphan-temporary job could not release its last interest");
+	completed_at = supervisor_time_add(&job_view.dispatched_at, 1, 0);
+	CHECK(supervisor_response_temporary_send(peer_fd, &request, &completed_at), "orphan-temporary response could not be sent");
+	now = completed_at;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK
+		&& !resolver_supervisor_entry_view(supervisor, temporary_entry, &job_view) && !resolver_supervisor_completion_take(supervisor, &completion),
+		"orphaned temporary result retried or produced a completion");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, temporary_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
+		&& resolver_supervisor_entry_view(supervisor, temporary_entry, &job_view), "orphan-timeout job could not be scheduled");
+	peer_fd = supervisor_fake_peer(supervisor, 0);
+	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request)
+		&& resolver_supervisor_entry_background_release(supervisor, temporary_entry, &now) == RESOLVER_SUPERVISOR_RELEASE_OK,
+		"orphan-timeout job could not release its last interest");
+	now = job_view.deadline;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK
+		&& !resolver_supervisor_entry_view(supervisor, temporary_entry, &job_view) && !resolver_supervisor_completion_take(supervisor, &completion),
+		"orphaned timeout retried or produced a completion");
+	CHECK(resolver_supervisor_entry_schedule_interactive(supervisor, complete_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
+		&& resolver_supervisor_entry_schedule_interactive(supervisor, complete_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED
+		&& resolver_supervisor_entry_view(supervisor, complete_entry, &job_view) && job_view.interactive_interest_count == 2,
+		"completion-satisfaction job did not acquire two interests");
+	peer_fd = supervisor_fake_peer(supervisor, 0);
+	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "completion-satisfaction request was not received");
+	completed_at = supervisor_time_add(&job_view.dispatched_at, 1, 0);
+	CHECK(supervisor_response_address_send(peer_fd, &request, &completed_at, 0), "completion-satisfaction response could not be sent");
+	now = completed_at;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK
+		&& resolver_supervisor_entry_view(supervisor, complete_entry, &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_COMPLETE
+		&& job_view.background_interest_count == 0 && job_view.interactive_interest_count == 0 && !job_view.orphaned
+		&& resolver_supervisor_entry_interactive_release(supervisor, complete_entry, &now) == RESOLVER_SUPERVISOR_RELEASE_SATISFIED
+		&& resolver_supervisor_completion_take(supervisor, &completion)
+		&& resolver_supervisor_entry_interactive_release(supervisor, complete_entry, &now) == RESOLVER_SUPERVISOR_RELEASE_SATISFIED,
+		"COMPLETE and post-take release were not both mapped to satisfied");
+	test_result = true;
+
+cleanup:
+	supervisor_completion_clear(&completion);
+	resolver_supervisor_destroy(supervisor);
+	resolver_cache_entry_release(complete_entry);
+	resolver_cache_entry_release(success_entry);
+	resolver_cache_entry_release(temporary_entry);
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
 static bool supervisor_test_priority(void) {
 	bool test_result = false;
 	sigset_t signal_mask;
@@ -583,7 +806,8 @@ static bool supervisor_test_priority(void) {
 		"background queue state was invalid");
 	CHECK(resolver_supervisor_entry_schedule_interactive(supervisor, entries[2], &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED
 		&& resolver_supervisor_entry_view(supervisor, entries[2], &job_view) && job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE
-		&& job_view.interactive_interest_count == 1 && resolver_supervisor_entry_interactive_release(supervisor, entries[2], &now)
+		&& job_view.interactive_interest_count == 1
+		&& resolver_supervisor_entry_interactive_release(supervisor, entries[2], &now) == RESOLVER_SUPERVISOR_RELEASE_OK
 		&& resolver_supervisor_entry_view(supervisor, entries[2], &job_view) && job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND
 		&& job_view.interactive_interest_count == 0 && job_view.state == RESOLVER_SUPERVISOR_JOB_QUEUED, "queued priority promotion or downgrade failed");
 	CHECK(resolver_supervisor_entry_schedule_interactive(supervisor, entries[3], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
@@ -622,9 +846,11 @@ static bool supervisor_test_priority(void) {
 		&& job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE && job_view.interactive_interest_count == 2,
 		"promoted background job was not dispatched first");
 	uint64_t query_id = job_view.query_id;
-	CHECK(resolver_supervisor_entry_interactive_release(supervisor, entries[2], &now) && resolver_supervisor_entry_view(supervisor, entries[2], &job_view)
+	CHECK(resolver_supervisor_entry_interactive_release(supervisor, entries[2], &now) == RESOLVER_SUPERVISOR_RELEASE_OK
+		&& resolver_supervisor_entry_view(supervisor, entries[2], &job_view)
 		&& job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE && job_view.interactive_interest_count == 1 && job_view.query_id == query_id
-		&& resolver_supervisor_entry_interactive_release(supervisor, entries[2], &now) && resolver_supervisor_entry_view(supervisor, entries[2], &job_view)
+		&& resolver_supervisor_entry_interactive_release(supervisor, entries[2], &now) == RESOLVER_SUPERVISOR_RELEASE_OK
+		&& resolver_supervisor_entry_view(supervisor, entries[2], &job_view)
 		&& job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND && job_view.interactive_interest_count == 0 && job_view.state == RESOLVER_SUPERVISOR_JOB_DISPATCHED
 		&& job_view.query_id == query_id, "last-waiter release did not downgrade dispatched work without restarting it");
 	completed_at = supervisor_time_add(&now, 1, 0);
@@ -778,6 +1004,54 @@ cleanup:
 	return test_result;
 }
 
+static bool supervisor_test_release_io(void) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 390 };
+	resolver_supervisor *epoll_supervisor = NULL;
+	resolver_supervisor *timer_supervisor = NULL;
+	resolver_cache *cache = NULL;
+	resolver_cache_entry *epoll_entry = NULL;
+	resolver_cache_entry *timer_entry = NULL;
+	supervisor_fake_reset();
+	epoll_supervisor = resolver_supervisor_create(&signal_mask, &now);
+	timer_supervisor = resolver_supervisor_create(&signal_mask, &now);
+	cache = resolver_cache_create();
+	epoll_entry = supervisor_cache_entry_create(cache, "release-epoll-io.supervisor.test", ns_t_a);
+	timer_entry = supervisor_cache_entry_create(cache, "release-timer-io.supervisor.test", ns_t_a);
+	CHECK(epoll_supervisor != NULL && timer_supervisor != NULL && cache != NULL && epoll_entry != NULL && timer_entry != NULL,
+		"release-IO test state could not be created");
+	supervisor_send_blocked = true;
+	CHECK(resolver_supervisor_entry_schedule(epoll_supervisor, epoll_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
+		"epoll-failure release job could not be scheduled");
+	supervisor_send_blocked = false;
+	CHECK(resolver_supervisor_entry_schedule(timer_supervisor, timer_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
+		"timer-failure release job could not be scheduled");
+	resolver_supervisor_job_view job_view;
+	CHECK(resolver_supervisor_entry_view(epoll_supervisor, epoll_entry, &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_SENDING,
+		"epoll-failure release job did not enter SENDING");
+	supervisor_epoll_failures = 1;
+	CHECK(resolver_supervisor_entry_background_release(epoll_supervisor, epoll_entry, &now) == RESOLVER_SUPERVISOR_RELEASE_IO
+		&& !resolver_supervisor_entry_view(epoll_supervisor, epoll_entry, &job_view), "SENDING release did not report epoll failure after consuming ownership");
+	CHECK(resolver_supervisor_entry_view(timer_supervisor, timer_entry, &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_DISPATCHED,
+		"timer-failure release job was not dispatched");
+	supervisor_timer_failures = 1;
+	CHECK(resolver_supervisor_entry_background_release(timer_supervisor, timer_entry, &now) == RESOLVER_SUPERVISOR_RELEASE_IO
+		&& resolver_supervisor_entry_view(timer_supervisor, timer_entry, &job_view) && job_view.orphaned && job_view.background_interest_count == 0,
+		"DISPATCHED release did not report timer failure after consuming ownership");
+	test_result = true;
+
+cleanup:
+	resolver_supervisor_destroy(epoll_supervisor);
+	resolver_supervisor_destroy(timer_supervisor);
+	resolver_cache_entry_release(epoll_entry);
+	resolver_cache_entry_release(timer_entry);
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
 static bool supervisor_test_retry(void) {
 	bool test_result = false;
 	sigset_t signal_mask;
@@ -819,7 +1093,8 @@ static bool supervisor_test_retry(void) {
 				&& retry_view.priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE && retry_view.interactive_interest_count == 1
 				&& retry_view.retry_at.tv_sec == retry_at.tv_sec && retry_view.retry_at.tv_nsec == retry_at.tv_nsec,
 				"retry-wait promotion bypassed backoff or failed to retain interest");
-			CHECK(resolver_supervisor_entry_interactive_release(supervisor, entry, &now) && resolver_supervisor_entry_view(supervisor, entry, &retry_view)
+			CHECK(resolver_supervisor_entry_interactive_release(supervisor, entry, &now) == RESOLVER_SUPERVISOR_RELEASE_OK
+				&& resolver_supervisor_entry_view(supervisor, entry, &retry_view)
 				&& retry_view.state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT && retry_view.priority == RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND
 				&& retry_view.interactive_interest_count == 0 && retry_view.retry_at.tv_sec == retry_at.tv_sec && retry_view.retry_at.tv_nsec == retry_at.tv_nsec,
 				"retry-wait interest release did not downgrade without changing backoff");
@@ -977,6 +1252,15 @@ dns_address_lookup_status __wrap_dns_address_lookup(const char *query_name, sa_f
 	return DNS_ADDRESS_LOOKUP_OK;
 }
 
+int __wrap_epoll_ctl(int epoll_fd, int operation, int fd, struct epoll_event *event) {
+	if (operation == EPOLL_CTL_MOD && supervisor_epoll_failures > 0) {
+		supervisor_epoll_failures--;
+		errno = EIO;
+		return -1;
+	}
+	return __real_epoll_ctl(epoll_fd, operation, fd, event);
+}
+
 int __wrap_kill(pid_t process_id, int signal_number) {
 	supervisor_test_helper *helper = supervisor_fake_find(process_id);
 	if (helper == NULL) {
@@ -1016,11 +1300,33 @@ int __wrap_resolver_helper_process_start(const sigset_t *signal_mask, const char
 	helper->last_signal = 0;
 	helper->peer_fd = sockets[1];
 	helper->process_id = (pid_t)(SUPERVISOR_TEST_PROCESS_BASE + (int)supervisor_helper_count);
+	helper->supervisor_fd = sockets[0];
 	snprintf(helper->process_name, sizeof(helper->process_name), "%s", process_name);
 	supervisor_helper_count++;
 	*process_id = helper->process_id;
 	*socket_fd = sockets[0];
 	return 0;
+}
+
+ssize_t __wrap_send(int socket_fd, const void *buffer, size_t length, int flags) {
+	if (supervisor_send_blocked) {
+		for (size_t index = 0; index < supervisor_helper_count; index++) {
+			if (supervisor_helpers[index].supervisor_fd == socket_fd) {
+				errno = EAGAIN;
+				return -1;
+			}
+		}
+	}
+	return __real_send(socket_fd, buffer, length, flags);
+}
+
+int __wrap_timerfd_settime(int fd, int flags, const struct itimerspec *new_value, struct itimerspec *old_value) {
+	if (supervisor_timer_failures > 0) {
+		supervisor_timer_failures--;
+		errno = EIO;
+		return -1;
+	}
+	return __real_timerfd_settime(fd, flags, new_value, old_value);
 }
 
 pid_t __wrap_waitpid(pid_t process_id, int *status, int options) {
@@ -1044,9 +1350,12 @@ int main(void) {
 	CHECK(supervisor_test_cancel(), "supervisor cancellation tests failed");
 	CHECK(supervisor_test_child_dispose(), "supervisor child-disposal tests failed");
 	CHECK(supervisor_test_completion(), "supervisor completion tests failed");
+	CHECK(supervisor_test_interest_release(), "supervisor interest-release tests failed");
+	CHECK(supervisor_test_orphan(), "supervisor orphan tests failed");
 	CHECK(supervisor_test_priority(), "supervisor priority tests failed");
 	CHECK(supervisor_test_protocol_and_recovery(), "supervisor protocol and recovery tests failed");
 	CHECK(supervisor_test_real_process(), "supervisor real-process tests failed");
+	CHECK(supervisor_test_release_io(), "supervisor release-IO tests failed");
 	CHECK(supervisor_test_retry(), "supervisor retry tests failed");
 	CHECK(supervisor_test_shutdown(), "supervisor shutdown tests failed");
 	CHECK(supervisor_test_timeout_and_order(), "supervisor deadline tests failed");

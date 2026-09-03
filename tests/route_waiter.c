@@ -574,12 +574,13 @@ cleanup:
 }
 
 /* section: functions (exported) */
-bool __wrap_resolver_supervisor_entry_interactive_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
+resolver_supervisor_release_status __wrap_resolver_supervisor_entry_interactive_release(resolver_supervisor *supervisor, resolver_cache_entry *entry,
+	const struct timespec *now) {
 	if (supervisor == NULL || entry == NULL || now == NULL || supervisor_mock.release_count >= sizeof(supervisor_mock.released) / sizeof(supervisor_mock.released[0])) {
-		return false;
+		return RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT;
 	}
 	supervisor_mock.released[supervisor_mock.release_count++] = entry;
-	return true;
+	return RESOLVER_SUPERVISOR_RELEASE_OK;
 }
 
 resolver_supervisor_schedule_status __wrap_resolver_supervisor_entry_schedule(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {

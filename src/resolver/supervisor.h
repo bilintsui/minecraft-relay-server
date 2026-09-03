@@ -119,15 +119,24 @@ typedef enum {
 	RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE
 } resolver_supervisor_priority;
 typedef struct {
+	size_t background_interest_count;
 	struct timespec deadline;
 	struct timespec dispatched_at;
 	size_t interactive_interest_count;
+	bool orphaned;
 	resolver_supervisor_priority priority;
 	uint64_t query_id;
 	struct timespec retry_at;
 	uint64_t retry_count;
 	resolver_supervisor_job_state state;
 } resolver_supervisor_job_view;
+typedef enum {
+	RESOLVER_SUPERVISOR_RELEASE_OK,
+	RESOLVER_SUPERVISOR_RELEASE_SATISFIED,
+	RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT,
+	RESOLVER_SUPERVISOR_RELEASE_IO,
+	RESOLVER_SUPERVISOR_RELEASE_TIME
+} resolver_supervisor_release_status;
 typedef enum {
 	RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
 	RESOLVER_SUPERVISOR_SCHEDULE_COALESCED,
@@ -149,11 +158,15 @@ resolver_supervisor *resolver_supervisor_create(const sigset_t *helper_signal_ma
 void resolver_supervisor_destroy(resolver_supervisor *supervisor);
 /* Use only in a forked non-listener child. This releases inherited local state without signalling or reaping listener-owned helper processes. The cache must outlive this call. */
 void resolver_supervisor_dispose_in_child(resolver_supervisor *supervisor);
+/* Release one interest retained by a STARTED or COALESCED background schedule. Completion releases every remaining interest implicitly. */
+resolver_supervisor_release_status resolver_supervisor_entry_background_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now);
 /* Cancelling a dispatched entry suppresses retry and completion but lets the current helper response drain normally. */
 bool resolver_supervisor_entry_cancel(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now);
 /* Release one interest retained by a STARTED or COALESCED interactive schedule. Completion releases every remaining interest implicitly. */
-bool resolver_supervisor_entry_interactive_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now);
-/* Background scheduling observes the reserved interactive headroom. A schedule-time IO result means the shared timer source failed and the caller must retire the supervisor. */
+resolver_supervisor_release_status resolver_supervisor_entry_interactive_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now);
+/* A STARTED or COALESCED result retains one background interest until release or completion. Background scheduling observes the reserved interactive headroom. A schedule-time IO result
+ * means the shared timer source failed and the caller must retire the supervisor without assuming ownership.
+ */
 resolver_supervisor_schedule_status resolver_supervisor_entry_schedule(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now);
 /* A STARTED or COALESCED result retains one interactive interest until release or completion. FRESH and COMPLETE retain no interest. */
 resolver_supervisor_schedule_status resolver_supervisor_entry_schedule_interactive(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now);

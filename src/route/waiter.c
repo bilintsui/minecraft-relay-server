@@ -75,10 +75,15 @@ static route_waiter_completion_status route_waiter_entry_overlay_records_copy(ro
 	return ROUTE_WAITER_COMPLETION_OK;
 }
 
+static bool route_waiter_release_succeeded(resolver_supervisor_release_status status) {
+	return status == RESOLVER_SUPERVISOR_RELEASE_OK || status == RESOLVER_SUPERVISOR_RELEASE_SATISFIED;
+}
+
 static bool route_waiter_entry_clear(route_waiter_entry *entry, resolver_supervisor *supervisor, const struct timespec *now) {
 	bool result = true;
 	if (entry->interest) {
-		result = supervisor != NULL && timeutil_valid(now) && resolver_supervisor_entry_interactive_release(supervisor, entry->entry, now);
+		result = supervisor != NULL && timeutil_valid(now)
+			&& route_waiter_release_succeeded(resolver_supervisor_entry_interactive_release(supervisor, entry->entry, now));
 		entry->interest = false;
 	}
 	route_waiter_entry_overlay_clear(entry);
@@ -115,7 +120,8 @@ static bool route_waiter_entries_interests_release(route_waiter *waiter, resolve
 	for (size_t entry_index = 0; entry_index < ROUTE_ENDPOINT_REQUIREMENT_LIMIT; entry_index++) {
 		route_waiter_entry *entry = &waiter->entries[entry_index];
 		if (entry->interest) {
-			bool released = supervisor != NULL && timeutil_valid(now) && resolver_supervisor_entry_interactive_release(supervisor, entry->entry, now);
+			bool released = supervisor != NULL && timeutil_valid(now)
+				&& route_waiter_release_succeeded(resolver_supervisor_entry_interactive_release(supervisor, entry->entry, now));
 			entry->interest = false;
 			result = released && result;
 		}
