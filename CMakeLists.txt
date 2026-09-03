@@ -179,7 +179,7 @@ if(BUILD_TESTING)
 	target_compile_definitions(route_endpoint_test PRIVATE _GNU_SOURCE)
 	target_link_libraries(route_endpoint_test -lcjson -lresolv)
 	set_target_properties(route_endpoint_test PROPERTIES
-		LINK_FLAGS "-Wl,--wrap=resolver_supervisor_entry_schedule -Wl,--wrap=route_generation_bindings -Wl,--wrap=route_generation_identity -Wl,--wrap=route_generation_resolution -Wl,--wrap=route_generation_routes")
+		LINK_FLAGS "-Wl,--wrap=resolver_supervisor_entry_background_release -Wl,--wrap=resolver_supervisor_entry_schedule -Wl,--wrap=route_generation_bindings -Wl,--wrap=route_generation_identity -Wl,--wrap=route_generation_resolution -Wl,--wrap=route_generation_routes")
 	add_test(NAME route_endpoint COMMAND route_endpoint_test)
 	add_executable(route_generation_test tests/route_generation.c src/route/generation.c)
 	target_include_directories(route_generation_test PRIVATE src)
@@ -219,7 +219,7 @@ if(BUILD_TESTING)
 	target_compile_definitions(route_waiter_test PRIVATE _GNU_SOURCE)
 	target_link_libraries(route_waiter_test -lcjson -lresolv)
 	set_target_properties(route_waiter_test PROPERTIES
-		LINK_FLAGS "-Wl,--wrap=resolver_supervisor_entry_interactive_release -Wl,--wrap=resolver_supervisor_entry_schedule -Wl,--wrap=resolver_supervisor_entry_schedule_interactive")
+		LINK_FLAGS "-Wl,--wrap=resolver_supervisor_entry_background_release -Wl,--wrap=resolver_supervisor_entry_interactive_release -Wl,--wrap=resolver_supervisor_entry_schedule -Wl,--wrap=resolver_supervisor_entry_schedule_interactive")
 	set_property(TARGET route_waiter_test APPEND_STRING PROPERTY LINK_FLAGS
 		" -Wl,--wrap=route_generation_bindings -Wl,--wrap=route_generation_identity -Wl,--wrap=route_generation_release")
 	set_property(TARGET route_waiter_test APPEND_STRING PROPERTY LINK_FLAGS
@@ -368,7 +368,7 @@ if(BUILD_TESTING)
 		target_compile_options(route_endpoint_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
 		target_link_libraries(route_endpoint_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all -lcjson -lresolv)
 		set_target_properties(route_endpoint_ubsan_test PROPERTIES
-			LINK_FLAGS "-Wl,--wrap=resolver_supervisor_entry_schedule -Wl,--wrap=route_generation_bindings -Wl,--wrap=route_generation_identity -Wl,--wrap=route_generation_resolution -Wl,--wrap=route_generation_routes")
+			LINK_FLAGS "-Wl,--wrap=resolver_supervisor_entry_background_release -Wl,--wrap=resolver_supervisor_entry_schedule -Wl,--wrap=route_generation_bindings -Wl,--wrap=route_generation_identity -Wl,--wrap=route_generation_resolution -Wl,--wrap=route_generation_routes")
 		add_test(NAME route_endpoint_ubsan COMMAND route_endpoint_ubsan_test)
 		set_tests_properties(route_endpoint_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(route_generation_ubsan_test tests/route_generation.c src/route/generation.c)
@@ -424,7 +424,7 @@ if(BUILD_TESTING)
 		target_compile_options(route_waiter_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
 		target_link_libraries(route_waiter_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all -lcjson -lresolv)
 		set_target_properties(route_waiter_ubsan_test PROPERTIES
-			LINK_FLAGS "-Wl,--wrap=resolver_supervisor_entry_interactive_release -Wl,--wrap=resolver_supervisor_entry_schedule -Wl,--wrap=resolver_supervisor_entry_schedule_interactive")
+			LINK_FLAGS "-Wl,--wrap=resolver_supervisor_entry_background_release -Wl,--wrap=resolver_supervisor_entry_interactive_release -Wl,--wrap=resolver_supervisor_entry_schedule -Wl,--wrap=resolver_supervisor_entry_schedule_interactive")
 		set_property(TARGET route_waiter_ubsan_test APPEND_STRING PROPERTY LINK_FLAGS
 			" -Wl,--wrap=route_generation_bindings -Wl,--wrap=route_generation_identity -Wl,--wrap=route_generation_release")
 		set_property(TARGET route_waiter_ubsan_test APPEND_STRING PROPERTY LINK_FLAGS

@@ -457,6 +457,13 @@ const route_table *__wrap_route_generation_routes(const route_generation *genera
 	return fixture == NULL ? NULL : fixture->routes;
 }
 
+resolver_supervisor_release_status __wrap_resolver_supervisor_entry_background_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
+	(void)supervisor;
+	(void)entry;
+	(void)now;
+	return RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT;
+}
+
 resolver_supervisor_schedule_status __wrap_resolver_supervisor_entry_schedule(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
 	(void)supervisor;
 	(void)entry;

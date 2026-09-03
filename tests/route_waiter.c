@@ -768,6 +768,13 @@ cleanup:
 }
 
 /* section: functions (exported) */
+resolver_supervisor_release_status __wrap_resolver_supervisor_entry_background_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
+	(void)supervisor;
+	(void)entry;
+	(void)now;
+	return RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT;
+}
+
 resolver_supervisor_release_status __wrap_resolver_supervisor_entry_interactive_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
 	if (supervisor == NULL || entry == NULL || now == NULL || supervisor_mock.release_count >= sizeof(supervisor_mock.released) / sizeof(supervisor_mock.released[0])) {
 		return RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT;
