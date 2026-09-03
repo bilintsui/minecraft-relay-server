@@ -353,6 +353,65 @@ cleanup:
 	return test_result;
 }
 
+static bool resolution_test_schedule_statuses(const hosts_table *hosts) {
+	static const char json[] = "[{\"vhost\":[\"route\"],\"address\":\"dns.example\",\"port\":25565}]";
+	static const struct {
+		resolver_supervisor_schedule_status input;
+		route_prewarm_status output;
+	} fixtures[] = {
+		{ RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT, ROUTE_PREWARM_BAD_ARGUMENT },
+		{ RESOLVER_SUPERVISOR_SCHEDULE_IO, ROUTE_PREWARM_IO },
+		{ RESOLVER_SUPERVISOR_SCHEDULE_LIMIT, ROUTE_PREWARM_CAPACITY },
+		{ RESOLVER_SUPERVISOR_SCHEDULE_MEMORY, ROUTE_PREWARM_MEMORY },
+		{ RESOLVER_SUPERVISOR_SCHEDULE_TIME, ROUTE_PREWARM_TIME }
+	};
+	bool test_result = false;
+	conf config = { 0 };
+	resolver_cache *cache = NULL;
+	route_bindings *bindings = NULL;
+	route_resolution *resolution = NULL;
+	route_table *routes = NULL;
+	const struct timespec now = { .tv_sec = 250 };
+	resolver_supervisor *supervisor = (resolver_supervisor *)(uintptr_t)1;
+	for (size_t fixture_index = 0; fixture_index < sizeof(fixtures) / sizeof(fixtures[0]); fixture_index++) {
+		cache = resolver_cache_create();
+		CHECK(cache != NULL && resolution_bindings_build(json, hosts, cache, &config, &routes, &bindings), "schedule-status fixtures could not be prepared");
+		CHECK(route_resolution_build(bindings, hosts, cache, &now, &resolution) == ROUTE_RESOLUTION_BUILD_OK && resolution != NULL,
+			"schedule-status coordinator could not be built");
+		resolver_cache_entry *entry = NULL;
+		CHECK(route_bindings_entry_get(bindings, 0, &entry), "schedule-status entry could not be read");
+		resolution_schedule_reset(supervisor, &now);
+		resolution_schedule_fixtures[0] = (resolution_schedule_fixture){ .entry = entry, .status = fixtures[fixture_index].input };
+		resolution_schedule_fixture_count = 1;
+		CHECK(route_resolution_schedule(resolution, supervisor, &now, 1) == fixtures[fixture_index].output && resolution_schedule_fixture_index == 1,
+			"schedule status was mapped incorrectly");
+		resolution_schedule_reset(supervisor, &now);
+		resolution_schedule_fixtures[0] = (resolution_schedule_fixture){ .entry = entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_STARTED };
+		resolution_schedule_fixture_count = 1;
+		CHECK(route_resolution_schedule(resolution, supervisor, &now, 1) == ROUTE_PREWARM_MORE && resolution_schedule_fixture_index == 1,
+			"failed schedule advanced past its rejected entry");
+		route_resolution_destroy(resolution);
+		resolution = NULL;
+		route_bindings_destroy(bindings);
+		bindings = NULL;
+		resolver_cache_destroy(cache);
+		cache = NULL;
+		route_table_destroy(routes);
+		routes = NULL;
+		cJSON_Delete(config.proxy);
+		config.proxy = NULL;
+	}
+	test_result = true;
+
+cleanup:
+	route_resolution_destroy(resolution);
+	route_bindings_destroy(bindings);
+	resolver_cache_destroy(cache);
+	route_table_destroy(routes);
+	cJSON_Delete(config.proxy);
+	return test_result;
+}
+
 static bool resolution_test_shared_targets(const hosts_table *hosts) {
 	static const char json[] = "["
 		"{\"vhost\":[\"one\"],\"address\":\"one.example\"},"
@@ -495,6 +554,7 @@ int main(void) {
 		"cannot load route-resolution hosts fixture");
 	CHECK(resolution_test_arguments(hosts), "route-resolution argument tests failed");
 	CHECK(resolution_test_generation(hosts), "route-resolution generation tests failed");
+	CHECK(resolution_test_schedule_statuses(hosts), "route-resolution schedule-status tests failed");
 	CHECK(resolution_test_shared_targets(hosts), "route-resolution shared-target tests failed");
 	CHECK(resolution_test_srv_terminals(hosts), "route-resolution SRV terminal tests failed");
 	test_result = EXIT_SUCCESS;

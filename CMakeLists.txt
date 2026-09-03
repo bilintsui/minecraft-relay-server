@@ -197,7 +197,6 @@ if(BUILD_TESTING)
 	target_include_directories(route_prewarmer_test PRIVATE src)
 	target_compile_definitions(route_prewarmer_test PRIVATE _GNU_SOURCE)
 	target_link_libraries(route_prewarmer_test -lcjson -lresolv)
-	set_target_properties(route_prewarmer_test PROPERTIES LINK_FLAGS "-Wl,--wrap=resolver_supervisor_entry_schedule")
 	add_test(NAME route_prewarmer COMMAND route_prewarmer_test)
 	add_executable(route_resolution_test
 		tests/route_resolution.c src/network.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/hosts.c
@@ -397,7 +396,6 @@ if(BUILD_TESTING)
 		target_compile_definitions(route_prewarmer_ubsan_test PRIVATE _GNU_SOURCE)
 		target_compile_options(route_prewarmer_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
 		target_link_libraries(route_prewarmer_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all -lcjson -lresolv)
-		set_target_properties(route_prewarmer_ubsan_test PROPERTIES LINK_FLAGS "-Wl,--wrap=resolver_supervisor_entry_schedule")
 		add_test(NAME route_prewarmer_ubsan COMMAND route_prewarmer_ubsan_test)
 		set_tests_properties(route_prewarmer_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(route_resolution_ubsan_test

@@ -847,7 +847,7 @@ route_prewarm_status route_resolution_schedule(route_resolution *resolution, res
 	size_t calls = 0;
 	while (calls < batch_limit && !route_prewarmer_complete(&resolution->prewarmer)) {
 		resolver_cache_entry *cache_entry = NULL;
-		if (!route_bindings_entry_get(resolution->bindings, resolution->prewarmer.next_entry_index, &cache_entry)) {
+		if (!route_prewarmer_entry_get(&resolution->prewarmer, &cache_entry)) {
 			return ROUTE_PREWARM_BAD_ARGUMENT;
 		}
 		route_resolution_entry *entry = route_resolution_entry_find(resolution, cache_entry);
@@ -855,16 +855,21 @@ route_prewarm_status route_resolution_schedule(route_resolution *resolution, res
 			return ROUTE_PREWARM_BAD_ARGUMENT;
 		}
 		if (entry->terminal) {
-			resolution->prewarmer.next_entry_index++;
+			if (!route_prewarmer_advance(&resolution->prewarmer)) {
+				return ROUTE_PREWARM_BAD_ARGUMENT;
+			}
 			continue;
 		}
-		route_prewarm_step step = { 0 };
-		route_prewarm_status status = route_prewarmer_step(&resolution->prewarmer, supervisor, now, &step);
+		resolver_supervisor_schedule_status schedule_status = resolver_supervisor_entry_schedule(supervisor, cache_entry, now);
+		route_prewarm_status status = route_resolution_schedule_status(schedule_status);
 		calls++;
 		if (status != ROUTE_PREWARM_COMPLETE && status != ROUTE_PREWARM_MORE) {
 			return status;
 		}
-		if (step.schedule_status == RESOLVER_SUPERVISOR_SCHEDULE_FRESH) {
+		if (!route_prewarmer_advance(&resolution->prewarmer)) {
+			return ROUTE_PREWARM_BAD_ARGUMENT;
+		}
+		if (schedule_status == RESOLVER_SUPERVISOR_SCHEDULE_FRESH) {
 			if (!route_resolution_entry_fresh_observe(resolution, entry, now)) {
 				return ROUTE_PREWARM_BAD_ARGUMENT;
 			}

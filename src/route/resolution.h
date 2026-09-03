@@ -19,7 +19,6 @@
 #include "../resolver/hosts.h"
 #include "../resolver/supervisor.h"
 #include "bindings.h"
-#include "prewarmer.h"
 
 /* section: types */
 typedef struct route_resolution route_resolution;
@@ -53,6 +52,15 @@ typedef enum {
 	ROUTE_RESOLUTION_TARGET_HOSTS,
 	ROUTE_RESOLUTION_TARGET_DNS
 } route_resolution_target_source;
+typedef enum {
+	ROUTE_PREWARM_COMPLETE,
+	ROUTE_PREWARM_MORE,
+	ROUTE_PREWARM_CAPACITY,
+	ROUTE_PREWARM_BAD_ARGUMENT,
+	ROUTE_PREWARM_IO,
+	ROUTE_PREWARM_MEMORY,
+	ROUTE_PREWARM_TIME
+} route_prewarm_status;
 typedef struct {
 	const net_addr *addresses;
 	size_t address_count;
