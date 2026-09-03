@@ -75,21 +75,77 @@ static route_waiter_completion_status route_waiter_entry_overlay_records_copy(ro
 	return ROUTE_WAITER_COMPLETION_OK;
 }
 
-static bool route_waiter_release_succeeded(resolver_supervisor_release_status status) {
-	return status == RESOLVER_SUPERVISOR_RELEASE_OK || status == RESOLVER_SUPERVISOR_RELEASE_SATISFIED;
+static route_waiter_destroy_status route_waiter_destroy_status_from_release(resolver_supervisor_release_status status) {
+	switch (status) {
+		case RESOLVER_SUPERVISOR_RELEASE_OK:
+		case RESOLVER_SUPERVISOR_RELEASE_SATISFIED:
+			return ROUTE_WAITER_DESTROY_OK;
+		case RESOLVER_SUPERVISOR_RELEASE_IO:
+			return ROUTE_WAITER_DESTROY_IO;
+		case RESOLVER_SUPERVISOR_RELEASE_TIME:
+			return ROUTE_WAITER_DESTROY_TIME;
+		case RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT:
+		default:
+			return ROUTE_WAITER_DESTROY_BAD_ARGUMENT;
+	}
 }
 
-static bool route_waiter_entry_clear(route_waiter_entry *entry, resolver_supervisor *supervisor, const struct timespec *now) {
-	bool result = true;
-	if (entry->interest) {
-		result = supervisor != NULL && timeutil_valid(now)
-			&& route_waiter_release_succeeded(resolver_supervisor_entry_interactive_release(supervisor, entry->entry, now));
-		entry->interest = false;
+static route_waiter_destroy_status route_waiter_destroy_status_merge(route_waiter_destroy_status result, route_waiter_destroy_status status) {
+	return result == ROUTE_WAITER_DESTROY_OK ? status : result;
+}
+
+static route_waiter_status route_waiter_status_from_destroy(route_waiter_destroy_status status) {
+	switch (status) {
+		case ROUTE_WAITER_DESTROY_IO:
+			return ROUTE_WAITER_IO;
+		case ROUTE_WAITER_DESTROY_TIME:
+			return ROUTE_WAITER_TIME;
+		case ROUTE_WAITER_DESTROY_BAD_ARGUMENT:
+			return ROUTE_WAITER_BAD_ARGUMENT;
+		case ROUTE_WAITER_DESTROY_OK:
+		default:
+			return ROUTE_WAITER_PENDING;
 	}
+}
+
+static route_waiter_destroy_status route_waiter_entry_interest_release(route_waiter_entry *entry, resolver_supervisor *supervisor, const struct timespec *now) {
+	if (entry == NULL) {
+		return ROUTE_WAITER_DESTROY_BAD_ARGUMENT;
+	}
+	if (!entry->interest) {
+		return ROUTE_WAITER_DESTROY_OK;
+	}
+	entry->interest = false;
+	resolver_supervisor_release_status release_status;
+	if (supervisor == NULL || now == NULL) {
+		release_status = RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT;
+	} else if (!timeutil_valid(now)) {
+		release_status = RESOLVER_SUPERVISOR_RELEASE_TIME;
+	} else {
+		release_status = resolver_supervisor_entry_interactive_release(supervisor, entry->entry, now);
+	}
+	return route_waiter_destroy_status_from_release(release_status);
+}
+
+static route_waiter_destroy_status route_waiter_entry_clear(route_waiter_entry *entry, resolver_supervisor *supervisor, const struct timespec *now) {
+	if (entry == NULL) {
+		return ROUTE_WAITER_DESTROY_BAD_ARGUMENT;
+	}
+	route_waiter_destroy_status result = route_waiter_entry_interest_release(entry, supervisor, now);
 	route_waiter_entry_overlay_clear(entry);
 	resolver_cache_entry_release(entry->entry);
 	memset(entry, 0, sizeof(*entry));
 	return result;
+}
+
+static void route_waiter_entry_dispose(route_waiter_entry *entry) {
+	if (entry == NULL) {
+		return;
+	}
+	entry->interest = false;
+	route_waiter_entry_overlay_clear(entry);
+	resolver_cache_entry_release(entry->entry);
+	memset(entry, 0, sizeof(*entry));
 }
 
 static route_waiter_entry *route_waiter_entry_find(route_waiter *waiter, const resolver_cache_entry *entry) {
@@ -115,15 +171,16 @@ static const route_endpoint_overlay *route_waiter_entry_overlays_link(route_wait
 	return head;
 }
 
-static bool route_waiter_entries_interests_release(route_waiter *waiter, resolver_supervisor *supervisor, const struct timespec *now) {
-	bool result = true;
+static route_waiter_destroy_status route_waiter_entries_interests_release(route_waiter *waiter, resolver_supervisor *supervisor, const struct timespec *now) {
+	if (waiter == NULL) {
+		return ROUTE_WAITER_DESTROY_BAD_ARGUMENT;
+	}
+	route_waiter_destroy_status result = ROUTE_WAITER_DESTROY_OK;
 	for (size_t entry_index = 0; entry_index < ROUTE_ENDPOINT_REQUIREMENT_LIMIT; entry_index++) {
 		route_waiter_entry *entry = &waiter->entries[entry_index];
 		if (entry->interest) {
-			bool released = supervisor != NULL && timeutil_valid(now)
-				&& route_waiter_release_succeeded(resolver_supervisor_entry_interactive_release(supervisor, entry->entry, now));
-			entry->interest = false;
-			result = released && result;
+			route_waiter_destroy_status status = route_waiter_entry_interest_release(entry, supervisor, now);
+			result = route_waiter_destroy_status_merge(result, status);
 		}
 	}
 	return result;
@@ -138,11 +195,15 @@ static route_waiter_status route_waiter_entries_reconcile(route_waiter *waiter, 
 			needed[(size_t)(existing - waiter->entries)] = true;
 		}
 	}
+	route_waiter_destroy_status clear_status = ROUTE_WAITER_DESTROY_OK;
 	for (size_t entry_index = 0; entry_index < ROUTE_ENDPOINT_REQUIREMENT_LIMIT; entry_index++) {
-		if (waiter->entries[entry_index].entry != NULL && !needed[entry_index]
-			&& !route_waiter_entry_clear(&waiter->entries[entry_index], supervisor, now)) {
-			return ROUTE_WAITER_BAD_ARGUMENT;
+		if (waiter->entries[entry_index].entry != NULL && !needed[entry_index]) {
+			route_waiter_destroy_status status = route_waiter_entry_clear(&waiter->entries[entry_index], supervisor, now);
+			clear_status = route_waiter_destroy_status_merge(clear_status, status);
 		}
+	}
+	if (clear_status != ROUTE_WAITER_DESTROY_OK) {
+		return route_waiter_status_from_destroy(clear_status);
 	}
 	for (size_t requirement_index = 0; requirement_index < requirements->count; requirement_index++) {
 		resolver_cache_entry *cache_entry = requirements->items[requirement_index].entry;
@@ -182,9 +243,9 @@ static route_waiter_status route_waiter_status_from_endpoint(route_endpoint_sele
 }
 
 static route_waiter_status route_waiter_terminal_set(route_waiter *waiter, route_waiter_status status, resolver_supervisor *supervisor, const struct timespec *now) {
-	if (!route_waiter_entries_interests_release(waiter, supervisor, now)) {
-		waiter->status = ROUTE_WAITER_BAD_ARGUMENT;
-		return waiter->status;
+	route_waiter_destroy_status release_status = route_waiter_entries_interests_release(waiter, supervisor, now);
+	if (release_status != ROUTE_WAITER_DESTROY_OK) {
+		status = route_waiter_status_from_destroy(release_status);
 	}
 	waiter->status = status;
 	return status;
@@ -292,22 +353,37 @@ bool route_waiter_deadline(const route_waiter *waiter, struct timespec *result) 
 	return true;
 }
 
-bool route_waiter_destroy(route_waiter *waiter, resolver_supervisor *supervisor, const struct timespec *now) {
+route_waiter_destroy_status route_waiter_destroy(route_waiter *waiter, resolver_supervisor *supervisor, const struct timespec *now) {
 	if (waiter == NULL) {
-		return true;
+		return ROUTE_WAITER_DESTROY_OK;
 	}
-	bool result = true;
+	route_waiter_destroy_status result = ROUTE_WAITER_DESTROY_OK;
 	for (size_t entry_index = 0; entry_index < ROUTE_ENDPOINT_REQUIREMENT_LIMIT; entry_index++) {
-		result = route_waiter_entry_clear(&waiter->entries[entry_index], supervisor, now) && result;
+		route_waiter_destroy_status status = route_waiter_entry_clear(&waiter->entries[entry_index], supervisor, now);
+		result = route_waiter_destroy_status_merge(result, status);
 	}
 	route_generation_release(waiter->generation);
 	free(waiter);
 	return result;
 }
 
+void route_waiter_dispose(route_waiter *waiter) {
+	if (waiter == NULL) {
+		return;
+	}
+	for (size_t entry_index = 0; entry_index < ROUTE_ENDPOINT_REQUIREMENT_LIMIT; entry_index++) {
+		route_waiter_entry_dispose(&waiter->entries[entry_index]);
+	}
+	route_generation_release(waiter->generation);
+	free(waiter);
+}
+
 route_waiter_status route_waiter_progress(route_waiter *waiter, resolver_supervisor *supervisor, const struct timespec *now) {
-	if (waiter == NULL || supervisor == NULL || !timeutil_valid(now)) {
+	if (waiter == NULL || supervisor == NULL || now == NULL) {
 		return ROUTE_WAITER_BAD_ARGUMENT;
+	}
+	if (!timeutil_valid(now)) {
+		return ROUTE_WAITER_TIME;
 	}
 	if (waiter->status != ROUTE_WAITER_PENDING) {
 		return waiter->status;

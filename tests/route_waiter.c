@@ -58,9 +58,12 @@ typedef struct {
 	route_table *routes;
 } waiter_fixture;
 typedef struct {
+	resolver_supervisor_release_status default_release_status;
 	resolver_supervisor_schedule_status default_status;
 	resolver_cache_entry *released[32];
 	size_t release_count;
+	resolver_supervisor_release_status release_statuses[32];
+	size_t release_status_count;
 	resolver_cache_entry *scheduled[32];
 	size_t schedule_count;
 } waiter_supervisor_mock;
@@ -218,7 +221,13 @@ static int waiter_fixture_write(const char *filename) {
 
 static void waiter_mock_reset(resolver_supervisor_schedule_status status) {
 	memset(&supervisor_mock, 0, sizeof(supervisor_mock));
+	supervisor_mock.default_release_status = RESOLVER_SUPERVISOR_RELEASE_OK;
 	supervisor_mock.default_status = status;
+}
+
+static void waiter_mock_release_reset(resolver_supervisor_release_status status) {
+	supervisor_mock.default_release_status = status;
+	supervisor_mock.release_status_count = 0;
 }
 
 static p_proxy waiter_proxy(sa_family_t family) {
@@ -276,7 +285,8 @@ static bool waiter_test_arguments(const hosts_table *hosts) {
 	CHECK(!route_waiter_snapshot_take(waiter, &snapshot) && snapshot.generation_identity == 0, "pending waiter exposed a snapshot");
 	CHECK(route_waiter_completion_observe(NULL, NULL) == ROUTE_WAITER_COMPLETION_BAD_ARGUMENT,
 		"invalid completion-observe arguments were accepted");
-	CHECK(route_waiter_destroy(waiter, NULL, NULL) && fixture.reference_count == 1 && route_waiter_destroy(NULL, NULL, NULL),
+	CHECK(route_waiter_destroy(waiter, NULL, NULL) == ROUTE_WAITER_DESTROY_OK && fixture.reference_count == 1
+		&& route_waiter_destroy(NULL, NULL, NULL) == ROUTE_WAITER_DESTROY_OK,
 		"idle waiter destruction or generation release failed");
 	waiter = NULL;
 	test_result = true;
@@ -317,6 +327,39 @@ cleanup:
 	return test_result;
 }
 
+static bool waiter_test_completion_clears_interest(const hosts_table *hosts) {
+	bool test_result = false;
+	waiter_fixture fixture;
+	const struct timespec now = { .tv_sec = 100 };
+	const struct timespec completed_at = { .tv_sec = 101 };
+	p_proxy inbound = waiter_proxy(AF_INET6);
+	route_waiter *waiter = NULL;
+	resolver_supervisor *supervisor = (resolver_supervisor *)&supervisor_mock;
+	waiter_mock_reset(RESOLVER_SUPERVISOR_SCHEDULE_STARTED);
+	CHECK(waiter_fixture_build(&fixture, hosts, &now) && route_waiter_create((route_generation *)&fixture, "dns", &inbound, &now, &waiter) == ROUTE_WAITER_CREATE_OK
+		&& route_waiter_progress(waiter, supervisor, &now) == ROUTE_WAITER_PENDING && supervisor_mock.schedule_count == 2,
+		"completion-interest waiter could not acquire both interests");
+	route_binding_view binding;
+	CHECK(waiter_binding_get(&fixture, "dns", &binding, NULL), "completion-interest binding was unavailable");
+	dns_address_record record;
+	resolver_supervisor_completion completion;
+	CHECK(waiter_completion_address(binding.ipv4_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_OK, &completed_at, "192.0.2.81", &record,
+		&completion), "completion-interest payload could not be prepared");
+	completion.response.payload.address.address_count = DNS_ADDRESS_RECORD_LIMIT + 1U;
+	CHECK(route_waiter_completion_observe(waiter, &completion) == ROUTE_WAITER_COMPLETION_BAD_ARGUMENT,
+		"malformed transient completion was accepted");
+	route_waiter_destroy_status destroy_status = route_waiter_destroy(waiter, supervisor, &completed_at);
+	waiter = NULL;
+	CHECK(destroy_status == ROUTE_WAITER_DESTROY_OK && supervisor_mock.release_count == 1 && supervisor_mock.released[0] == binding.ipv6_entry,
+		"completion observation did not clear interest before transient-payload processing");
+	test_result = true;
+
+cleanup:
+	route_waiter_destroy(waiter, supervisor, &completed_at);
+	waiter_fixture_destroy(&fixture);
+	return test_result;
+}
+
 static bool waiter_test_dns(const hosts_table *hosts) {
 	bool test_result = false;
 	waiter_fixture fixture;
@@ -347,7 +390,7 @@ static bool waiter_test_dns(const hosts_table *hosts) {
 	resolver_cache_view view;
 	CHECK(resolver_cache_entry_view(binding.ipv4_entry, &completed_at, &view) && view.status == RESOLVER_CACHE_VIEW_EMPTY,
 		"TTL-zero waiter result leaked into the shared cache");
-	CHECK(route_waiter_destroy(waiter, supervisor, &completed_at) && supervisor_mock.release_count == 1 && fixture.reference_count == 1,
+	CHECK(route_waiter_destroy(waiter, supervisor, &completed_at) == ROUTE_WAITER_DESTROY_OK && supervisor_mock.release_count == 1 && fixture.reference_count == 1,
 		"ready waiter released an interactive interest twice or retained its generation");
 	waiter = NULL;
 	test_result = true;
@@ -368,22 +411,26 @@ static bool waiter_test_errors(const hosts_table *hosts) {
 	CHECK(waiter_fixture_build(&fixture, hosts, &now), "waiter error fixture could not be built");
 	waiter_mock_reset(RESOLVER_SUPERVISOR_SCHEDULE_LIMIT);
 	CHECK(route_waiter_create((route_generation *)&fixture, "dns", &inbound, &now, &waiter) == ROUTE_WAITER_CREATE_OK
-		&& route_waiter_progress(waiter, supervisor, &now) == ROUTE_WAITER_UNAVAILABLE && route_waiter_destroy(waiter, supervisor, &now),
+		&& route_waiter_progress(waiter, supervisor, &now) == ROUTE_WAITER_UNAVAILABLE
+		&& route_waiter_destroy(waiter, supervisor, &now) == ROUTE_WAITER_DESTROY_OK,
 		"local interactive capacity failure did not make only the route unavailable");
 	waiter = NULL;
 	waiter_mock_reset(RESOLVER_SUPERVISOR_SCHEDULE_MEMORY);
 	CHECK(route_waiter_create((route_generation *)&fixture, "dns", &inbound, &now, &waiter) == ROUTE_WAITER_CREATE_OK
-		&& route_waiter_progress(waiter, supervisor, &now) == ROUTE_WAITER_UNAVAILABLE && route_waiter_destroy(waiter, supervisor, &now),
+		&& route_waiter_progress(waiter, supervisor, &now) == ROUTE_WAITER_UNAVAILABLE
+		&& route_waiter_destroy(waiter, supervisor, &now) == ROUTE_WAITER_DESTROY_OK,
 		"local interactive memory failure did not make only the route unavailable");
 	waiter = NULL;
 	waiter_mock_reset(RESOLVER_SUPERVISOR_SCHEDULE_IO);
 	CHECK(route_waiter_create((route_generation *)&fixture, "dns", &inbound, &now, &waiter) == ROUTE_WAITER_CREATE_OK
-		&& route_waiter_progress(waiter, supervisor, &now) == ROUTE_WAITER_IO && route_waiter_destroy(waiter, supervisor, &now),
+		&& route_waiter_progress(waiter, supervisor, &now) == ROUTE_WAITER_IO
+		&& route_waiter_destroy(waiter, supervisor, &now) == ROUTE_WAITER_DESTROY_OK,
 		"shared resolver IO failure was not propagated");
 	waiter = NULL;
 	waiter_mock_reset(RESOLVER_SUPERVISOR_SCHEDULE_TIME);
 	CHECK(route_waiter_create((route_generation *)&fixture, "dns", &inbound, &now, &waiter) == ROUTE_WAITER_CREATE_OK
-		&& route_waiter_progress(waiter, supervisor, &now) == ROUTE_WAITER_TIME && route_waiter_destroy(waiter, supervisor, &now),
+		&& route_waiter_progress(waiter, supervisor, &now) == ROUTE_WAITER_TIME
+		&& route_waiter_destroy(waiter, supervisor, &now) == ROUTE_WAITER_DESTROY_OK,
 		"shared resolver time failure was not propagated");
 	waiter = NULL;
 	CHECK(fixture.reference_count == 1, "error waiters leaked generation references");
@@ -518,6 +565,153 @@ cleanup:
 	return test_result;
 }
 
+static bool waiter_test_release_statuses(const hosts_table *hosts) {
+	static const resolver_supervisor_release_status release_statuses[] = {
+		RESOLVER_SUPERVISOR_RELEASE_OK,
+		RESOLVER_SUPERVISOR_RELEASE_SATISFIED,
+		RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT,
+		RESOLVER_SUPERVISOR_RELEASE_IO,
+		RESOLVER_SUPERVISOR_RELEASE_TIME
+	};
+	static const route_waiter_destroy_status destroy_statuses[] = {
+		ROUTE_WAITER_DESTROY_OK,
+		ROUTE_WAITER_DESTROY_OK,
+		ROUTE_WAITER_DESTROY_BAD_ARGUMENT,
+		ROUTE_WAITER_DESTROY_IO,
+		ROUTE_WAITER_DESTROY_TIME
+	};
+	bool test_result = false;
+	waiter_fixture fixture;
+	const struct timespec now = { .tv_sec = 100 };
+	p_proxy inbound = waiter_proxy(AF_INET6);
+	resolver_supervisor *supervisor = (resolver_supervisor *)&supervisor_mock;
+	route_waiter *waiter = NULL;
+	route_waiter_destroy_status result;
+	for (size_t status_index = 0; status_index < sizeof(release_statuses) / sizeof(release_statuses[0]); status_index++) {
+		waiter_mock_reset(RESOLVER_SUPERVISOR_SCHEDULE_STARTED);
+		waiter_mock_release_reset(release_statuses[status_index]);
+		CHECK(waiter_fixture_build(&fixture, hosts, &now) && route_waiter_create((route_generation *)&fixture, "dns", &inbound, &now, &waiter) == ROUTE_WAITER_CREATE_OK
+			&& route_waiter_progress(waiter, supervisor, &now) == ROUTE_WAITER_PENDING && supervisor_mock.schedule_count == 2,
+			"release-status waiter could not acquire both interests");
+		result = route_waiter_destroy(waiter, supervisor, &now);
+		waiter = NULL;
+		CHECK(result == destroy_statuses[status_index] && supervisor_mock.release_count == 2 && fixture.reference_count == 1,
+			"waiter destroy did not preserve the supervisor release status");
+		waiter_fixture_destroy(&fixture);
+	}
+	waiter_mock_reset(RESOLVER_SUPERVISOR_SCHEDULE_STARTED);
+	CHECK(waiter_fixture_build(&fixture, hosts, &now), "completion-take fixture could not be built");
+	CHECK(route_waiter_create((route_generation *)&fixture, "dns", &inbound, &now, &waiter) == ROUTE_WAITER_CREATE_OK
+		&& route_waiter_progress(waiter, supervisor, &now) == ROUTE_WAITER_PENDING && supervisor_mock.schedule_count == 2,
+		"completion-take waiter could not acquire both interests");
+	/* The first release models a completion-take that removed its job before waiter destruction. */
+	supervisor_mock.release_statuses[0] = RESOLVER_SUPERVISOR_RELEASE_SATISFIED;
+	supervisor_mock.release_status_count = 1;
+	result = route_waiter_destroy(waiter, supervisor, &now);
+	waiter = NULL;
+	CHECK(result == ROUTE_WAITER_DESTROY_OK && supervisor_mock.release_count == 2 && fixture.reference_count == 1,
+		"completion-take SATISFIED release was not treated as normal destruction");
+	waiter_fixture_destroy(&fixture);
+
+	waiter_mock_reset(RESOLVER_SUPERVISOR_SCHEDULE_STARTED);
+	CHECK(waiter_fixture_build(&fixture, hosts, &now), "batch-release fixture could not be built");
+	CHECK(route_waiter_create((route_generation *)&fixture, "dns", &inbound, &now, &waiter) == ROUTE_WAITER_CREATE_OK
+		&& route_waiter_progress(waiter, supervisor, &now) == ROUTE_WAITER_PENDING && supervisor_mock.schedule_count == 2,
+		"batch-release waiter could not acquire both interests");
+	supervisor_mock.release_statuses[0] = RESOLVER_SUPERVISOR_RELEASE_IO;
+	supervisor_mock.release_statuses[1] = RESOLVER_SUPERVISOR_RELEASE_TIME;
+	supervisor_mock.release_status_count = 2;
+	result = route_waiter_destroy(waiter, supervisor, &now);
+	waiter = NULL;
+	CHECK(result == ROUTE_WAITER_DESTROY_IO && supervisor_mock.release_count == 2 && fixture.reference_count == 1,
+		"waiter destroy stopped after the first release error");
+	waiter_fixture_destroy(&fixture);
+
+	const struct timespec invalid_now = { .tv_sec = 100, .tv_nsec = 1000000000L };
+	waiter_mock_reset(RESOLVER_SUPERVISOR_SCHEDULE_STARTED);
+	CHECK(waiter_fixture_build(&fixture, hosts, &now), "invalid-time fixture could not be built");
+	CHECK(route_waiter_create((route_generation *)&fixture, "dns", &inbound, &now, &waiter) == ROUTE_WAITER_CREATE_OK
+		&& route_waiter_progress(waiter, supervisor, &now) == ROUTE_WAITER_PENDING && supervisor_mock.schedule_count == 2,
+		"invalid-time waiter could not acquire both interests");
+	result = route_waiter_destroy(waiter, supervisor, &invalid_now);
+	waiter = NULL;
+	CHECK(result == ROUTE_WAITER_DESTROY_TIME && supervisor_mock.release_count == 0 && fixture.reference_count == 1,
+		"invalid destruction time was not propagated without retrying release");
+	waiter_fixture_destroy(&fixture);
+
+	CHECK(waiter_fixture_build(&fixture, hosts, &now), "local-dispose fixture could not be built");
+	waiter_mock_reset(RESOLVER_SUPERVISOR_SCHEDULE_STARTED);
+	CHECK(route_waiter_create((route_generation *)&fixture, "dns", &inbound, &now, &waiter) == ROUTE_WAITER_CREATE_OK
+		&& route_waiter_progress(waiter, supervisor, &now) == ROUTE_WAITER_PENDING && supervisor_mock.schedule_count == 2,
+		"local-dispose waiter could not acquire both interests");
+	route_waiter_dispose(waiter);
+	waiter = NULL;
+	CHECK(supervisor_mock.release_count == 0 && fixture.reference_count == 1, "local waiter disposal called the supervisor or leaked its generation");
+	waiter_fixture_destroy(&fixture);
+	test_result = true;
+
+cleanup:
+	route_waiter_destroy(waiter, supervisor, &now);
+	waiter_fixture_destroy(&fixture);
+	return test_result;
+}
+
+static bool waiter_test_release_progress(const hosts_table *hosts) {
+	static const resolver_supervisor_release_status release_statuses[] = {
+		RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT,
+		RESOLVER_SUPERVISOR_RELEASE_IO,
+		RESOLVER_SUPERVISOR_RELEASE_TIME
+	};
+	static const route_waiter_status waiter_statuses[] = {
+		ROUTE_WAITER_BAD_ARGUMENT,
+		ROUTE_WAITER_IO,
+		ROUTE_WAITER_TIME
+	};
+	bool test_result = false;
+	waiter_fixture fixture;
+	const struct timespec accepted_at = { .tv_sec = 100 };
+	const struct timespec expired_at = { .tv_sec = 110 };
+	p_proxy inbound = waiter_proxy(AF_INET6);
+	resolver_supervisor *supervisor = (resolver_supervisor *)&supervisor_mock;
+	route_waiter *waiter = NULL;
+	for (size_t status_index = 0; status_index < sizeof(release_statuses) / sizeof(release_statuses[0]); status_index++) {
+		waiter_mock_reset(RESOLVER_SUPERVISOR_SCHEDULE_STARTED);
+		waiter_mock_release_reset(release_statuses[status_index]);
+		CHECK(waiter_fixture_build(&fixture, hosts, &accepted_at) && route_waiter_create((route_generation *)&fixture, "dns", &inbound, &accepted_at, &waiter) == ROUTE_WAITER_CREATE_OK
+			&& route_waiter_progress(waiter, supervisor, &accepted_at) == ROUTE_WAITER_PENDING && supervisor_mock.schedule_count == 2,
+			"release-progress waiter could not acquire both interests");
+		route_waiter_status progress_status = route_waiter_progress(waiter, supervisor, &expired_at);
+		route_waiter_destroy_status destroy_status = route_waiter_destroy(waiter, supervisor, &expired_at);
+		waiter = NULL;
+		CHECK(progress_status == waiter_statuses[status_index] && destroy_status == ROUTE_WAITER_DESTROY_OK && supervisor_mock.release_count == 2
+			&& fixture.reference_count == 1, "waiter progress did not propagate every release status");
+		waiter_fixture_destroy(&fixture);
+	}
+	const struct timespec completed_at = { .tv_sec = 101 };
+	waiter_mock_reset(RESOLVER_SUPERVISOR_SCHEDULE_STARTED);
+	CHECK(waiter_fixture_build(&fixture, hosts, &accepted_at) && route_waiter_create((route_generation *)&fixture, "dns", &inbound, &accepted_at, &waiter) == ROUTE_WAITER_CREATE_OK
+		&& route_waiter_progress(waiter, supervisor, &accepted_at) == ROUTE_WAITER_PENDING && supervisor_mock.schedule_count == 2,
+		"terminal-entry waiter could not acquire both interests");
+	CHECK(route_waiter_progress(waiter, supervisor, &expired_at) == ROUTE_WAITER_TIMEOUT, "terminal-entry waiter did not become terminal");
+	route_binding_view binding;
+	CHECK(waiter_binding_get(&fixture, "dns", &binding, NULL), "terminal-entry binding was unavailable");
+	dns_address_record record;
+	resolver_supervisor_completion completion;
+	CHECK(waiter_completion_address(binding.ipv6_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_OK, &completed_at, "2001:db8::64", &record,
+		&completion) && route_waiter_completion_observe(waiter, &completion) == ROUTE_WAITER_COMPLETION_OK,
+		"terminal waiter released its local entry before destruction");
+	CHECK(route_waiter_destroy(waiter, supervisor, &expired_at) == ROUTE_WAITER_DESTROY_OK && supervisor_mock.release_count == 2 && fixture.reference_count == 1,
+		"terminal waiter did not preserve local entries until destruction");
+	waiter = NULL;
+	waiter_fixture_destroy(&fixture);
+	test_result = true;
+
+cleanup:
+	route_waiter_destroy(waiter, supervisor, &expired_at);
+	waiter_fixture_destroy(&fixture);
+	return test_result;
+}
+
 static bool waiter_test_srv(const hosts_table *hosts) {
 	bool test_result = false;
 	waiter_fixture fixture;
@@ -574,13 +768,13 @@ cleanup:
 }
 
 /* section: functions (exported) */
-resolver_supervisor_release_status __wrap_resolver_supervisor_entry_interactive_release(resolver_supervisor *supervisor, resolver_cache_entry *entry,
-	const struct timespec *now) {
+resolver_supervisor_release_status __wrap_resolver_supervisor_entry_interactive_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
 	if (supervisor == NULL || entry == NULL || now == NULL || supervisor_mock.release_count >= sizeof(supervisor_mock.released) / sizeof(supervisor_mock.released[0])) {
 		return RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT;
 	}
-	supervisor_mock.released[supervisor_mock.release_count++] = entry;
-	return RESOLVER_SUPERVISOR_RELEASE_OK;
+	size_t release_index = supervisor_mock.release_count++;
+	supervisor_mock.released[release_index] = entry;
+	return release_index < supervisor_mock.release_status_count ? supervisor_mock.release_statuses[release_index] : supervisor_mock.default_release_status;
 }
 
 resolver_supervisor_schedule_status __wrap_resolver_supervisor_entry_schedule(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
@@ -651,12 +845,15 @@ int main(void) {
 		"cannot load route-waiter hosts fixture");
 	CHECK(waiter_test_arguments(hosts), "route-waiter argument tests failed");
 	CHECK(waiter_test_complete(hosts), "route-waiter queued-completion tests failed");
+	CHECK(waiter_test_completion_clears_interest(hosts), "route-waiter completion-interest tests failed");
 	CHECK(waiter_test_dns(hosts), "route-waiter DNS tests failed");
 	CHECK(waiter_test_errors(hosts), "route-waiter error tests failed");
 	CHECK(waiter_test_late(hosts), "route-waiter late-completion tests failed");
 	CHECK(waiter_test_negative(hosts), "route-waiter negative-family tests failed");
 	CHECK(waiter_test_numeric(hosts), "route-waiter numeric tests failed");
 	CHECK(waiter_test_processing_delay(hosts), "route-waiter processing-delay tests failed");
+	CHECK(waiter_test_release_statuses(hosts), "route-waiter release-status tests failed");
+	CHECK(waiter_test_release_progress(hosts), "route-waiter release-progress tests failed");
 	CHECK(waiter_test_srv(hosts), "route-waiter SRV tests failed");
 	test_result = EXIT_SUCCESS;
 

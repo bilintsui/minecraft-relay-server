@@ -897,10 +897,16 @@ static bool listener_connection_route_release(listener_connection *connection, r
 	if (connection == NULL || connection->generation == NULL) {
 		return false;
 	}
-	bool result = route_waiter_destroy(connection->waiter, supervisor, now);
+	route_waiter_destroy_status destroy_status = route_waiter_destroy(connection->waiter, supervisor, now);
+	bool result = destroy_status == ROUTE_WAITER_DESTROY_OK;
+	if (!result) {
+		errno = destroy_status == ROUTE_WAITER_DESTROY_IO ? EIO : destroy_status == ROUTE_WAITER_DESTROY_TIME ? EOVERFLOW : EINVAL;
+	}
+	int saved_errno = errno;
 	connection->waiter = NULL;
 	route_generation_release(connection->generation);
 	connection->generation = NULL;
+	errno = saved_errno;
 	return result;
 }
 

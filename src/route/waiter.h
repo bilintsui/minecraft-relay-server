@@ -41,6 +41,12 @@ typedef enum {
 	ROUTE_WAITER_CREATE_TIME
 } route_waiter_create_status;
 typedef enum {
+	ROUTE_WAITER_DESTROY_OK,
+	ROUTE_WAITER_DESTROY_BAD_ARGUMENT,
+	ROUTE_WAITER_DESTROY_IO,
+	ROUTE_WAITER_DESTROY_TIME
+} route_waiter_destroy_status;
+typedef enum {
 	ROUTE_WAITER_PENDING,
 	ROUTE_WAITER_READY,
 	ROUTE_WAITER_BAD_ARGUMENT,
@@ -62,8 +68,10 @@ route_waiter_completion_status route_waiter_completion_observe(route_waiter *wai
 route_waiter_create_status route_waiter_create(route_generation *generation, const char *vhost, const p_proxy *inbound_proxy, const struct timespec *now,
 	route_waiter **result);
 bool route_waiter_deadline(const route_waiter *waiter, struct timespec *result);
-/* Destroy pending waiters before their supervisor. Returns false if an outstanding interactive interest could not be released. */
-bool route_waiter_destroy(route_waiter *waiter, resolver_supervisor *supervisor, const struct timespec *now);
+/* Destroy pending waiters before their supervisor. SATISFIED release outcomes are normal. */
+route_waiter_destroy_status route_waiter_destroy(route_waiter *waiter, resolver_supervisor *supervisor, const struct timespec *now);
+/* Dispose a waiter after its supervisor has gone away, releasing only local ownership. */
+void route_waiter_dispose(route_waiter *waiter);
 route_waiter_status route_waiter_progress(route_waiter *waiter, resolver_supervisor *supervisor, const struct timespec *now);
 /* A successful take transfers a fully self-contained value snapshot and may occur only once. */
 bool route_waiter_snapshot_take(route_waiter *waiter, route_endpoint_snapshot *result);
