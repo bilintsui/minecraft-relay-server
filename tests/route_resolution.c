@@ -54,6 +54,12 @@ static size_t resolution_schedule_fixture_index;
 static resolution_schedule_fixture resolution_schedule_fixtures[16];
 static resolver_supervisor *resolution_schedule_supervisor;
 static struct timespec resolution_schedule_time;
+static size_t resolution_release_count;
+static resolver_cache_entry *resolution_release_entries[16];
+static uint64_t resolution_release_entry_ids[16];
+static size_t resolution_release_status_count;
+static size_t resolution_release_status_index;
+static resolver_supervisor_release_status resolution_release_statuses[16];
 
 /* section: functions (local) */
 static bool resolution_address_equal(const net_addr *address, sa_family_t family, const char *expected) {
@@ -130,6 +136,12 @@ static void resolution_schedule_reset(resolver_supervisor *supervisor, const str
 	resolution_schedule_fixture_index = 0;
 	resolution_schedule_supervisor = supervisor;
 	resolution_schedule_time = *now;
+	resolution_release_count = 0;
+	memset(resolution_release_entries, 0, sizeof(resolution_release_entries));
+	memset(resolution_release_entry_ids, 0, sizeof(resolution_release_entry_ids));
+	resolution_release_status_count = 1;
+	resolution_release_status_index = 0;
+	resolution_release_statuses[0] = RESOLVER_SUPERVISOR_RELEASE_OK;
 }
 
 static bool resolution_srv_publish(resolver_cache_entry *entry, const char *const *targets, size_t target_count, uint32_t ttl, const struct timespec *completed_at) {
@@ -192,6 +204,7 @@ static bool resolution_test_arguments(const hosts_table *hosts) {
 	resolver_supervisor_completion completion = { 0 };
 	CHECK(route_resolution_completion_observe(NULL, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT
 		&& route_resolution_completion_observe(resolution, NULL, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT
+		&& route_resolution_completion_observe_with_supervisor(resolution, NULL, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT
 		&& route_resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT,
 		"invalid completion arguments were accepted");
 	CHECK(route_resolution_schedule(NULL, (resolver_supervisor *)(uintptr_t)1, &now, 1) == ROUTE_PREWARM_BAD_ARGUMENT
@@ -199,6 +212,11 @@ static bool resolution_test_arguments(const hosts_table *hosts) {
 		&& route_resolution_schedule(resolution, (resolver_supervisor *)(uintptr_t)1, NULL, 1) == ROUTE_PREWARM_BAD_ARGUMENT
 		&& route_resolution_schedule(resolution, (resolver_supervisor *)(uintptr_t)1, &now, 0) == ROUTE_PREWARM_BAD_ARGUMENT,
 		"invalid schedule arguments were accepted");
+	CHECK(route_resolution_background_release(NULL, (resolver_supervisor *)(uintptr_t)1, &now) == ROUTE_RESOLUTION_RELEASE_BAD_ARGUMENT
+		&& route_resolution_background_release(resolution, NULL, &now) == ROUTE_RESOLUTION_RELEASE_BAD_ARGUMENT
+		&& route_resolution_background_release(resolution, (resolver_supervisor *)(uintptr_t)1, NULL) == ROUTE_RESOLUTION_RELEASE_BAD_ARGUMENT
+		&& route_resolution_background_release(resolution, (resolver_supervisor *)(uintptr_t)1, &invalid_time) == ROUTE_RESOLUTION_RELEASE_TIME,
+		"invalid background-release arguments were accepted");
 	CHECK(!route_resolution_scheduling_complete(NULL) && !route_resolution_warmup_complete(NULL), "NULL coordinator appeared complete");
 	route_resolution_destroy(NULL);
 	test_result = true;
@@ -307,6 +325,27 @@ static bool resolution_test_generation(const hosts_table *hosts) {
 	resolution_schedule_fixture_count = 1;
 	CHECK(route_resolution_schedule(resolution, supervisor, &now, 1) == ROUTE_PREWARM_COMPLETE && route_resolution_scheduling_complete(resolution),
 		"dynamic scheduling did not resume to completion");
+	resolver_supervisor_completion early_completion = resolution_completion(dns_target.ipv4_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_NODATA);
+	CHECK(route_resolution_completion_observe_with_supervisor(resolution, supervisor, &early_completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK,
+		"completion did not clear dynamic background ownership before route processing");
+	resolver_cache_entry *static_aaaa_entry = NULL;
+	resolution_release_status_count = 2;
+	resolution_release_status_index = 0;
+	resolution_release_statuses[0] = RESOLVER_SUPERVISOR_RELEASE_OK;
+	resolution_release_statuses[1] = RESOLVER_SUPERVISOR_RELEASE_IO;
+	CHECK(route_bindings_entry_get(bindings, 1, &static_aaaa_entry) && route_resolution_background_release(resolution, supervisor, &now) == ROUTE_RESOLUTION_RELEASE_IO
+		&& resolution_release_count == 2, "background release did not consume every remaining generation interest");
+	bool static_aaaa_released = false;
+	bool dynamic_ipv4_released = false;
+	bool dynamic_ipv6_released = false;
+	for (size_t release_index = 0; release_index < resolution_release_count; release_index++) {
+		static_aaaa_released = static_aaaa_released || resolution_release_entries[release_index] == static_aaaa_entry;
+		dynamic_ipv4_released = dynamic_ipv4_released || resolution_release_entries[release_index] == dns_target.ipv4_entry;
+		dynamic_ipv6_released = dynamic_ipv6_released || resolution_release_entries[release_index] == dns_target.ipv6_entry;
+	}
+	CHECK(static_aaaa_released && !dynamic_ipv4_released && dynamic_ipv6_released, "background release did not honor completion-cleared ownership");
+	CHECK(route_resolution_background_release(resolution, supervisor, &now) == ROUTE_RESOLUTION_RELEASE_OK && resolution_release_count == 2,
+		"background release retried an already-cleared local ownership marker");
 	resolver_supervisor_completion completion = resolution_completion(address_binding.ipv4_entry, RESOLVER_CACHE_PUBLISH_STORED, RESOLVER_IPC_LOOKUP_OK);
 	CHECK(route_resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK
 		&& route_resolution_destination_get(resolution, 2, &address) && address.pending_entry_count == 1 && !address.first_terminal,
@@ -346,6 +385,62 @@ cleanup:
 	route_resolution_destroy(resolution_second);
 	route_resolution_destroy(resolution);
 	route_bindings_destroy(bindings_second);
+	route_bindings_destroy(bindings);
+	resolver_cache_destroy(cache);
+	route_table_destroy(routes);
+	cJSON_Delete(config.proxy);
+	return test_result;
+}
+
+static bool resolution_test_release_statuses(const hosts_table *hosts) {
+	static const char json[] = "[{\"vhost\":[\"route\"],\"address\":\"dns.example\",\"port\":25565}]";
+	static const struct {
+		resolver_supervisor_release_status input;
+		route_resolution_release_status output;
+	} fixtures[] = {
+		{ RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT, ROUTE_RESOLUTION_RELEASE_BAD_ARGUMENT },
+		{ RESOLVER_SUPERVISOR_RELEASE_IO, ROUTE_RESOLUTION_RELEASE_IO },
+		{ RESOLVER_SUPERVISOR_RELEASE_TIME, ROUTE_RESOLUTION_RELEASE_TIME }
+	};
+	bool test_result = false;
+	conf config = { 0 };
+	resolver_cache *cache = NULL;
+	route_bindings *bindings = NULL;
+	route_resolution *resolution = NULL;
+	route_table *routes = NULL;
+	const struct timespec now = { .tv_sec = 225 };
+	resolver_supervisor *supervisor = (resolver_supervisor *)(uintptr_t)1;
+	for (size_t fixture_index = 0; fixture_index < sizeof(fixtures) / sizeof(fixtures[0]); fixture_index++) {
+		cache = resolver_cache_create();
+		CHECK(cache != NULL && resolution_bindings_build(json, hosts, cache, &config, &routes, &bindings), "release-status fixtures could not be prepared");
+		CHECK(route_resolution_build(bindings, hosts, cache, &now, &resolution) == ROUTE_RESOLUTION_BUILD_OK && resolution != NULL,
+			"release-status coordinator could not be built");
+		resolver_cache_entry *entry = NULL;
+		CHECK(route_bindings_entry_get(bindings, 0, &entry), "release-status entry could not be read");
+		resolution_schedule_reset(supervisor, &now);
+		resolution_schedule_fixtures[0] = (resolution_schedule_fixture){ .entry = entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_STARTED };
+		resolution_schedule_fixture_count = 1;
+		CHECK(route_resolution_schedule(resolution, supervisor, &now, 1) == ROUTE_PREWARM_MORE, "release-status interest could not be acquired");
+		resolution_release_statuses[0] = fixtures[fixture_index].input;
+		CHECK(route_resolution_background_release(resolution, supervisor, &now) == fixtures[fixture_index].output && resolution_release_count == 1,
+			"supervisor release status was mapped incorrectly");
+		CHECK(route_resolution_background_release(resolution, supervisor, &now) == ROUTE_RESOLUTION_RELEASE_OK && resolution_release_count == 1,
+			"failed background release was retried after its local marker cleared");
+		route_resolution_destroy(resolution);
+		resolution = NULL;
+		route_bindings_destroy(bindings);
+		bindings = NULL;
+		resolver_cache_destroy(cache);
+		cache = NULL;
+		route_table_destroy(routes);
+		routes = NULL;
+		cJSON_Delete(config.proxy);
+		config.proxy = NULL;
+	}
+	test_result = true;
+
+cleanup:
+	route_resolution_destroy(resolution);
 	route_bindings_destroy(bindings);
 	resolver_cache_destroy(cache);
 	route_table_destroy(routes);
@@ -437,6 +532,10 @@ static bool resolution_test_shared_targets(const hosts_table *hosts) {
 	route_resolution_destination_view second_destination;
 	route_resolution_target_view first_target;
 	route_resolution_target_view second_target;
+	resolver_cache_entry *old_ipv4_entry = NULL;
+	resolver_cache_entry *old_ipv6_entry = NULL;
+	route_binding_view first_binding;
+	route_binding_view second_binding;
 	CHECK(route_resolution_destination_get(resolution, 0, &first_destination) && !first_destination.first_terminal && first_destination.pending_entry_count == 2
 		&& route_resolution_destination_get(resolution, 1, &second_destination) && !second_destination.first_terminal && second_destination.pending_entry_count == 2,
 		"shared-target destinations did not begin with the same two pending address sources");
@@ -444,6 +543,42 @@ static bool resolution_test_shared_targets(const hosts_table *hosts) {
 		&& first_target.source == ROUTE_RESOLUTION_TARGET_DNS && second_target.source == ROUTE_RESOLUTION_TARGET_DNS
 		&& first_target.ipv4_entry == second_target.ipv4_entry && first_target.ipv6_entry == second_target.ipv6_entry,
 		"identical SRV targets did not share generation-owned address entries");
+	old_ipv4_entry = first_target.ipv4_entry;
+	old_ipv6_entry = first_target.ipv6_entry;
+	uint64_t old_ipv4_id = resolver_cache_entry_id(old_ipv4_entry);
+	uint64_t old_ipv6_id = resolver_cache_entry_id(old_ipv6_entry);
+	CHECK(route_bindings_destination_get(bindings, 0, &first_binding) && route_bindings_destination_get(bindings, 1, &second_binding),
+		"shared-target SRV bindings could not be read for replacement");
+	resolution_schedule_reset((resolver_supervisor *)(uintptr_t)1, &now);
+	resolution_schedule_fixtures[0] = (resolution_schedule_fixture){ .entry = old_ipv4_entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_STARTED };
+	resolution_schedule_fixtures[1] = (resolution_schedule_fixture){ .entry = old_ipv6_entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_STARTED };
+	resolution_schedule_fixture_count = 2;
+	CHECK(route_resolution_schedule(resolution, (resolver_supervisor *)(uintptr_t)1, &now, 2) == ROUTE_PREWARM_COMPLETE
+		&& resolution_release_count == 0, "shared-target address entries could not acquire background ownership");
+	static const char *const replacement_targets[] = { "replacement.target" };
+	dns_srv_record replacement_record = { 0 };
+	CHECK(snprintf(replacement_record.target, sizeof(replacement_record.target), "%s", replacement_targets[0]) > 0,
+		"shared-target replacement record could not be prepared");
+	resolver_supervisor_completion replacement = resolution_completion(first_binding.srv_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_OK);
+	replacement.response.payload.srv.records = &replacement_record;
+	replacement.response.payload.srv.record_count = 1;
+	CHECK(route_resolution_completion_observe_with_supervisor(resolution, (resolver_supervisor *)(uintptr_t)1, &replacement, &now) == ROUTE_RESOLUTION_COMPLETION_OK
+		&& resolution_release_count == 0, "shared target was released while still referenced by the second destination");
+	replacement = resolution_completion(second_binding.srv_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_OK);
+	replacement.response.payload.srv.records = &replacement_record;
+	replacement.response.payload.srv.record_count = 1;
+	CHECK(route_resolution_completion_observe_with_supervisor(resolution, (resolver_supervisor *)(uintptr_t)1, &replacement, &now) == ROUTE_RESOLUTION_COMPLETION_OK
+		&& resolution_release_count == 2 && resolution_release_entry_ids[0] == old_ipv4_id && resolution_release_entry_ids[1] == old_ipv6_id,
+		"exclusive shared-target entries were not released after the final target unlink");
+	CHECK(route_resolution_destination_target_get(resolution, 0, 0, &first_target) && route_resolution_destination_target_get(resolution, 1, 0, &second_target)
+		&& first_target.name != NULL && strcmp(first_target.name, replacement_targets[0]) == 0 && first_target.ipv4_entry == second_target.ipv4_entry
+		&& first_target.ipv6_entry == second_target.ipv6_entry, "shared-target replacement did not link the new target set");
+	resolution_schedule_reset((resolver_supervisor *)(uintptr_t)1, &now);
+	resolution_schedule_fixtures[0] = (resolution_schedule_fixture){ .entry = first_target.ipv4_entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_FRESH };
+	resolution_schedule_fixtures[1] = (resolution_schedule_fixture){ .entry = first_target.ipv6_entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_COMPLETE };
+	resolution_schedule_fixture_count = 2;
+	CHECK(route_resolution_schedule(resolution, (resolver_supervisor *)(uintptr_t)1, &now, 2) == ROUTE_PREWARM_COMPLETE,
+		"dynamic FRESH and COMPLETE results did not remove their queue entries");
 	resolver_supervisor_completion completion = resolution_completion(first_target.ipv4_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_OK);
 	CHECK(route_resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK, "shared IPv4 completion was not observed");
 	completion = resolution_completion(first_target.ipv6_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_OK);
@@ -540,6 +675,19 @@ resolver_supervisor_schedule_status __wrap_resolver_supervisor_entry_schedule(re
 	return resolution_schedule_fixtures[resolution_schedule_fixture_index++].status;
 }
 
+resolver_supervisor_release_status __wrap_resolver_supervisor_entry_background_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
+	if (supervisor != resolution_schedule_supervisor || entry == NULL || now == NULL || now->tv_sec != resolution_schedule_time.tv_sec
+		|| now->tv_nsec != resolution_schedule_time.tv_nsec || resolution_release_count >= sizeof(resolution_release_entries) / sizeof(resolution_release_entries[0])) {
+		return RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT;
+	}
+	resolution_release_entries[resolution_release_count++] = entry;
+	resolution_release_entry_ids[resolution_release_count - 1U] = resolver_cache_entry_id(entry);
+	if (resolution_release_status_count == 0) {
+		return RESOLVER_SUPERVISOR_RELEASE_OK;
+	}
+	return resolution_release_statuses[resolution_release_status_index < resolution_release_status_count ? resolution_release_status_index++ : resolution_release_status_count - 1U];
+}
+
 /* section: functions (entry point) */
 int main(void) {
 	int test_result = EXIT_FAILURE;
@@ -554,6 +702,7 @@ int main(void) {
 		"cannot load route-resolution hosts fixture");
 	CHECK(resolution_test_arguments(hosts), "route-resolution argument tests failed");
 	CHECK(resolution_test_generation(hosts), "route-resolution generation tests failed");
+	CHECK(resolution_test_release_statuses(hosts), "route-resolution release-status tests failed");
 	CHECK(resolution_test_schedule_statuses(hosts), "route-resolution schedule-status tests failed");
 	CHECK(resolution_test_shared_targets(hosts), "route-resolution shared-target tests failed");
 	CHECK(resolution_test_srv_terminals(hosts), "route-resolution SRV terminal tests failed");

@@ -1594,6 +1594,26 @@ static int listener_events_wait(const listener_events *events, listener_requests
 	return 0;
 }
 
+static bool listener_generation_collect(listener_context *context, const struct timespec *now) {
+	route_generation_registry_collect_status status = route_generation_registry_collect(context->generations, context->resolver, now);
+	switch (status) {
+		case ROUTE_GENERATION_REGISTRY_COLLECT_NONE:
+		case ROUTE_GENERATION_REGISTRY_COLLECT_RETAINED:
+		case ROUTE_GENERATION_REGISTRY_COLLECT_COLLECTED:
+			return true;
+		case ROUTE_GENERATION_REGISTRY_COLLECT_IO:
+			errno = EIO;
+			return false;
+		case ROUTE_GENERATION_REGISTRY_COLLECT_TIME:
+			errno = EOVERFLOW;
+			return false;
+		case ROUTE_GENERATION_REGISTRY_COLLECT_BAD_ARGUMENT:
+		default:
+			errno = EINVAL;
+			return false;
+	}
+}
+
 static bool listener_generation_create(listener_context *context, conf *config, hosts_table *hosts, route_table *routes, route_bindings *bindings,
 	route_resolution *resolution, mksys_level failure_level, const char *failure_action, route_generation **result) {
 	if (result == NULL || *result != NULL) {
@@ -1611,22 +1631,28 @@ static bool listener_generation_create(listener_context *context, conf *config, 
 }
 
 static route_generation_registry_publish_status listener_generation_publish(listener_context *context, route_generation **candidate) {
-	if (context == NULL || candidate == NULL || *candidate == NULL) {
+	if (context == NULL || candidate == NULL || *candidate == NULL || context->resolver == NULL) {
 		return ROUTE_GENERATION_REGISTRY_PUBLISH_BAD_ARGUMENT;
 	}
-	route_generation_registry_publish_status status = route_generation_registry_publish(context->generations, *candidate);
-	if (status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
+	struct timespec now;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+		return ROUTE_GENERATION_REGISTRY_PUBLISH_TIME;
+	}
+	route_generation_registry_publish_status status = route_generation_registry_publish(context->generations, candidate, context->resolver, &now);
+	if (*candidate != NULL) {
 		return status;
 	}
-	*candidate = NULL;
 	route_generation *active = route_generation_registry_active(context->generations);
+	if (active == NULL) {
+		return ROUTE_GENERATION_REGISTRY_PUBLISH_BAD_ARGUMENT;
+	}
 	context->config = (conf *)route_generation_config(active);
 	context->hosts = (hosts_table *)route_generation_hosts(active);
 	context->route_bindings = (route_bindings *)route_generation_bindings(active);
 	context->route_resolution = route_generation_resolution(active);
 	context->routes = (route_table *)route_generation_routes(active);
 	context->generation_next_identity = context->generation_next_identity == UINT64_MAX ? 0 : context->generation_next_identity + 1U;
-	return ROUTE_GENERATION_REGISTRY_PUBLISH_OK;
+	return status;
 }
 
 static const char *listener_hosts_load_error(hosts_load_status status) {
@@ -2142,7 +2168,7 @@ static int listener_resolver_events_process(listener_context *context, listener_
 	}
 	resolver_supervisor_completion completion = { 0 };
 	while (resolver_supervisor_completion_take(context->resolver, &completion)) {
-		route_resolution_completion_status completion_status = route_generation_registry_completion_observe(context->generations, &completion, now);
+		route_resolution_completion_status completion_status = route_generation_registry_completion_observe(context->generations, &completion, context->resolver, now);
 		bool waiter_invalid = false;
 		for (listener_connection *connection = connections; connection != NULL; connection = connection->next) {
 			if (connection->waiter == NULL || connection->closing) {
@@ -2154,8 +2180,9 @@ static int listener_resolver_events_process(listener_context *context, listener_
 			}
 		}
 		resolver_supervisor_completion_destroy(&completion);
-		if (completion_status == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT || waiter_invalid) {
-			errno = EINVAL;
+		if (completion_status == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT || completion_status == ROUTE_RESOLUTION_COMPLETION_IO
+			|| completion_status == ROUTE_RESOLUTION_COMPLETION_TIME || waiter_invalid) {
+			errno = completion_status == ROUTE_RESOLUTION_COMPLETION_IO ? EIO : completion_status == ROUTE_RESOLUTION_COMPLETION_TIME ? EOVERFLOW : EINVAL;
 			return -1;
 		}
 	}
@@ -2505,7 +2532,11 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
-		route_generation_registry_collect(context->generations);
+		if (!listener_generation_collect(context, &route_now)) {
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot collect a retired proxy route generation: %s", strerror(errno));
+			exitcode = EXITCODE_INTERNAL;
+			break;
+		}
 		bool reload_processed = false;
 		if (route_runtime.ready && reload_pending && route_generation_registry_retired(context->generations) == NULL) {
 			if (listener_notify_reloading() == -1) {

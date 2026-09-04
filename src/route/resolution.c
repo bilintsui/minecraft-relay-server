@@ -36,6 +36,17 @@
 typedef struct route_resolution_dependency route_resolution_dependency;
 typedef struct route_resolution_destination route_resolution_destination;
 typedef struct route_resolution_entry route_resolution_entry;
+typedef enum {
+	ROUTE_RESOLUTION_OPERATION_OK,
+	ROUTE_RESOLUTION_OPERATION_BAD_ARGUMENT,
+	ROUTE_RESOLUTION_OPERATION_IO,
+	ROUTE_RESOLUTION_OPERATION_TIME
+} route_resolution_operation_status;
+typedef struct {
+	bool release_background;
+	resolver_supervisor *supervisor;
+	const struct timespec *now;
+} route_resolution_operation_context;
 typedef struct route_resolution_target {
 	uint64_t hash;
 	struct route_resolution_target *hash_next;
@@ -93,6 +104,7 @@ struct route_resolution_destination {
 	route_resolution_target_set targets;
 };
 struct route_resolution_entry {
+	bool background_interest;
 	resolver_cache_entry *cache_entry;
 	route_resolution_dependency *dependencies;
 	route_resolution_entry *hash_next;
@@ -106,6 +118,39 @@ struct route_resolution_entry {
 };
 
 /* section: functions (local) */
+static route_resolution_completion_status route_resolution_completion_from_operation(route_resolution_operation_status status) {
+	switch (status) {
+		case ROUTE_RESOLUTION_OPERATION_OK:
+			return ROUTE_RESOLUTION_COMPLETION_OK;
+		case ROUTE_RESOLUTION_OPERATION_IO:
+			return ROUTE_RESOLUTION_COMPLETION_IO;
+		case ROUTE_RESOLUTION_OPERATION_TIME:
+			return ROUTE_RESOLUTION_COMPLETION_TIME;
+		case ROUTE_RESOLUTION_OPERATION_BAD_ARGUMENT:
+		default:
+			return ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT;
+	}
+}
+
+static route_resolution_operation_status route_resolution_operation_from_release(resolver_supervisor_release_status status) {
+	switch (status) {
+		case RESOLVER_SUPERVISOR_RELEASE_OK:
+		case RESOLVER_SUPERVISOR_RELEASE_SATISFIED:
+			return ROUTE_RESOLUTION_OPERATION_OK;
+		case RESOLVER_SUPERVISOR_RELEASE_IO:
+			return ROUTE_RESOLUTION_OPERATION_IO;
+		case RESOLVER_SUPERVISOR_RELEASE_TIME:
+			return ROUTE_RESOLUTION_OPERATION_TIME;
+		case RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT:
+		default:
+			return ROUTE_RESOLUTION_OPERATION_BAD_ARGUMENT;
+	}
+}
+
+static route_resolution_operation_status route_resolution_operation_merge(route_resolution_operation_status current, route_resolution_operation_status update) {
+	return current == ROUTE_RESOLUTION_OPERATION_OK ? update : current;
+}
+
 static void route_resolution_dependency_link(route_resolution_entry *entry, route_resolution_dependency *dependency) {
 	dependency->entry = entry;
 	dependency->entry_next = entry->dependencies;
@@ -129,6 +174,20 @@ static void route_resolution_destination_update(route_resolution *resolution, ro
 		destination->first_terminal = true;
 		resolution->terminal_destination_count++;
 	}
+}
+
+static route_resolution_operation_status route_resolution_entry_background_release(route_resolution_entry *entry, const route_resolution_operation_context *context) {
+	if (entry == NULL || !entry->background_interest) {
+		return ROUTE_RESOLUTION_OPERATION_OK;
+	}
+	entry->background_interest = false;
+	if (context == NULL || !context->release_background) {
+		return ROUTE_RESOLUTION_OPERATION_OK;
+	}
+	if (context->supervisor == NULL || context->now == NULL) {
+		return ROUTE_RESOLUTION_OPERATION_BAD_ARGUMENT;
+	}
+	return route_resolution_operation_from_release(resolver_supervisor_entry_background_release(context->supervisor, entry->cache_entry, context->now));
 }
 
 static size_t route_resolution_entry_bucket(const route_resolution *resolution, const resolver_cache_entry *entry) {
@@ -214,10 +273,11 @@ static void route_resolution_entry_queue_remove(route_resolution *resolution, ro
 	entry->queued = false;
 }
 
-static void route_resolution_entry_remove(route_resolution *resolution, route_resolution_entry *entry) {
+static route_resolution_operation_status route_resolution_entry_remove(route_resolution *resolution, route_resolution_entry *entry, const route_resolution_operation_context *context) {
 	if (entry == NULL || entry->use_count != 0 || entry->dependencies != NULL) {
-		return;
+		return ROUTE_RESOLUTION_OPERATION_OK;
 	}
+	route_resolution_operation_status status = route_resolution_entry_background_release(entry, context);
 	size_t bucket = route_resolution_entry_bucket(resolution, entry->cache_entry);
 	route_resolution_entry **cursor = &resolution->buckets[bucket];
 	while (*cursor != NULL && *cursor != entry) {
@@ -231,12 +291,14 @@ static void route_resolution_entry_remove(route_resolution *resolution, route_re
 		resolver_cache_entry_release(entry->cache_entry);
 	}
 	free(entry);
+	return status;
 }
 
-static void route_resolution_dependency_unlink(route_resolution *resolution, route_resolution_dependency *dependency) {
+static route_resolution_operation_status route_resolution_dependency_unlink(route_resolution *resolution, route_resolution_dependency *dependency,
+	const route_resolution_operation_context *context) {
 	route_resolution_entry *entry = dependency->entry;
 	if (entry == NULL) {
-		return;
+		return ROUTE_RESOLUTION_OPERATION_OK;
 	}
 	if (dependency->entry_previous == NULL) {
 		entry->dependencies = dependency->entry_next;
@@ -251,8 +313,9 @@ static void route_resolution_dependency_unlink(route_resolution *resolution, rou
 	}
 	memset(dependency, 0, sizeof(*dependency));
 	if (entry->owned && entry->use_count == 0) {
-		route_resolution_entry_remove(resolution, entry);
+		return route_resolution_entry_remove(resolution, entry, context);
 	}
+	return ROUTE_RESOLUTION_OPERATION_OK;
 }
 
 static uint64_t route_resolution_name_hash(const char *name) {
@@ -262,6 +325,34 @@ static uint64_t route_resolution_name_hash(const char *name) {
 		hash *= ROUTE_RESOLUTION_HASH_PRIME;
 	}
 	return hash;
+}
+
+static route_prewarm_status route_resolution_prewarm_from_operation(route_resolution_operation_status status) {
+	switch (status) {
+		case ROUTE_RESOLUTION_OPERATION_OK:
+			return ROUTE_PREWARM_MORE;
+		case ROUTE_RESOLUTION_OPERATION_IO:
+			return ROUTE_PREWARM_IO;
+		case ROUTE_RESOLUTION_OPERATION_TIME:
+			return ROUTE_PREWARM_TIME;
+		case ROUTE_RESOLUTION_OPERATION_BAD_ARGUMENT:
+		default:
+			return ROUTE_PREWARM_BAD_ARGUMENT;
+	}
+}
+
+static route_resolution_release_status route_resolution_release_from_operation(route_resolution_operation_status status) {
+	switch (status) {
+		case ROUTE_RESOLUTION_OPERATION_OK:
+			return ROUTE_RESOLUTION_RELEASE_OK;
+		case ROUTE_RESOLUTION_OPERATION_IO:
+			return ROUTE_RESOLUTION_RELEASE_IO;
+		case ROUTE_RESOLUTION_OPERATION_TIME:
+			return ROUTE_RESOLUTION_RELEASE_TIME;
+		case ROUTE_RESOLUTION_OPERATION_BAD_ARGUMENT:
+		default:
+			return ROUTE_RESOLUTION_RELEASE_BAD_ARGUMENT;
+	}
 }
 
 static route_prewarm_status route_resolution_schedule_status(resolver_supervisor_schedule_status status) {
@@ -299,7 +390,7 @@ static bool route_resolution_target_dns_prepare(route_resolution *resolution, ro
 	target->ipv6_entry = route_resolution_dynamic_entry_acquire(resolution, target->name, ns_t_aaaa, &ipv6_created);
 	if (target->ipv6_entry == NULL) {
 		if (ipv4_created) {
-			route_resolution_entry_remove(resolution, target->ipv4_entry);
+			route_resolution_entry_remove(resolution, target->ipv4_entry, NULL);
 		}
 		target->ipv4_entry = NULL;
 		return false;
@@ -372,10 +463,12 @@ static route_resolution_target *route_resolution_target_create(route_resolution 
 	return target;
 }
 
-static void route_resolution_target_remove(route_resolution *resolution, route_resolution_target *target) {
+static route_resolution_operation_status route_resolution_target_remove(route_resolution *resolution, route_resolution_target *target,
+	const route_resolution_operation_context *context) {
 	if (target == NULL || target->use_count != 0) {
-		return;
+		return ROUTE_RESOLUTION_OPERATION_OK;
 	}
+	route_resolution_operation_status status = ROUTE_RESOLUTION_OPERATION_OK;
 	size_t bucket = route_resolution_target_bucket(resolution, target->hash);
 	route_resolution_target **cursor = &resolution->target_buckets[bucket];
 	while (*cursor != NULL && *cursor != target) {
@@ -389,7 +482,7 @@ static void route_resolution_target_remove(route_resolution *resolution, route_r
 			target->ipv4_entry->use_count--;
 		}
 		if (target->ipv4_entry->owned) {
-			route_resolution_entry_remove(resolution, target->ipv4_entry);
+			status = route_resolution_operation_merge(status, route_resolution_entry_remove(resolution, target->ipv4_entry, context));
 		}
 	}
 	if (target->ipv6_entry != NULL) {
@@ -397,11 +490,12 @@ static void route_resolution_target_remove(route_resolution *resolution, route_r
 			target->ipv6_entry->use_count--;
 		}
 		if (target->ipv6_entry->owned) {
-			route_resolution_entry_remove(resolution, target->ipv6_entry);
+			status = route_resolution_operation_merge(status, route_resolution_entry_remove(resolution, target->ipv6_entry, context));
 		}
 	}
 	hosts_address_result_destroy(&target->hosts);
 	free(target);
+	return status;
 }
 
 static void route_resolution_target_set_destroy_data(route_resolution_target_set *targets) {
@@ -444,6 +538,10 @@ static bool route_resolution_target_set_build(route_resolution *resolution, cons
 	route_resolution_destination_result *failure_result) {
 	bool root_target = false;
 	bool ordinary_target = false;
+	if (records == NULL && record_count > 0) {
+		*failure_result = ROUTE_RESOLUTION_DESTINATION_UNAVAILABLE;
+		return false;
+	}
 	for (size_t record_index = 0; record_index < record_count; record_index++) {
 		root_target = root_target || strcmp(records[record_index].target, ".") == 0;
 		ordinary_target = ordinary_target || strcmp(records[record_index].target, ".") != 0;
@@ -491,7 +589,7 @@ static bool route_resolution_target_set_build(route_resolution *resolution, cons
 
 fail:
 	for (size_t target_index = 0; target_index < new_target_count; target_index++) {
-		route_resolution_target_remove(resolution, new_targets[target_index]);
+		route_resolution_target_remove(resolution, new_targets[target_index], NULL);
 	}
 	free(new_targets);
 	route_resolution_target_set_destroy_data(result);
@@ -499,33 +597,39 @@ fail:
 	return false;
 }
 
-static void route_resolution_target_set_unlink(route_resolution *resolution, route_resolution_target_set *targets) {
+static route_resolution_operation_status route_resolution_target_set_unlink(route_resolution *resolution, route_resolution_target_set *targets,
+	const route_resolution_operation_context *context) {
+	route_resolution_operation_status status = ROUTE_RESOLUTION_OPERATION_OK;
 	if (targets == NULL) {
-		return;
+		return status;
 	}
 	for (size_t dependency_index = 0; dependency_index < targets->dependency_count; dependency_index++) {
-		route_resolution_dependency_unlink(resolution, &targets->dependencies[dependency_index]);
+		status = route_resolution_operation_merge(status, route_resolution_dependency_unlink(resolution, &targets->dependencies[dependency_index], context));
 	}
 	for (size_t target_index = 0; target_index < targets->target_count; target_index++) {
 		route_resolution_target *target = targets->targets[target_index];
 		if (target->use_count > 0) {
 			target->use_count--;
 		}
-		route_resolution_target_remove(resolution, target);
+		status = route_resolution_operation_merge(status, route_resolution_target_remove(resolution, target, context));
 	}
 	route_resolution_target_set_destroy_data(targets);
+	return status;
 }
 
-static void route_resolution_destination_fail(route_resolution *resolution, route_resolution_destination *destination, route_resolution_destination_result result) {
-	route_resolution_target_set_unlink(resolution, &destination->targets);
+static route_resolution_operation_status route_resolution_destination_fail(route_resolution *resolution, route_resolution_destination *destination, route_resolution_destination_result result,
+	const route_resolution_operation_context *context) {
+	route_resolution_operation_status status = route_resolution_target_set_unlink(resolution, &destination->targets, context);
 	destination->expanded = true;
 	destination->pending_entry_count = 0;
 	destination->positive_source_count = 0;
 	destination->result = result;
 	route_resolution_destination_update(resolution, destination);
+	return status;
 }
 
-static void route_resolution_destination_targets_replace(route_resolution *resolution, route_resolution_destination *destination, route_resolution_target_set *candidate) {
+static route_resolution_operation_status route_resolution_destination_targets_replace(route_resolution *resolution, route_resolution_destination *destination, route_resolution_target_set *candidate,
+	const route_resolution_operation_context *context) {
 	/* Link the candidate first so shared cache entries cannot reach zero references during a generation-local SRV target-set replacement. */
 	for (size_t target_index = 0; target_index < candidate->target_count; target_index++) {
 		candidate->targets[target_index]->use_count++;
@@ -538,7 +642,7 @@ static void route_resolution_destination_targets_replace(route_resolution *resol
 		candidate->pending_count += dependency->pending ? 1U : 0U;
 		candidate->positive_count += dependency->positive ? 1U : 0U;
 	}
-	route_resolution_target_set_unlink(resolution, &destination->targets);
+	route_resolution_operation_status status = route_resolution_target_set_unlink(resolution, &destination->targets, context);
 	destination->targets = *candidate;
 	memset(candidate, 0, sizeof(*candidate));
 	destination->expanded = true;
@@ -546,25 +650,27 @@ static void route_resolution_destination_targets_replace(route_resolution *resol
 	destination->positive_source_count = destination->targets.immediate_positive_count + destination->targets.positive_count;
 	destination->result = ROUTE_RESOLUTION_DESTINATION_PENDING;
 	route_resolution_destination_update(resolution, destination);
+	return status;
 }
 
-static void route_resolution_destination_expand(route_resolution *resolution, route_resolution_destination *destination, const dns_srv_record *records, size_t record_count,
-	bool retain_records) {
+static route_resolution_operation_status route_resolution_destination_expand(route_resolution *resolution, route_resolution_destination *destination, const dns_srv_record *records, size_t record_count,
+	bool retain_records, const route_resolution_operation_context *context) {
 	route_resolution_target_set candidate;
 	memset(&candidate, 0, sizeof(candidate));
 	route_resolution_target **new_targets = NULL;
 	size_t new_target_count = 0;
 	route_resolution_destination_result failure_result = ROUTE_RESOLUTION_DESTINATION_UNAVAILABLE;
 	if (!route_resolution_target_set_build(resolution, records, record_count, retain_records, &candidate, &new_targets, &new_target_count, &failure_result)) {
-		route_resolution_destination_fail(resolution, destination, failure_result);
-		return;
+		return route_resolution_destination_fail(resolution, destination, failure_result, context);
 	}
-	route_resolution_destination_targets_replace(resolution, destination, &candidate);
+	route_resolution_operation_status status = route_resolution_destination_targets_replace(resolution, destination, &candidate, context);
 	free(new_targets);
+	return status;
 }
 
-static void route_resolution_entry_terminal_observe(route_resolution *resolution, route_resolution_entry *entry, bool positive, const dns_srv_record *srv_records,
-	size_t srv_record_count, bool retain_srv_records) {
+static route_resolution_operation_status route_resolution_entry_terminal_observe(route_resolution *resolution, route_resolution_entry *entry, bool positive, const dns_srv_record *srv_records,
+	size_t srv_record_count, bool retain_srv_records, const route_resolution_operation_context *context) {
+	route_resolution_operation_status status = ROUTE_RESOLUTION_OPERATION_OK;
 	route_resolution_entry_queue_remove(resolution, entry);
 	/* The first terminal observation satisfies every existing dependency once. Later SRV observations may still replace the current target set. */
 	bool first_terminal = !entry->terminal;
@@ -589,9 +695,11 @@ static void route_resolution_entry_terminal_observe(route_resolution *resolution
 			route_resolution_dependency *next = dependency->entry_next;
 			if (dependency->destination->srv && !dependency->address_source) {
 				if (positive && srv_records != NULL) {
-					route_resolution_destination_expand(resolution, dependency->destination, srv_records, srv_record_count, retain_srv_records);
+					status = route_resolution_operation_merge(status,
+						route_resolution_destination_expand(resolution, dependency->destination, srv_records, srv_record_count, retain_srv_records, context));
 				} else {
-					route_resolution_destination_fail(resolution, dependency->destination, ROUTE_RESOLUTION_DESTINATION_UNAVAILABLE);
+					status = route_resolution_operation_merge(status,
+						route_resolution_destination_fail(resolution, dependency->destination, ROUTE_RESOLUTION_DESTINATION_UNAVAILABLE, context));
 				}
 			}
 			dependency = next;
@@ -602,24 +710,97 @@ static void route_resolution_entry_terminal_observe(route_resolution *resolution
 			route_resolution_destination_update(resolution, dependency->destination);
 		}
 	}
+	return status;
 }
 
-static bool route_resolution_entry_fresh_observe(route_resolution *resolution, route_resolution_entry *entry, const struct timespec *now) {
+static route_resolution_operation_status route_resolution_entry_fresh_observe(route_resolution *resolution, route_resolution_entry *entry, const struct timespec *now,
+	const route_resolution_operation_context *context) {
 	resolver_cache_view view;
 	if (!resolver_cache_entry_view(entry->cache_entry, now, &view)) {
-		return false;
+		return ROUTE_RESOLUTION_OPERATION_BAD_ARGUMENT;
 	}
 	if (view.status == RESOLVER_CACHE_VIEW_EMPTY) {
-		return true;
+		return ROUTE_RESOLUTION_OPERATION_OK;
 	}
 	bool positive = view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE;
 	const dns_srv_record *srv_records = resolver_cache_entry_query_type(entry->cache_entry) == ns_t_srv && positive ? view.srv_records : NULL;
 	size_t srv_record_count = srv_records == NULL ? 0 : view.srv_record_count;
-	route_resolution_entry_terminal_observe(resolution, entry, positive, srv_records, srv_record_count, true);
-	return true;
+	return route_resolution_entry_terminal_observe(resolution, entry, positive, srv_records, srv_record_count, true, context);
+}
+
+static route_resolution_completion_status route_resolution_completion_observe_internal(route_resolution *resolution,
+	const route_resolution_operation_context *context, const resolver_supervisor_completion *completion, const struct timespec *now) {
+	if (resolution == NULL || completion == NULL || completion->entry == NULL || now == NULL) {
+		return ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT;
+	}
+	if (!timeutil_valid(now)) {
+		return ROUTE_RESOLUTION_COMPLETION_TIME;
+	}
+	route_resolution_entry *entry = route_resolution_entry_find(resolution, completion->entry);
+	if (entry == NULL) {
+		return ROUTE_RESOLUTION_COMPLETION_IGNORED;
+	}
+	/* completion_take() has already removed the supervisor ownership; clear the local marker before inspecting any payload or SRV records. */
+	entry->background_interest = false;
+	if (completion->response.query_type != resolver_cache_entry_query_type(entry->cache_entry) || completion->response.status < RESOLVER_IPC_LOOKUP_OK
+		|| completion->response.status > RESOLVER_IPC_LOOKUP_TRUNCATED || completion->response.status == RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR) {
+		return ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT;
+	}
+	switch (completion->publication) {
+		case RESOLVER_CACHE_PUBLISH_STORED:
+		case RESOLVER_CACHE_PUBLISH_TRANSIENT:
+		case RESOLVER_CACHE_PUBLISH_BAD_ARGUMENT:
+		case RESOLVER_CACHE_PUBLISH_INVALID:
+		case RESOLVER_CACHE_PUBLISH_LIMIT:
+		case RESOLVER_CACHE_PUBLISH_MEMORY:
+		case RESOLVER_CACHE_PUBLISH_TIME:
+			break;
+		default:
+			return ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT;
+	}
+	if (completion->publication == RESOLVER_CACHE_PUBLISH_STORED) {
+		resolver_cache_view view;
+		if (!resolver_cache_entry_view(entry->cache_entry, now, &view)) {
+			return ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT;
+		}
+		if (view.status != RESOLVER_CACHE_VIEW_EMPTY) {
+			bool positive = view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE;
+			const dns_srv_record *srv_records = resolver_cache_entry_query_type(entry->cache_entry) == ns_t_srv && positive ? view.srv_records : NULL;
+			return route_resolution_completion_from_operation(route_resolution_entry_terminal_observe(resolution, entry, positive, srv_records,
+				srv_records == NULL ? 0 : view.srv_record_count, true, context));
+		}
+	}
+	bool positive = completion->publication == RESOLVER_CACHE_PUBLISH_TRANSIENT && completion->response.status == RESOLVER_IPC_LOOKUP_OK;
+	const dns_srv_record *srv_records = NULL;
+	size_t srv_record_count = 0;
+	if (positive && resolver_cache_entry_query_type(entry->cache_entry) == ns_t_srv) {
+		srv_records = completion->response.payload.srv.records;
+		srv_record_count = completion->response.payload.srv.record_count;
+		if (srv_records == NULL && srv_record_count > 0) {
+			return ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT;
+		}
+	}
+	return route_resolution_completion_from_operation(route_resolution_entry_terminal_observe(resolution, entry, positive, srv_records, srv_record_count, false, context));
 }
 
 /* section: functions (exported) */
+route_resolution_release_status route_resolution_background_release(route_resolution *resolution, resolver_supervisor *supervisor, const struct timespec *now) {
+	if (resolution == NULL || supervisor == NULL || now == NULL) {
+		return ROUTE_RESOLUTION_RELEASE_BAD_ARGUMENT;
+	}
+	if (!timeutil_valid(now)) {
+		return ROUTE_RESOLUTION_RELEASE_TIME;
+	}
+	route_resolution_operation_context context = { .now = now, .release_background = true, .supervisor = supervisor };
+	route_resolution_operation_status status = ROUTE_RESOLUTION_OPERATION_OK;
+	for (size_t bucket = 0; bucket < resolution->bucket_count; bucket++) {
+		for (route_resolution_entry *entry = resolution->buckets[bucket]; entry != NULL; entry = entry->hash_next) {
+			status = route_resolution_operation_merge(status, route_resolution_entry_background_release(entry, &context));
+		}
+	}
+	return route_resolution_release_from_operation(status);
+}
+
 route_resolution_build_status route_resolution_build(const route_bindings *bindings, const hosts_table *hosts, resolver_cache *cache, const struct timespec *now,
 	route_resolution **result) {
 	if (bindings == NULL || hosts == NULL || cache == NULL || !timeutil_valid(now) || result == NULL || *result != NULL || RESOLVER_CACHE_ENTRY_LIMIT == 0) {
@@ -714,7 +895,7 @@ route_resolution_build_status route_resolution_build(const route_bindings *bindi
 			return ROUTE_RESOLUTION_BUILD_BAD_ARGUMENT;
 		}
 		route_resolution_entry *entry = route_resolution_entry_find(resolution, cache_entry);
-		if (entry == NULL || !route_resolution_entry_fresh_observe(resolution, entry, now)) {
+		if (entry == NULL || route_resolution_entry_fresh_observe(resolution, entry, now, NULL) != ROUTE_RESOLUTION_OPERATION_OK) {
 			route_resolution_destroy(resolution);
 			return ROUTE_RESOLUTION_BUILD_BAD_ARGUMENT;
 		}
@@ -724,50 +905,18 @@ route_resolution_build_status route_resolution_build(const route_bindings *bindi
 }
 
 route_resolution_completion_status route_resolution_completion_observe(route_resolution *resolution, const resolver_supervisor_completion *completion, const struct timespec *now) {
-	if (resolution == NULL || completion == NULL || completion->entry == NULL || !timeutil_valid(now)) {
+	/* This compatibility entry has no supervisor context; listener code must use the supervisor-aware entry below. */
+	route_resolution_operation_context context = { .now = now, .release_background = false };
+	return route_resolution_completion_observe_internal(resolution, &context, completion, now);
+}
+
+route_resolution_completion_status route_resolution_completion_observe_with_supervisor(route_resolution *resolution, resolver_supervisor *supervisor,
+	const resolver_supervisor_completion *completion, const struct timespec *now) {
+	if (supervisor == NULL) {
 		return ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT;
 	}
-	route_resolution_entry *entry = route_resolution_entry_find(resolution, completion->entry);
-	if (entry == NULL) {
-		return ROUTE_RESOLUTION_COMPLETION_IGNORED;
-	}
-	if (completion->response.query_type != resolver_cache_entry_query_type(entry->cache_entry) || completion->response.status < RESOLVER_IPC_LOOKUP_OK
-		|| completion->response.status > RESOLVER_IPC_LOOKUP_TRUNCATED || completion->response.status == RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR) {
-		return ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT;
-	}
-	switch (completion->publication) {
-		case RESOLVER_CACHE_PUBLISH_STORED:
-		case RESOLVER_CACHE_PUBLISH_TRANSIENT:
-		case RESOLVER_CACHE_PUBLISH_BAD_ARGUMENT:
-		case RESOLVER_CACHE_PUBLISH_INVALID:
-		case RESOLVER_CACHE_PUBLISH_LIMIT:
-		case RESOLVER_CACHE_PUBLISH_MEMORY:
-		case RESOLVER_CACHE_PUBLISH_TIME:
-			break;
-		default:
-			return ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT;
-	}
-	if (completion->publication == RESOLVER_CACHE_PUBLISH_STORED) {
-		resolver_cache_view view;
-		if (!resolver_cache_entry_view(entry->cache_entry, now, &view)) {
-			return ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT;
-		}
-		if (view.status != RESOLVER_CACHE_VIEW_EMPTY) {
-			bool positive = view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE;
-			const dns_srv_record *srv_records = resolver_cache_entry_query_type(entry->cache_entry) == ns_t_srv && positive ? view.srv_records : NULL;
-			route_resolution_entry_terminal_observe(resolution, entry, positive, srv_records, srv_records == NULL ? 0 : view.srv_record_count, true);
-			return ROUTE_RESOLUTION_COMPLETION_OK;
-		}
-	}
-	bool positive = completion->publication == RESOLVER_CACHE_PUBLISH_TRANSIENT && completion->response.status == RESOLVER_IPC_LOOKUP_OK;
-	const dns_srv_record *srv_records = NULL;
-	size_t srv_record_count = 0;
-	if (positive && resolver_cache_entry_query_type(entry->cache_entry) == ns_t_srv) {
-		srv_records = completion->response.payload.srv.records;
-		srv_record_count = completion->response.payload.srv.record_count;
-	}
-	route_resolution_entry_terminal_observe(resolution, entry, positive, srv_records, srv_record_count, false);
-	return ROUTE_RESOLUTION_COMPLETION_OK;
+	route_resolution_operation_context context = { .now = now, .release_background = true, .supervisor = supervisor };
+	return route_resolution_completion_observe_internal(resolution, &context, completion, now);
 }
 
 void route_resolution_destroy(route_resolution *resolution) {
@@ -776,9 +925,9 @@ void route_resolution_destroy(route_resolution *resolution) {
 	}
 	for (size_t destination_index = 0; destination_index < resolution->destination_count; destination_index++) {
 		route_resolution_destination *destination = &resolution->destinations[destination_index];
-		route_resolution_target_set_unlink(resolution, &destination->targets);
+		route_resolution_target_set_unlink(resolution, &destination->targets, NULL);
 		for (size_t dependency_index = 0; dependency_index < destination->owner_dependency_count; dependency_index++) {
-			route_resolution_dependency_unlink(resolution, &destination->owner_dependencies[dependency_index]);
+			route_resolution_dependency_unlink(resolution, &destination->owner_dependencies[dependency_index], NULL);
 		}
 	}
 	if (resolution->buckets != NULL) {
@@ -844,6 +993,7 @@ route_prewarm_status route_resolution_schedule(route_resolution *resolution, res
 	if (resolution == NULL || supervisor == NULL || !timeutil_valid(now) || batch_limit == 0) {
 		return ROUTE_PREWARM_BAD_ARGUMENT;
 	}
+	route_resolution_operation_context context = { .now = now, .release_background = true, .supervisor = supervisor };
 	size_t calls = 0;
 	while (calls < batch_limit && !route_prewarmer_complete(&resolution->prewarmer)) {
 		resolver_cache_entry *cache_entry = NULL;
@@ -866,12 +1016,16 @@ route_prewarm_status route_resolution_schedule(route_resolution *resolution, res
 		if (status != ROUTE_PREWARM_COMPLETE && status != ROUTE_PREWARM_MORE) {
 			return status;
 		}
+		if (schedule_status == RESOLVER_SUPERVISOR_SCHEDULE_STARTED || schedule_status == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED) {
+			entry->background_interest = true;
+		}
 		if (!route_prewarmer_advance(&resolution->prewarmer)) {
 			return ROUTE_PREWARM_BAD_ARGUMENT;
 		}
 		if (schedule_status == RESOLVER_SUPERVISOR_SCHEDULE_FRESH) {
-			if (!route_resolution_entry_fresh_observe(resolution, entry, now)) {
-				return ROUTE_PREWARM_BAD_ARGUMENT;
+			route_resolution_operation_status observe_status = route_resolution_entry_fresh_observe(resolution, entry, now, &context);
+			if (observe_status != ROUTE_RESOLUTION_OPERATION_OK) {
+				return route_resolution_prewarm_from_operation(observe_status);
 			}
 		}
 	}
@@ -883,9 +1037,15 @@ route_prewarm_status route_resolution_schedule(route_resolution *resolution, res
 		if (mapped != ROUTE_PREWARM_MORE) {
 			return mapped;
 		}
+		if (schedule_status == RESOLVER_SUPERVISOR_SCHEDULE_STARTED || schedule_status == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED) {
+			entry->background_interest = true;
+		}
 		route_resolution_entry_queue_remove(resolution, entry);
-		if (schedule_status == RESOLVER_SUPERVISOR_SCHEDULE_FRESH && !route_resolution_entry_fresh_observe(resolution, entry, now)) {
-			return ROUTE_PREWARM_BAD_ARGUMENT;
+		if (schedule_status == RESOLVER_SUPERVISOR_SCHEDULE_FRESH) {
+			route_resolution_operation_status observe_status = route_resolution_entry_fresh_observe(resolution, entry, now, &context);
+			if (observe_status != ROUTE_RESOLUTION_OPERATION_OK) {
+				return route_resolution_prewarm_from_operation(observe_status);
+			}
 		}
 	}
 	return route_resolution_scheduling_complete(resolution) ? ROUTE_PREWARM_COMPLETE : ROUTE_PREWARM_MORE;
