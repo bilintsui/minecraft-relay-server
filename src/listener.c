@@ -2564,13 +2564,6 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				break;
 			}
 		}
-		if (route_runtime.ready && reload_pending && route_generation_registry_retired(context->generations) == NULL) {
-			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1 || listener_route_timer_set(&events, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot resume a deferred configuration reload: %s", strerror(errno));
-				exitcode = EXITCODE_INTERNAL;
-				break;
-			}
-		}
 		/* Consume socket data before timers from the same epoll batch, then reject only a still-current deadline. */
 		for (int timeout_pass = 0; timeout_pass <= 1; timeout_pass++) {
 			if (timeout_pass == 1 && clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
@@ -2645,6 +2638,18 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			break;
 		}
 		connection_count -= destroyed_count;
+		if (!listener_generation_collect(context, &route_now)) {
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot collect a retired proxy route generation after connection processing: %s", strerror(errno));
+			exitcode = EXITCODE_INTERNAL;
+			break;
+		}
+		if (route_runtime.ready && reload_pending && route_generation_registry_retired(context->generations) == NULL) {
+			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1 || listener_route_timer_set(&events, &route_now) == -1) {
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot resume a deferred configuration reload: %s", strerror(errno));
+				exitcode = EXITCODE_INTERNAL;
+				break;
+			}
+		}
 		if (!route_runtime.ready || !requests.accept_ready) {
 			continue;
 		}
