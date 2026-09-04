@@ -667,14 +667,31 @@ static int listener_connection_data_send(int socket_fd, const uint8_t *data, siz
 	return 0;
 }
 
-static void listener_connection_destroy(listener_connection **connections, listener_connection *target, const listener_events *events, resolver_supervisor *supervisor,
+static bool listener_waiter_destroy_status_apply(route_waiter_destroy_status status) {
+	switch (status) {
+		case ROUTE_WAITER_DESTROY_OK:
+			return true;
+		case ROUTE_WAITER_DESTROY_IO:
+			errno = EIO;
+			return false;
+		case ROUTE_WAITER_DESTROY_TIME:
+			errno = EOVERFLOW;
+			return false;
+		case ROUTE_WAITER_DESTROY_BAD_ARGUMENT:
+		default:
+			errno = EINVAL;
+			return false;
+	}
+}
+
+static bool listener_connection_destroy(listener_connection **connections, listener_connection *target, const listener_events *events, resolver_supervisor *supervisor,
 	const struct timespec *now) {
 	listener_connection **current = connections;
 	while (*current != NULL && *current != target) {
 		current = &(*current)->next;
 	}
 	if (*current == NULL) {
-		return;
+		return true;
 	}
 	*current = target->next;
 	if (target->socket_fd != -1) {
@@ -697,9 +714,18 @@ static void listener_connection_destroy(listener_connection **connections, liste
 	if (target->upstream_buffer_owned) {
 		free(target->upstream_buffer.data);
 	}
-	route_waiter_destroy(target->waiter, supervisor, now);
+	bool result;
+	if (supervisor == NULL) {
+		route_waiter_dispose(target->waiter);
+		result = true;
+	} else {
+		result = listener_waiter_destroy_status_apply(route_waiter_destroy(target->waiter, supervisor, now));
+	}
+	int saved_errno = errno;
 	route_generation_release(target->generation);
 	free(target);
+	errno = saved_errno;
+	return result;
 }
 
 static bool listener_connection_snapshot_prepare(listener_connection *connection, listener_context *context, connection_setup_snapshot *result) {
@@ -1281,19 +1307,32 @@ static void listener_connections_close_except(listener_connection *connections, 
 	}
 }
 
-static size_t listener_connections_destroy_closed(listener_connection **connections, const listener_events *events, resolver_supervisor *supervisor,
-	const struct timespec *now) {
-	size_t destroyed_count = 0;
+static bool listener_connections_destroy_closed(listener_connection **connections, const listener_events *events, resolver_supervisor *supervisor,
+	const struct timespec *now, size_t *destroyed_count) {
+	if (destroyed_count == NULL) {
+		errno = EINVAL;
+		return false;
+	}
+	*destroyed_count = 0;
+	bool result = true;
+	int saved_errno = 0;
 	listener_connection *connection = *connections;
 	while (connection != NULL) {
 		listener_connection *next = connection->next;
 		if (connection->closing) {
-			listener_connection_destroy(connections, connection, events, supervisor, now);
-			destroyed_count++;
+			bool destroyed = listener_connection_destroy(connections, connection, events, supervisor, now);
+			if (!destroyed && result) {
+				saved_errno = errno;
+				result = false;
+			}
+			(*destroyed_count)++;
 		}
 		connection = next;
 	}
-	return destroyed_count;
+	if (!result) {
+		errno = saved_errno;
+	}
+	return result;
 }
 
 static bool listener_endpoint_equal(const listener_endpoint *left, const listener_endpoint *right) {
@@ -2432,10 +2471,19 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
+			int connection_destroy_errno = 0;
 			while (connections != NULL) {
-				listener_connection_destroy(&connections, connections, &events, context->resolver, &route_now);
+				if (!listener_connection_destroy(&connections, connections, &events, context->resolver, &route_now) && connection_destroy_errno == 0) {
+					connection_destroy_errno = errno;
+				}
 			}
 			connection_count = 0;
+			if (connection_destroy_errno != 0) {
+				errno = connection_destroy_errno;
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot release connection route interests during shutdown: %s", strerror(errno));
+				exitcode = EXITCODE_INTERNAL;
+				break;
+			}
 			if (listener_route_timer_set(&events, NULL) == -1 || listener_resolver_shutdown(context) == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot shut down resolver runtime: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
@@ -2554,7 +2602,12 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			}
 #endif
 		}
-		size_t destroyed_count = listener_connections_destroy_closed(&connections, &events, context->resolver, &route_now);
+		size_t destroyed_count;
+		if (!listener_connections_destroy_closed(&connections, &events, context->resolver, &route_now, &destroyed_count)) {
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot release closed connection route interests: %s", strerror(errno));
+			exitcode = EXITCODE_INTERNAL;
+			break;
+		}
 		if (destroyed_count > connection_count) {
 			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Listener connection accounting failed.");
 			exitcode = EXITCODE_INTERNAL;
@@ -2611,10 +2664,8 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		}
 	}
 cleanup: {
-	struct timespec cleanup_now;
-	const struct timespec *cleanup_time = clock_gettime(CLOCK_MONOTONIC, &cleanup_now) == -1 ? NULL : &cleanup_now;
 	while (connections != NULL) {
-		listener_connection_destroy(&connections, connections, &events, context->resolver, cleanup_time);
+		listener_connection_destroy(&connections, connections, &events, NULL, NULL);
 	}
 	listener_resolver_destroy(context);
 	listener_events_destroy(&events);
