@@ -52,17 +52,17 @@ typedef struct {
 } short_fixture;
 
 /* section: global variables */
-static const uint8_t short_status_request[] = {
-	0x12, 0x00, 0x2F, 0x0C,
-	't', 'e', 's', 't', '.', 'e', 'x', 'a', 'm', 'p', 'l', 'e',
-	0x63, 0xDD, 0x01,
-	0x01, 0x00
-};
 static const uint8_t short_login_request[] = {
 	0x12, 0x00, 0x2F, 0x0C,
 	't', 'e', 's', 't', '.', 'e', 'x', 'a', 'm', 'p', 'l', 'e',
 	0x63, 0xDD, 0x02,
 	0x03, 0x00, 0x01, 'x'
+};
+static const uint8_t short_status_request[] = {
+	0x12, 0x00, 0x2F, 0x0C,
+	't', 'e', 's', 't', '.', 'e', 'x', 'a', 'm', 'p', 'l', 'e',
+	0x63, 0xDD, 0x01,
+	0x01, 0x00
 };
 
 /* section: functions (local) */
@@ -80,29 +80,6 @@ static bool short_test_bytes_contain(const uint8_t *data, size_t data_size, cons
 		}
 	}
 	return false;
-}
-
-static bool short_test_file_contains(const char *filename, const char *needle) {
-	if (filename == NULL || needle == NULL) {
-		errno = EINVAL;
-		return false;
-	}
-	FILE *file = fopen(filename, "r");
-	if (file == NULL) {
-		return false;
-	}
-	char line[BUFSIZ];
-	bool result = false;
-	while (fgets(line, sizeof(line), file) != NULL) {
-		if (strstr(line, needle) != NULL) {
-			result = true;
-			break;
-		}
-	}
-	if (fclose(file) == EOF && !result) {
-		return false;
-	}
-	return result;
 }
 
 static int short_test_client_connect(in_port_t port) {
@@ -157,29 +134,27 @@ static int short_test_config_write(const short_fixture *fixture, const char *add
 	return close(fd);
 }
 
-static int short_test_fixture_release_environment(const short_fixture *fixture, const char *suffix) {
-	if (suffix == NULL || strncmp(suffix, "release-", strlen("release-")) != 0) {
-		return 0;
-	}
-	const char *status = strstr(suffix, "-bad") != NULL ? "BAD_ARGUMENT" : strstr(suffix, "-time") != NULL ? "TIME" : "IO";
-	if (fixture == NULL || setenv("MCRELAY_TEST_DNS_FIXED", "1", 1) == -1 || setenv("MCRELAY_TEST_DNS_FIXED_DELAY_MS", "500", 1) == -1
-		|| setenv("MCRELAY_TEST_ROUTE_DESTROY_FAULT_TRIGGER", fixture->release_trigger_filename, 1) == -1
-		|| setenv("MCRELAY_TEST_ROUTE_DESTROY_FAULT_STATUS", status, 1) == -1) {
-		return -1;
-	}
-	return 0;
-}
-
-static int short_test_fixture_release_trigger(const short_fixture *fixture) {
-	if (fixture == NULL || fixture->release_trigger_filename[0] == '\0') {
+static bool short_test_file_contains(const char *filename, const char *needle) {
+	if (filename == NULL || needle == NULL) {
 		errno = EINVAL;
-		return -1;
+		return false;
 	}
-	int fd = open(fixture->release_trigger_filename, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-	if (fd == -1) {
-		return -1;
+	FILE *file = fopen(filename, "r");
+	if (file == NULL) {
+		return false;
 	}
-	return close(fd);
+	char line[BUFSIZ];
+	bool result = false;
+	while (fgets(line, sizeof(line), file) != NULL) {
+		if (strstr(line, needle) != NULL) {
+			result = true;
+			break;
+		}
+	}
+	if (fclose(file) == EOF && !result) {
+		return false;
+	}
+	return result;
 }
 
 static ssize_t short_test_fixture_notification_timeout(short_fixture *fixture, char *message, size_t capacity, int timeout_ms) {
@@ -206,6 +181,31 @@ static ssize_t short_test_fixture_notification_timeout(short_fixture *fixture, c
 
 static ssize_t short_test_fixture_notification(short_fixture *fixture, char *message, size_t capacity) {
 	return short_test_fixture_notification_timeout(fixture, message, capacity, LISTENER_SHORT_TEST_TIMEOUT_MS);
+}
+
+static int short_test_fixture_release_environment(const short_fixture *fixture, const char *suffix) {
+	if (suffix == NULL || strncmp(suffix, "release-", strlen("release-")) != 0) {
+		return 0;
+	}
+	const char *status = strstr(suffix, "-bad") != NULL ? "BAD_ARGUMENT" : strstr(suffix, "-time") != NULL ? "TIME" : "IO";
+	if (fixture == NULL || setenv("MCRELAY_TEST_DNS_FIXED", "1", 1) == -1 || setenv("MCRELAY_TEST_DNS_FIXED_DELAY_MS", "500", 1) == -1
+		|| setenv("MCRELAY_TEST_ROUTE_DESTROY_FAULT_TRIGGER", fixture->release_trigger_filename, 1) == -1
+		|| setenv("MCRELAY_TEST_ROUTE_DESTROY_FAULT_STATUS", status, 1) == -1) {
+		return -1;
+	}
+	return 0;
+}
+
+static int short_test_fixture_release_trigger(const short_fixture *fixture) {
+	if (fixture == NULL || fixture->release_trigger_filename[0] == '\0') {
+		errno = EINVAL;
+		return -1;
+	}
+	int fd = open(fixture->release_trigger_filename, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd == -1) {
+		return -1;
+	}
+	return close(fd);
 }
 
 static int short_test_fixture_start(short_fixture *fixture, const char *binary, const char *directory, const char *suffix,
