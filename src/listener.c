@@ -1634,6 +1634,7 @@ static bool listener_generation_create(listener_context *context, conf *config, 
 
 static route_generation_registry_publish_status listener_generation_publish(listener_context *context, route_generation **candidate) {
 	if (context == NULL || candidate == NULL || *candidate == NULL || context->resolver == NULL) {
+		errno = EINVAL;
 		return ROUTE_GENERATION_REGISTRY_PUBLISH_BAD_ARGUMENT;
 	}
 	struct timespec now;
@@ -1642,10 +1643,18 @@ static route_generation_registry_publish_status listener_generation_publish(list
 	}
 	route_generation_registry_publish_status status = route_generation_registry_publish(context->generations, candidate, context->resolver, &now);
 	if (*candidate != NULL) {
+		if (status == ROUTE_GENERATION_REGISTRY_PUBLISH_BAD_ARGUMENT) {
+			errno = EINVAL;
+		} else if (status == ROUTE_GENERATION_REGISTRY_PUBLISH_IO) {
+			errno = EIO;
+		} else if (status == ROUTE_GENERATION_REGISTRY_PUBLISH_TIME) {
+			errno = EOVERFLOW;
+		}
 		return status;
 	}
 	route_generation *active = route_generation_registry_active(context->generations);
 	if (active == NULL) {
+		errno = EINVAL;
 		return ROUTE_GENERATION_REGISTRY_PUBLISH_BAD_ARGUMENT;
 	}
 	context->config = (conf *)route_generation_config(active);
@@ -1654,6 +1663,9 @@ static route_generation_registry_publish_status listener_generation_publish(list
 	context->route_resolution = route_generation_resolution(active);
 	context->routes = (route_table *)route_generation_routes(active);
 	context->generation_next_identity = context->generation_next_identity == UINT64_MAX ? 0 : context->generation_next_identity + 1U;
+	if (status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
+		errno = status == ROUTE_GENERATION_REGISTRY_PUBLISH_IO ? EIO : status == ROUTE_GENERATION_REGISTRY_PUBLISH_TIME ? EOVERFLOW : EINVAL;
+	}
 	return status;
 }
 
@@ -2054,7 +2066,7 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 			if (publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
 				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
 					"Cannot publish the prepared proxy route generation: %s.",
-					publish_status == ROUTE_GENERATION_REGISTRY_PUBLISH_BLOCKED ? "a retired generation is still pinned" : "invalid internal generation state"
+					publish_status == ROUTE_GENERATION_REGISTRY_PUBLISH_BLOCKED ? "a retired generation is still pinned" : strerror(errno)
 				);
 				result = -1;
 				break;
@@ -2136,7 +2148,7 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 				if (publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
 					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
 						"Cannot publish the replacement proxy route generation: %s.",
-						publish_status == ROUTE_GENERATION_REGISTRY_PUBLISH_BLOCKED ? "a retired generation is still pinned" : "invalid internal generation state"
+						publish_status == ROUTE_GENERATION_REGISTRY_PUBLISH_BLOCKED ? "a retired generation is still pinned" : strerror(errno)
 					);
 					result = -1;
 				} else if (publish_hosts) {
@@ -2430,7 +2442,10 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 	}
 	route_generation_registry_publish_status initial_publish_status = listener_generation_publish(context, &initial_generation);
 	if (initial_publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot publish the initial proxy route generation: invalid internal generation state.");
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+			"Cannot publish the initial proxy route generation: %s.",
+			initial_publish_status == ROUTE_GENERATION_REGISTRY_PUBLISH_BLOCKED ? "a retired generation is still pinned" : strerror(errno)
+		);
 		route_generation_release(initial_generation);
 		context->config = NULL;
 		context->hosts = NULL;
