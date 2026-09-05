@@ -1850,7 +1850,7 @@ static int listener_route_runtime_schedule(listener_context *context, listener_r
 	const struct timespec *now) {
 	route_prewarm_status status = route_resolution_schedule(context->route_resolution, context->resolver, now, LISTENER_ROUTE_PREWARM_BATCH_LIMIT);
 	if (status == ROUTE_PREWARM_BAD_ARGUMENT || status == ROUTE_PREWARM_IO || status == ROUTE_PREWARM_TIME) {
-		errno = status == ROUTE_PREWARM_TIME ? EINVAL : status == ROUTE_PREWARM_IO ? EIO : EINVAL;
+		errno = status == ROUTE_PREWARM_TIME ? EOVERFLOW : status == ROUTE_PREWARM_IO ? EIO : EINVAL;
 		return -1;
 	}
 	if (status == ROUTE_PREWARM_CAPACITY || status == ROUTE_PREWARM_MEMORY) {
@@ -2165,7 +2165,7 @@ static void listener_resolver_dispose_in_child(listener_context *context) {
 static int listener_resolver_events_process(listener_context *context, listener_connection *connections, const struct timespec *now) {
 	resolver_supervisor_event_status status = resolver_supervisor_events_process(context->resolver, now);
 	if (status != RESOLVER_SUPERVISOR_EVENT_OK) {
-		errno = status == RESOLVER_SUPERVISOR_EVENT_TIME ? EINVAL : EIO;
+		errno = status == RESOLVER_SUPERVISOR_EVENT_TIME ? EOVERFLOW : status == RESOLVER_SUPERVISOR_EVENT_IO ? EIO : EINVAL;
 		return -1;
 	}
 	resolver_supervisor_completion completion = { 0 };
