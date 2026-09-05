@@ -1120,8 +1120,11 @@ static listener_connection_progress listener_connection_refusal_start(listener_c
 		default:
 			return LISTENER_CONNECTION_CLOSED;
 	}
-	if (packet_size == 0 || !listener_connection_route_release(connection, supervisor, now)) {
+	if (packet_size == 0) {
 		return LISTENER_CONNECTION_ABORT;
+	}
+	if (!listener_connection_route_release(connection, supervisor, now)) {
+		return LISTENER_CONNECTION_FATAL;
 	}
 	connection->inbound_size = 0;
 	connection->state = LISTENER_CONNECTION_WORKER_REFUSING;
@@ -1221,7 +1224,6 @@ static listener_connection_progress listener_connection_short_start(listener_con
 	net_addrbundle client = listener_client_address_parse(&connection->address);
 	connection_setup_short_action action = connection_setup_short_prepare(&connection->short_plan, &snapshot, client, connection->inbound, connection->inbound_size);
 	if (!listener_connection_route_release(connection, context->resolver, now)) {
-		errno = EINVAL;
 		return LISTENER_CONNECTION_FATAL;
 	}
 	if (action == CONNECTION_SETUP_SHORT_ABORT || !listener_connection_short_buffer_prepare(connection)) {
@@ -2316,11 +2318,13 @@ static listener_connection_progress listener_connection_dispatch(listener_connec
 		return listener_connection_refusal_start(connection, events, context->resolver, now);
 	}
 	connection_setup_snapshot snapshot;
-	if (!listener_connection_snapshot_prepare(connection, context, &snapshot)
-		|| !listener_connection_route_release(connection, context->resolver, now)) {
+	if (!listener_connection_snapshot_prepare(connection, context, &snapshot)) {
 		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot prepare a self-contained worker handoff.");
 		connection->closing = true;
 		return LISTENER_CONNECTION_PENDING;
+	}
+	if (!listener_connection_route_release(connection, context->resolver, now)) {
+		return LISTENER_CONNECTION_FATAL;
 	}
 	pid_t worker_pid = fork();
 	if (worker_pid > 0) {
