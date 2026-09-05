@@ -45,6 +45,7 @@ typedef struct {
 	char config_filename[PATH_MAX];
 	char log_filename[PATH_MAX];
 	char notify_filename[PATH_MAX];
+	char release_trigger_filename[PATH_MAX];
 	int notify_fd;
 	in_port_t listener_port;
 	pid_t listener;
@@ -56,6 +57,12 @@ static const uint8_t short_status_request[] = {
 	't', 'e', 's', 't', '.', 'e', 'x', 'a', 'm', 'p', 'l', 'e',
 	0x63, 0xDD, 0x01,
 	0x01, 0x00
+};
+static const uint8_t short_login_request[] = {
+	0x12, 0x00, 0x2F, 0x0C,
+	't', 'e', 's', 't', '.', 'e', 'x', 'a', 'm', 'p', 'l', 'e',
+	0x63, 0xDD, 0x02,
+	0x03, 0x00, 0x01, 'x'
 };
 
 /* section: functions (local) */
@@ -73,6 +80,29 @@ static bool short_test_bytes_contain(const uint8_t *data, size_t data_size, cons
 		}
 	}
 	return false;
+}
+
+static bool short_test_file_contains(const char *filename, const char *needle) {
+	if (filename == NULL || needle == NULL) {
+		errno = EINVAL;
+		return false;
+	}
+	FILE *file = fopen(filename, "r");
+	if (file == NULL) {
+		return false;
+	}
+	char line[BUFSIZ];
+	bool result = false;
+	while (fgets(line, sizeof(line), file) != NULL) {
+		if (strstr(line, needle) != NULL) {
+			result = true;
+			break;
+		}
+	}
+	if (fclose(file) == EOF && !result) {
+		return false;
+	}
+	return result;
 }
 
 static int short_test_client_connect(in_port_t port) {
@@ -123,6 +153,31 @@ static int short_test_config_write(const short_fixture *fixture, const char *add
 			return -1;
 		}
 		written += (size_t)write_size;
+	}
+	return close(fd);
+}
+
+static int short_test_fixture_release_environment(const short_fixture *fixture, const char *suffix) {
+	if (suffix == NULL || strncmp(suffix, "release-", strlen("release-")) != 0) {
+		return 0;
+	}
+	const char *status = strstr(suffix, "-bad") != NULL ? "BAD_ARGUMENT" : strstr(suffix, "-time") != NULL ? "TIME" : "IO";
+	if (fixture == NULL || setenv("MCRELAY_TEST_DNS_FIXED", "1", 1) == -1 || setenv("MCRELAY_TEST_DNS_FIXED_DELAY_MS", "500", 1) == -1
+		|| setenv("MCRELAY_TEST_ROUTE_DESTROY_FAULT_TRIGGER", fixture->release_trigger_filename, 1) == -1
+		|| setenv("MCRELAY_TEST_ROUTE_DESTROY_FAULT_STATUS", status, 1) == -1) {
+		return -1;
+	}
+	return 0;
+}
+
+static int short_test_fixture_release_trigger(const short_fixture *fixture) {
+	if (fixture == NULL || fixture->release_trigger_filename[0] == '\0') {
+		errno = EINVAL;
+		return -1;
+	}
+	int fd = open(fixture->release_trigger_filename, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+	if (fd == -1) {
+		return -1;
 	}
 	return close(fd);
 }
@@ -179,6 +234,11 @@ static int short_test_fixture_start(short_fixture *fixture, const char *binary, 
 		errno = EOVERFLOW;
 		return -1;
 	}
+	filename_length = snprintf(fixture->release_trigger_filename, sizeof(fixture->release_trigger_filename), "%s/%s-release.trigger", directory, suffix);
+	if (filename_length < 0 || (size_t)filename_length >= sizeof(fixture->release_trigger_filename)) {
+		errno = EOVERFLOW;
+		return -1;
+	}
 	int reservation_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (reservation_fd == -1) {
 		return -1;
@@ -226,7 +286,8 @@ static int short_test_fixture_start(short_fixture *fixture, const char *binary, 
 			|| ((strcmp(suffix, "route-cancel") == 0 || strcmp(suffix, "reload-late") == 0)
 				&& setenv("MCRELAY_TEST_DNS_PENDING", "1", 1) == -1)
 			|| (strcmp(suffix, "deadline") == 0 && (setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1
-				|| setenv("MCRELAY_TEST_TIMER_REARM_RACE", "1", 1) == -1))) {
+				|| setenv("MCRELAY_TEST_TIMER_REARM_RACE", "1", 1) == -1))
+			|| short_test_fixture_release_environment(fixture, suffix) == -1) {
 			_exit(EXIT_FAILURE);
 		}
 		close(devnull_fd);
@@ -293,7 +354,29 @@ static int short_test_fixture_stop(short_fixture *fixture) {
 	unlink(fixture->config_filename);
 	unlink(fixture->log_filename);
 	unlink(fixture->notify_filename);
+	unlink(fixture->release_trigger_filename);
 	return result;
+}
+
+static int short_test_fixture_wait_exit(short_fixture *fixture, int *status, int timeout_ms) {
+	if (fixture == NULL || fixture->listener <= 0 || status == NULL || timeout_ms < 1) {
+		errno = EINVAL;
+		return -1;
+	}
+	for (int elapsed = 0; elapsed <= timeout_ms; elapsed += LISTENER_SHORT_TEST_POLL_MS) {
+		pid_t result = waitpid(fixture->listener, status, WNOHANG);
+		if (result == fixture->listener) {
+			fixture->listener = -1;
+			return 0;
+		}
+		if (result == -1) {
+			return -1;
+		}
+		struct timespec delay = { .tv_nsec = LISTENER_SHORT_TEST_POLL_MS * 1000000L };
+		nanosleep(&delay, NULL);
+	}
+	errno = ETIMEDOUT;
+	return -1;
 }
 
 static int short_test_listener_accept(int listener_fd) {
@@ -595,6 +678,112 @@ cleanup:
 	return test_result;
 }
 
+static bool short_test_release_fault_dispatch(const char *binary, const char *directory) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int client_fd = -1;
+	int status = 0;
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "release-dispatch-io", "release-fault.example", 25565) == 0,
+		"could not start dispatch release-failure listener");
+	CHECK(short_test_fixture_release_trigger(&fixture) == 0, "could not arm dispatch release-failure injection");
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0, "could not connect dispatch release-failure client");
+	CHECK(short_test_send_all(client_fd, short_login_request, sizeof(short_login_request)) == 0,
+		"could not send dispatch release-failure request");
+	CHECK(short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
+		&& WIFEXITED(status) && WEXITSTATUS(status) != EXIT_SUCCESS, "dispatch release failure did not terminate the listener");
+	CHECK(short_test_file_contains(fixture.log_filename, "Input/output error"), "dispatch release failure was not listener-fatal");
+	test_result = true;
+
+cleanup:
+	if (client_fd >= 0) {
+		close(client_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
+static bool short_test_release_fault_refusal(const char *binary, const char *directory) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int upstream_fd = -1;
+	int upstream_a_fd = -1;
+	int client_a_fd = -1;
+	int client_refusal_fd = -1;
+	int status = 0;
+	in_port_t upstream_port = 0;
+	upstream_fd = short_test_listener_open(&upstream_port);
+	CHECK(upstream_fd >= 0, "could not open release-failure upstream");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "release-refusal-io", "release-fault.example", upstream_port) == 0,
+		"could not start refusal release-failure listener");
+	client_a_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_a_fd >= 0 && short_test_send_all(client_a_fd, short_login_request, sizeof(short_login_request)) == 0,
+		"could not start first release-failure worker");
+	upstream_a_fd = short_test_listener_accept(upstream_fd);
+	CHECK(upstream_a_fd >= 0, "first release-failure worker did not reach upstream");
+	CHECK(short_test_fixture_release_trigger(&fixture) == 0, "could not arm refusal release-failure injection");
+	client_refusal_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_refusal_fd >= 0 && short_test_send_all(client_refusal_fd, short_login_request, sizeof(short_login_request)) == 0,
+		"could not start refusal release-failure client");
+	CHECK(short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
+		&& WIFEXITED(status) && WEXITSTATUS(status) != EXIT_SUCCESS, "refusal release failure did not terminate the listener");
+	CHECK(short_test_file_contains(fixture.log_filename, "Input/output error"), "refusal release failure was not listener-fatal");
+	test_result = true;
+
+cleanup:
+	if (client_a_fd >= 0) {
+		close(client_a_fd);
+	}
+	if (client_refusal_fd >= 0) {
+		close(client_refusal_fd);
+	}
+	if (upstream_a_fd >= 0) {
+		close(upstream_a_fd);
+	}
+	if (upstream_fd >= 0) {
+		close(upstream_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
+static bool short_test_release_fault_short_case(const char *binary, const char *directory, const char *suffix, const char *expected_error) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int client_fd = -1;
+	int status = 0;
+	CHECK(short_test_fixture_start(&fixture, binary, directory, suffix, "release-fault.example", 25565) == 0,
+		"could not start short release-failure listener");
+	CHECK(short_test_fixture_release_trigger(&fixture) == 0, "could not arm short release-failure injection");
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0, "could not connect short release-failure client");
+	CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0,
+		"could not send short release-failure request");
+	CHECK(short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
+		&& WIFEXITED(status) && WEXITSTATUS(status) != EXIT_SUCCESS, "short release failure did not terminate the listener");
+	CHECK(short_test_file_contains(fixture.log_filename, expected_error), "short release failure errno was not preserved in the fatal log");
+	test_result = true;
+
+cleanup:
+	if (client_fd >= 0) {
+		close(client_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
+static bool short_test_release_fault_short(const char *binary, const char *directory) {
+	return short_test_release_fault_short_case(binary, directory, "release-short-bad", "Invalid argument")
+		&& short_test_release_fault_short_case(binary, directory, "release-short-io", "Input/output error")
+		&& short_test_release_fault_short_case(binary, directory, "release-short-time", "Value too large for defined data type");
+}
+
 static bool short_test_relay(const char *binary, const char *directory) {
 	bool test_result = false;
 	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
@@ -863,6 +1052,8 @@ int main(int argc, char **argv) {
 	}
 	test_result = short_test_admission(argv[1], temp_directory) && short_test_deadline(argv[1], temp_directory)
 		&& short_test_lifetime(argv[1], temp_directory) && short_test_refusal(argv[1], temp_directory)
+		&& short_test_release_fault_short(argv[1], temp_directory) && short_test_release_fault_dispatch(argv[1], temp_directory)
+		&& short_test_release_fault_refusal(argv[1], temp_directory)
 		&& short_test_relay(argv[1], temp_directory) && short_test_relay_upstream_first(argv[1], temp_directory)
 		&& short_test_reload_late_release(argv[1], temp_directory) && short_test_route_cancel(argv[1], temp_directory)
 		&& short_test_stop(argv[1], temp_directory);
