@@ -36,6 +36,7 @@
 
 /* timeout */
 #define LISTENER_RELOAD_LATE_TEST_DEFERRED_MS	500
+#define LISTENER_RELOAD_LATE_TEST_RELEASE_MS	2000
 #define LISTENER_ROUTE_CANCEL_TEST_TIMEOUT_MS	2000
 #define LISTENER_SHORT_TEST_TIMEOUT_MS	5000
 #define LISTENER_SHORT_TEST_POLL_MS	100
@@ -80,6 +81,19 @@ static bool short_test_bytes_contain(const uint8_t *data, size_t data_size, cons
 		}
 	}
 	return false;
+}
+
+static bool short_test_client_alive(int socket_fd) {
+	uint8_t byte;
+	ssize_t result;
+	if (socket_fd < 0) {
+		errno = EINVAL;
+		return false;
+	}
+	do {
+		result = recv(socket_fd, &byte, sizeof(byte), MSG_DONTWAIT | MSG_PEEK);
+	} while (result == -1 && errno == EINTR);
+	return result > 0 || (result == -1 && (errno == EAGAIN || errno == EWOULDBLOCK));
 }
 
 static int short_test_client_connect(in_port_t port) {
@@ -285,6 +299,7 @@ static int short_test_fixture_start(short_fixture *fixture, const char *binary, 
 			|| setenv("NOTIFY_SOCKET", fixture->notify_filename, 1) == -1
 			|| ((strcmp(suffix, "route-cancel") == 0 || strcmp(suffix, "reload-late") == 0)
 				&& setenv("MCRELAY_TEST_DNS_PENDING", "1", 1) == -1)
+			|| (strcmp(suffix, "reload-late-short") == 0 && setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1)
 			|| (strcmp(suffix, "deadline") == 0 && (setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1
 				|| setenv("MCRELAY_TEST_TIMER_REARM_RACE", "1", 1) == -1))
 			|| short_test_fixture_release_environment(fixture, suffix) == -1) {
@@ -912,20 +927,23 @@ cleanup:
 	return test_result;
 }
 
-static bool short_test_reload_late_release(const char *binary, const char *directory) {
+static bool short_test_reload_late_case(const char *binary, const char *directory, const char *suffix, const char *address, in_port_t port,
+	bool release_with_short_start) {
 	bool test_result = false;
 	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
 	int client_fd = -1;
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "reload-late", "route-wait.example", 25565) == 0,
+	CHECK(short_test_fixture_start(&fixture, binary, directory, suffix, address, port) == 0,
 		"could not start late-reload listener");
 	client_fd = short_test_client_connect(fixture.listener_port);
 	CHECK(client_fd >= 0, "could not connect late-reload client");
-	CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send late-reload request");
+	if (!release_with_short_start) {
+		CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send late-reload request");
+	}
 	struct timespec delay = { .tv_nsec = 100000000L };
 	while (nanosleep(&delay, &delay) == -1) {
-		CHECK(errno == EINTR, "could not wait for pending late-reload route resolution");
+		CHECK(errno == EINTR, "could not wait for late-reload client state");
 	}
-	CHECK(short_test_config_write(&fixture, "route-wait.example", 25565) == 0, "could not rewrite configuration for first reload");
+	CHECK(short_test_config_write(&fixture, address, port) == 0, "could not rewrite configuration for first reload");
 	CHECK(kill(fixture.listener, SIGUSR1) == 0, "could not request first late-reload reload");
 	char notification[128];
 	ssize_t notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
@@ -933,18 +951,25 @@ static bool short_test_reload_late_release(const char *binary, const char *direc
 		"first late-reload notification was invalid");
 	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
 	CHECK(notification_size > 0 && strcmp(notification, "READY=1") == 0, "first late-reload completion was invalid");
-	CHECK(short_test_config_write(&fixture, "route-wait.example", 25565) == 0, "could not rewrite configuration for deferred reload");
+	CHECK(short_test_config_write(&fixture, address, port) == 0, "could not rewrite configuration for deferred reload");
 	CHECK(kill(fixture.listener, SIGUSR1) == 0, "could not request deferred late-reload reload");
 	errno = 0;
 	CHECK(short_test_fixture_notification_timeout(&fixture, notification, sizeof(notification), LISTENER_RELOAD_LATE_TEST_DEFERRED_MS) == -1
 		&& errno == ETIMEDOUT, "deferred late-reload unexpectedly completed while the generation was pinned");
-	CHECK(close(client_fd) == 0, "could not close late-reload client to release the generation");
-	client_fd = -1;
-	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	if (release_with_short_start) {
+		CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send late-reload request");
+	} else {
+		CHECK(close(client_fd) == 0, "could not close late-reload client to release the generation");
+		client_fd = -1;
+	}
+	notification_size = short_test_fixture_notification_timeout(&fixture, notification, sizeof(notification), LISTENER_RELOAD_LATE_TEST_RELEASE_MS);
 	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0,
 		"deferred late-reload notification was missing");
 	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
 	CHECK(notification_size > 0 && strcmp(notification, "READY=1") == 0, "deferred late-reload completion was invalid");
+	if (release_with_short_start) {
+		CHECK(short_test_client_alive(client_fd), "short-start late-reload client was destroyed before upstream connect completed");
+	}
 	errno = 0;
 	CHECK(short_test_fixture_notification_timeout(&fixture, notification, sizeof(notification), LISTENER_RELOAD_LATE_TEST_DEFERRED_MS) == -1
 		&& errno == ETIMEDOUT, "deferred late-reload executed more than once");
@@ -960,6 +985,14 @@ cleanup:
 		short_test_fixture_stop(&fixture);
 	}
 	return test_result;
+}
+
+static bool short_test_reload_late_release(const char *binary, const char *directory) {
+	return short_test_reload_late_case(binary, directory, "reload-late", "route-wait.example", 25565, false);
+}
+
+static bool short_test_reload_late_release_short_start(const char *binary, const char *directory) {
+	return short_test_reload_late_case(binary, directory, "reload-late-short", "127.0.0.1", 9, true);
 }
 
 static bool short_test_route_cancel(const char *binary, const char *directory) {
@@ -1055,7 +1088,8 @@ int main(int argc, char **argv) {
 		&& short_test_release_fault_short(argv[1], temp_directory) && short_test_release_fault_dispatch(argv[1], temp_directory)
 		&& short_test_release_fault_refusal(argv[1], temp_directory)
 		&& short_test_relay(argv[1], temp_directory) && short_test_relay_upstream_first(argv[1], temp_directory)
-		&& short_test_reload_late_release(argv[1], temp_directory) && short_test_route_cancel(argv[1], temp_directory)
+		&& short_test_reload_late_release(argv[1], temp_directory) && short_test_reload_late_release_short_start(argv[1], temp_directory)
+		&& short_test_route_cancel(argv[1], temp_directory)
 		&& short_test_stop(argv[1], temp_directory);
 	if (rmdir(temp_directory) == -1 && errno != ENOENT) {
 		test_result = false;
