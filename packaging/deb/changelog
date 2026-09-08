@@ -1,3 +1,10 @@
+mcrelay (1.2~rc3-1) unstable; urgency=medium
+
+  * Resume deferred configuration reloads after late route-generation
+    releases.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Tue, 08 Sep 2026 13:59:00 +0800
+
 mcrelay (1.2~rc2-1) unstable; urgency=medium
 
   * Open file inputs descriptor-first to close path replacement races.
