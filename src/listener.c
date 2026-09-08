@@ -89,6 +89,9 @@
 #ifndef LISTENER_ROUTE_WARMUP_TIMEOUT_SEC
 #define LISTENER_ROUTE_WARMUP_TIMEOUT_SEC	10
 #endif
+#ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
+#define LISTENER_ROUTE_TIMER_ARMED_TEST_DELAY_SEC	60
+#endif
 #ifndef LISTENER_WORKER_LIMIT
 #define LISTENER_WORKER_LIMIT	256
 #endif
@@ -1803,6 +1806,37 @@ static listener_route_prepare_status listener_generation_prepare(listener_contex
 	return status;
 }
 
+#ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
+static int listener_route_timer_armed_test_apply(struct itimerspec *timer) {
+	if (getenv("MCRELAY_TEST_ROUTE_TIMER_ARMED") == NULL) {
+		return 0;
+	}
+	struct timespec now;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+		return -1;
+	}
+	if (!timeutil_add_seconds(&now, LISTENER_ROUTE_TIMER_ARMED_TEST_DELAY_SEC, &timer->it_value)) {
+		errno = EOVERFLOW;
+		return -1;
+	}
+	return 1;
+}
+
+static int listener_route_timer_armed_test_notify(void) {
+	static bool notified;
+	if (notified) {
+		return 0;
+	}
+	int result = sd_notify(0, "MCRELAY_TEST_ROUTE_TIMER_ARMED=1");
+	if (result < 0) {
+		errno = -result;
+		return -1;
+	}
+	notified = true;
+	return 0;
+}
+#endif
+
 static int listener_route_timer_drain(const listener_events *events) {
 	uint64_t expirations;
 	ssize_t bytes;
@@ -1824,7 +1858,21 @@ static int listener_route_timer_set(const listener_events *events, const struct 
 	if (deadline != NULL) {
 		timer.it_value = *deadline;
 	}
-	return timerfd_settime(events->route_timer_fd, TFD_TIMER_ABSTIME, &timer, NULL);
+#ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
+	int armed_test = deadline == NULL ? listener_route_timer_armed_test_apply(&timer) : 0;
+	if (armed_test == -1) {
+		return -1;
+	}
+#endif
+	if (timerfd_settime(events->route_timer_fd, TFD_TIMER_ABSTIME, &timer, NULL) == -1) {
+		return -1;
+	}
+#ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
+	if (armed_test == 1 && listener_route_timer_armed_test_notify() == -1) {
+		return -1;
+	}
+#endif
+	return 0;
 }
 
 static int listener_route_runtime_ready(listener_context *context, listener_route_runtime *runtime, const listener_events *events, const listener_socket *listener,

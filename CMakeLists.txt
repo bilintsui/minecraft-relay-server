@@ -469,7 +469,7 @@ if(BUILD_TESTING)
 		tests/connect_pending.c tests/dns_pending.c tests/route_waiter_destroy_fault.c)
 	add_dependencies(listener_short_runtime_daemon version_header)
 	target_compile_definitions(listener_short_runtime_daemon PRIVATE _GNU_SOURCE DEBUG_MODE=false LISTENER_CONNECTION_LIMIT=2 LISTENER_WORKER_LIMIT=1 LISTENER_INITIAL_TIMEOUT_SEC=5
-		LISTENER_ROUTE_WARMUP_TIMEOUT_SEC=1 LISTENER_SHORT_CONNECT_TIMEOUT_SEC=10 LISTENER_SHORT_LIFETIME_TIMEOUT_SEC=5
+		LISTENER_ROUTE_TIMER_ARMED_TEST LISTENER_ROUTE_WARMUP_TIMEOUT_SEC=1 LISTENER_SHORT_CONNECT_TIMEOUT_SEC=10 LISTENER_SHORT_LIFETIME_TIMEOUT_SEC=5
 		LISTENER_SHORT_RELAY_IDLE_TIMEOUT_SEC=10 LISTENER_TIMER_REARM_TEST)
 	target_include_directories(listener_short_runtime_daemon PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
 	target_link_libraries(listener_short_runtime_daemon -lresolv -lcjson -lsystemd)

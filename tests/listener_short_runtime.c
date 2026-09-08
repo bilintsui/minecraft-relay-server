@@ -299,7 +299,9 @@ static int short_test_fixture_start(short_fixture *fixture, const char *binary, 
 			|| setenv("NOTIFY_SOCKET", fixture->notify_filename, 1) == -1
 			|| ((strcmp(suffix, "route-cancel") == 0 || strcmp(suffix, "reload-late") == 0)
 				&& setenv("MCRELAY_TEST_DNS_PENDING", "1", 1) == -1)
-			|| (strcmp(suffix, "reload-late-short") == 0 && setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1)
+			|| ((strcmp(suffix, "reload-late-short") == 0 || strcmp(suffix, "reload-late-short-armed") == 0)
+				&& setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1)
+			|| (strcmp(suffix, "reload-late-short-armed") == 0 && setenv("MCRELAY_TEST_ROUTE_TIMER_ARMED", "1", 1) == -1)
 			|| (strcmp(suffix, "deadline") == 0 && (setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1
 				|| setenv("MCRELAY_TEST_TIMER_REARM_RACE", "1", 1) == -1))
 			|| short_test_fixture_release_environment(fixture, suffix) == -1) {
@@ -928,12 +930,19 @@ cleanup:
 }
 
 static bool short_test_reload_late_case(const char *binary, const char *directory, const char *suffix, const char *address, in_port_t port,
-	bool release_with_short_start) {
+	bool release_with_short_start, bool route_timer_armed) {
 	bool test_result = false;
 	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
 	int client_fd = -1;
+	char notification[128];
+	ssize_t notification_size;
 	CHECK(short_test_fixture_start(&fixture, binary, directory, suffix, address, port) == 0,
 		"could not start late-reload listener");
+	if (route_timer_armed) {
+		notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+		CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_ROUTE_TIMER_ARMED=1") == 0,
+			"route timer was not held armed for late-reload test");
+	}
 	client_fd = short_test_client_connect(fixture.listener_port);
 	CHECK(client_fd >= 0, "could not connect late-reload client");
 	if (!release_with_short_start) {
@@ -945,8 +954,7 @@ static bool short_test_reload_late_case(const char *binary, const char *director
 	}
 	CHECK(short_test_config_write(&fixture, address, port) == 0, "could not rewrite configuration for first reload");
 	CHECK(kill(fixture.listener, SIGUSR1) == 0, "could not request first late-reload reload");
-	char notification[128];
-	ssize_t notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
 	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0,
 		"first late-reload notification was invalid");
 	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
@@ -988,11 +996,15 @@ cleanup:
 }
 
 static bool short_test_reload_late_release(const char *binary, const char *directory) {
-	return short_test_reload_late_case(binary, directory, "reload-late", "route-wait.example", 25565, false);
+	return short_test_reload_late_case(binary, directory, "reload-late", "route-wait.example", 25565, false, false);
 }
 
 static bool short_test_reload_late_release_short_start(const char *binary, const char *directory) {
-	return short_test_reload_late_case(binary, directory, "reload-late-short", "127.0.0.1", 9, true);
+	return short_test_reload_late_case(binary, directory, "reload-late-short", "127.0.0.1", 9, true, false);
+}
+
+static bool short_test_reload_late_release_timer_armed(const char *binary, const char *directory) {
+	return short_test_reload_late_case(binary, directory, "reload-late-short-armed", "127.0.0.1", 9, true, true);
 }
 
 static bool short_test_route_cancel(const char *binary, const char *directory) {
@@ -1089,6 +1101,7 @@ int main(int argc, char **argv) {
 		&& short_test_release_fault_refusal(argv[1], temp_directory)
 		&& short_test_relay(argv[1], temp_directory) && short_test_relay_upstream_first(argv[1], temp_directory)
 		&& short_test_reload_late_release(argv[1], temp_directory) && short_test_reload_late_release_short_start(argv[1], temp_directory)
+		&& short_test_reload_late_release_timer_armed(argv[1], temp_directory)
 		&& short_test_route_cancel(argv[1], temp_directory)
 		&& short_test_stop(argv[1], temp_directory);
 	if (rmdir(temp_directory) == -1 && errno != ENOENT) {
