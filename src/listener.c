@@ -1599,6 +1599,20 @@ static int listener_events_wait(const listener_events *events, listener_requests
 	return 0;
 }
 
+#ifdef LISTENER_EARLY_COLLECT_TEST
+static int listener_early_collect_test_notify(const char *message) {
+	if (getenv("MCRELAY_TEST_EARLY_COLLECT") == NULL) {
+		return 0;
+	}
+	int result = sd_notify(0, message);
+	if (result < 0) {
+		errno = -result;
+		return -1;
+	}
+	return 0;
+}
+#endif
+
 static bool listener_generation_collect(listener_context *context, const struct timespec *now) {
 	route_generation_registry_collect_status status = route_generation_registry_collect(context->generations, context->resolver, now);
 	switch (status) {
@@ -2593,12 +2607,22 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		}
 		if (requests.reload) {
 			reload_pending = true;
+#ifdef LISTENER_EARLY_COLLECT_TEST
+			if (listener_early_collect_test_notify("MCRELAY_TEST_EARLY_RELOAD_ACK=1") == -1) {
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the early-collect reload test: %s", strerror(errno));
+				exitcode = EXITCODE_INTERNAL;
+				break;
+			}
+#endif
 		}
 		if (requests.resolver_ready && listener_connections_route_progress(connections, listener, &events, listener_pid, context, &route_now) == -1) {
 			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Connection route resolution failed: %s", strerror(errno));
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
+#ifdef LISTENER_EARLY_COLLECT_TEST
+		bool retired_before_collect = route_generation_registry_retired(context->generations) != NULL;
+#endif
 		if (!listener_generation_collect(context, &route_now)) {
 			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot collect a retired proxy route generation: %s", strerror(errno));
 			exitcode = EXITCODE_INTERNAL;
@@ -2606,6 +2630,13 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		}
 		bool reload_processed = false;
 		if (route_runtime.ready && reload_pending && route_generation_registry_retired(context->generations) == NULL) {
+#ifdef LISTENER_EARLY_COLLECT_TEST
+			if (requests.resolver_ready && retired_before_collect && listener_early_collect_test_notify("MCRELAY_TEST_EARLY_COLLECT=1") == -1) {
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the early-collect test: %s", strerror(errno));
+				exitcode = EXITCODE_INTERNAL;
+				break;
+			}
+#endif
 			if (listener_notify_reloading() == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot create systemd reload timestamp: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;

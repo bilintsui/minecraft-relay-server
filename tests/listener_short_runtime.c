@@ -35,6 +35,8 @@
 	} while (0)
 
 /* timeout */
+#define LISTENER_RELOAD_EARLY_TEST_DEFERRED_MS	500
+#define LISTENER_RELOAD_EARLY_TEST_RELEASE_MS	2000
 #define LISTENER_RELOAD_LATE_TEST_DEFERRED_MS	500
 #define LISTENER_RELOAD_LATE_TEST_RELEASE_MS	2000
 #define LISTENER_ROUTE_CANCEL_TEST_TIMEOUT_MS	2000
@@ -301,6 +303,9 @@ static int short_test_fixture_start(short_fixture *fixture, const char *binary, 
 				&& setenv("MCRELAY_TEST_DNS_PENDING", "1", 1) == -1)
 			|| ((strcmp(suffix, "reload-late-short") == 0 || strcmp(suffix, "reload-late-short-armed") == 0)
 				&& setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1)
+			|| (strcmp(suffix, "reload-early") == 0 && (setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1
+				|| setenv("MCRELAY_TEST_DNS_PENDING_TRIGGER", fixture->release_trigger_filename, 1) == -1
+				|| setenv("MCRELAY_TEST_EARLY_COLLECT", "1", 1) == -1))
 			|| ((strcmp(suffix, "reload-late-armed") == 0 || strcmp(suffix, "reload-late-short-armed") == 0)
 				&& setenv("MCRELAY_TEST_ROUTE_TIMER_ARMED", "1", 1) == -1)
 			|| (strcmp(suffix, "deadline") == 0 && (setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1
@@ -930,6 +935,67 @@ cleanup:
 	return test_result;
 }
 
+static bool short_test_reload_early_collect(const char *binary, const char *directory) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int client_fd = -1;
+	char notification[128];
+	ssize_t notification_size;
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "reload-early", "early.example", 25565) == 0,
+		"could not start early-collect listener");
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0, "could not connect early-collect client");
+	CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0,
+		"could not send early-collect request");
+	struct timespec delay = { .tv_nsec = 100000000L };
+	while (nanosleep(&delay, &delay) == -1) {
+		CHECK(errno == EINTR, "could not wait for early-collect client state");
+	}
+	CHECK(short_test_config_write(&fixture, "early.example", 25565) == 0, "could not rewrite configuration for first early reload");
+	CHECK(kill(fixture.listener, SIGUSR1) == 0, "could not request first early reload");
+	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_EARLY_RELOAD_ACK=1") == 0,
+		"first early reload acknowledgement was invalid");
+	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0,
+		"first early reload notification was invalid");
+	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	CHECK(notification_size > 0 && strcmp(notification, "READY=1") == 0, "first early reload completion was invalid");
+	CHECK(short_test_config_write(&fixture, "early.example", 25565) == 0, "could not rewrite configuration for deferred early reload");
+	CHECK(kill(fixture.listener, SIGUSR1) == 0, "could not request deferred early reload");
+	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_EARLY_RELOAD_ACK=1") == 0,
+		"deferred early reload acknowledgement was invalid");
+	errno = 0;
+	CHECK(short_test_fixture_notification_timeout(&fixture, notification, sizeof(notification), LISTENER_RELOAD_EARLY_TEST_DEFERRED_MS) == -1
+		&& errno == ETIMEDOUT, "deferred early reload unexpectedly completed while the generation was pinned");
+	CHECK(short_test_fixture_release_trigger(&fixture) == 0, "could not release early-collect DNS lookup");
+	notification_size = short_test_fixture_notification_timeout(&fixture, notification, sizeof(notification), LISTENER_RELOAD_EARLY_TEST_RELEASE_MS);
+	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_EARLY_COLLECT=1") == 0,
+		"early collect marker was missing");
+	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0,
+		"early-collect reload notification was invalid");
+	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	CHECK(notification_size > 0 && strcmp(notification, "READY=1") == 0, "early-collect reload completion was invalid");
+	errno = 0;
+	CHECK(short_test_fixture_notification_timeout(&fixture, notification, sizeof(notification), LISTENER_RELOAD_EARLY_TEST_DEFERRED_MS) == -1
+		&& errno == ETIMEDOUT, "early-collect reload executed more than once");
+	CHECK(short_test_client_alive(client_fd), "early-collect client was destroyed before upstream connect completed");
+	CHECK(kill(fixture.listener, 0) == 0, "early-collect reload terminated listener");
+	CHECK(short_test_fixture_stop(&fixture) == 0, "early-collect listener did not stop cleanly");
+	test_result = true;
+
+cleanup:
+	if (client_fd >= 0) {
+		close(client_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
 static bool short_test_reload_late_case(const char *binary, const char *directory, const char *suffix, const char *address, in_port_t port,
 	bool release_with_short_start, bool route_timer_armed) {
 	bool test_result = false;
@@ -1105,6 +1171,7 @@ int main(int argc, char **argv) {
 		&& short_test_release_fault_short(argv[1], temp_directory) && short_test_release_fault_dispatch(argv[1], temp_directory)
 		&& short_test_release_fault_refusal(argv[1], temp_directory)
 		&& short_test_relay(argv[1], temp_directory) && short_test_relay_upstream_first(argv[1], temp_directory)
+		&& short_test_reload_early_collect(argv[1], temp_directory)
 		&& short_test_reload_late_release(argv[1], temp_directory) && short_test_reload_late_release_destroy_armed(argv[1], temp_directory)
 		&& short_test_reload_late_release_short_start(argv[1], temp_directory)
 		&& short_test_reload_late_release_timer_armed(argv[1], temp_directory)

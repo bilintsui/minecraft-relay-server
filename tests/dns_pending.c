@@ -51,12 +51,39 @@ static dns_address_lookup_status dns_pending_fixed(const char *hostname, sa_fami
 	return DNS_ADDRESS_LOOKUP_OK;
 }
 
+static dns_address_lookup_status dns_pending_trigger_wait(const char *filename) {
+	if (filename == NULL || filename[0] == '\0') {
+		return DNS_ADDRESS_LOOKUP_BAD_ARGUMENT;
+	}
+	for (;;) {
+		if (access(filename, F_OK) == 0) {
+			return DNS_ADDRESS_LOOKUP_OK;
+		}
+		if (errno != ENOENT) {
+			return DNS_ADDRESS_LOOKUP_BAD_ARGUMENT;
+		}
+		struct timespec delay = { .tv_nsec = 1000000L };
+		int sleep_result;
+		do {
+			sleep_result = nanosleep(&delay, &delay);
+		} while (sleep_result == -1 && errno == EINTR);
+		if (sleep_result == -1) {
+			return DNS_ADDRESS_LOOKUP_BAD_ARGUMENT;
+		}
+	}
+}
+
 /* section: functions (exported) */
 dns_address_lookup_status __real_dns_address_lookup(const char *hostname, sa_family_t family, dns_address_result *result);
 
 dns_address_lookup_status __wrap_dns_address_lookup(const char *hostname, sa_family_t family, dns_address_result *result) {
 	if (getenv("MCRELAY_TEST_DNS_FIXED") != NULL) {
 		return dns_pending_fixed(hostname, family, result);
+	}
+	const char *trigger_filename = getenv("MCRELAY_TEST_DNS_PENDING_TRIGGER");
+	if (trigger_filename != NULL) {
+		dns_address_lookup_status status = dns_pending_trigger_wait(trigger_filename);
+		return status == DNS_ADDRESS_LOOKUP_OK ? dns_pending_fixed(hostname, family, result) : status;
 	}
 	if (getenv("MCRELAY_TEST_DNS_PENDING") == NULL) {
 		return __real_dns_address_lookup(hostname, family, result);
