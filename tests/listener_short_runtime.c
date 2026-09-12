@@ -297,11 +297,12 @@ static int short_test_fixture_start(short_fixture *fixture, const char *binary, 
 		int devnull_fd = open("/dev/null", O_WRONLY);
 		if (devnull_fd == -1 || dup2(devnull_fd, STDOUT_FILENO) == -1 || dup2(devnull_fd, STDERR_FILENO) == -1
 			|| setenv("NOTIFY_SOCKET", fixture->notify_filename, 1) == -1
-			|| ((strcmp(suffix, "route-cancel") == 0 || strcmp(suffix, "reload-late") == 0)
+			|| ((strcmp(suffix, "route-cancel") == 0 || strcmp(suffix, "reload-late") == 0 || strcmp(suffix, "reload-late-armed") == 0)
 				&& setenv("MCRELAY_TEST_DNS_PENDING", "1", 1) == -1)
 			|| ((strcmp(suffix, "reload-late-short") == 0 || strcmp(suffix, "reload-late-short-armed") == 0)
 				&& setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1)
-			|| (strcmp(suffix, "reload-late-short-armed") == 0 && setenv("MCRELAY_TEST_ROUTE_TIMER_ARMED", "1", 1) == -1)
+			|| ((strcmp(suffix, "reload-late-armed") == 0 || strcmp(suffix, "reload-late-short-armed") == 0)
+				&& setenv("MCRELAY_TEST_ROUTE_TIMER_ARMED", "1", 1) == -1)
 			|| (strcmp(suffix, "deadline") == 0 && (setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1
 				|| setenv("MCRELAY_TEST_TIMER_REARM_RACE", "1", 1) == -1))
 			|| short_test_fixture_release_environment(fixture, suffix) == -1) {
@@ -999,6 +1000,10 @@ static bool short_test_reload_late_release(const char *binary, const char *direc
 	return short_test_reload_late_case(binary, directory, "reload-late", "route-wait.example", 25565, false, false);
 }
 
+static bool short_test_reload_late_release_destroy_armed(const char *binary, const char *directory) {
+	return short_test_reload_late_case(binary, directory, "reload-late-armed", "route-wait.example", 25565, false, true);
+}
+
 static bool short_test_reload_late_release_short_start(const char *binary, const char *directory) {
 	return short_test_reload_late_case(binary, directory, "reload-late-short", "127.0.0.1", 9, true, false);
 }
@@ -1100,7 +1105,8 @@ int main(int argc, char **argv) {
 		&& short_test_release_fault_short(argv[1], temp_directory) && short_test_release_fault_dispatch(argv[1], temp_directory)
 		&& short_test_release_fault_refusal(argv[1], temp_directory)
 		&& short_test_relay(argv[1], temp_directory) && short_test_relay_upstream_first(argv[1], temp_directory)
-		&& short_test_reload_late_release(argv[1], temp_directory) && short_test_reload_late_release_short_start(argv[1], temp_directory)
+		&& short_test_reload_late_release(argv[1], temp_directory) && short_test_reload_late_release_destroy_armed(argv[1], temp_directory)
+		&& short_test_reload_late_release_short_start(argv[1], temp_directory)
 		&& short_test_reload_late_release_timer_armed(argv[1], temp_directory)
 		&& short_test_route_cancel(argv[1], temp_directory)
 		&& short_test_stop(argv[1], temp_directory);
