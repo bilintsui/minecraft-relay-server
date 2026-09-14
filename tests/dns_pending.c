@@ -55,6 +55,7 @@ static dns_address_lookup_status dns_pending_trigger_wait(const char *filename) 
 	if (filename == NULL || filename[0] == '\0') {
 		return DNS_ADDRESS_LOOKUP_BAD_ARGUMENT;
 	}
+	/* The supervisor's attempt deadline bounds this wait and kills the test helper if the trigger is never created. */
 	for (;;) {
 		if (access(filename, F_OK) == 0) {
 			return DNS_ADDRESS_LOOKUP_OK;

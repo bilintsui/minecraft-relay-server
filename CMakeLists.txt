@@ -466,7 +466,7 @@ if(BUILD_TESTING)
 		src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c
 		src/route/table.c src/route/waiter.c
 		src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c
-		tests/connect_pending.c tests/dns_pending.c tests/route_waiter_destroy_fault.c)
+		tests/connect_pending.c tests/dns_pending.c tests/listener_runtime_hooks.c tests/route_waiter_destroy_fault.c)
 	add_dependencies(listener_short_runtime_daemon version_header)
 	target_compile_definitions(listener_short_runtime_daemon PRIVATE _GNU_SOURCE DEBUG_MODE=false LISTENER_CONNECTION_LIMIT=2 LISTENER_EARLY_COLLECT_TEST LISTENER_READY_FLIP_TEST
 		LISTENER_INITIAL_TIMEOUT_SEC=5 LISTENER_WORKER_LIMIT=1

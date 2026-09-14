@@ -40,6 +40,9 @@
 #include "connection/setup_long.h"
 #include "connection/setup_short.h"
 #include "define/exitcode.h"
+#if defined(LISTENER_EARLY_COLLECT_TEST) || defined(LISTENER_READY_FLIP_TEST)
+#include "listener_runtime_hooks.h"
+#endif
 #include "log.h"
 #include "network.h"
 #include "protocol/common.h"
@@ -184,13 +187,6 @@ typedef enum {
 	LISTENER_EVENT_TIMEOUT,
 	LISTENER_EVENT_UPSTREAM
 } listener_event_kind;
-#ifdef LISTENER_READY_FLIP_TEST
-typedef enum {
-	LISTENER_READY_FLIP_TIMER_ARM,
-	LISTENER_READY_FLIP_TIMER_EVENT,
-	LISTENER_READY_FLIP_TIMER_READY
-} listener_ready_flip_timer_action;
-#endif
 typedef enum {
 	LISTENER_ROUTE_PREPARE_OK,
 	LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR,
@@ -1606,20 +1602,6 @@ static int listener_events_wait(const listener_events *events, listener_requests
 	return 0;
 }
 
-#ifdef LISTENER_EARLY_COLLECT_TEST
-static int listener_early_collect_test_notify(const char *message) {
-	if (getenv("MCRELAY_TEST_EARLY_COLLECT") == NULL) {
-		return 0;
-	}
-	int result = sd_notify(0, message);
-	if (result < 0) {
-		errno = -result;
-		return -1;
-	}
-	return 0;
-}
-#endif
-
 static bool listener_generation_collect(listener_context *context, const struct timespec *now) {
 	route_generation_registry_collect_status status = route_generation_registry_collect(context->generations, context->resolver, now);
 	switch (status) {
@@ -1897,71 +1879,8 @@ static int listener_route_timer_set(const listener_events *events, const struct 
 }
 
 #ifdef LISTENER_READY_FLIP_TEST
-static int listener_ready_flip_test_notify(const char *message) {
-	if (getenv("MCRELAY_TEST_READY_FLIP") == NULL) {
-		return 0;
-	}
-	int result = sd_notify(0, message);
-	if (result < 0) {
-		errno = -result;
-		return -1;
-	}
-	return 0;
-}
-
-static int listener_ready_flip_test_control(listener_route_runtime *runtime, const listener_events *events, bool warmup_complete, bool release) {
-	static bool held;
-	static bool released;
-	if (getenv("MCRELAY_TEST_READY_FLIP") == NULL) {
-		return 0;
-	}
-	if (release) {
-		if (released) {
-			return 0;
-		}
-		released = true;
-		return listener_ready_flip_test_notify("MCRELAY_TEST_READY_FLIP_RELOAD_ACK=1");
-	}
-	if (held) {
-		return released ? 0 : 1;
-	}
-	if (runtime->ready || !warmup_complete) {
-		return 0;
-	}
-	if (listener_route_timer_set(events, NULL) == -1) {
-		return -1;
-	}
-	held = true;
-	if (listener_ready_flip_test_notify("MCRELAY_TEST_ROUTE_READY_HELD=1") == -1) {
-		return -1;
-	}
-	return 1;
-}
-
-static int listener_ready_flip_test_timer_control(listener_ready_flip_timer_action action) {
-	static bool armed;
-	static bool fired;
-	if (getenv("MCRELAY_TEST_READY_FLIP") == NULL) {
-		return action == LISTENER_READY_FLIP_TIMER_READY ? 1 : 0;
-	}
-	if (action == LISTENER_READY_FLIP_TIMER_READY) {
-		return fired ? 1 : 0;
-	}
-	if (action == LISTENER_READY_FLIP_TIMER_ARM) {
-		if (armed) {
-			return 0;
-		}
-		armed = true;
-		return listener_ready_flip_test_notify("MCRELAY_TEST_LATE_WAKE_ARMED=1");
-	}
-	if (!armed || fired) {
-		return 0;
-	}
-	if (listener_ready_flip_test_notify("MCRELAY_TEST_ROUTE_TIMER_FIRED=1") == -1) {
-		return -1;
-	}
-	fired = true;
-	return 0;
+static int listener_ready_flip_test_timer_disarm(const void *context) {
+	return listener_route_timer_set(context, NULL);
 }
 #endif
 
@@ -2018,7 +1937,7 @@ static int listener_route_runtime_schedule(listener_context *context, listener_r
 	bool deadline_reached = timeutil_compare(now, &runtime->deadline) >= 0;
 	bool warmup_complete = route_resolution_warmup_complete(context->route_resolution);
 #ifdef LISTENER_READY_FLIP_TEST
-	int ready_flip_hold = listener_ready_flip_test_control(runtime, events, warmup_complete, false);
+	int ready_flip_hold = listener_test_ready_flip_hold(runtime->ready, warmup_complete, listener_ready_flip_test_timer_disarm, events);
 	if (ready_flip_hold == -1) {
 		return -1;
 	}
@@ -2653,7 +2572,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				break;
 			}
 #ifdef LISTENER_READY_FLIP_TEST
-			if (requests.route_timer_ready && listener_ready_flip_test_timer_control(LISTENER_READY_FLIP_TIMER_EVENT) == -1) {
+			if (requests.route_timer_ready && listener_test_ready_flip_timer_event() == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the ready-flip timer test: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
@@ -2700,14 +2619,14 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		if (requests.reload) {
 			reload_pending = true;
 #ifdef LISTENER_READY_FLIP_TEST
-			if (listener_ready_flip_test_control(NULL, NULL, false, true) == -1) {
+			if (listener_test_ready_flip_release() == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the ready-flip reload test: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 #endif
 #ifdef LISTENER_EARLY_COLLECT_TEST
-			if (listener_early_collect_test_notify("MCRELAY_TEST_EARLY_RELOAD_ACK=1") == -1) {
+			if (listener_test_early_collect_reload_ack() == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the early-collect reload test: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
@@ -2729,9 +2648,10 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		}
 		bool reload_processed = false;
 #ifdef LISTENER_READY_FLIP_TEST
-		bool ready_flip_timer_ready = listener_ready_flip_test_timer_control(LISTENER_READY_FLIP_TIMER_READY) == 1;
+		/* Exclude unrelated test-daemon events: this scenario may reload only after the late-arm timer actually fires. */
+		bool ready_flip_timer_ready = listener_test_ready_flip_timer_ready();
 		if (!route_runtime.ready && reload_pending) {
-			if (listener_ready_flip_test_notify("MCRELAY_TEST_RELOAD_BLOCKED=1") == -1) {
+			if (listener_test_ready_flip_reload_blocked() == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the ready-flip reload test: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
@@ -2744,7 +2664,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 #endif
 		) {
 #ifdef LISTENER_EARLY_COLLECT_TEST
-			if (requests.resolver_ready && retired_before_collect && listener_early_collect_test_notify("MCRELAY_TEST_EARLY_COLLECT=1") == -1) {
+			if (listener_test_early_collect_observe(requests.resolver_ready, retired_before_collect) == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the early-collect test: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
@@ -2861,7 +2781,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				break;
 			}
 #ifdef LISTENER_READY_FLIP_TEST
-			if (listener_ready_flip_test_timer_control(LISTENER_READY_FLIP_TIMER_ARM) == -1) {
+			if (listener_test_ready_flip_timer_arm() == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the ready-flip late-wake test: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
