@@ -88,7 +88,9 @@ typedef struct {
 } resolver_supervisor_job_queue;
 struct resolver_supervisor_job {
 	size_t background_interest_count;
+#ifdef RESOLVER_SUPERVISOR_TEST_API
 	bool cancelled;
+#endif
 	resolver_supervisor_job *completion_next;
 	resolver_supervisor_job *completion_previous;
 	struct timespec deadline;
@@ -354,7 +356,11 @@ static bool resolver_supervisor_job_result_retryable(resolver_ipc_lookup_status 
 }
 
 static void resolver_supervisor_job_retry(resolver_supervisor *supervisor, resolver_supervisor_job *job, const struct timespec *now) {
+#ifdef RESOLVER_SUPERVISOR_TEST_API
 	if (job->cancelled || job->orphaned) {
+#else
+	if (job->orphaned) {
+#endif
 		resolver_supervisor_job_destroy(supervisor, job);
 		return;
 	}
@@ -495,8 +501,10 @@ static void resolver_supervisor_helper_fail(resolver_supervisor *supervisor, siz
 		helper->request_size = 0;
 		if (dispatched) {
 			resolver_supervisor_job_retry(supervisor, job, now);
+#ifdef RESOLVER_SUPERVISOR_TEST_API
 		} else if (job->cancelled) {
 			resolver_supervisor_job_destroy(supervisor, job);
+#endif
 		} else {
 			resolver_supervisor_job_queue_prepend(supervisor, job);
 		}
@@ -703,12 +711,14 @@ static void resolver_supervisor_helper_result_finish(resolver_supervisor *superv
 	helper->job = NULL;
 	helper->state = RESOLVER_SUPERVISOR_HELPER_IDLE;
 	resolver_supervisor_helper_success(helper);
+#ifdef RESOLVER_SUPERVISOR_TEST_API
 	if (job->cancelled) {
 		/* Explicit cancellation wins when a test-only cancel races with zero-interest orphaning. */
 		resolver_ipc_assembly_result_destroy(&response);
 		resolver_supervisor_job_destroy(supervisor, job);
 		return;
 	}
+#endif
 	if (resolver_supervisor_job_result_retryable(response.status)) {
 		resolver_ipc_assembly_result_destroy(&response);
 		resolver_supervisor_job_retry(supervisor, job, now);
@@ -999,7 +1009,9 @@ static resolver_supervisor_schedule_status resolver_supervisor_entry_schedule_pr
 			return RESOLVER_SUPERVISOR_SCHEDULE_LIMIT;
 		}
 		(*interest_count)++;
+#ifdef RESOLVER_SUPERVISOR_TEST_API
 		existing->cancelled = false;
+#endif
 		existing->orphaned = false;
 		if (priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE) {
 			resolver_supervisor_job_priority_promote(supervisor, existing);
