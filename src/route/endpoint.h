@@ -79,10 +79,8 @@ typedef struct {
 
 /* section: functions (exported) */
 /* Evaluation reports the cache-entry chain that determined a pending result. Overlays are event-scoped waiter-owned results and never modify the shared cache. */
+/* Returned snapshots own all data and contain no generation or cache pointers. */
 route_endpoint_select_status route_endpoint_evaluate(route_generation *generation, const char *vhost, const struct timespec *now, const p_proxy *inbound_proxy,
 	const route_endpoint_overlay *overlays, route_endpoint_requirements *requirements, route_endpoint_snapshot *result);
-/* Selection re-views every DNS cache level at now. The returned snapshot owns all of its data and contains no generation or cache pointers. */
-route_endpoint_select_status route_endpoint_select(route_generation *generation, const char *vhost, const struct timespec *now, const p_proxy *inbound_proxy,
-	route_endpoint_snapshot *result);
 
 #endif

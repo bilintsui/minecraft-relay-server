@@ -198,6 +198,11 @@ static p_proxy endpoint_proxy(sa_family_t family) {
 	return result;
 }
 
+static route_endpoint_select_status endpoint_select(route_generation *generation, const char *vhost, const struct timespec *now, const p_proxy *inbound_proxy, route_endpoint_snapshot *result) {
+	route_endpoint_requirements requirements;
+	return route_endpoint_evaluate(generation, vhost, now, inbound_proxy, NULL, &requirements, result);
+}
+
 static bool endpoint_srv_publish(endpoint_fixture *fixture, resolver_cache_entry *entry, size_t destination_index, const dns_srv_record *records, size_t record_count,
 	uint32_t ttl, const struct timespec *completed_at) {
 	if (fixture == NULL || entry == NULL || records == NULL || record_count == 0 || completed_at == NULL) {
@@ -262,30 +267,30 @@ static bool endpoint_test_arguments(const hosts_table *hosts) {
 	p_proxy inbound = endpoint_proxy(AF_INET6);
 	route_endpoint_snapshot snapshot;
 	CHECK(endpoint_fixture_build(&fixture, hosts, &now), "endpoint argument fixture could not be built");
-	CHECK(route_endpoint_select(NULL, "numeric", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT
-		&& route_endpoint_select((route_generation *)&fixture, NULL, &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT
-		&& route_endpoint_select((route_generation *)&fixture, "numeric", NULL, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT
-		&& route_endpoint_select((route_generation *)&fixture, "numeric", &invalid_now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT
-		&& route_endpoint_select((route_generation *)&fixture, "numeric", &now, NULL, &snapshot) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT
-		&& route_endpoint_select((route_generation *)&fixture, "numeric", &now, &inbound, NULL) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT,
+	CHECK(endpoint_select(NULL, "numeric", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT
+		&& endpoint_select((route_generation *)&fixture, NULL, &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT
+		&& endpoint_select((route_generation *)&fixture, "numeric", NULL, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT
+		&& endpoint_select((route_generation *)&fixture, "numeric", &invalid_now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT
+		&& endpoint_select((route_generation *)&fixture, "numeric", &now, NULL, &snapshot) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT
+		&& endpoint_select((route_generation *)&fixture, "numeric", &now, &inbound, NULL) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT,
 		"invalid endpoint-selection arguments were accepted");
 	p_proxy invalid_proxy = inbound;
 	invalid_proxy.dstaddr.family = AF_INET;
-	CHECK(route_endpoint_select((route_generation *)&fixture, "numeric", &now, &invalid_proxy, &snapshot) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT,
+	CHECK(endpoint_select((route_generation *)&fixture, "numeric", &now, &invalid_proxy, &snapshot) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT,
 		"inconsistent inbound endpoints were accepted");
-	CHECK(route_endpoint_select((route_generation *)&fixture, "missing", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_NO_ROUTE,
+	CHECK(endpoint_select((route_generation *)&fixture, "missing", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_NO_ROUTE,
 		"unknown virtual host was not distinguished");
-	CHECK(route_endpoint_select((route_generation *)&fixture, "invalid", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_UNAVAILABLE,
+	CHECK(endpoint_select((route_generation *)&fixture, "invalid", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_UNAVAILABLE,
 		"locally unavailable route was accepted");
-	CHECK(route_endpoint_select((route_generation *)&fixture, "NUMERIC.", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
+	CHECK(endpoint_select((route_generation *)&fixture, "NUMERIC.", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET, "192.0.2.10") && snapshot.port == 25560 && snapshot.generation_identity == 42
 		&& snapshot.destination_index == 0 && snapshot.pheader && snapshot.rewrite && strcmp(snapshot.configured_address, "192.0.2.10") == 0
 		&& strcmp(snapshot.target_name, "192.0.2.10") == 0 && strcmp(snapshot.vhost, "numeric") == 0 && snapshot.inbound_proxy.family == AF_INET6,
 		"numeric endpoint or pointer-free metadata snapshot was incorrect");
-	CHECK(route_endpoint_select((route_generation *)&fixture, "hosts", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
+	CHECK(endpoint_select((route_generation *)&fixture, "hosts", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET6, "2001:db8::20"), "hosts selection did not prefer the inbound IPv6 family");
 	inbound = endpoint_proxy(AF_INET);
-	CHECK(route_endpoint_select((route_generation *)&fixture, "hosts", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
+	CHECK(endpoint_select((route_generation *)&fixture, "hosts", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET, "192.0.2.20"), "hosts selection did not prefer the inbound IPv4 family");
 	test_result = true;
 
@@ -302,28 +307,28 @@ static bool endpoint_test_dns(const hosts_table *hosts) {
 	route_endpoint_snapshot snapshot;
 	route_binding_view binding;
 	CHECK(endpoint_fixture_build(&fixture, hosts, &built_at) && endpoint_binding_get(&fixture, "dns", &binding, NULL), "DNS endpoint fixture could not be built");
-	CHECK(route_endpoint_select((route_generation *)&fixture, "dns", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_PENDING,
+	CHECK(endpoint_select((route_generation *)&fixture, "dns", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_PENDING,
 		"empty dual-family DNS route was not pending");
 	static const char *const ipv4_addresses[] = { "192.0.2.40", "192.0.2.41" };
 	CHECK(endpoint_address_publish(binding.ipv4_entry, ipv4_addresses, 2, 30, &built_at)
-		&& route_endpoint_select((route_generation *)&fixture, "dns", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
+		&& endpoint_select((route_generation *)&fixture, "dns", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET, "192.0.2.40"), "fresh alternate family did not bypass a pending preferred query");
 	CHECK(endpoint_negative_publish(binding.ipv6_entry, &built_at)
-		&& route_endpoint_select((route_generation *)&fixture, "dns", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
+		&& endpoint_select((route_generation *)&fixture, "dns", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET, "192.0.2.40"), "fresh alternate family did not bypass a terminally negative preferred family");
 	static const char *const ipv6_addresses[] = { "2001:db8::40" };
 	CHECK(endpoint_address_publish(binding.ipv6_entry, ipv6_addresses, 1, 5, &built_at)
-		&& route_endpoint_select((route_generation *)&fixture, "dns", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
+		&& endpoint_select((route_generation *)&fixture, "dns", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET6, "2001:db8::40"), "fresh preferred family did not win");
 	const struct timespec ipv6_expired = { .tv_sec = 105 };
-	CHECK(route_endpoint_select((route_generation *)&fixture, "dns", &ipv6_expired, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
+	CHECK(endpoint_select((route_generation *)&fixture, "dns", &ipv6_expired, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET, "192.0.2.40"), "expired preferred payload did not fall back to the fresh alternate");
 	const struct timespec all_expired = { .tv_sec = 130 };
-	CHECK(route_endpoint_select((route_generation *)&fixture, "dns", &all_expired, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_PENDING,
+	CHECK(endpoint_select((route_generation *)&fixture, "dns", &all_expired, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_PENDING,
 		"strictly expired address payload remained selectable through warm-up state");
 	const struct timespec negative_at = { .tv_sec = 140 };
 	CHECK(endpoint_negative_publish(binding.ipv4_entry, &negative_at) && endpoint_negative_publish(binding.ipv6_entry, &negative_at)
-		&& route_endpoint_select((route_generation *)&fixture, "dns", &negative_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_UNAVAILABLE,
+		&& endpoint_select((route_generation *)&fixture, "dns", &negative_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_UNAVAILABLE,
 		"two terminally negative address families did not make the route unavailable");
 	test_result = true;
 
@@ -339,7 +344,7 @@ static bool endpoint_test_snapshot(const hosts_table *hosts) {
 	p_proxy inbound = endpoint_proxy(AF_INET);
 	route_endpoint_snapshot snapshot;
 	CHECK(endpoint_fixture_build(&fixture, hosts, &now), "snapshot fixture could not be built");
-	CHECK(route_endpoint_select((route_generation *)&fixture, "numeric", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK,
+	CHECK(endpoint_select((route_generation *)&fixture, "numeric", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK,
 		"snapshot endpoint could not be selected");
 	endpoint_fixture_destroy(&fixture);
 	char proxy_header[PROTOPROXY_PACKETMAXLEN + 1] = { 0 };
@@ -363,7 +368,7 @@ static bool endpoint_test_srv(const hosts_table *hosts) {
 	route_binding_view binding;
 	size_t destination_index = 0;
 	CHECK(endpoint_fixture_build(&fixture, hosts, &built_at) && endpoint_binding_get(&fixture, "srv", &binding, &destination_index), "SRV endpoint fixture could not be built");
-	CHECK(route_endpoint_select((route_generation *)&fixture, "srv", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_PENDING,
+	CHECK(endpoint_select((route_generation *)&fixture, "srv", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_PENDING,
 		"empty SRV owner was not pending");
 	dns_srv_record records[4];
 	memset(records, 0, sizeof(records));
@@ -391,22 +396,22 @@ static bool endpoint_test_srv(const hosts_table *hosts) {
 	static const char *const target_ipv6[] = { "2001:db8::72" };
 	CHECK(endpoint_address_publish(target.ipv4_entry, target_ipv4, 2, 30, &built_at) && endpoint_address_publish(target.ipv6_entry, target_ipv6, 1, 5, &built_at),
 		"selected SRV target addresses could not be published");
-	CHECK(route_endpoint_select((route_generation *)&fixture, "srv", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
+	CHECK(endpoint_select((route_generation *)&fixture, "srv", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET6, "2001:db8::72") && snapshot.port == 25572 && strcmp(snapshot.target_name, "chosen.target") == 0,
 		"SRV selector did not apply priority, weight, record order, and preferred family");
 	inbound = endpoint_proxy(AF_INET);
-	CHECK(route_endpoint_select((route_generation *)&fixture, "srv", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
+	CHECK(endpoint_select((route_generation *)&fixture, "srv", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET, "192.0.2.72"), "SRV address selection did not preserve DNS order");
 	inbound = endpoint_proxy(AF_INET6);
 	const struct timespec ipv6_expired = { .tv_sec = 205 };
-	CHECK(route_endpoint_select((route_generation *)&fixture, "srv", &ipv6_expired, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
+	CHECK(endpoint_select((route_generation *)&fixture, "srv", &ipv6_expired, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET, "192.0.2.72"), "expired SRV target family remained selectable");
 	dns_srv_record host_record;
 	memset(&host_record, 0, sizeof(host_record));
 	host_record.port = 25580;
 	CHECK(snprintf(host_record.target, sizeof(host_record.target), "%s", "host.target") > 0
 		&& endpoint_srv_publish(&fixture, binding.srv_entry, destination_index, &host_record, 1, 30, &ipv6_expired)
-		&& route_endpoint_select((route_generation *)&fixture, "srv", &ipv6_expired, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
+		&& endpoint_select((route_generation *)&fixture, "srv", &ipv6_expired, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET6, "2001:db8::20") && snapshot.port == 25580,
 		"SRV target did not use the generation hosts source before DNS");
 	dns_srv_record numeric_record;
@@ -414,7 +419,7 @@ static bool endpoint_test_srv(const hosts_table *hosts) {
 	numeric_record.port = 25581;
 	CHECK(snprintf(numeric_record.target, sizeof(numeric_record.target), "%s", "192.0.2.81") > 0
 		&& endpoint_srv_publish(&fixture, binding.srv_entry, destination_index, &numeric_record, 1, 30, &ipv6_expired)
-		&& route_endpoint_select((route_generation *)&fixture, "srv", &ipv6_expired, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
+		&& endpoint_select((route_generation *)&fixture, "srv", &ipv6_expired, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET, "192.0.2.81") && snapshot.port == 25581,
 		"numeric SRV target did not retain its fixed family");
 	dns_srv_record root_records[2];
@@ -422,12 +427,12 @@ static bool endpoint_test_srv(const hosts_table *hosts) {
 	root_records[0].port = 25565;
 	CHECK(snprintf(root_records[0].target, sizeof(root_records[0].target), "%s", ".") > 0
 		&& endpoint_srv_publish(&fixture, binding.srv_entry, destination_index, root_records, 1, 30, &ipv6_expired)
-		&& route_endpoint_select((route_generation *)&fixture, "srv", &ipv6_expired, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_SERVICE_UNAVAILABLE,
+		&& endpoint_select((route_generation *)&fixture, "srv", &ipv6_expired, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_SERVICE_UNAVAILABLE,
 		"root-only SRV RRset was not service-unavailable");
 	root_records[1].port = 25565;
 	CHECK(snprintf(root_records[1].target, sizeof(root_records[1].target), "%s", "host.target") > 0
 		&& endpoint_srv_publish(&fixture, binding.srv_entry, destination_index, root_records, 2, 30, &ipv6_expired)
-		&& route_endpoint_select((route_generation *)&fixture, "srv", &ipv6_expired, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_CONTRADICTORY,
+		&& endpoint_select((route_generation *)&fixture, "srv", &ipv6_expired, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_CONTRADICTORY,
 		"mixed root and named SRV RRset was not contradictory");
 	test_result = true;
 

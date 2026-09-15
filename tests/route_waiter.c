@@ -172,6 +172,11 @@ static bool waiter_completion_srv(resolver_cache_entry *entry, const struct time
 	return true;
 }
 
+static route_endpoint_select_status waiter_endpoint_select(route_generation *generation, const char *vhost, const struct timespec *now, const p_proxy *inbound_proxy, route_endpoint_snapshot *result) {
+	route_endpoint_requirements requirements;
+	return route_endpoint_evaluate(generation, vhost, now, inbound_proxy, NULL, &requirements, result);
+}
+
 static bool waiter_fixture_build(waiter_fixture *fixture, const hosts_table *hosts, const struct timespec *now) {
 	static const char json[] = "["
 		"{\"vhost\":[\"numeric\"],\"address\":\"192.0.2.10\",\"port\":25560,\"rewrite\":true,\"pheader\":true},"
@@ -463,7 +468,7 @@ static bool waiter_test_late(const hosts_table *hosts) {
 	CHECK(waiter_completion_address(binding.ipv6_entry, publication, RESOLVER_IPC_LOOKUP_OK, &completed_at, NULL, &record, &completion)
 		&& waiter_completion_observe(&fixture, waiter, &completion, &completed_at), "late stored completion was not observed");
 	route_endpoint_snapshot direct_snapshot;
-	CHECK(route_endpoint_select((route_generation *)&fixture, "dns", &completed_at, &inbound, &direct_snapshot) == ROUTE_ENDPOINT_SELECT_OK
+	CHECK(waiter_endpoint_select((route_generation *)&fixture, "dns", &completed_at, &inbound, &direct_snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& waiter_address_equal(&direct_snapshot.address, AF_INET6, "2001:db8::51"), "late stored result was not available to unrelated future selectors");
 	CHECK(route_waiter_progress(waiter, supervisor, &completed_at) == ROUTE_WAITER_TIMEOUT && supervisor_mock.release_count == 1
 		&& supervisor_mock.released[0] == binding.ipv4_entry, "late completion crossed the waiter deadline or did not release the remaining interest");

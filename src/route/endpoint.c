@@ -381,9 +381,3 @@ route_endpoint_select_status route_endpoint_evaluate(route_generation *generatio
 	result->rewrite = route.rewrite;
 	return ROUTE_ENDPOINT_SELECT_OK;
 }
-
-route_endpoint_select_status route_endpoint_select(route_generation *generation, const char *vhost, const struct timespec *now, const p_proxy *inbound_proxy,
-	route_endpoint_snapshot *result) {
-	route_endpoint_requirements requirements;
-	return route_endpoint_evaluate(generation, vhost, now, inbound_proxy, NULL, &requirements, result);
-}
