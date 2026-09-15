@@ -97,6 +97,7 @@ typedef enum {
 	RESOLVER_SUPERVISOR_HELPER_SHUTTING_DOWN,
 	RESOLVER_SUPERVISOR_HELPER_STOPPED
 } resolver_supervisor_helper_state;
+#ifdef RESOLVER_SUPERVISOR_TEST_API
 typedef struct {
 	size_t consecutive_successes;
 	uint64_t failure_count;
@@ -107,6 +108,7 @@ typedef struct {
 	pid_t process_id;
 	resolver_supervisor_helper_state state;
 } resolver_supervisor_helper_view;
+#endif
 typedef enum {
 	RESOLVER_SUPERVISOR_JOB_QUEUED,
 	RESOLVER_SUPERVISOR_JOB_SENDING,
@@ -118,6 +120,7 @@ typedef enum {
 	RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND,
 	RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE
 } resolver_supervisor_priority;
+#ifdef RESOLVER_SUPERVISOR_TEST_API
 typedef struct {
 	size_t background_interest_count;
 	struct timespec deadline;
@@ -130,6 +133,7 @@ typedef struct {
 	uint64_t retry_count;
 	resolver_supervisor_job_state state;
 } resolver_supervisor_job_view;
+#endif
 typedef enum {
 	RESOLVER_SUPERVISOR_RELEASE_OK,
 	RESOLVER_SUPERVISOR_RELEASE_SATISFIED,
@@ -170,14 +174,18 @@ resolver_supervisor_release_status resolver_supervisor_entry_interactive_release
 resolver_supervisor_schedule_status resolver_supervisor_entry_schedule(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now);
 /* A STARTED or COALESCED result retains one interactive interest until release or completion. FRESH and COMPLETE retain no interest. */
 resolver_supervisor_schedule_status resolver_supervisor_entry_schedule_interactive(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now);
+#ifdef RESOLVER_SUPERVISOR_TEST_API
 bool resolver_supervisor_entry_view(const resolver_supervisor *supervisor, const resolver_cache_entry *entry, resolver_supervisor_job_view *result);
+#endif
 /* Register this stable nested-epoll descriptor for EPOLLIN in the listener; helper replacements remain internal. Sample now after readiness before processing events. */
 int resolver_supervisor_event_fd(const resolver_supervisor *supervisor);
 /* Drain helper responses before applying every deadline due at now. */
 resolver_supervisor_event_status resolver_supervisor_events_process(resolver_supervisor *supervisor, const struct timespec *now);
+#ifdef RESOLVER_SUPERVISOR_TEST_API
 size_t resolver_supervisor_helper_count(const resolver_supervisor *supervisor);
 bool resolver_supervisor_helper_view_get(const resolver_supervisor *supervisor, size_t helper_index, resolver_supervisor_helper_view *result);
 size_t resolver_supervisor_job_count(const resolver_supervisor *supervisor);
+#endif
 bool resolver_supervisor_shutdown(resolver_supervisor *supervisor, const struct timespec *now);
 bool resolver_supervisor_shutdown_complete(const resolver_supervisor *supervisor);
 

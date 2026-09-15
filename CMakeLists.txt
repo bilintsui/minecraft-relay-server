@@ -161,7 +161,7 @@ if(BUILD_TESTING)
 		tests/resolver_supervisor.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c
 		src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c)
 	target_include_directories(resolver_supervisor_test PRIVATE src)
-	target_compile_definitions(resolver_supervisor_test PRIVATE _GNU_SOURCE RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE=1 RESOLVER_SUPERVISOR_INTEREST_COUNT_LIMIT=2
+	target_compile_definitions(resolver_supervisor_test PRIVATE _GNU_SOURCE RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE=1 RESOLVER_SUPERVISOR_INTEREST_COUNT_LIMIT=2 RESOLVER_SUPERVISOR_TEST_API
 		RESOLVER_SUPERVISOR_JOB_LIMIT=4)
 	target_link_libraries(resolver_supervisor_test -lresolv)
 	set_target_properties(resolver_supervisor_test PROPERTIES
@@ -345,7 +345,7 @@ if(BUILD_TESTING)
 			tests/resolver_supervisor.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c
 			src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c)
 		target_include_directories(resolver_supervisor_ubsan_test PRIVATE src)
-		target_compile_definitions(resolver_supervisor_ubsan_test PRIVATE _GNU_SOURCE RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE=1 RESOLVER_SUPERVISOR_INTEREST_COUNT_LIMIT=2
+		target_compile_definitions(resolver_supervisor_ubsan_test PRIVATE _GNU_SOURCE RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE=1 RESOLVER_SUPERVISOR_INTEREST_COUNT_LIMIT=2 RESOLVER_SUPERVISOR_TEST_API
 			RESOLVER_SUPERVISOR_JOB_LIMIT=4)
 		target_compile_options(resolver_supervisor_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
 		target_link_libraries(resolver_supervisor_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all -lresolv)

@@ -1179,6 +1179,7 @@ resolver_supervisor_schedule_status resolver_supervisor_entry_schedule_interacti
 	return resolver_supervisor_entry_schedule_priority(supervisor, entry, now, RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE);
 }
 
+#ifdef RESOLVER_SUPERVISOR_TEST_API
 bool resolver_supervisor_entry_view(const resolver_supervisor *supervisor, const resolver_cache_entry *entry, resolver_supervisor_job_view *result) {
 	if (result != NULL) {
 		memset(result, 0, sizeof(*result));
@@ -1199,6 +1200,7 @@ bool resolver_supervisor_entry_view(const resolver_supervisor *supervisor, const
 	result->state = job->state;
 	return true;
 }
+#endif
 
 int resolver_supervisor_event_fd(const resolver_supervisor *supervisor) {
 	return supervisor == NULL ? -1 : supervisor->epoll_fd;
@@ -1277,6 +1279,7 @@ resolver_supervisor_event_status resolver_supervisor_events_process(resolver_sup
 	return resolver_supervisor_timer_rearm(supervisor) == -1 ? RESOLVER_SUPERVISOR_EVENT_IO : RESOLVER_SUPERVISOR_EVENT_OK;
 }
 
+#ifdef RESOLVER_SUPERVISOR_TEST_API
 size_t resolver_supervisor_helper_count(const resolver_supervisor *supervisor) {
 	return supervisor == NULL ? 0 : RESOLVER_SUPERVISOR_HELPER_COUNT;
 }
@@ -1303,6 +1306,7 @@ bool resolver_supervisor_helper_view_get(const resolver_supervisor *supervisor, 
 size_t resolver_supervisor_job_count(const resolver_supervisor *supervisor) {
 	return supervisor == NULL ? 0 : supervisor->job_count;
 }
+#endif
 
 bool resolver_supervisor_shutdown(resolver_supervisor *supervisor, const struct timespec *now) {
 	if (!resolver_supervisor_time_update(supervisor, now)) {
