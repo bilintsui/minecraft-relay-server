@@ -111,6 +111,10 @@ static resolver_supervisor_completion resolution_completion(resolver_cache_entry
 	return completion;
 }
 
+static route_resolution_completion_status resolution_completion_observe(route_resolution *resolution, const resolver_supervisor_completion *completion, const struct timespec *now) {
+	return route_resolution_completion_observe_with_supervisor(resolution, (resolver_supervisor *)(uintptr_t)1, completion, now);
+}
+
 static int resolution_fixture_write(const char *filename) {
 	static const char fixture[] =
 		"192.0.2.10 local.example\n"
@@ -202,10 +206,10 @@ static bool resolution_test_arguments(const hosts_table *hosts) {
 	CHECK(!route_resolution_destination_target_get(resolution, 0, 0, &target) && target.name == NULL && target.addresses == NULL,
 		"invalid target access did not clear its output");
 	resolver_supervisor_completion completion = { 0 };
-	CHECK(route_resolution_completion_observe(NULL, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT
-		&& route_resolution_completion_observe(resolution, NULL, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT
+	CHECK(resolution_completion_observe(NULL, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT
+		&& resolution_completion_observe(resolution, NULL, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT
 		&& route_resolution_completion_observe_with_supervisor(resolution, NULL, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT
-		&& route_resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT,
+		&& resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT,
 		"invalid completion arguments were accepted");
 	CHECK(route_resolution_schedule(NULL, (resolver_supervisor *)(uintptr_t)1, &now, 1) == ROUTE_PREWARM_BAD_ARGUMENT
 		&& route_resolution_schedule(resolution, NULL, &now, 1) == ROUTE_PREWARM_BAD_ARGUMENT
@@ -268,13 +272,13 @@ static bool resolution_test_generation(const hosts_table *hosts) {
 		"DNS binding fixtures were incorrect");
 	resolver_supervisor_completion malformed = resolution_completion(address_binding.ipv4_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_NODATA);
 	malformed.response.query_type = ns_t_srv;
-	CHECK(route_resolution_completion_observe(resolution, &malformed, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT,
+	CHECK(resolution_completion_observe(resolution, &malformed, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT,
 		"mismatched completion query type was accepted");
 	malformed = resolution_completion(address_binding.ipv4_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR);
-	CHECK(route_resolution_completion_observe(resolution, &malformed, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT,
+	CHECK(resolution_completion_observe(resolution, &malformed, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT,
 		"nonterminal temporary completion was accepted");
 	malformed = resolution_completion(address_binding.ipv4_entry, (resolver_cache_publish_status)UINT8_MAX, RESOLVER_IPC_LOOKUP_NODATA);
-	CHECK(route_resolution_completion_observe(resolution, &malformed, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT,
+	CHECK(resolution_completion_observe(resolution, &malformed, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT,
 		"unknown completion publication was accepted");
 	CHECK(resolution_address_publish(address_binding.ipv4_entry, AF_INET, "192.0.2.30", 30, &now), "stored address fixture could not be published");
 	CHECK(resolution_srv_publish(srv_binding.srv_entry, srv_targets, sizeof(srv_targets) / sizeof(srv_targets[0]), 30, &now), "stored SRV fixture could not be published");
@@ -347,22 +351,22 @@ static bool resolution_test_generation(const hosts_table *hosts) {
 	CHECK(route_resolution_background_release(resolution, supervisor, &now) == ROUTE_RESOLUTION_RELEASE_OK && resolution_release_count == 2,
 		"background release retried an already-cleared local ownership marker");
 	resolver_supervisor_completion completion = resolution_completion(address_binding.ipv4_entry, RESOLVER_CACHE_PUBLISH_STORED, RESOLVER_IPC_LOOKUP_OK);
-	CHECK(route_resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK
+	CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK
 		&& route_resolution_destination_get(resolution, 2, &address) && address.pending_entry_count == 1 && !address.first_terminal,
 		"stored address completion was not observed");
-	CHECK(route_resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK
+	CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK
 		&& route_resolution_destination_get(resolution, 2, &address) && address.pending_entry_count == 1,
 		"duplicate address completion changed terminal accounting");
 	completion = resolution_completion(address_binding.ipv6_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_NODATA);
-	CHECK(route_resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK
+	CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK
 		&& route_resolution_destination_get(resolution, 2, &address) && address.first_terminal && address.result == ROUTE_RESOLUTION_DESTINATION_AVAILABLE,
 		"dual-family address route did not complete after both terminal results");
 	completion = resolution_completion(dns_target.ipv4_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_NODATA);
-	CHECK(route_resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK
+	CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK
 		&& route_resolution_destination_get(resolution, 3, &srv) && srv.pending_entry_count == 1 && !srv.first_terminal,
 		"first dynamic target completion ended the SRV route early");
 	completion = resolution_completion(dns_target.ipv6_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_NODATA);
-	CHECK(route_resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK
+	CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK
 		&& route_resolution_destination_get(resolution, 3, &srv) && srv.first_terminal && srv.result == ROUTE_RESOLUTION_DESTINATION_AVAILABLE
 		&& route_resolution_warmup_complete(resolution), "SRV route did not complete after every target source reached a terminal result");
 	CHECK(route_bindings_build(routes, hosts, cache, &bindings_second) == ROUTE_BINDINGS_BUILD_OK && bindings_second != NULL,
@@ -580,9 +584,9 @@ static bool resolution_test_shared_targets(const hosts_table *hosts) {
 	CHECK(route_resolution_schedule(resolution, (resolver_supervisor *)(uintptr_t)1, &now, 2) == ROUTE_PREWARM_COMPLETE,
 		"dynamic FRESH and COMPLETE results did not remove their queue entries");
 	resolver_supervisor_completion completion = resolution_completion(first_target.ipv4_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_OK);
-	CHECK(route_resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK, "shared IPv4 completion was not observed");
+	CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK, "shared IPv4 completion was not observed");
 	completion = resolution_completion(first_target.ipv6_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_OK);
-	CHECK(route_resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK
+	CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK
 		&& route_resolution_destination_get(resolution, 0, &first_destination) && first_destination.first_terminal
 		&& first_destination.result == ROUTE_RESOLUTION_DESTINATION_AVAILABLE
 		&& route_resolution_destination_get(resolution, 1, &second_destination) && second_destination.first_terminal
@@ -630,14 +634,14 @@ static bool resolution_test_srv_terminals(const hosts_table *hosts) {
 			CHECK(snprintf(completion.response.payload.srv.records[1].target, sizeof(completion.response.payload.srv.records[1].target), "%s", "dns.target") > 0,
 				"ordinary mixed SRV target could not be prepared");
 		}
-		CHECK(route_resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK,
+		CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK,
 			"transient SRV terminal completion was not observed");
 		free(completion.response.payload.srv.records);
 	}
 	route_binding_view negative_binding;
 	CHECK(route_bindings_destination_get(bindings, 2, &negative_binding), "negative SRV binding could not be read");
 	resolver_supervisor_completion completion = resolution_completion(negative_binding.srv_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_NOT_FOUND);
-	CHECK(route_resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK, "negative SRV completion was not observed");
+	CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK, "negative SRV completion was not observed");
 	route_resolution_destination_view root;
 	route_resolution_destination_view mixed;
 	route_resolution_destination_view negative;
@@ -651,7 +655,7 @@ static bool resolution_test_srv_terminals(const hosts_table *hosts) {
 		&& route_resolution_warmup_complete(resolution), "negative SRV route was not terminal unavailable");
 	CHECK(resolver_cache_entry_acquire(cache, "unrelated.example", ns_t_a, &unrelated) == RESOLVER_CACHE_ACQUIRE_OK, "unrelated completion entry could not be acquired");
 	completion = resolution_completion(unrelated, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_NODATA);
-	CHECK(route_resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_IGNORED,
+	CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_IGNORED,
 		"unrelated generation completion was not ignored");
 	test_result = true;
 

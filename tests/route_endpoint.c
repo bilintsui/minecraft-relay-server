@@ -116,6 +116,10 @@ static bool endpoint_binding_get(const endpoint_fixture *fixture, const char *vh
 	return true;
 }
 
+static route_resolution_completion_status endpoint_completion_observe(route_resolution *resolution, const resolver_supervisor_completion *completion, const struct timespec *now) {
+	return route_resolution_completion_observe_with_supervisor(resolution, (resolver_supervisor *)(uintptr_t)1, completion, now);
+}
+
 static bool endpoint_fixture_build(endpoint_fixture *fixture, const hosts_table *hosts, const struct timespec *now) {
 	static const char json[] = "["
 		"{\"vhost\":[\"numeric\"],\"address\":\"192.0.2.10\",\"port\":25560,\"rewrite\":true,\"pheader\":true},"
@@ -236,7 +240,7 @@ static bool endpoint_srv_publish(endpoint_fixture *fixture, resolver_cache_entry
 	completion.publication = publication;
 	completion.response.query_type = ns_t_srv;
 	completion.response.status = RESOLVER_IPC_LOOKUP_OK;
-	if (route_resolution_completion_observe(fixture->resolution, &completion, completed_at) != ROUTE_RESOLUTION_COMPLETION_OK) {
+	if (endpoint_completion_observe(fixture->resolution, &completion, completed_at) != ROUTE_RESOLUTION_COMPLETION_OK) {
 		return false;
 	}
 	route_resolution_destination_view destination;

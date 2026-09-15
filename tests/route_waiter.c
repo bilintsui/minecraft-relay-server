@@ -152,7 +152,8 @@ static bool waiter_completion_address(resolver_cache_entry *entry, resolver_cach
 
 static bool waiter_completion_observe(waiter_fixture *fixture, route_waiter *waiter, const resolver_supervisor_completion *completion,
 	const struct timespec *processed_at) {
-	return route_resolution_completion_observe(fixture->resolution, completion, processed_at) == ROUTE_RESOLUTION_COMPLETION_OK
+	return route_resolution_completion_observe_with_supervisor(fixture->resolution, (resolver_supervisor *)(uintptr_t)1, completion, processed_at)
+		== ROUTE_RESOLUTION_COMPLETION_OK
 		&& route_waiter_completion_observe(waiter, completion) == ROUTE_WAITER_COMPLETION_OK;
 }
 
