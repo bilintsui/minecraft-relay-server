@@ -158,6 +158,14 @@ fail:
 	return false;
 }
 
+static size_t proxy_socket_write(void *dst, int socket_fd) {
+	p_proxy source;
+	if (dst == NULL || !protocol_proxy_socket_read(socket_fd, &source)) {
+		return 0;
+	}
+	return protocol_proxy_write(dst, source);
+}
+
 static bool proxy_header_test(sa_family_t listener_family, sa_family_t client_family, bool dual_stack, const char *protocol, const char *source, const char *destination) {
 	bool test_result = false;
 	proxy_connection connection;
@@ -174,7 +182,7 @@ static bool proxy_header_test(sa_family_t listener_family, sa_family_t client_fa
 	CHECK(protocol_proxy_socket_read(connection.accepted_fd, &endpoints) && endpoints.family == client_family && endpoints.srcport == connection.client_port
 		&& endpoints.dstport == connection.listener_port && protocol_proxy_write(header, endpoints) == (size_t)expected_size
 		&& memcmp(header, expected, (size_t)expected_size + 1U) == 0, "accepted connection endpoints were not captured as a reusable value");
-	size_t header_size = protocol_proxy_write_socket(header, connection.accepted_fd);
+	size_t header_size = proxy_socket_write(header, connection.accepted_fd);
 	CHECK(header_size == (size_t)expected_size && memcmp(header, expected, header_size + 1) == 0, "PROXY header did not describe the accepted connection");
 	p_proxy parsed = protocol_proxy_read(header, header_size);
 	CHECK(parsed.family == client_family && parsed.srcport == connection.client_port && parsed.dstport == connection.listener_port, "PROXY header did not round-trip");
@@ -190,7 +198,7 @@ static bool proxy_test_arguments(void) {
 	p_proxy endpoints;
 	memset(&endpoints, 0xFF, sizeof(endpoints));
 	return !protocol_proxy_socket_read(-1, &endpoints) && endpoints.family == AF_UNSPEC && endpoints.srcaddr.family == AF_UNSPEC
-		&& !protocol_proxy_socket_read(-1, NULL) && protocol_proxy_write_socket(NULL, -1) == 0 && protocol_proxy_write_socket(header, -1) == 0;
+		&& !protocol_proxy_socket_read(-1, NULL) && proxy_socket_write(NULL, -1) == 0 && proxy_socket_write(header, -1) == 0;
 }
 
 static bool proxy_test_declared_family(void) {

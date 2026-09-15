@@ -199,21 +199,3 @@ size_t protocol_proxy_write(void *dst, p_proxy src) {
 	}
 	return result > 0 ? (size_t)result : 0;
 }
-
-size_t protocol_proxy_write_plain(void *dst, sa_family_t family, net_addr srcaddr, net_addr dstaddr, in_port_t srcport, in_port_t dstport) {
-	p_proxy data;
-	data.family = family;
-	data.srcaddr = srcaddr;
-	data.dstaddr = dstaddr;
-	data.srcport = srcport;
-	data.dstport = dstport;
-	return protocol_proxy_write(dst, data);
-}
-
-size_t protocol_proxy_write_socket(void *dst, int socket_fd) {
-	p_proxy source;
-	if (dst == NULL || !protocol_proxy_socket_read(socket_fd, &source)) {
-		return 0;
-	}
-	return protocol_proxy_write(dst, source);
-}
