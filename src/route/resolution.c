@@ -904,12 +904,6 @@ route_resolution_build_status route_resolution_build(const route_bindings *bindi
 	return ROUTE_RESOLUTION_BUILD_OK;
 }
 
-route_resolution_completion_status route_resolution_completion_observe(route_resolution *resolution, const resolver_supervisor_completion *completion, const struct timespec *now) {
-	/* This compatibility entry has no supervisor context; listener code must use the supervisor-aware entry below. */
-	route_resolution_operation_context context = { .now = now, .release_background = false };
-	return route_resolution_completion_observe_internal(resolution, &context, completion, now);
-}
-
 route_resolution_completion_status route_resolution_completion_observe_with_supervisor(route_resolution *resolution, resolver_supervisor *supervisor,
 	const resolver_supervisor_completion *completion, const struct timespec *now) {
 	if (supervisor == NULL) {

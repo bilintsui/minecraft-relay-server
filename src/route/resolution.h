@@ -88,8 +88,7 @@ route_resolution_release_status route_resolution_background_release(route_resolu
 route_resolution_build_status route_resolution_build(const route_bindings *bindings, const hosts_table *hosts, resolver_cache *cache, const struct timespec *now,
 	route_resolution **result);
 /* Observing a completion never consumes it; the caller remains responsible for completion destruction. */
-route_resolution_completion_status route_resolution_completion_observe(route_resolution *resolution, const resolver_supervisor_completion *completion, const struct timespec *now);
-/* Normal listener completion observation also releases obsolete dynamic background interests through this temporary supervisor context. */
+/* Completion observation also releases obsolete dynamic background interests through this temporary supervisor context. */
 route_resolution_completion_status route_resolution_completion_observe_with_supervisor(route_resolution *resolution, resolver_supervisor *supervisor,
 	const resolver_supervisor_completion *completion, const struct timespec *now);
 void route_resolution_destroy(route_resolution *resolution);
