@@ -1139,6 +1139,7 @@ resolver_supervisor_release_status resolver_supervisor_entry_background_release(
 	return resolver_supervisor_entry_release(supervisor, entry, now, RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND);
 }
 
+#ifdef RESOLVER_SUPERVISOR_TEST_API
 bool resolver_supervisor_entry_cancel(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
 	if (!resolver_supervisor_time_update(supervisor, now)) {
 		return false;
@@ -1166,6 +1167,7 @@ bool resolver_supervisor_entry_cancel(resolver_supervisor *supervisor, resolver_
 	resolver_supervisor_dispatch(supervisor, now);
 	return events_updated && resolver_supervisor_timer_rearm(supervisor) == 0;
 }
+#endif
 
 resolver_supervisor_release_status resolver_supervisor_entry_interactive_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
 	return resolver_supervisor_entry_release(supervisor, entry, now, RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE);

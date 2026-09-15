@@ -164,8 +164,10 @@ void resolver_supervisor_destroy(resolver_supervisor *supervisor);
 void resolver_supervisor_dispose_in_child(resolver_supervisor *supervisor);
 /* Release one interest retained by a STARTED or COALESCED background schedule. Completion releases every remaining interest implicitly. */
 resolver_supervisor_release_status resolver_supervisor_entry_background_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now);
+#ifdef RESOLVER_SUPERVISOR_TEST_API
 /* Cancelling a dispatched entry suppresses retry and completion but lets the current helper response drain normally. */
 bool resolver_supervisor_entry_cancel(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now);
+#endif
 /* Release one interest retained by a STARTED or COALESCED interactive schedule. Completion releases every remaining interest implicitly. */
 resolver_supervisor_release_status resolver_supervisor_entry_interactive_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now);
 /* A STARTED or COALESCED result retains one background interest until release or completion. Background scheduling observes the reserved interactive headroom. A schedule-time IO result
