@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Install toolchain
         run: |
           sudo apt-get update
@@ -24,7 +24,7 @@ jobs:
           cmake --build build-debug --parallel "$(nproc)"
           ctest --test-dir build-debug --output-on-failure --parallel 4
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: mcrelay-amd64
           path: |

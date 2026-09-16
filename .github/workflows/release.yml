@@ -37,7 +37,7 @@ jobs:
             compiler_package: gcc-s390x-linux-gnu
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - name: Install and update build dependencies
         env:
           COMPILER_PACKAGE: ${{ matrix.compiler_package }}
@@ -94,7 +94,7 @@ jobs:
           cp "build-deb-$TARGET_ARCH/mcrelay" "build/mcrelay-$TARGET_ARCH"
           cp packaging/deb/out/*.deb build/
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: mcrelay-${{ matrix.arch }}
           path: build/*
@@ -108,7 +108,7 @@ jobs:
       contents: write
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           pattern: mcrelay-*
           path: build
