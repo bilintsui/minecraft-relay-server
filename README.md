@@ -48,6 +48,29 @@ Additionally, if you want cross-compiling, the following CMake properties will b
 * <code>-DCMAKE_C_COMPILER</code>: Specify an alternative compiler, CMake uses <code>cc</code> by default.
 * <code>-DEXEC_SUFFIX</code>: Add a suffix to the final binary file, the file will be generated called <code>mcrelay</code>.
 
+### Debug builds
+
+Use the following commands, or run <code>./debug-build.sh</code> from the repository root:
+
+```sh
+cmake -S . -B build-debug -DCMAKE_BUILD_TYPE=Debug -DDEBUG_MODE=ON -DBUILD_TESTING=ON
+cmake --build build-debug
+```
+
+The executable is <code>build-debug/mcrelay</code>. The options have separate effects:
+
+- <code>CMAKE_BUILD_TYPE=Debug</code> selects the toolchain's Debug compiler flags. This project's <code>_FORTIFY_SOURCE</code> definition is omitted in Debug; stack protection, PIE, RELRO and the non-executable stack remain enabled.
+- <code>DEBUG_MODE=ON</code> allows FIFO (named pipe) input for configuration loading, including <code>dumpconfig</code>, startup and reload. FIFO reads are deliberately blocking: a missing writer or a writer that does not close its output can stall configuration loading, including the listener during reload. Icon loading still requires a regular file.
+- With <code>DEBUG_MODE=ON</code>, <code>mcrelay version</code> includes <code>-debug</code>, for example <code>v1.3-alpha+&lt;commit&gt;-debug</code>; the help banner is unchanged. Existing Git/hash/dirty and internal-version information is retained. The marker follows <code>DEBUG_MODE</code>, not the build type: Debug with the option OFF has no marker; Release with it ON does.
+- <code>BUILD_TESTING=ON</code> builds separate test executables. Neither Debug nor <code>DEBUG_MODE</code> automatically enables sanitizers, verbose logging or runtime test hooks in <code>mcrelay</code>; protocol and resolver policies are unchanged.
+
+For production, use a Release build with FIFO configuration input disabled:
+
+```sh
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DDEBUG_MODE=OFF
+cmake --build build-release
+```
+
 ### Resolver helper capacity
 By default, mcrelay starts two resolver helper processes, and each helper performs at most one blocking DNS lookup at a time. Configured destinations are normally prewarmed before mcrelay reports readiness, but a large startup or reload configuration, or a burst of distinct uncached names, can contend for the two helpers and each connection's independent default 10-second route-wait deadline.
 

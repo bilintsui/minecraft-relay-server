@@ -281,7 +281,7 @@ int main(int argc, char **argv) {
 			print_help(args.help_topic, progname);
 			return EXITCODE_OK;
 		case COMMAND_VERSION:
-			fprintf(stdout, "v%s%s(%s)\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_SUFFIX, MCRELAY_VERSION_INTERNAL);
+			fprintf(stdout, "v%s%s%s(%s)\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_SUFFIX, DEBUG_MODE ? "-debug" : "", MCRELAY_VERSION_INTERNAL);
 			return EXITCODE_OK;
 		case COMMAND_RUN:
 			break;
