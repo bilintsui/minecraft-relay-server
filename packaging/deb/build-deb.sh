@@ -50,7 +50,7 @@ echo "==> Configuring"
 cmake -S "$ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER="$CC" -DDEBUG_MODE=OFF -DBUILD_TESTING=OFF
 
 echo "==> Compiling"
-cmake --build "$BUILD_DIR" --parallel
+cmake --build "$BUILD_DIR" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}"
 
 echo "==> Assembling package root"
 rm -rf "$STAGING"
