@@ -13,16 +13,16 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc cmake libcjson-dev libsystemd-dev
+          sudo apt-get install -y build-essential cmake libcjson-dev libsystemd-dev
       - name: Build release
         run: |
-          cmake -B build-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=OFF
-          cmake --build build-release
+          cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=OFF -DBUILD_TESTING=OFF -DUBSAN_TEST=OFF
+          cmake --build build-release --parallel "$(nproc)"
       - name: Build debug
         run: |
-          cmake -B build-debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=ON -DUBSAN_TEST=ON
-          cmake --build build-debug
-          ctest --test-dir build-debug --output-on-failure
+          cmake -S . -B build-debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=ON -DBUILD_TESTING=ON -DUBSAN_TEST=ON
+          cmake --build build-debug --parallel "$(nproc)"
+          ctest --test-dir build-debug --output-on-failure --parallel 4
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
         with:
