@@ -1,3 +1,9 @@
+mcrelay (1.2-1) stable; urgency=medium
+
+  * Finalize the 1.2 stable release.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Thu, 17 Sep 2026 03:21:53 +0800
+
 mcrelay (1.2~rc3-1) unstable; urgency=medium
 
   * Resume deferred configuration reloads after late route-generation
