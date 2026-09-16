@@ -6,51 +6,70 @@ on:
       - published
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build_mcrelay:
-    name: Build Minecraft Relay Server
+    name: Build Minecraft Relay Server (${{ matrix.arch }})
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        include:
+          - arch: amd64
+            cc: gcc
+            compiler_package: gcc
+          - arch: arm64
+            cc: aarch64-linux-gnu-gcc
+            compiler_package: gcc-aarch64-linux-gnu
+          - arch: armhf
+            cc: arm-linux-gnueabihf-gcc
+            compiler_package: gcc-arm-linux-gnueabihf
+          - arch: ppc64el
+            cc: powerpc64le-linux-gnu-gcc
+            compiler_package: gcc-powerpc64le-linux-gnu
+          - arch: riscv64
+            cc: riscv64-linux-gnu-gcc
+            compiler_package: gcc-riscv64-linux-gnu
+          - arch: s390x
+            cc: s390x-linux-gnu-gcc
+            compiler_package: gcc-s390x-linux-gnu
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6
       - name: Install and update build dependencies
+        env:
+          COMPILER_PACKAGE: ${{ matrix.compiler_package }}
+          TARGET_ARCH: ${{ matrix.arch }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf gcc-powerpc64le-linux-gnu gcc-riscv64-linux-gnu gcc-s390x-linux-gnu pandoc lintian
           CODENAME=$(lsb_release -cs)
-          sudo rm -f /etc/apt/sources.list
-          sudo rm -f /etc/apt/sources.list.d/*
-          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${CODENAME} main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/main.list
-          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${CODENAME}-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/main.list
-          echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${CODENAME}-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/main.list
-          echo "deb [arch=amd64] http://security.ubuntu.com/ubuntu ${CODENAME}-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/main.list
-          echo "deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports ${CODENAME} main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/port.list
-          echo "deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/port.list
-          echo "deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/port.list
-          echo "deb [arch=arm64,armhf,ppc64el,riscv64,s390x] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/port.list
-          sudo dpkg --add-architecture arm64
-          sudo dpkg --add-architecture armhf
-          sudo dpkg --add-architecture ppc64el
-          sudo dpkg --add-architecture riscv64
-          sudo dpkg --add-architecture s390x
-          sudo apt-get update
-          sudo apt-get install -y \
-            libcjson-dev:amd64 libcjson-dev:arm64 libcjson-dev:armhf libcjson-dev:ppc64el libcjson-dev:riscv64 libcjson-dev:s390x \
-            libsystemd-dev:amd64 libsystemd-dev:arm64 libsystemd-dev:armhf libsystemd-dev:ppc64el libsystemd-dev:riscv64 libsystemd-dev:s390x
-      - name: Build deb amd64
-        run: sh packaging/deb/build-deb.sh --arch amd64 --cc "$(which gcc)"
-      - name: Build deb arm64
-        run: sh packaging/deb/build-deb.sh --arch arm64 --cc "$(which aarch64-linux-gnu-gcc)"
-      - name: Build deb armhf
-        run: sh packaging/deb/build-deb.sh --arch armhf --cc "$(which arm-linux-gnueabihf-gcc)"
-      - name: Build deb ppc64el
-        run: sh packaging/deb/build-deb.sh --arch ppc64el --cc "$(which powerpc64le-linux-gnu-gcc)"
-      - name: Build deb riscv64
-        run: sh packaging/deb/build-deb.sh --arch riscv64 --cc "$(which riscv64-linux-gnu-gcc)"
-      - name: Build deb s390x
-        run: sh packaging/deb/build-deb.sh --arch s390x --cc "$(which s390x-linux-gnu-gcc)"
+          APT_DIRECTORY=$(mktemp -d "$RUNNER_TEMP/mcrelay-apt.XXXXXX")
+          mkdir "$APT_DIRECTORY/sources.list.d"
+          printf '%s\n' \
+            "deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${CODENAME} main restricted universe multiverse" \
+            "deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${CODENAME}-updates main restricted universe multiverse" \
+            "deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${CODENAME}-backports main restricted universe multiverse" \
+            "deb [arch=amd64] http://security.ubuntu.com/ubuntu ${CODENAME}-security main restricted universe multiverse" \
+            > "$APT_DIRECTORY/sources.list"
+          if [ "$TARGET_ARCH" != amd64 ]; then
+            sudo dpkg --add-architecture "$TARGET_ARCH"
+            printf '%s\n' \
+              "deb [arch=$TARGET_ARCH] http://ports.ubuntu.com/ubuntu-ports ${CODENAME} main restricted universe multiverse" \
+              "deb [arch=$TARGET_ARCH] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-updates main restricted universe multiverse" \
+              "deb [arch=$TARGET_ARCH] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-backports main restricted universe multiverse" \
+              "deb [arch=$TARGET_ARCH] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-security main restricted universe multiverse" \
+              >> "$APT_DIRECTORY/sources.list"
+          fi
+          sudo apt-get -o "Dir::Etc::sourcelist=$APT_DIRECTORY/sources.list" -o "Dir::Etc::sourceparts=$APT_DIRECTORY/sources.list.d" update
+          sudo apt-get -o "Dir::Etc::sourcelist=$APT_DIRECTORY/sources.list" -o "Dir::Etc::sourceparts=$APT_DIRECTORY/sources.list.d" install -y \
+            build-essential cmake "$COMPILER_PACKAGE" pandoc lintian gzip \
+            "libcjson-dev:$TARGET_ARCH" "libsystemd-dev:$TARGET_ARCH"
+      - name: Build deb
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+          TARGET_CC: ${{ matrix.cc }}
+        run: sh packaging/deb/build-deb.sh --arch "$TARGET_ARCH" --cc "$TARGET_CC"
       - name: Lint debs
         run: |
           for deb in packaging/deb/out/*.deb; do
@@ -67,14 +86,43 @@ jobs:
             esac
           done
       - name: Collect artifacts
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
         run: |
           # Reuse binaries compiled by build-deb.sh (build-deb-<arch>/mcrelay)
           mkdir -p build
-          for arch in amd64 arm64 armhf ppc64el riscv64 s390x; do
-            cp "build-deb-$arch/mcrelay" "build/mcrelay-$arch"
-          done
+          cp "build-deb-$TARGET_ARCH/mcrelay" "build/mcrelay-$TARGET_ARCH"
           cp packaging/deb/out/*.deb build/
-      - name: Upload artifacts
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: mcrelay-${{ matrix.arch }}
+          path: build/*
+          if-no-files-found: error
+
+  publish_release:
+    name: Upload release artifacts
+    needs: build_mcrelay
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: mcrelay-*
+          path: build
+          merge-multiple: true
+      - name: Check artifact completeness
+        run: |
+          for arch in amd64 arm64 armhf ppc64el riscv64 s390x; do
+            test -f "build/mcrelay-$arch"
+            set -- build/mcrelay_*_"$arch".deb
+            test "$#" -eq 1
+            test -f "$1"
+          done
+      - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" build/* --clobber
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" build/* --repo "$GITHUB_REPOSITORY" --clobber
