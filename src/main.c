@@ -284,9 +284,9 @@ int main(int argc, char **argv) {
 		case COMMAND_VERSION: {
 			bool internal_assigned = MCRELAY_VERSION_INTERNAL[0] != '\0';
 			if (internal_assigned) {
-				fprintf(stdout, "v%s%s(%s)\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_SUFFIX, MCRELAY_VERSION_INTERNAL);
+				fprintf(stdout, "v%s%s%s(%s)\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_SUFFIX, DEBUG_MODE ? "-debug" : "", MCRELAY_VERSION_INTERNAL);
 			} else {
-				fprintf(stdout, "v%s%s\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_SUFFIX);
+				fprintf(stdout, "v%s%s%s\n", MCRELAY_VERSION_DISPLAY, MCRELAY_VERSION_SUFFIX, DEBUG_MODE ? "-debug" : "");
 			}
 			return EXITCODE_OK;
 		}
