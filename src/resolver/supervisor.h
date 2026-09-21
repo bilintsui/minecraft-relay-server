@@ -35,6 +35,7 @@
 #endif
 
 /* helper recovery */
+#define RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY	32U
 #ifndef RESOLVER_SUPERVISOR_RESPAWN_INITIAL_MS
 #define RESOLVER_SUPERVISOR_RESPAWN_INITIAL_MS	100
 #endif
@@ -105,13 +106,50 @@ typedef enum {
 	RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT
 } resolver_supervisor_helper_failure;
 typedef enum {
+	RESOLVER_SUPERVISOR_HELPER_RECOVERY_SUCCESS_STREAK,
+	RESOLVER_SUPERVISOR_HELPER_RECOVERY_STABLE_UPTIME,
+	RESOLVER_SUPERVISOR_HELPER_RECOVERY_COUNT
+} resolver_supervisor_helper_recovery;
+typedef enum {
 	RESOLVER_SUPERVISOR_HELPER_IDLE,
 	RESOLVER_SUPERVISOR_HELPER_SENDING,
 	RESOLVER_SUPERVISOR_HELPER_BUSY,
 	RESOLVER_SUPERVISOR_HELPER_BACKOFF,
 	RESOLVER_SUPERVISOR_HELPER_SHUTTING_DOWN,
-	RESOLVER_SUPERVISOR_HELPER_STOPPED
+	RESOLVER_SUPERVISOR_HELPER_STOPPED,
+	RESOLVER_SUPERVISOR_HELPER_STATE_COUNT
 } resolver_supervisor_helper_state;
+typedef struct {
+	uint64_t backoff_milliseconds;
+	uint64_t cycle_id;
+	resolver_supervisor_helper_failure failure;
+	uint64_t failure_count;
+	struct timespec observed_at;
+	pid_t process_id;
+	size_t slot;
+} resolver_supervisor_observation_degraded;
+typedef struct {
+	uint64_t cycle_id;
+	struct timespec degraded_at;
+	uint64_t failure_count;
+	resolver_supervisor_helper_failure last_failure;
+	struct timespec observed_at;
+	pid_t process_id;
+	resolver_supervisor_helper_recovery recovery;
+	size_t slot;
+} resolver_supervisor_observation_recovered;
+typedef enum {
+	RESOLVER_SUPERVISOR_OBSERVATION_DEGRADED,
+	RESOLVER_SUPERVISOR_OBSERVATION_RECOVERED
+} resolver_supervisor_observation_type;
+typedef union {
+	resolver_supervisor_observation_degraded degraded;
+	resolver_supervisor_observation_recovered recovered;
+} resolver_supervisor_observation_data;
+typedef struct {
+	resolver_supervisor_observation_data data;
+	resolver_supervisor_observation_type type;
+} resolver_supervisor_observation;
 #ifdef RESOLVER_SUPERVISOR_TEST_API
 typedef struct {
 	size_t consecutive_successes;
@@ -191,9 +229,18 @@ typedef struct {
 	uint64_t status[RESOLVER_SUPERVISOR_SCHEDULE_STATUS_COUNT];
 } resolver_supervisor_metrics_schedule;
 typedef struct {
+	uint64_t failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT];
+	uint64_t observation_dropped;
+	uint64_t recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_COUNT];
+	uint64_t spawn_attempt;
+	uint64_t spawn_success;
+	uint64_t state_current[RESOLVER_SUPERVISOR_HELPER_STATE_COUNT];
+} resolver_supervisor_metrics_helper;
+typedef struct {
 	resolver_supervisor_metrics_attempt attempt[METRICS_RESOLVER_QUERY_TYPE_COUNT];
 	metrics_histogram_snapshot attempt_duration[METRICS_RESOLVER_QUERY_TYPE_COUNT];
 	metrics_histogram_snapshot dispatch_wait[RESOLVER_SUPERVISOR_PRIORITY_COUNT][METRICS_RESOLVER_QUERY_TYPE_COUNT];
+	resolver_supervisor_metrics_helper helper;
 	uint64_t interests_current[RESOLVER_SUPERVISOR_PRIORITY_COUNT];
 	uint64_t jobs_current;
 	uint64_t jobs_high_water;
@@ -242,6 +289,7 @@ bool resolver_supervisor_helper_view_get(const resolver_supervisor *supervisor, 
 size_t resolver_supervisor_job_count(const resolver_supervisor *supervisor);
 #endif
 bool resolver_supervisor_metrics_get(const resolver_supervisor *supervisor, resolver_supervisor_metrics_snapshot *result);
+bool resolver_supervisor_observation_take(resolver_supervisor *supervisor, resolver_supervisor_observation *result);
 bool resolver_supervisor_shutdown(resolver_supervisor *supervisor, const struct timespec *now);
 bool resolver_supervisor_shutdown_complete(const resolver_supervisor *supervisor);
 

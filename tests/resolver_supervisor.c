@@ -146,6 +146,28 @@ static uint64_t supervisor_hash_u64(uint64_t hash, uint64_t value) {
 	}
 }
 
+static bool supervisor_helper_exit(resolver_supervisor *supervisor, size_t helper_index, struct timespec *now) {
+	resolver_supervisor_helper_view view;
+	if (!resolver_supervisor_helper_view_get(supervisor, helper_index, &view)) {
+		return false;
+	}
+	supervisor_test_helper *helper = supervisor_fake_find(view.process_id);
+	if (helper == NULL || helper->peer_fd == -1 || close(helper->peer_fd) == -1) {
+		return false;
+	}
+	helper->peer_fd = -1;
+	if (resolver_supervisor_events_process(supervisor, now) != RESOLVER_SUPERVISOR_EVENT_OK || !resolver_supervisor_helper_view_get(supervisor, helper_index, &view)) {
+		return false;
+	}
+	for (size_t retry = 0; view.state == RESOLVER_SUPERVISOR_HELPER_BACKOFF && retry < 3; retry++) {
+		*now = view.next_event_at;
+		if (resolver_supervisor_events_process(supervisor, now) != RESOLVER_SUPERVISOR_EVENT_OK || !resolver_supervisor_helper_view_get(supervisor, helper_index, &view)) {
+			return false;
+		}
+	}
+	return view.state == RESOLVER_SUPERVISOR_HELPER_IDLE && supervisor_fake_peer(supervisor, helper_index) != -1;
+}
+
 static bool supervisor_packet_send(int socket_fd, const void *packet, size_t packet_size) {
 	ssize_t sent;
 	do {
@@ -342,8 +364,20 @@ static bool supervisor_test_arguments(void) {
 		resolver_supervisor_helper_view helper_view;
 		CHECK(resolver_supervisor_helper_view_get(supervisor, helper_index, &helper_view) && helper_view.state == RESOLVER_SUPERVISOR_HELPER_BACKOFF
 			&& helper_view.failure_count == 1, "initial helper-start failure was not retained as degraded state");
+		resolver_supervisor_observation observation;
+		CHECK(resolver_supervisor_observation_take(supervisor, &observation) && observation.type == RESOLVER_SUPERVISOR_OBSERVATION_DEGRADED
+			&& observation.data.degraded.slot == helper_index && observation.data.degraded.cycle_id == 1 && observation.data.degraded.process_id == 0
+			&& observation.data.degraded.failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN && observation.data.degraded.failure_count == 1
+			&& observation.data.degraded.backoff_milliseconds == 0, "initial spawn-failure observation was invalid");
 	}
+	CHECK(!resolver_supervisor_observation_take(supervisor, &(resolver_supervisor_observation){ 0 }), "unexpected initial helper observation remained queued");
 	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK, "initial helper-start failures were not retried");
+	resolver_supervisor_metrics_snapshot metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics)
+		&& metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN] == RESOLVER_SUPERVISOR_HELPER_COUNT
+		&& metrics.helper.spawn_attempt == RESOLVER_SUPERVISOR_HELPER_COUNT * 2U && metrics.helper.spawn_success == RESOLVER_SUPERVISOR_HELPER_COUNT
+		&& metrics.helper.observation_dropped == 0 && metrics.helper.state_current[RESOLVER_SUPERVISOR_HELPER_IDLE] == RESOLVER_SUPERVISOR_HELPER_COUNT,
+		"initial helper spawn metrics were incorrect");
 	CHECK(resolver_supervisor_entry_schedule(NULL, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT
 		&& resolver_supervisor_entry_schedule(supervisor, NULL, &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT
 		&& resolver_supervisor_entry_schedule_interactive(NULL, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT
@@ -409,7 +443,8 @@ static bool supervisor_test_attempt_failures(void) {
 	CHECK(attempt->dispatched == 2 && attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT] == 1
 		&& attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_IO] == 1 && attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] == 0
 		&& attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT] == 0 && attempt->retry_scheduled == 2
-		&& metrics.attempt_duration[METRICS_QUERY_TYPE_A].count == 2,
+		&& metrics.attempt_duration[METRICS_QUERY_TYPE_A].count == 2 && metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT] == 1
+		&& metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_IO] == 1,
 		"exit or IO attempt-failure metrics were incorrect");
 	CHECK(resolver_supervisor_entry_cancel(supervisor, entries[1], &now), "IO-failure retry could not be cancelled");
 	test_result = true;
@@ -684,6 +719,105 @@ cleanup:
 	resolver_cache_entry_release(negative_entry);
 	resolver_cache_entry_release(srv_entry);
 	resolver_cache_entry_release(zero_entry);
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
+static bool supervisor_test_helper_observation(void) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 450 };
+	struct timespec first_degraded_at = { 0 };
+	resolver_supervisor *supervisor = NULL;
+	resolver_cache *cache = NULL;
+	resolver_supervisor_completion completion = { 0 };
+	supervisor_fake_reset();
+	supervisor = resolver_supervisor_create(&signal_mask, &now);
+	cache = resolver_cache_create();
+	CHECK(supervisor != NULL && cache != NULL, "helper-observation test state could not be created");
+	CHECK(supervisor_helper_exit(supervisor, 0, &now), "first helper degradation could not be generated");
+	resolver_supervisor_observation observation;
+	CHECK(resolver_supervisor_observation_take(supervisor, &observation) && observation.type == RESOLVER_SUPERVISOR_OBSERVATION_DEGRADED
+		&& observation.data.degraded.slot == 0 && observation.data.degraded.cycle_id == 1 && observation.data.degraded.process_id > 0
+		&& observation.data.degraded.failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT && observation.data.degraded.failure_count == 1
+		&& observation.data.degraded.backoff_milliseconds == 0, "first helper degradation observation was invalid");
+	first_degraded_at = observation.data.degraded.observed_at;
+	for (size_t index = 0; index < RESOLVER_SUPERVISOR_RESPAWN_RESET_SUCCESS_COUNT; index++) {
+		char name[64];
+		snprintf(name, sizeof(name), "observation-recovery-%zu.supervisor.test", index);
+		resolver_cache_entry *entry = supervisor_cache_entry_create(cache, name, ns_t_a);
+		CHECK(entry != NULL && resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
+			"helper-observation recovery job could not be scheduled");
+		int peer_fd = supervisor_fake_peer(supervisor, 0);
+		resolver_ipc_request request;
+		CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request) && supervisor_response_address_send(peer_fd, &request, &now, 10)
+			&& resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_completion_take(supervisor, &completion),
+			"helper-observation recovery response did not complete");
+		supervisor_completion_clear(&completion);
+		resolver_cache_entry_release(entry);
+	}
+	CHECK(resolver_supervisor_observation_take(supervisor, &observation) && observation.type == RESOLVER_SUPERVISOR_OBSERVATION_RECOVERED
+		&& observation.data.recovered.slot == 0 && observation.data.recovered.cycle_id == 1 && observation.data.recovered.process_id > 0
+		&& observation.data.recovered.recovery == RESOLVER_SUPERVISOR_HELPER_RECOVERY_SUCCESS_STREAK && observation.data.recovered.failure_count == 1
+		&& observation.data.recovered.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT
+		&& observation.data.recovered.degraded_at.tv_sec == first_degraded_at.tv_sec && observation.data.recovered.degraded_at.tv_nsec == first_degraded_at.tv_nsec
+		&& observation.data.recovered.observed_at.tv_sec == first_degraded_at.tv_sec && observation.data.recovered.observed_at.tv_nsec == first_degraded_at.tv_nsec,
+		"success-streak recovery observation was not self-contained");
+	CHECK(!resolver_supervisor_observation_take(supervisor, &observation), "unexpected observation remained after first recovery");
+	CHECK(supervisor_helper_exit(supervisor, 0, &now), "second helper degradation cycle could not start");
+	for (size_t failure_index = 1; failure_index < RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY; failure_index++) {
+		if (failure_index + 1U == RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY) {
+			supervisor_start_failures = 1;
+		}
+		CHECK(supervisor_helper_exit(supervisor, 0, &now), "helper observation ring could not be filled");
+	}
+	resolver_supervisor_helper_view helper_view;
+	CHECK(resolver_supervisor_helper_view_get(supervisor, 0, &helper_view) && helper_view.failure_count == RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY + 1U
+		&& helper_view.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN, "repeated helper failures did not preserve the degradation cycle");
+	now = helper_view.next_event_at;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK, "stable helper recovery could not be processed");
+	for (uint64_t failure_count = 3; failure_count <= RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY + 1U; failure_count++) {
+		CHECK(resolver_supervisor_observation_take(supervisor, &observation) && observation.type == RESOLVER_SUPERVISOR_OBSERVATION_DEGRADED
+			&& observation.data.degraded.slot == 0 && observation.data.degraded.cycle_id == 2 && observation.data.degraded.failure_count == failure_count,
+			"helper observation FIFO order was incorrect after overflow");
+		if (failure_count == RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY + 1U) {
+			CHECK(observation.data.degraded.failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN && observation.data.degraded.process_id == 0,
+				"pre-fork spawn failure was not normalized in the degradation event");
+		}
+	}
+	CHECK(resolver_supervisor_observation_take(supervisor, &observation) && observation.type == RESOLVER_SUPERVISOR_OBSERVATION_RECOVERED
+		&& observation.data.recovered.slot == 0 && observation.data.recovered.cycle_id == 2
+		&& observation.data.recovered.recovery == RESOLVER_SUPERVISOR_HELPER_RECOVERY_STABLE_UPTIME
+		&& observation.data.recovered.failure_count == RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY + 1U
+		&& observation.data.recovered.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN
+		&& observation.data.recovered.degraded_at.tv_sec == first_degraded_at.tv_sec && observation.data.recovered.degraded_at.tv_nsec == first_degraded_at.tv_nsec,
+		"stable recovery did not retain the dropped degradation event's cycle state");
+	CHECK(!resolver_supervisor_observation_take(supervisor, &observation), "helper observation ring did not drain completely");
+	CHECK(supervisor_helper_exit(supervisor, 0, &now) && resolver_supervisor_helper_view_get(supervisor, 0, &helper_view),
+		"post-identifier-exhaustion helper failure affected business recovery");
+	now = helper_view.next_event_at;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && !resolver_supervisor_observation_take(supervisor, &observation),
+		"exhausted helper cycle identifier emitted an observation");
+	resolver_supervisor_metrics_snapshot metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics) && metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT] == 34
+		&& metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN] == 1 && metrics.helper.spawn_attempt == 37 && metrics.helper.spawn_success == 36
+		&& metrics.helper.recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_SUCCESS_STREAK] == 1
+		&& metrics.helper.recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_STABLE_UPTIME] == 2 && metrics.helper.observation_dropped == 4
+		&& metrics.helper.state_current[RESOLVER_SUPERVISOR_HELPER_IDLE] == RESOLVER_SUPERVISOR_HELPER_COUNT,
+		"helper lifecycle metrics or identifier-exhaustion drops were incorrect");
+	CHECK(resolver_supervisor_shutdown(supervisor, &now), "helper-observation supervisor could not shut down");
+	resolver_supervisor_metrics_snapshot shutdown_metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &shutdown_metrics)
+		&& shutdown_metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT] == metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT]
+		&& shutdown_metrics.helper.observation_dropped == metrics.helper.observation_dropped && !resolver_supervisor_observation_take(supervisor, &observation),
+		"shutdown generated a helper degradation observation or failure metric");
+	test_result = true;
+
+cleanup:
+	supervisor_completion_clear(&completion);
+	resolver_supervisor_destroy(supervisor);
 	resolver_cache_destroy(cache);
 	supervisor_fake_reset();
 	return test_result;
@@ -1136,7 +1270,10 @@ static bool supervisor_test_protocol_and_recovery(void) {
 	const resolver_supervisor_metrics_attempt *attempt = &metrics.attempt[METRICS_QUERY_TYPE_A];
 	CHECK(attempt->dispatched == RESOLVER_SUPERVISOR_RESPAWN_RESET_SUCCESS_COUNT + 1U
 		&& attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] == 1 && attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN] == 0
-		&& attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == RESOLVER_SUPERVISOR_RESPAWN_RESET_SUCCESS_COUNT && attempt->retry_scheduled == 1,
+		&& attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == RESOLVER_SUPERVISOR_RESPAWN_RESET_SUCCESS_COUNT && attempt->retry_scheduled == 1
+		&& metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT] == 2 && metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] == 1
+		&& metrics.helper.recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_SUCCESS_STREAK] == 1
+		&& metrics.helper.recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_STABLE_UPTIME] == 1,
 		"protocol attempt failure or retry metrics were incorrect");
 	test_result = true;
 
@@ -1424,7 +1561,8 @@ static bool supervisor_test_timeout_and_order(void) {
 	CHECK(attempt->dispatched == 4 && attempt->jobs_dispatched_current == 1, "deadline dispatch metrics were incorrect");
 	CHECK(attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == 1, "deadline response metrics were incorrect");
 	CHECK(attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT] == 1 && attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] == 1
-		&& attempt->retry_scheduled == 2, "deadline failure or retry metrics were incorrect");
+		&& attempt->retry_scheduled == 2 && metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT] == 1
+		&& metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] == 1, "deadline failure or retry metrics were incorrect");
 	CHECK(attempt->completion_enqueued == 1 && attempt->completion_taken == 1, "deadline completion metrics were incorrect");
 	CHECK(metrics.attempt_duration[METRICS_QUERY_TYPE_A].count == 3, "deadline duration metrics were incorrect");
 	CHECK(attempt->dispatched == attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] + attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT]
@@ -1583,6 +1721,7 @@ int main(void) {
 	CHECK(supervisor_test_cancel(), "supervisor cancellation tests failed");
 	CHECK(supervisor_test_child_dispose(), "supervisor child-disposal tests failed");
 	CHECK(supervisor_test_completion(), "supervisor completion tests failed");
+	CHECK(supervisor_test_helper_observation(), "supervisor helper-observation tests failed");
 	CHECK(supervisor_test_interest_release(), "supervisor interest-release tests failed");
 	CHECK(supervisor_test_metrics(), "supervisor metrics tests failed");
 	CHECK(supervisor_test_orphan(), "supervisor orphan tests failed");

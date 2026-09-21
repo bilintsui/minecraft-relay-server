@@ -50,6 +50,11 @@
 #define RESOLVER_SUPERVISOR_INTEREST_COUNT_LIMIT	SIZE_MAX
 #endif
 
+/* observation correlation; override only in focused tests that exercise identifier exhaustion */
+#ifndef RESOLVER_SUPERVISOR_OBSERVATION_CYCLE_ID_LIMIT
+#define RESOLVER_SUPERVISOR_OBSERVATION_CYCLE_ID_LIMIT	UINT64_MAX
+#endif
+
 /* packet */
 #define RESOLVER_SUPERVISOR_RECEIVE_BYTE_CAPACITY	(RESOLVER_IPC_PACKET_BYTE_LIMIT + 1U)
 
@@ -72,11 +77,14 @@ typedef enum {
 } resolver_supervisor_send_status;
 typedef struct {
 	size_t consecutive_successes;
+	uint64_t cycle_id;
+	struct timespec degraded_at;
 	uint64_t failure_count;
 	int fd;
 	resolver_supervisor_job *job;
 	pid_t last_failed_process_id;
 	resolver_supervisor_helper_failure last_failure;
+	uint64_t next_cycle_id;
 	struct timespec next_event_at;
 	pid_t process_id;
 	uint8_t request_packet[RESOLVER_IPC_PACKET_BYTE_LIMIT];
@@ -92,6 +100,7 @@ typedef struct {
 	resolver_supervisor_metrics_attempt attempt[METRICS_RESOLVER_QUERY_TYPE_COUNT];
 	metrics_histogram attempt_duration[METRICS_RESOLVER_QUERY_TYPE_COUNT];
 	metrics_histogram dispatch_wait[RESOLVER_SUPERVISOR_PRIORITY_COUNT][METRICS_RESOLVER_QUERY_TYPE_COUNT];
+	resolver_supervisor_metrics_helper helper;
 	uint64_t jobs_high_water;
 	uint64_t queue_high_water[RESOLVER_SUPERVISOR_PRIORITY_COUNT];
 	resolver_supervisor_metrics_schedule schedule[RESOLVER_SUPERVISOR_PRIORITY_COUNT][METRICS_QUERY_TYPE_COUNT];
@@ -137,6 +146,9 @@ struct resolver_supervisor {
 	struct timespec last_now;
 	resolver_supervisor_metrics_state metrics;
 	uint64_t next_query_id;
+	size_t observation_count;
+	size_t observation_head;
+	resolver_supervisor_observation observations[RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY];
 	bool shutting_down;
 	int timer_fd;
 };
@@ -260,6 +272,21 @@ static void resolver_supervisor_metrics_increment(resolver_supervisor *superviso
 static void resolver_supervisor_metrics_gauge_add(uint64_t *gauge, size_t amount) {
 	uint64_t value = (uint64_t)amount;
 	*gauge = UINT64_MAX - *gauge < value ? UINT64_MAX : *gauge + value;
+}
+
+static void resolver_supervisor_observation_drop(resolver_supervisor *supervisor) {
+	resolver_supervisor_metrics_increment(supervisor, &supervisor->metrics.helper.observation_dropped);
+}
+
+static void resolver_supervisor_observation_push(resolver_supervisor *supervisor, const resolver_supervisor_observation *observation) {
+	if (supervisor->observation_count == RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY) {
+		supervisor->observation_head = (supervisor->observation_head + 1U) % RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY;
+		supervisor->observation_count--;
+		resolver_supervisor_observation_drop(supervisor);
+	}
+	size_t index = (supervisor->observation_head + supervisor->observation_count) % RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY;
+	supervisor->observations[index] = *observation;
+	supervisor->observation_count++;
 }
 
 static metrics_query_type resolver_supervisor_metrics_query_type(const resolver_cache_entry *entry) {
@@ -589,8 +616,35 @@ static void resolver_supervisor_helper_process_close(resolver_supervisor *superv
 	}
 }
 
-static void resolver_supervisor_helper_recovery_reset(resolver_supervisor_helper *helper) {
+static void resolver_supervisor_helper_recover(resolver_supervisor *supervisor, size_t helper_index, resolver_supervisor_helper_recovery recovery, const struct timespec *now) {
+	resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
+	if (helper->failure_count == 0) {
+		return;
+	}
+	if (recovery < RESOLVER_SUPERVISOR_HELPER_RECOVERY_COUNT) {
+		resolver_supervisor_metrics_increment(supervisor, &supervisor->metrics.helper.recovery[recovery]);
+	}
+	if (helper->cycle_id == 0) {
+		resolver_supervisor_observation_drop(supervisor);
+	} else {
+		resolver_supervisor_observation observation = {
+			.data.recovered = {
+				.cycle_id = helper->cycle_id,
+				.degraded_at = helper->degraded_at,
+				.failure_count = helper->failure_count,
+				.last_failure = helper->last_failure,
+				.observed_at = *now,
+				.process_id = helper->process_id,
+				.recovery = recovery,
+				.slot = helper_index
+			},
+			.type = RESOLVER_SUPERVISOR_OBSERVATION_RECOVERED
+		};
+		resolver_supervisor_observation_push(supervisor, &observation);
+	}
 	helper->consecutive_successes = 0;
+	helper->cycle_id = 0;
+	memset(&helper->degraded_at, 0, sizeof(helper->degraded_at));
 	helper->failure_count = 0;
 	helper->last_failed_process_id = -1;
 	helper->last_failure = RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE;
@@ -600,31 +654,60 @@ static void resolver_supervisor_helper_recovery_reset(resolver_supervisor_helper
 static void resolver_supervisor_helper_respawn_schedule(resolver_supervisor *supervisor, size_t helper_index, resolver_supervisor_helper_failure failure, const struct timespec *now) {
 	resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
 	helper->consecutive_successes = 0;
+	if (supervisor->shutting_down) {
+		helper->state = RESOLVER_SUPERVISOR_HELPER_STOPPED;
+		memset(&helper->next_event_at, 0, sizeof(helper->next_event_at));
+		return;
+	}
+	if (helper->failure_count == 0) {
+		helper->degraded_at = *now;
+		if (helper->next_cycle_id != 0) {
+			helper->cycle_id = helper->next_cycle_id;
+			helper->next_cycle_id = helper->next_cycle_id == RESOLVER_SUPERVISOR_OBSERVATION_CYCLE_ID_LIMIT ? 0 : helper->next_cycle_id + 1U;
+		}
+	}
 	if (helper->failure_count < UINT64_MAX) {
 		helper->failure_count++;
 	}
 	helper->last_failure = failure;
-	helper->state = supervisor->shutting_down ? RESOLVER_SUPERVISOR_HELPER_STOPPED : RESOLVER_SUPERVISOR_HELPER_BACKOFF;
-	if (supervisor->shutting_down) {
-		memset(&helper->next_event_at, 0, sizeof(helper->next_event_at));
-		return;
+	if (failure > RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE && failure < RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT) {
+		resolver_supervisor_metrics_increment(supervisor, &supervisor->metrics.helper.failure[failure]);
 	}
+	helper->state = RESOLVER_SUPERVISOR_HELPER_BACKOFF;
 	uint64_t base_delay = resolver_supervisor_delay_respawn_base(helper->failure_count);
 	uint64_t delay = base_delay == 0 ? 0 : resolver_supervisor_delay_jitter(base_delay, RESOLVER_SUPERVISOR_RESPAWN_MAX_MS, RESOLVER_SUPERVISOR_JITTER_RESPAWN_DOMAIN,
 		helper_index, helper->failure_count);
 	if (!timeutil_add_milliseconds(now, delay, &helper->next_event_at)) {
 		helper->next_event_at = *now;
 	}
+	if (helper->cycle_id == 0) {
+		resolver_supervisor_observation_drop(supervisor);
+	} else {
+		resolver_supervisor_observation observation = {
+			.data.degraded = {
+				.backoff_milliseconds = delay,
+				.cycle_id = helper->cycle_id,
+				.failure = failure,
+				.failure_count = helper->failure_count,
+				.observed_at = *now,
+				.process_id = helper->last_failed_process_id > 0 ? helper->last_failed_process_id : 0,
+				.slot = helper_index
+			},
+			.type = RESOLVER_SUPERVISOR_OBSERVATION_DEGRADED
+		};
+		resolver_supervisor_observation_push(supervisor, &observation);
+	}
 }
 
-static void resolver_supervisor_helper_success(resolver_supervisor_helper *helper) {
+static void resolver_supervisor_helper_success(resolver_supervisor *supervisor, size_t helper_index, const struct timespec *now) {
+	resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
 	/* Success counting matters only while this slot retains recovery state from an earlier failure. */
 	if (helper->failure_count == 0) {
 		return;
 	}
 	helper->consecutive_successes++;
 	if (helper->consecutive_successes >= RESOLVER_SUPERVISOR_RESPAWN_RESET_SUCCESS_COUNT) {
-		resolver_supervisor_helper_recovery_reset(helper);
+		resolver_supervisor_helper_recover(supervisor, helper_index, RESOLVER_SUPERVISOR_HELPER_RECOVERY_SUCCESS_STREAK, now);
 	}
 }
 
@@ -656,6 +739,7 @@ static void resolver_supervisor_helper_fail(resolver_supervisor *supervisor, siz
 
 static int resolver_supervisor_helper_spawn(resolver_supervisor *supervisor, size_t helper_index, const struct timespec *now) {
 	resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
+	resolver_supervisor_metrics_increment(supervisor, &supervisor->metrics.helper.spawn_attempt);
 	char process_name[RESOLVER_SUPERVISOR_PROCESS_NAME_CAPACITY];
 	snprintf(process_name, sizeof(process_name), "resolver-%zu", helper_index);
 	pid_t process_id;
@@ -683,6 +767,7 @@ static int resolver_supervisor_helper_spawn(resolver_supervisor *supervisor, siz
 	}
 	helper->process_id = process_id;
 	helper->state = RESOLVER_SUPERVISOR_HELPER_IDLE;
+	resolver_supervisor_metrics_increment(supervisor, &supervisor->metrics.helper.spawn_success);
 	return 0;
 }
 
@@ -852,7 +937,7 @@ static void resolver_supervisor_helper_result_finish(resolver_supervisor *superv
 	}
 	helper->job = NULL;
 	helper->state = RESOLVER_SUPERVISOR_HELPER_IDLE;
-	resolver_supervisor_helper_success(helper);
+	resolver_supervisor_helper_success(supervisor, helper_index, now);
 #ifdef RESOLVER_SUPERVISOR_TEST_API
 	if (job->cancelled) {
 		/* Explicit cancellation wins when a test-only cancel races with zero-interest orphaning. */
@@ -1015,7 +1100,7 @@ static void resolver_supervisor_timers_process_helpers(resolver_supervisor *supe
 		helper = &supervisor->helpers[helper_index];
 		if (helper->failure_count > 0 && (helper->state == RESOLVER_SUPERVISOR_HELPER_IDLE || helper->state == RESOLVER_SUPERVISOR_HELPER_SENDING
 			|| helper->state == RESOLVER_SUPERVISOR_HELPER_BUSY) && timeutil_compare(now, &helper->next_event_at) >= 0) {
-			resolver_supervisor_helper_recovery_reset(helper);
+			resolver_supervisor_helper_recover(supervisor, helper_index, RESOLVER_SUPERVISOR_HELPER_RECOVERY_STABLE_UPTIME, now);
 		}
 		helper = &supervisor->helpers[helper_index];
 		if (helper->state == RESOLVER_SUPERVISOR_HELPER_BACKOFF && timeutil_compare(now, &helper->next_event_at) >= 0) {
@@ -1255,7 +1340,8 @@ resolver_supervisor *resolver_supervisor_create(const sigset_t *helper_signal_ma
 		|| RESOLVER_SUPERVISOR_HELPER_COUNT > INT_MAX - 1 || RESOLVER_SUPERVISOR_JITTER_PERCENT > 100 || RESOLVER_SUPERVISOR_QUERY_RETRY_INITIAL_MS == 0
 		|| RESOLVER_SUPERVISOR_QUERY_RETRY_MAX_MS < RESOLVER_SUPERVISOR_QUERY_RETRY_INITIAL_MS || RESOLVER_SUPERVISOR_QUERY_TIMEOUT_SEC == 0
 		|| RESOLVER_SUPERVISOR_RESPAWN_INITIAL_MS == 0 || RESOLVER_SUPERVISOR_RESPAWN_MAX_MS < RESOLVER_SUPERVISOR_RESPAWN_INITIAL_MS
-		|| RESOLVER_SUPERVISOR_RESPAWN_RESET_STABLE_SEC == 0 || RESOLVER_SUPERVISOR_RESPAWN_RESET_SUCCESS_COUNT == 0 || RESOLVER_SUPERVISOR_SHUTDOWN_GRACE_MS == 0) {
+		|| RESOLVER_SUPERVISOR_OBSERVATION_CYCLE_ID_LIMIT == 0 || RESOLVER_SUPERVISOR_RESPAWN_RESET_STABLE_SEC == 0
+		|| RESOLVER_SUPERVISOR_RESPAWN_RESET_SUCCESS_COUNT == 0 || RESOLVER_SUPERVISOR_SHUTDOWN_GRACE_MS == 0) {
 		errno = EINVAL;
 		return NULL;
 	}
@@ -1282,6 +1368,7 @@ resolver_supervisor *resolver_supervisor_create(const sigset_t *helper_signal_ma
 		for (size_t helper_index = 0; helper_index < RESOLVER_SUPERVISOR_HELPER_COUNT; helper_index++) {
 			supervisor->helpers[helper_index].fd = -1;
 			supervisor->helpers[helper_index].last_failed_process_id = -1;
+			supervisor->helpers[helper_index].next_cycle_id = 1;
 			supervisor->helpers[helper_index].process_id = -1;
 			supervisor->helpers[helper_index].state = RESOLVER_SUPERVISOR_HELPER_STOPPED;
 		}
@@ -1506,6 +1593,7 @@ bool resolver_supervisor_metrics_get(const resolver_supervisor *supervisor, reso
 		return false;
 	}
 	memcpy(result->attempt, supervisor->metrics.attempt, sizeof(result->attempt));
+	result->helper = supervisor->metrics.helper;
 	result->jobs_current = supervisor->job_count;
 	result->jobs_high_water = supervisor->metrics.jobs_high_water;
 	result->queue_current[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND] = supervisor->background_queue.count;
@@ -1520,6 +1608,12 @@ bool resolver_supervisor_metrics_get(const resolver_supervisor *supervisor, reso
 	}
 	for (size_t query = 0; query < METRICS_RESOLVER_QUERY_TYPE_COUNT; query++) {
 		metrics_duration_histogram_get(&supervisor->metrics.attempt_duration[query], &result->attempt_duration[query]);
+	}
+	for (size_t helper_index = 0; helper_index < RESOLVER_SUPERVISOR_HELPER_COUNT; helper_index++) {
+		resolver_supervisor_helper_state state = supervisor->helpers[helper_index].state;
+		if (state < RESOLVER_SUPERVISOR_HELPER_STATE_COUNT) {
+			result->helper.state_current[state]++;
+		}
 	}
 	for (size_t bucket = 0; bucket < RESOLVER_SUPERVISOR_JOB_LIMIT; bucket++) {
 		for (const resolver_supervisor_job *job = supervisor->buckets[bucket]; job != NULL; job = job->hash_next) {
@@ -1545,6 +1639,20 @@ bool resolver_supervisor_metrics_get(const resolver_supervisor *supervisor, reso
 			}
 		}
 	}
+	return true;
+}
+
+bool resolver_supervisor_observation_take(resolver_supervisor *supervisor, resolver_supervisor_observation *result) {
+	if (result != NULL) {
+		memset(result, 0, sizeof(*result));
+	}
+	if (supervisor == NULL || result == NULL || supervisor->observation_count == 0) {
+		return false;
+	}
+	*result = supervisor->observations[supervisor->observation_head];
+	memset(&supervisor->observations[supervisor->observation_head], 0, sizeof(supervisor->observations[supervisor->observation_head]));
+	supervisor->observation_head = (supervisor->observation_head + 1U) % RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY;
+	supervisor->observation_count--;
 	return true;
 }
 
