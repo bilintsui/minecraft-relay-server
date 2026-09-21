@@ -4,7 +4,7 @@ This guide separates project switches, generic CMake settings, advanced compile-
 
 ## Requirements and defaults
 
-The project requires Linux, a C99 compiler, CMake (minimum declared version: 3.10), and the cJSON/systemd development files. For example, on Debian-like systems:
+The project requires Linux, a C99 compiler, CMake (minimum declared version: 3.12), and the cJSON/systemd development files. For example, on Debian-like systems:
 
 ```sh
 sudo apt install build-essential cmake libcjson-dev libsystemd-dev
