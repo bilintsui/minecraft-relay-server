@@ -72,8 +72,8 @@ static int log_write(bool noprefix, const char *logfile, uint8_t maxlevel, mksys
 	if (message == NULL) {
 		message = "";
 	}
+	bool failed = false;
 	char level_str[8];
-	int status = 0;
 	if (msglevel > maxlevel) {
 		return 0;
 	}
@@ -93,40 +93,45 @@ static int log_write(bool noprefix, const char *logfile, uint8_t maxlevel, mksys
 		char time_str[32];
 		gettime(time_str, sizeof(time_str));
 		int logfd = log_fd_open(logfile);
-		if (logfd != -1) {
+		if (logfd == -1) {
+			failed = true;
+		} else {
 			FILE *log_stream = fdopen(logfd, "a");
 			if (log_stream == NULL) {
 				close(logfd);
-				status = -1;
+				failed = true;
 			} else {
-				if (noprefix == MKSYS_PREFIX_ON) {
-					fprintf(log_stream, "[%s] [%s] ", time_str, level_str);
+				if (noprefix == MKSYS_PREFIX_ON && fprintf(log_stream, "[%s] [%s] ", time_str, level_str) < 0) {
+					failed = true;
 				}
-				status = fprintf(log_stream, "%s\n", message);
-				if ((fclose(log_stream) != 0) && (status >= 0)) {
-					status = -1;
+				if (fprintf(log_stream, "%s\n", message) < 0) {
+					failed = true;
+				}
+				if (fclose(log_stream) != 0) {
+					failed = true;
 				}
 			}
 		}
 	}
 	if (noprefix == MKSYS_PREFIX_OFF && !isatty(STDOUT_FILENO)) {
-		return 0;
+		return failed ? 1 : 0;
 	}
 	if (msglevel == MKSYS_LEVEL_CRITICAL) {
-		if (noprefix == MKSYS_PREFIX_ON) {
-			fprintf(stderr, "[%s] ", level_str);
+		if (noprefix == MKSYS_PREFIX_ON && fprintf(stderr, "[%s] ", level_str) < 0) {
+			failed = true;
 		}
-		status = fprintf(stderr, line_end == MKSYS_PARAGRAPH_END ? "%s\n\n" : "%s\n", message);
+		if (fprintf(stderr, line_end == MKSYS_PARAGRAPH_END ? "%s\n\n" : "%s\n", message) < 0) {
+			failed = true;
+		}
 	} else {
-		if (noprefix == MKSYS_PREFIX_ON) {
-			fprintf(stdout, "[%s] ", level_str);
+		if (noprefix == MKSYS_PREFIX_ON && fprintf(stdout, "[%s] ", level_str) < 0) {
+			failed = true;
 		}
-		status = fprintf(stdout, line_end == MKSYS_PARAGRAPH_END ? "%s\n\n" : "%s\n", message);
+		if (fprintf(stdout, line_end == MKSYS_PARAGRAPH_END ? "%s\n\n" : "%s\n", message) < 0) {
+			failed = true;
+		}
 	}
-	if (status < 0) {
-		return 1;
-	}
-	return 0;
+	return failed ? 1 : 0;
 }
 
 /* section: functions (exported) */
