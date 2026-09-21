@@ -26,7 +26,7 @@ add_custom_target(version_header ALL
 	BYPRODUCTS "${MCRELAY_VERSION_HEADER}"
 	VERBATIM)
 add_executable(mcrelay${EXEC_SUFFIX}
-	src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/log.c src/main.c src/network.c src/timeutil.c
+	src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/log.c src/main.c src/metrics.c src/network.c src/timeutil.c
 	src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
 	src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c src/route/table.c src/route/waiter.c
 	src/protocol/common.c src/protocol/handshake.c
@@ -101,6 +101,10 @@ if(BUILD_TESTING)
 	target_compile_definitions(log_file_test PRIVATE _GNU_SOURCE)
 	set_target_properties(log_file_test PROPERTIES LINK_FLAGS "-Wl,--wrap=fclose -Wl,--wrap=fdopen")
 	add_test(NAME log_file COMMAND log_file_test)
+	add_executable(metrics_test tests/metrics.c src/metrics.c src/timeutil.c)
+	target_include_directories(metrics_test PRIVATE src)
+	target_compile_definitions(metrics_test PRIVATE _GNU_SOURCE)
+	add_test(NAME metrics COMMAND metrics_test)
 	add_executable(timeutil_test tests/timeutil.c src/timeutil.c)
 	target_include_directories(timeutil_test PRIVATE src)
 	target_compile_definitions(timeutil_test PRIVATE _GNU_SOURCE)
@@ -263,6 +267,13 @@ if(BUILD_TESTING)
 		target_link_libraries(hosts_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all -lresolv)
 		add_test(NAME hosts_ubsan COMMAND hosts_ubsan_test)
 		set_tests_properties(hosts_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+		add_executable(metrics_ubsan_test tests/metrics.c src/metrics.c src/timeutil.c)
+		target_include_directories(metrics_ubsan_test PRIVATE src)
+		target_compile_definitions(metrics_ubsan_test PRIVATE _GNU_SOURCE)
+		target_compile_options(metrics_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
+		target_link_libraries(metrics_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all)
+		add_test(NAME metrics_ubsan COMMAND metrics_ubsan_test)
+		set_tests_properties(metrics_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(timeutil_ubsan_test tests/timeutil.c src/timeutil.c)
 		target_include_directories(timeutil_ubsan_test PRIVATE src)
 		target_compile_definitions(timeutil_ubsan_test PRIVATE _GNU_SOURCE)
