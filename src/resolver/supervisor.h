@@ -18,6 +18,7 @@
 #include <time.h>
 
 /* section: headers (project) */
+#include "../metrics.h"
 #include "cache.h"
 #include "ipc_assembly.h"
 
@@ -76,6 +77,19 @@ typedef struct {
 	resolver_ipc_assembly_result response;
 } resolver_supervisor_completion;
 typedef enum {
+	RESOLVER_SUPERVISOR_DNS_OUTCOME_OK,
+	RESOLVER_SUPERVISOR_DNS_OUTCOME_BAD_ARGUMENT,
+	RESOLVER_SUPERVISOR_DNS_OUTCOME_LIMIT,
+	RESOLVER_SUPERVISOR_DNS_OUTCOME_MALFORMED,
+	RESOLVER_SUPERVISOR_DNS_OUTCOME_MEMORY,
+	RESOLVER_SUPERVISOR_DNS_OUTCOME_NODATA,
+	RESOLVER_SUPERVISOR_DNS_OUTCOME_NOT_FOUND,
+	RESOLVER_SUPERVISOR_DNS_OUTCOME_PERMANENT,
+	RESOLVER_SUPERVISOR_DNS_OUTCOME_TEMPORARY,
+	RESOLVER_SUPERVISOR_DNS_OUTCOME_TRUNCATED,
+	RESOLVER_SUPERVISOR_DNS_OUTCOME_COUNT
+} resolver_supervisor_dns_outcome;
+typedef enum {
 	RESOLVER_SUPERVISOR_EVENT_OK,
 	RESOLVER_SUPERVISOR_EVENT_BAD_ARGUMENT,
 	RESOLVER_SUPERVISOR_EVENT_IO,
@@ -87,7 +101,8 @@ typedef enum {
 	RESOLVER_SUPERVISOR_HELPER_FAILURE_IO,
 	RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL,
 	RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN,
-	RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT
+	RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT,
+	RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT
 } resolver_supervisor_helper_failure;
 typedef enum {
 	RESOLVER_SUPERVISOR_HELPER_IDLE,
@@ -114,11 +129,13 @@ typedef enum {
 	RESOLVER_SUPERVISOR_JOB_SENDING,
 	RESOLVER_SUPERVISOR_JOB_DISPATCHED,
 	RESOLVER_SUPERVISOR_JOB_RETRY_WAIT,
-	RESOLVER_SUPERVISOR_JOB_COMPLETE
+	RESOLVER_SUPERVISOR_JOB_COMPLETE,
+	RESOLVER_SUPERVISOR_JOB_STATE_COUNT
 } resolver_supervisor_job_state;
 typedef enum {
 	RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND,
-	RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE
+	RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE,
+	RESOLVER_SUPERVISOR_PRIORITY_COUNT
 } resolver_supervisor_priority;
 #ifdef RESOLVER_SUPERVISOR_TEST_API
 typedef struct {
@@ -150,8 +167,44 @@ typedef enum {
 	RESOLVER_SUPERVISOR_SCHEDULE_IO,
 	RESOLVER_SUPERVISOR_SCHEDULE_LIMIT,
 	RESOLVER_SUPERVISOR_SCHEDULE_MEMORY,
-	RESOLVER_SUPERVISOR_SCHEDULE_TIME
+	RESOLVER_SUPERVISOR_SCHEDULE_TIME,
+	RESOLVER_SUPERVISOR_SCHEDULE_STATUS_COUNT
 } resolver_supervisor_schedule_status;
+typedef struct {
+	uint64_t attempt_abandoned_shutdown;
+	uint64_t completion_abandoned_shutdown;
+	uint64_t completion_enqueued;
+	uint64_t completion_taken;
+	uint64_t dispatched;
+	uint64_t failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT];
+	uint64_t jobs_complete_current;
+	uint64_t jobs_dispatched_current;
+	uint64_t orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_COUNT];
+	uint64_t response[RESOLVER_SUPERVISOR_DNS_OUTCOME_COUNT];
+	uint64_t retry_scheduled;
+} resolver_supervisor_metrics_attempt;
+typedef struct {
+	uint64_t limit_background_admission;
+	uint64_t limit_entry_reference;
+	uint64_t limit_interest_count;
+	uint64_t limit_total_admission;
+	uint64_t status[RESOLVER_SUPERVISOR_SCHEDULE_STATUS_COUNT];
+} resolver_supervisor_metrics_schedule;
+typedef struct {
+	resolver_supervisor_metrics_attempt attempt[METRICS_RESOLVER_QUERY_TYPE_COUNT];
+	metrics_histogram_snapshot attempt_duration[METRICS_RESOLVER_QUERY_TYPE_COUNT];
+	metrics_histogram_snapshot dispatch_wait[RESOLVER_SUPERVISOR_PRIORITY_COUNT][METRICS_RESOLVER_QUERY_TYPE_COUNT];
+	uint64_t interests_current[RESOLVER_SUPERVISOR_PRIORITY_COUNT];
+	uint64_t jobs_current;
+	uint64_t jobs_high_water;
+	uint64_t jobs_priority_current[RESOLVER_SUPERVISOR_PRIORITY_COUNT];
+	uint64_t jobs_state_current[RESOLVER_SUPERVISOR_JOB_STATE_COUNT];
+	uint64_t orphaned_dispatched_current;
+	uint64_t queue_current[RESOLVER_SUPERVISOR_PRIORITY_COUNT];
+	uint64_t queue_high_water[RESOLVER_SUPERVISOR_PRIORITY_COUNT];
+	resolver_supervisor_metrics_schedule schedule[RESOLVER_SUPERVISOR_PRIORITY_COUNT][METRICS_QUERY_TYPE_COUNT];
+	uint64_t saturation_total;
+} resolver_supervisor_metrics_snapshot;
 
 /* section: functions (exported) */
 /* The cache outlives the supervisor. Completion ownership includes the retained cache-entry reference and any transient response payload. Destroy every taken completion before its supervisor. */
@@ -188,6 +241,7 @@ size_t resolver_supervisor_helper_count(const resolver_supervisor *supervisor);
 bool resolver_supervisor_helper_view_get(const resolver_supervisor *supervisor, size_t helper_index, resolver_supervisor_helper_view *result);
 size_t resolver_supervisor_job_count(const resolver_supervisor *supervisor);
 #endif
+bool resolver_supervisor_metrics_get(const resolver_supervisor *supervisor, resolver_supervisor_metrics_snapshot *result);
 bool resolver_supervisor_shutdown(resolver_supervisor *supervisor, const struct timespec *now);
 bool resolver_supervisor_shutdown_complete(const resolver_supervisor *supervisor);
 

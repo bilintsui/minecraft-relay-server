@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 /* section: headers (project) */
+#include "../metrics.h"
 #include "../timeutil.h"
 #include "cache.h"
 #include "helper.h"
@@ -84,8 +85,18 @@ typedef struct {
 } resolver_supervisor_helper;
 typedef struct {
 	resolver_supervisor_job *head;
+	size_t count;
 	resolver_supervisor_job *tail;
 } resolver_supervisor_job_queue;
+typedef struct {
+	resolver_supervisor_metrics_attempt attempt[METRICS_RESOLVER_QUERY_TYPE_COUNT];
+	metrics_histogram attempt_duration[METRICS_RESOLVER_QUERY_TYPE_COUNT];
+	metrics_histogram dispatch_wait[RESOLVER_SUPERVISOR_PRIORITY_COUNT][METRICS_RESOLVER_QUERY_TYPE_COUNT];
+	uint64_t jobs_high_water;
+	uint64_t queue_high_water[RESOLVER_SUPERVISOR_PRIORITY_COUNT];
+	resolver_supervisor_metrics_schedule schedule[RESOLVER_SUPERVISOR_PRIORITY_COUNT][METRICS_QUERY_TYPE_COUNT];
+	uint64_t saturation_total;
+} resolver_supervisor_metrics_state;
 struct resolver_supervisor_job {
 	size_t background_interest_count;
 #ifdef RESOLVER_SUPERVISOR_TEST_API
@@ -95,6 +106,7 @@ struct resolver_supervisor_job {
 	resolver_supervisor_job *completion_previous;
 	struct timespec deadline;
 	struct timespec dispatched_at;
+	struct timespec dispatch_wait_at;
 	resolver_cache_entry *entry;
 	resolver_supervisor_job *hash_next;
 	size_t interactive_interest_count;
@@ -123,6 +135,7 @@ struct resolver_supervisor {
 	resolver_supervisor_job_queue interactive_queue;
 	size_t job_count;
 	struct timespec last_now;
+	resolver_supervisor_metrics_state metrics;
 	uint64_t next_query_id;
 	bool shutting_down;
 	int timer_fd;
@@ -200,8 +213,124 @@ static size_t resolver_supervisor_job_bucket(const resolver_cache_entry *entry) 
 	return (size_t)(resolver_cache_entry_id(entry) % (uint64_t)RESOLVER_SUPERVISOR_JOB_LIMIT);
 }
 
+static resolver_supervisor_metrics_attempt *resolver_supervisor_metrics_attempt_select(resolver_supervisor *supervisor, const resolver_supervisor_job *job) {
+	uint16_t query_type = resolver_cache_entry_query_type(job->entry);
+	if (query_type == ns_t_a) {
+		return &supervisor->metrics.attempt[METRICS_QUERY_TYPE_A];
+	}
+	if (query_type == ns_t_aaaa) {
+		return &supervisor->metrics.attempt[METRICS_QUERY_TYPE_AAAA];
+	}
+	if (query_type == ns_t_srv) {
+		return &supervisor->metrics.attempt[METRICS_QUERY_TYPE_SRV];
+	}
+	return NULL;
+}
+
+static resolver_supervisor_dns_outcome resolver_supervisor_metrics_dns_outcome(resolver_ipc_lookup_status status) {
+	switch (status) {
+		case RESOLVER_IPC_LOOKUP_OK:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_OK;
+		case RESOLVER_IPC_LOOKUP_BAD_ARGUMENT:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_BAD_ARGUMENT;
+		case RESOLVER_IPC_LOOKUP_LIMIT:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_LIMIT;
+		case RESOLVER_IPC_LOOKUP_MALFORMED:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_MALFORMED;
+		case RESOLVER_IPC_LOOKUP_MEMORY:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_MEMORY;
+		case RESOLVER_IPC_LOOKUP_NODATA:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_NODATA;
+		case RESOLVER_IPC_LOOKUP_NOT_FOUND:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_NOT_FOUND;
+		case RESOLVER_IPC_LOOKUP_PERMANENT_ERROR:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_PERMANENT;
+		case RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_TEMPORARY;
+		case RESOLVER_IPC_LOOKUP_TRUNCATED:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_TRUNCATED;
+	}
+	return RESOLVER_SUPERVISOR_DNS_OUTCOME_BAD_ARGUMENT;
+}
+
+static void resolver_supervisor_metrics_increment(resolver_supervisor *supervisor, uint64_t *counter) {
+	(void)metrics_counter_add(counter, 1, &supervisor->metrics.saturation_total);
+}
+
+static void resolver_supervisor_metrics_gauge_add(uint64_t *gauge, size_t amount) {
+	uint64_t value = (uint64_t)amount;
+	*gauge = UINT64_MAX - *gauge < value ? UINT64_MAX : *gauge + value;
+}
+
+static metrics_query_type resolver_supervisor_metrics_query_type(const resolver_cache_entry *entry) {
+	if (entry != NULL) {
+		uint16_t query_type = resolver_cache_entry_query_type(entry);
+		if (query_type == ns_t_a) {
+			return METRICS_QUERY_TYPE_A;
+		}
+		if (query_type == ns_t_aaaa) {
+			return METRICS_QUERY_TYPE_AAAA;
+		}
+		if (query_type == ns_t_srv) {
+			return METRICS_QUERY_TYPE_SRV;
+		}
+	}
+	return METRICS_QUERY_TYPE_OTHER;
+}
+
+static void resolver_supervisor_metrics_schedule_record(resolver_supervisor *supervisor, const resolver_cache_entry *entry, resolver_supervisor_priority priority,
+	resolver_supervisor_schedule_status status) {
+	if (supervisor == NULL || priority >= RESOLVER_SUPERVISOR_PRIORITY_COUNT || status >= RESOLVER_SUPERVISOR_SCHEDULE_STATUS_COUNT) {
+		return;
+	}
+	metrics_query_type query = resolver_supervisor_metrics_query_type(entry);
+	resolver_supervisor_metrics_increment(supervisor, &supervisor->metrics.schedule[priority][query].status[status]);
+}
+
+static void resolver_supervisor_metrics_attempt_failure_record(resolver_supervisor *supervisor, const resolver_supervisor_job *job,
+	resolver_supervisor_helper_failure failure, const struct timespec *now) {
+	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
+	if (metrics == NULL || failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE || failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN
+		|| failure >= RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT) {
+		return;
+	}
+	resolver_supervisor_metrics_increment(supervisor, &metrics->failure[failure]);
+	metrics_query_type query = resolver_supervisor_metrics_query_type(job->entry);
+	(void)metrics_duration_histogram_observe(&supervisor->metrics.attempt_duration[query], &job->dispatched_at, now, &supervisor->metrics.saturation_total);
+}
+
+static void resolver_supervisor_metrics_dispatch_record(resolver_supervisor *supervisor, const resolver_supervisor_job *job, const struct timespec *now) {
+	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
+	if (metrics == NULL || job->priority >= RESOLVER_SUPERVISOR_PRIORITY_COUNT) {
+		return;
+	}
+	resolver_supervisor_metrics_increment(supervisor, &metrics->dispatched);
+	metrics_query_type query = resolver_supervisor_metrics_query_type(job->entry);
+	(void)metrics_duration_histogram_observe(&supervisor->metrics.dispatch_wait[job->priority][query], &job->dispatch_wait_at, now,
+		&supervisor->metrics.saturation_total);
+}
+
+static void resolver_supervisor_metrics_response_record(resolver_supervisor *supervisor, const resolver_supervisor_job *job, const resolver_ipc_assembly_result *response) {
+	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
+	if (metrics == NULL) {
+		return;
+	}
+	resolver_supervisor_dns_outcome outcome = resolver_supervisor_metrics_dns_outcome(response->status);
+	resolver_supervisor_metrics_increment(supervisor, &metrics->response[outcome]);
+	if (job->orphaned) {
+		resolver_supervisor_metrics_increment(supervisor, &metrics->orphan_response[outcome]);
+	}
+	metrics_query_type query = resolver_supervisor_metrics_query_type(job->entry);
+	(void)metrics_duration_histogram_observe(&supervisor->metrics.attempt_duration[query], &job->dispatched_at, &response->completed_at,
+		&supervisor->metrics.saturation_total);
+}
+
 static void resolver_supervisor_job_complete(resolver_supervisor *supervisor, resolver_supervisor_job *job, resolver_cache_publish_status publication,
 	resolver_ipc_assembly_result *response) {
+	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
+	if (metrics != NULL) {
+		resolver_supervisor_metrics_increment(supervisor, &metrics->completion_enqueued);
+	}
 	job->background_interest_count = 0;
 	job->interactive_interest_count = 0;
 	job->publication = publication;
@@ -278,6 +407,9 @@ static void resolver_supervisor_job_queue_remove(resolver_supervisor *supervisor
 	}
 	job->queue_next = NULL;
 	job->queue_previous = NULL;
+	if (queue->count > 0) {
+		queue->count--;
+	}
 }
 
 static void resolver_supervisor_job_destroy(resolver_supervisor *supervisor, resolver_supervisor_job *job) {
@@ -308,6 +440,8 @@ static void resolver_supervisor_job_queue_append(resolver_supervisor *supervisor
 		queue->tail->queue_next = job;
 	}
 	queue->tail = job;
+	queue->count++;
+	metrics_high_water_update(&supervisor->metrics.queue_high_water[job->priority], queue->count);
 	job->state = RESOLVER_SUPERVISOR_JOB_QUEUED;
 }
 
@@ -320,6 +454,8 @@ static void resolver_supervisor_job_queue_prepend(resolver_supervisor *superviso
 		queue->head->queue_previous = job;
 	}
 	queue->head = job;
+	queue->count++;
+	metrics_high_water_update(&supervisor->metrics.queue_high_water[job->priority], queue->count);
 	job->state = RESOLVER_SUPERVISOR_JOB_QUEUED;
 }
 
@@ -379,6 +515,10 @@ static void resolver_supervisor_job_retry(resolver_supervisor *supervisor, resol
 		return;
 	}
 	job->state = RESOLVER_SUPERVISOR_JOB_RETRY_WAIT;
+	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
+	if (metrics != NULL) {
+		resolver_supervisor_metrics_increment(supervisor, &metrics->retry_scheduled);
+	}
 }
 
 static bool resolver_supervisor_job_timestamp_valid(const resolver_supervisor_job *job, const struct timespec *completed_at, const struct timespec *now) {
@@ -500,6 +640,7 @@ static void resolver_supervisor_helper_fail(resolver_supervisor *supervisor, siz
 		helper->job = NULL;
 		helper->request_size = 0;
 		if (dispatched) {
+			resolver_supervisor_metrics_attempt_failure_record(supervisor, job, failure, now);
 			resolver_supervisor_job_retry(supervisor, job, now);
 #ifdef RESOLVER_SUPERVISOR_TEST_API
 		} else if (job->cancelled) {
@@ -564,6 +705,7 @@ static resolver_supervisor_send_status resolver_supervisor_helper_request_send(r
 			job->state = RESOLVER_SUPERVISOR_JOB_DISPATCHED;
 			job->dispatched_at = *now;
 			job->deadline = deadline;
+			resolver_supervisor_metrics_dispatch_record(supervisor, job, now);
 			helper->request_size = 0;
 			helper->state = RESOLVER_SUPERVISOR_HELPER_BUSY;
 			return resolver_supervisor_helper_events_update(supervisor, helper_index) == 0 ? RESOLVER_SUPERVISOR_SEND_OK : RESOLVER_SUPERVISOR_SEND_IO;
@@ -719,6 +861,7 @@ static void resolver_supervisor_helper_result_finish(resolver_supervisor *superv
 		return;
 	}
 #endif
+	resolver_supervisor_metrics_response_record(supervisor, job, &response);
 	if (resolver_supervisor_job_result_retryable(response.status)) {
 		resolver_ipc_assembly_result_destroy(&response);
 		resolver_supervisor_job_retry(supervisor, job, now);
@@ -852,6 +995,7 @@ static void resolver_supervisor_timers_process_jobs(resolver_supervisor *supervi
 		while (job != NULL) {
 			resolver_supervisor_job *next = job->hash_next;
 			if (job->state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT && timeutil_compare(now, &job->retry_at) >= 0) {
+				job->dispatch_wait_at = *now;
 				resolver_supervisor_job_queue_append(supervisor, job);
 			}
 			job = next;
@@ -889,6 +1033,20 @@ static void resolver_supervisor_jobs_destroy_all(resolver_supervisor *supervisor
 	for (size_t bucket = 0; bucket < RESOLVER_SUPERVISOR_JOB_LIMIT; bucket++) {
 		while (supervisor->buckets[bucket] != NULL) {
 			resolver_supervisor_job *job = supervisor->buckets[bucket];
+			resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
+			if (supervisor->shutting_down && metrics != NULL) {
+				if (job->state == RESOLVER_SUPERVISOR_JOB_COMPLETE) {
+					resolver_supervisor_metrics_increment(supervisor, &metrics->completion_abandoned_shutdown);
+				} else if (job->state == RESOLVER_SUPERVISOR_JOB_DISPATCHED) {
+#ifdef RESOLVER_SUPERVISOR_TEST_API
+					if (!job->cancelled) {
+						resolver_supervisor_metrics_increment(supervisor, &metrics->attempt_abandoned_shutdown);
+					}
+#else
+					resolver_supervisor_metrics_increment(supervisor, &metrics->attempt_abandoned_shutdown);
+#endif
+				}
+			}
 			if (job->state == RESOLVER_SUPERVISOR_JOB_SENDING || job->state == RESOLVER_SUPERVISOR_JOB_DISPATCHED) {
 				job->query_id = 0;
 				resolver_ipc_assembly_destroy(job->assembly);
@@ -1006,6 +1164,7 @@ static resolver_supervisor_schedule_status resolver_supervisor_entry_schedule_pr
 		}
 		size_t *interest_count = priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE ? &existing->interactive_interest_count : &existing->background_interest_count;
 		if (*interest_count >= RESOLVER_SUPERVISOR_INTEREST_COUNT_LIMIT) {
+			resolver_supervisor_metrics_increment(supervisor, &supervisor->metrics.schedule[priority][resolver_supervisor_metrics_query_type(entry)].limit_interest_count);
 			return RESOLVER_SUPERVISOR_SCHEDULE_LIMIT;
 		}
 		(*interest_count)++;
@@ -1021,6 +1180,12 @@ static resolver_supervisor_schedule_status resolver_supervisor_entry_schedule_pr
 	size_t admission_limit = priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE ? (size_t)RESOLVER_SUPERVISOR_JOB_LIMIT
 		: (size_t)(RESOLVER_SUPERVISOR_JOB_LIMIT - RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE);
 	if (supervisor->job_count >= admission_limit) {
+		resolver_supervisor_metrics_schedule *metrics = &supervisor->metrics.schedule[priority][resolver_supervisor_metrics_query_type(entry)];
+		if (priority == RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND) {
+			resolver_supervisor_metrics_increment(supervisor, &metrics->limit_background_admission);
+		} else {
+			resolver_supervisor_metrics_increment(supervisor, &metrics->limit_total_admission);
+		}
 		return RESOLVER_SUPERVISOR_SCHEDULE_LIMIT;
 	}
 	resolver_supervisor_job *job = calloc(1, sizeof(*job));
@@ -1028,6 +1193,7 @@ static resolver_supervisor_schedule_status resolver_supervisor_entry_schedule_pr
 		return RESOLVER_SUPERVISOR_SCHEDULE_MEMORY;
 	}
 	if (!resolver_cache_entry_retain(entry)) {
+		resolver_supervisor_metrics_increment(supervisor, &supervisor->metrics.schedule[priority][resolver_supervisor_metrics_query_type(entry)].limit_entry_reference);
 		free(job);
 		return RESOLVER_SUPERVISOR_SCHEDULE_LIMIT;
 	}
@@ -1035,11 +1201,13 @@ static resolver_supervisor_schedule_status resolver_supervisor_entry_schedule_pr
 	job->background_interest_count = priority == RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND ? 1U : 0U;
 	job->interactive_interest_count = priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE ? 1U : 0U;
 	job->priority = priority;
+	job->dispatch_wait_at = *now;
 	job->slot_index = SIZE_MAX;
 	size_t bucket = resolver_supervisor_job_bucket(entry);
 	job->hash_next = supervisor->buckets[bucket];
 	supervisor->buckets[bucket] = job;
 	supervisor->job_count++;
+	metrics_high_water_update(&supervisor->metrics.jobs_high_water, supervisor->job_count);
 	resolver_supervisor_job_queue_append(supervisor, job);
 	resolver_supervisor_dispatch(supervisor, now);
 	if (resolver_supervisor_timer_rearm(supervisor) == -1) {
@@ -1063,6 +1231,10 @@ bool resolver_supervisor_completion_take(resolver_supervisor *supervisor, resolv
 		return false;
 	}
 	resolver_supervisor_job *job = supervisor->completion_head;
+	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
+	if (metrics != NULL) {
+		resolver_supervisor_metrics_increment(supervisor, &metrics->completion_taken);
+	}
 	resolver_supervisor_job_completion_remove(supervisor, job);
 	resolver_supervisor_job_hash_remove(supervisor, job);
 	completion->entry = job->entry;
@@ -1186,11 +1358,15 @@ resolver_supervisor_release_status resolver_supervisor_entry_interactive_release
 }
 
 resolver_supervisor_schedule_status resolver_supervisor_entry_schedule(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
-	return resolver_supervisor_entry_schedule_priority(supervisor, entry, now, RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND);
+	resolver_supervisor_schedule_status status = resolver_supervisor_entry_schedule_priority(supervisor, entry, now, RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND);
+	resolver_supervisor_metrics_schedule_record(supervisor, entry, RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND, status);
+	return status;
 }
 
 resolver_supervisor_schedule_status resolver_supervisor_entry_schedule_interactive(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
-	return resolver_supervisor_entry_schedule_priority(supervisor, entry, now, RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE);
+	resolver_supervisor_schedule_status status = resolver_supervisor_entry_schedule_priority(supervisor, entry, now, RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE);
+	resolver_supervisor_metrics_schedule_record(supervisor, entry, RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE, status);
+	return status;
 }
 
 #ifdef RESOLVER_SUPERVISOR_TEST_API
@@ -1321,6 +1497,56 @@ size_t resolver_supervisor_job_count(const resolver_supervisor *supervisor) {
 	return supervisor == NULL ? 0 : supervisor->job_count;
 }
 #endif
+
+bool resolver_supervisor_metrics_get(const resolver_supervisor *supervisor, resolver_supervisor_metrics_snapshot *result) {
+	if (result != NULL) {
+		memset(result, 0, sizeof(*result));
+	}
+	if (supervisor == NULL || result == NULL) {
+		return false;
+	}
+	memcpy(result->attempt, supervisor->metrics.attempt, sizeof(result->attempt));
+	result->jobs_current = supervisor->job_count;
+	result->jobs_high_water = supervisor->metrics.jobs_high_water;
+	result->queue_current[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND] = supervisor->background_queue.count;
+	result->queue_current[RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE] = supervisor->interactive_queue.count;
+	memcpy(result->queue_high_water, supervisor->metrics.queue_high_water, sizeof(result->queue_high_water));
+	memcpy(result->schedule, supervisor->metrics.schedule, sizeof(result->schedule));
+	result->saturation_total = supervisor->metrics.saturation_total;
+	for (size_t priority = 0; priority < RESOLVER_SUPERVISOR_PRIORITY_COUNT; priority++) {
+		for (size_t query = 0; query < METRICS_RESOLVER_QUERY_TYPE_COUNT; query++) {
+			metrics_duration_histogram_get(&supervisor->metrics.dispatch_wait[priority][query], &result->dispatch_wait[priority][query]);
+		}
+	}
+	for (size_t query = 0; query < METRICS_RESOLVER_QUERY_TYPE_COUNT; query++) {
+		metrics_duration_histogram_get(&supervisor->metrics.attempt_duration[query], &result->attempt_duration[query]);
+	}
+	for (size_t bucket = 0; bucket < RESOLVER_SUPERVISOR_JOB_LIMIT; bucket++) {
+		for (const resolver_supervisor_job *job = supervisor->buckets[bucket]; job != NULL; job = job->hash_next) {
+			if (job->priority < RESOLVER_SUPERVISOR_PRIORITY_COUNT) {
+				result->jobs_priority_current[job->priority]++;
+			}
+			if (job->state < RESOLVER_SUPERVISOR_JOB_STATE_COUNT) {
+				result->jobs_state_current[job->state]++;
+			}
+			resolver_supervisor_metrics_gauge_add(&result->interests_current[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND], job->background_interest_count);
+			resolver_supervisor_metrics_gauge_add(&result->interests_current[RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE], job->interactive_interest_count);
+			metrics_query_type query = resolver_supervisor_metrics_query_type(job->entry);
+			if (query >= METRICS_RESOLVER_QUERY_TYPE_COUNT) {
+				continue;
+			}
+			if (job->state == RESOLVER_SUPERVISOR_JOB_DISPATCHED) {
+				result->attempt[query].jobs_dispatched_current++;
+				if (job->orphaned) {
+					result->orphaned_dispatched_current++;
+				}
+			} else if (job->state == RESOLVER_SUPERVISOR_JOB_COMPLETE) {
+				result->attempt[query].jobs_complete_current++;
+			}
+		}
+	}
+	return true;
+}
 
 bool resolver_supervisor_shutdown(resolver_supervisor *supervisor, const struct timespec *now) {
 	if (!resolver_supervisor_time_update(supervisor, now)) {

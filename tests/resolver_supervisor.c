@@ -66,6 +66,8 @@ typedef struct {
 
 /* section: global variables */
 static supervisor_test_helper supervisor_helpers[SUPERVISOR_TEST_HELPER_LIMIT];
+static size_t supervisor_calloc_failures;
+static size_t supervisor_entry_retain_failures;
 static size_t supervisor_epoll_failures;
 static size_t supervisor_helper_count;
 static bool supervisor_send_blocked;
@@ -73,8 +75,10 @@ static size_t supervisor_start_failures;
 static size_t supervisor_timer_failures;
 static bool supervisor_use_real_helper;
 
+void *__real_calloc(size_t count, size_t size);
 int __real_epoll_ctl(int epoll_fd, int operation, int fd, struct epoll_event *event);
 int __real_kill(pid_t process_id, int signal_number);
+bool __real_resolver_cache_entry_retain(resolver_cache_entry *entry);
 int __real_resolver_helper_process_start(const sigset_t *signal_mask, const char *process_name, pid_t *process_id, int *socket_fd);
 ssize_t __real_send(int socket_fd, const void *buffer, size_t length, int flags);
 int __real_timerfd_settime(int fd, int flags, const struct itimerspec *new_value, struct itimerspec *old_value);
@@ -119,6 +123,8 @@ static void supervisor_fake_reset(void) {
 		supervisor_helpers[index].peer_fd = -1;
 		supervisor_helpers[index].supervisor_fd = -1;
 	}
+	supervisor_calloc_failures = 0;
+	supervisor_entry_retain_failures = 0;
 	supervisor_epoll_failures = 0;
 	supervisor_helper_count = 0;
 	supervisor_send_blocked = false;
@@ -367,6 +373,57 @@ cleanup:
 	return test_result;
 }
 
+static bool supervisor_test_attempt_failures(void) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 150 };
+	resolver_supervisor *supervisor = NULL;
+	resolver_cache *cache = NULL;
+	resolver_cache_entry *entries[2] = { 0 };
+	supervisor_fake_reset();
+	supervisor = resolver_supervisor_create(&signal_mask, &now);
+	cache = resolver_cache_create();
+	entries[0] = supervisor_cache_entry_create(cache, "exit-failure.supervisor.test", ns_t_a);
+	entries[1] = supervisor_cache_entry_create(cache, "io-failure.supervisor.test", ns_t_a);
+	CHECK(supervisor != NULL && cache != NULL && entries[0] != NULL && entries[1] != NULL, "attempt-failure test state could not be created");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "exit-failure job could not be scheduled");
+	resolver_supervisor_helper_view helper_view;
+	CHECK(resolver_supervisor_helper_view_get(supervisor, 0, &helper_view), "exit-failure helper could not be inspected");
+	supervisor_test_helper *failed_helper = supervisor_fake_find(helper_view.process_id);
+	int peer_fd = failed_helper == NULL ? -1 : failed_helper->peer_fd;
+	resolver_ipc_request request;
+	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request) && close(peer_fd) == 0, "exit-failure helper could not be closed");
+	failed_helper->peer_fd = -1;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK, "exit-failure event could not be processed");
+	resolver_supervisor_job_view job_view;
+	CHECK(resolver_supervisor_entry_view(supervisor, entries[0], &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT
+		&& resolver_supervisor_entry_cancel(supervisor, entries[0], &now), "exit-failure job did not retry or could not be cancelled");
+	supervisor_epoll_failures = 1;
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entries[1], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
+		&& resolver_supervisor_entry_view(supervisor, entries[1], &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT,
+		"post-dispatch epoll failure did not enter retry wait");
+	resolver_supervisor_metrics_snapshot metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics), "attempt-failure metrics could not be read");
+	const resolver_supervisor_metrics_attempt *attempt = &metrics.attempt[METRICS_QUERY_TYPE_A];
+	CHECK(attempt->dispatched == 2 && attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT] == 1
+		&& attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_IO] == 1 && attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] == 0
+		&& attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT] == 0 && attempt->retry_scheduled == 2
+		&& metrics.attempt_duration[METRICS_QUERY_TYPE_A].count == 2,
+		"exit or IO attempt-failure metrics were incorrect");
+	CHECK(resolver_supervisor_entry_cancel(supervisor, entries[1], &now), "IO-failure retry could not be cancelled");
+	test_result = true;
+
+cleanup:
+	resolver_supervisor_destroy(supervisor);
+	for (size_t index = 0; index < 2; index++) {
+		resolver_cache_entry_release(entries[index]);
+	}
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
 static bool supervisor_test_capacity(void) {
 	bool test_result = false;
 	sigset_t signal_mask;
@@ -414,6 +471,17 @@ static bool supervisor_test_capacity(void) {
 	CHECK(resolver_supervisor_entry_cancel(supervisor, entries[background_limit], &now)
 		&& resolver_supervisor_entry_schedule_interactive(supervisor, entries[RESOLVER_SUPERVISOR_JOB_LIMIT], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
 		"cancelled interactive capacity was not reusable");
+	resolver_supervisor_metrics_snapshot metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics) && metrics.jobs_current == RESOLVER_SUPERVISOR_JOB_LIMIT
+		&& metrics.jobs_high_water == RESOLVER_SUPERVISOR_JOB_LIMIT && metrics.jobs_state_current[RESOLVER_SUPERVISOR_JOB_DISPATCHED] == RESOLVER_SUPERVISOR_HELPER_COUNT
+		&& metrics.jobs_state_current[RESOLVER_SUPERVISOR_JOB_QUEUED] == RESOLVER_SUPERVISOR_JOB_LIMIT - RESOLVER_SUPERVISOR_HELPER_COUNT
+		&& metrics.queue_current[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND] == 1 && metrics.queue_current[RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE] == 1,
+		"supervisor capacity gauges were incorrect");
+	const resolver_supervisor_metrics_schedule *background = &metrics.schedule[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND][METRICS_QUERY_TYPE_A];
+	const resolver_supervisor_metrics_schedule *interactive = &metrics.schedule[RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE][METRICS_QUERY_TYPE_A];
+	CHECK(background->limit_interest_count == 1 && background->limit_background_admission == 1 && background->limit_total_admission == 0
+		&& interactive->limit_interest_count == 1 && interactive->limit_background_admission == 0 && interactive->limit_total_admission == 1,
+		"supervisor admission or interest-limit reasons were incorrect");
 	test_result = true;
 
 cleanup:
@@ -485,6 +553,12 @@ static bool supervisor_test_cancel(void) {
 	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_completion_take(supervisor, &completion)
 		&& resolver_cache_entry_view(entry, &now, &cache_view) && cache_view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE,
 		"reclaimed cancelled orphan did not restore normal completion semantics");
+	resolver_supervisor_metrics_snapshot metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics) && metrics.attempt[METRICS_QUERY_TYPE_A].dispatched == 3
+		&& metrics.attempt[METRICS_QUERY_TYPE_A].response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == 1
+		&& metrics.attempt[METRICS_QUERY_TYPE_A].orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == 0
+		&& metrics.attempt[METRICS_QUERY_TYPE_A].completion_enqueued == 1 && metrics.attempt[METRICS_QUERY_TYPE_A].completion_taken == 1,
+		"test-only cancellation contaminated response or orphan metrics");
 	test_result = true;
 
 cleanup:
@@ -666,12 +740,115 @@ static bool supervisor_test_interest_release(void) {
 		&& !resolver_supervisor_entry_view(supervisor, entries[2], &job_view), "last sending interest did not detach and destroy the jobs");
 	CHECK(!resolver_supervisor_completion_take(supervisor, &completion) && resolver_supervisor_job_count(supervisor) == 0,
 		"released work left a completion or live job behind");
+	resolver_supervisor_metrics_snapshot metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics) && metrics.jobs_current == 0
+		&& metrics.attempt[METRICS_QUERY_TYPE_A].dispatched == 1
+		&& metrics.attempt[METRICS_QUERY_TYPE_A].response[RESOLVER_SUPERVISOR_DNS_OUTCOME_TEMPORARY] == 1
+		&& metrics.attempt[METRICS_QUERY_TYPE_A].retry_scheduled == 1 && metrics.attempt[METRICS_QUERY_TYPE_A].attempt_abandoned_shutdown == 0,
+		"zero-interest SENDING, QUEUED, or RETRY_WAIT cleanup contaminated attempt metrics");
 	test_result = true;
 
 cleanup:
 	supervisor_completion_clear(&completion);
 	resolver_supervisor_destroy(supervisor);
 	for (size_t index = 0; index < 4; index++) {
+		resolver_cache_entry_release(entries[index]);
+	}
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
+static bool supervisor_test_metrics(void) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 330 };
+	struct timespec invalid_time = { .tv_sec = -1 };
+	resolver_supervisor *supervisor = NULL;
+	resolver_cache *cache = NULL;
+	resolver_cache_entry *entries[3] = { 0 };
+	resolver_supervisor_completion completion = { 0 };
+	resolver_supervisor_metrics_snapshot metrics;
+	supervisor_fake_reset();
+	memset(&metrics, 0xFF, sizeof(metrics));
+	CHECK(!resolver_supervisor_metrics_get(NULL, &metrics) && metrics.jobs_current == 0 && metrics.attempt[METRICS_QUERY_TYPE_A].dispatched == 0,
+		"NULL supervisor metrics input was accepted or left output data behind");
+	supervisor = resolver_supervisor_create(&signal_mask, &now);
+	cache = resolver_cache_create();
+	for (size_t index = 0; index < 3; index++) {
+		char name[64];
+		snprintf(name, sizeof(name), "metrics-%zu.supervisor.test", index);
+		entries[index] = supervisor_cache_entry_create(cache, name, ns_t_a);
+	}
+	CHECK(supervisor != NULL && cache != NULL && entries[0] != NULL && entries[1] != NULL && entries[2] != NULL
+		&& resolver_supervisor_metrics_get(supervisor, &metrics) && metrics.jobs_current == 0 && metrics.jobs_high_water == 0 && metrics.saturation_total == 0,
+		"initial supervisor metrics state was invalid");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, NULL, &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT
+		&& resolver_supervisor_entry_schedule(supervisor, entries[0], &invalid_time) == RESOLVER_SUPERVISOR_SCHEDULE_TIME, "schedule failure metrics inputs were not rejected");
+	supervisor_calloc_failures = 1;
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_MEMORY, "schedule allocation failure was not reported");
+	supervisor_entry_retain_failures = 1;
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_LIMIT, "schedule reference failure was not reported");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
+		&& resolver_supervisor_entry_schedule(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_COALESCED, "metrics-test job could not be started and coalesced");
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics) && metrics.schedule[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND][METRICS_QUERY_TYPE_OTHER].status[RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT] == 1
+		&& metrics.schedule[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND][METRICS_QUERY_TYPE_A].status[RESOLVER_SUPERVISOR_SCHEDULE_TIME] == 1
+		&& metrics.schedule[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND][METRICS_QUERY_TYPE_A].status[RESOLVER_SUPERVISOR_SCHEDULE_MEMORY] == 1
+		&& metrics.schedule[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND][METRICS_QUERY_TYPE_A].status[RESOLVER_SUPERVISOR_SCHEDULE_LIMIT] == 1
+		&& metrics.schedule[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND][METRICS_QUERY_TYPE_A].limit_entry_reference == 1
+		&& metrics.schedule[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND][METRICS_QUERY_TYPE_A].status[RESOLVER_SUPERVISOR_SCHEDULE_STARTED] == 1
+		&& metrics.schedule[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND][METRICS_QUERY_TYPE_A].status[RESOLVER_SUPERVISOR_SCHEDULE_COALESCED] == 1,
+		"schedule status or reference-limit metrics were incorrect");
+	CHECK(metrics.jobs_current == 1 && metrics.jobs_high_water == 1 && metrics.jobs_state_current[RESOLVER_SUPERVISOR_JOB_DISPATCHED] == 1
+		&& metrics.jobs_priority_current[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND] == 1 && metrics.interests_current[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND] == 2
+		&& metrics.attempt[METRICS_QUERY_TYPE_A].dispatched == 1 && metrics.attempt[METRICS_QUERY_TYPE_A].jobs_dispatched_current == 1
+		&& metrics.dispatch_wait[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND][METRICS_QUERY_TYPE_A].count == 1,
+		"supervisor dispatch, interest, state, or dispatch-wait metrics were incorrect");
+	resolver_supervisor_job_view job_view;
+	int peer_fd = supervisor_fake_peer(supervisor, 0);
+	resolver_ipc_request request;
+	CHECK(resolver_supervisor_entry_view(supervisor, entries[0], &job_view) && peer_fd != -1 && supervisor_request_receive(peer_fd, &request),
+		"first metrics-test request was not available");
+	struct timespec completed_at = supervisor_time_add(&job_view.dispatched_at, 1, 0);
+	CHECK(supervisor_response_address_send(peer_fd, &request, &completed_at, 30), "first metrics-test response could not be sent");
+	now = completed_at;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_metrics_get(supervisor, &metrics)
+		&& metrics.attempt[METRICS_QUERY_TYPE_A].response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == 1
+		&& metrics.attempt[METRICS_QUERY_TYPE_A].completion_enqueued == 1 && metrics.attempt[METRICS_QUERY_TYPE_A].jobs_complete_current == 1
+		&& metrics.attempt_duration[METRICS_QUERY_TYPE_A].count == 1 && metrics.attempt_duration[METRICS_QUERY_TYPE_A].sum == UINT64_C(1000000),
+		"response, completion, or attempt-duration metrics were incorrect");
+	CHECK(resolver_supervisor_completion_take(supervisor, &completion) && resolver_supervisor_entry_schedule(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_FRESH,
+		"first metrics-test completion could not be taken or observed as fresh");
+	supervisor_completion_clear(&completion);
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entries[1], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
+		&& resolver_supervisor_entry_view(supervisor, entries[1], &job_view), "second metrics-test job could not be dispatched");
+	peer_fd = supervisor_fake_peer(supervisor, 0);
+	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "second metrics-test request was not available");
+	completed_at = supervisor_time_add(&job_view.dispatched_at, 1, 0);
+	CHECK(supervisor_response_address_send(peer_fd, &request, &completed_at, 0), "second metrics-test response could not be sent");
+	now = completed_at;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK
+		&& resolver_supervisor_entry_schedule(supervisor, entries[1], &now) == RESOLVER_SUPERVISOR_SCHEDULE_COMPLETE, "second metrics-test completion was not retained");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entries[2], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "shutdown-abandonment job could not be dispatched");
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics) && metrics.jobs_current == 2 && metrics.jobs_high_water == 2
+		&& metrics.attempt[METRICS_QUERY_TYPE_A].jobs_complete_current == 1 && metrics.attempt[METRICS_QUERY_TYPE_A].jobs_dispatched_current == 1,
+		"pre-shutdown completion and attempt gauges were incorrect");
+	CHECK(resolver_supervisor_shutdown(supervisor, &now) && resolver_supervisor_metrics_get(supervisor, &metrics), "metrics-test shutdown failed");
+	const resolver_supervisor_metrics_attempt *attempt = &metrics.attempt[METRICS_QUERY_TYPE_A];
+	CHECK(metrics.jobs_current == 0 && attempt->dispatched == 3 && attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == 2
+		&& attempt->completion_enqueued == 2 && attempt->completion_taken == 1 && attempt->attempt_abandoned_shutdown == 1
+		&& attempt->completion_abandoned_shutdown == 1 && attempt->jobs_dispatched_current == 0 && attempt->jobs_complete_current == 0,
+		"supervisor shutdown-abandonment metrics were incorrect");
+	CHECK(attempt->dispatched == attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] + attempt->attempt_abandoned_shutdown + attempt->jobs_dispatched_current
+		&& attempt->completion_enqueued == attempt->completion_taken + attempt->completion_abandoned_shutdown + attempt->jobs_complete_current,
+		"supervisor attempt or completion conservation did not hold");
+	test_result = true;
+
+cleanup:
+	supervisor_completion_clear(&completion);
+	resolver_supervisor_destroy(supervisor);
+	for (size_t index = 0; index < 3; index++) {
 		resolver_cache_entry_release(entries[index]);
 	}
 	resolver_cache_destroy(cache);
@@ -764,6 +941,15 @@ static bool supervisor_test_orphan(void) {
 		&& resolver_supervisor_completion_take(supervisor, &completion)
 		&& resolver_supervisor_entry_interactive_release(supervisor, complete_entry, &now) == RESOLVER_SUPERVISOR_RELEASE_SATISFIED,
 		"COMPLETE and post-take release were not both mapped to satisfied");
+	resolver_supervisor_metrics_snapshot metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics), "orphan metrics could not be read");
+	const resolver_supervisor_metrics_attempt *attempt = &metrics.attempt[METRICS_QUERY_TYPE_A];
+	CHECK(attempt->dispatched == 4 && attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == 2
+		&& attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_TEMPORARY] == 1 && attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT] == 1
+		&& attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == 1
+		&& attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_TEMPORARY] == 1 && attempt->retry_scheduled == 0
+		&& attempt->completion_enqueued == 1 && attempt->completion_taken == 1 && metrics.orphaned_dispatched_current == 0,
+		"orphan response, failure, retry, or completion metrics were incorrect");
 	test_result = true;
 
 cleanup:
@@ -945,6 +1131,13 @@ static bool supervisor_test_protocol_and_recovery(void) {
 	CHECK(resolver_supervisor_helper_view_get(supervisor, 0, &helper_view) && helper_view.failure_count == 0 && helper_view.consecutive_successes == 0
 		&& helper_view.last_failed_process_id == -1 && helper_view.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE,
 		"three valid responses did not reset helper failure state");
+	resolver_supervisor_metrics_snapshot metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics), "protocol metrics could not be read");
+	const resolver_supervisor_metrics_attempt *attempt = &metrics.attempt[METRICS_QUERY_TYPE_A];
+	CHECK(attempt->dispatched == RESOLVER_SUPERVISOR_RESPAWN_RESET_SUCCESS_COUNT + 1U
+		&& attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] == 1 && attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN] == 0
+		&& attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == RESOLVER_SUPERVISOR_RESPAWN_RESET_SUCCESS_COUNT && attempt->retry_scheduled == 1,
+		"protocol attempt failure or retry metrics were incorrect");
 	test_result = true;
 
 cleanup:
@@ -1112,6 +1305,16 @@ static bool supervisor_test_retry(void) {
 	now = completed_at;
 	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_completion_take(supervisor, &completion)
 		&& completion.publication == RESOLVER_CACHE_PUBLISH_STORED, "retried response did not complete");
+	resolver_supervisor_metrics_snapshot metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics), "retry metrics could not be read");
+	const resolver_supervisor_metrics_attempt *attempt = &metrics.attempt[METRICS_QUERY_TYPE_A];
+	CHECK(attempt->dispatched == 8 && attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_TEMPORARY] == 7
+		&& attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == 1 && attempt->retry_scheduled == 7
+		&& attempt->completion_enqueued == 1 && attempt->completion_taken == 1 && metrics.attempt_duration[METRICS_QUERY_TYPE_A].count == 8
+		&& metrics.attempt_duration[METRICS_QUERY_TYPE_A].sum == UINT64_C(8000000)
+		&& metrics.dispatch_wait[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND][METRICS_QUERY_TYPE_A].count == 8
+		&& metrics.dispatch_wait[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND][METRICS_QUERY_TYPE_A].sum == 0,
+		"retry response, attempt, completion, or dispatch-wait metrics were incorrect");
 	test_result = true;
 
 cleanup:
@@ -1215,6 +1418,18 @@ static bool supervisor_test_timeout_and_order(void) {
 	CHECK(resolver_supervisor_entry_view(supervisor, future_entry, &retry_view) && retry_view.state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT
 		&& resolver_supervisor_helper_view_get(supervisor, 0, &helper_view) && helper_view.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL,
 		"future helper completion timestamp was accepted");
+	resolver_supervisor_metrics_snapshot metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics), "deadline metrics could not be read");
+	const resolver_supervisor_metrics_attempt *attempt = &metrics.attempt[METRICS_QUERY_TYPE_A];
+	CHECK(attempt->dispatched == 4 && attempt->jobs_dispatched_current == 1, "deadline dispatch metrics were incorrect");
+	CHECK(attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == 1, "deadline response metrics were incorrect");
+	CHECK(attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT] == 1 && attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] == 1
+		&& attempt->retry_scheduled == 2, "deadline failure or retry metrics were incorrect");
+	CHECK(attempt->completion_enqueued == 1 && attempt->completion_taken == 1, "deadline completion metrics were incorrect");
+	CHECK(metrics.attempt_duration[METRICS_QUERY_TYPE_A].count == 3, "deadline duration metrics were incorrect");
+	CHECK(attempt->dispatched == attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] + attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT]
+		+ attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] + attempt->jobs_dispatched_current,
+		"deadline attempt conservation did not hold");
 	test_result = true;
 
 cleanup:
@@ -1229,6 +1444,15 @@ cleanup:
 }
 
 /* section: functions (exported) */
+void *__wrap_calloc(size_t count, size_t size) {
+	if (supervisor_calloc_failures > 0) {
+		supervisor_calloc_failures--;
+		errno = ENOMEM;
+		return NULL;
+	}
+	return __real_calloc(count, size);
+}
+
 dns_address_lookup_status __wrap_dns_address_lookup(const char *query_name, sa_family_t family, dns_address_result *result) {
 	if (query_name == NULL || result == NULL || (family != AF_INET && family != AF_INET6)) {
 		return DNS_ADDRESS_LOOKUP_BAD_ARGUMENT;
@@ -1275,6 +1499,14 @@ int __wrap_kill(pid_t process_id, int signal_number) {
 		helper->active = false;
 	}
 	return 0;
+}
+
+bool __wrap_resolver_cache_entry_retain(resolver_cache_entry *entry) {
+	if (supervisor_entry_retain_failures > 0) {
+		supervisor_entry_retain_failures--;
+		return false;
+	}
+	return __real_resolver_cache_entry_retain(entry);
 }
 
 int __wrap_resolver_helper_process_start(const sigset_t *signal_mask, const char *process_name, pid_t *process_id, int *socket_fd) {
@@ -1346,11 +1578,13 @@ pid_t __wrap_waitpid(pid_t process_id, int *status, int options) {
 int main(void) {
 	int test_result = EXIT_FAILURE;
 	CHECK(supervisor_test_arguments(), "supervisor argument tests failed");
+	CHECK(supervisor_test_attempt_failures(), "supervisor attempt-failure tests failed");
 	CHECK(supervisor_test_capacity(), "supervisor capacity tests failed");
 	CHECK(supervisor_test_cancel(), "supervisor cancellation tests failed");
 	CHECK(supervisor_test_child_dispose(), "supervisor child-disposal tests failed");
 	CHECK(supervisor_test_completion(), "supervisor completion tests failed");
 	CHECK(supervisor_test_interest_release(), "supervisor interest-release tests failed");
+	CHECK(supervisor_test_metrics(), "supervisor metrics tests failed");
 	CHECK(supervisor_test_orphan(), "supervisor orphan tests failed");
 	CHECK(supervisor_test_priority(), "supervisor priority tests failed");
 	CHECK(supervisor_test_protocol_and_recovery(), "supervisor protocol and recovery tests failed");
