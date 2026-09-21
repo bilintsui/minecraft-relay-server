@@ -18,6 +18,7 @@
 /* section: defines */
 #define METRICS_DURATION_BUCKET_COUNT	14
 #define METRICS_HISTOGRAM_BUCKET_COUNT	METRICS_DURATION_BUCKET_COUNT
+#define METRICS_RESOLVER_QUERY_TYPE_COUNT	3
 #define METRICS_SIZE_BUCKET_COUNT	10
 #define METRICS_TTL_BUCKET_COUNT	13
 
@@ -34,6 +35,19 @@ typedef struct {
 	uint64_t sample_errors;
 	uint64_t sum;
 } metrics_histogram_snapshot;
+typedef enum {
+	METRICS_PAYLOAD_KIND_POSITIVE,
+	METRICS_PAYLOAD_KIND_NXDOMAIN,
+	METRICS_PAYLOAD_KIND_NODATA,
+	METRICS_PAYLOAD_KIND_COUNT
+} metrics_payload_kind;
+typedef enum {
+	METRICS_QUERY_TYPE_A,
+	METRICS_QUERY_TYPE_AAAA,
+	METRICS_QUERY_TYPE_SRV,
+	METRICS_QUERY_TYPE_OTHER = METRICS_RESOLVER_QUERY_TYPE_COUNT,
+	METRICS_QUERY_TYPE_COUNT
+} metrics_query_type;
 
 /* section: functions (exported) */
 bool metrics_counter_add(uint64_t *counter, uint64_t amount, uint64_t *saturation_total);

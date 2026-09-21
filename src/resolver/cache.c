@@ -15,6 +15,7 @@
 #include <time.h>
 
 /* section: headers (project) */
+#include "../metrics.h"
 #include "../timeutil.h"
 #include "util.h"
 
@@ -31,6 +32,13 @@ typedef enum {
 	RESOLVER_CACHE_PAYLOAD_ADDRESS,
 	RESOLVER_CACHE_PAYLOAD_SRV
 } resolver_cache_payload_type;
+typedef struct {
+	uint64_t entries_high_water;
+	uint64_t owned_bytes_high_water;
+	resolver_cache_metrics_query query[METRICS_QUERY_TYPE_COUNT];
+	uint64_t saturation_total;
+	metrics_histogram ttl[METRICS_RESOLVER_QUERY_TYPE_COUNT][METRICS_PAYLOAD_KIND_COUNT];
+} resolver_cache_metrics_state;
 typedef struct {
 	struct timespec completed_at;
 	struct timespec expires_at;
@@ -56,6 +64,7 @@ struct resolver_cache {
 	resolver_cache_entry **buckets;
 	size_t bucket_count;
 	size_t entry_count;
+	resolver_cache_metrics_state metrics;
 	uint64_t next_entry_id;
 	size_t owned_bytes;
 };
@@ -101,6 +110,85 @@ static uint64_t resolver_cache_hash(const char *name, uint16_t query_type) {
 	result ^= (uint8_t)query_type;
 	result *= RESOLVER_CACHE_HASH_PRIME;
 	return result;
+}
+
+static void resolver_cache_metrics_increment(resolver_cache *cache, uint64_t *counter) {
+	(void)metrics_counter_add(counter, 1, &cache->metrics.saturation_total);
+}
+
+static metrics_payload_kind resolver_cache_metrics_payload_kind(resolver_cache_view_status status) {
+	switch (status) {
+		case RESOLVER_CACHE_VIEW_FRESH_POSITIVE:
+			return METRICS_PAYLOAD_KIND_POSITIVE;
+		case RESOLVER_CACHE_VIEW_FRESH_NXDOMAIN:
+			return METRICS_PAYLOAD_KIND_NXDOMAIN;
+		case RESOLVER_CACHE_VIEW_FRESH_NODATA:
+		default:
+			return METRICS_PAYLOAD_KIND_NODATA;
+	}
+}
+
+static void resolver_cache_metrics_publication_record(resolver_cache *cache, metrics_query_type query, resolver_cache_publish_status status) {
+	resolver_cache_metrics_query *metrics = &cache->metrics.query[query];
+	uint64_t *counter;
+	switch (status) {
+		case RESOLVER_CACHE_PUBLISH_STORED:
+			counter = &metrics->publish_stored;
+			break;
+		case RESOLVER_CACHE_PUBLISH_TRANSIENT:
+			counter = &metrics->publish_transient;
+			break;
+		case RESOLVER_CACHE_PUBLISH_BAD_ARGUMENT:
+			counter = &metrics->publish_bad_argument;
+			break;
+		case RESOLVER_CACHE_PUBLISH_INVALID:
+			counter = &metrics->publish_invalid;
+			break;
+		case RESOLVER_CACHE_PUBLISH_LIMIT:
+			counter = &metrics->publish_limit;
+			break;
+		case RESOLVER_CACHE_PUBLISH_MEMORY:
+			counter = &metrics->publish_memory;
+			break;
+		case RESOLVER_CACHE_PUBLISH_TIME:
+		default:
+			counter = &metrics->publish_time;
+			break;
+	}
+	resolver_cache_metrics_increment(cache, counter);
+}
+
+static metrics_query_type resolver_cache_metrics_query_type(uint16_t query_type) {
+	switch (query_type) {
+		case ns_t_a:
+			return METRICS_QUERY_TYPE_A;
+		case ns_t_aaaa:
+			return METRICS_QUERY_TYPE_AAAA;
+		case ns_t_srv:
+			return METRICS_QUERY_TYPE_SRV;
+		default:
+			return METRICS_QUERY_TYPE_OTHER;
+	}
+}
+
+static void resolver_cache_metrics_value_record(resolver_cache *cache, metrics_query_type query, resolver_cache_view_status status, uint32_t ttl) {
+	metrics_payload_kind kind = resolver_cache_metrics_payload_kind(status);
+	resolver_cache_metrics_query *metrics = &cache->metrics.query[query];
+	uint64_t *counter;
+	switch (kind) {
+		case METRICS_PAYLOAD_KIND_POSITIVE:
+			counter = &metrics->value_positive;
+			break;
+		case METRICS_PAYLOAD_KIND_NXDOMAIN:
+			counter = &metrics->value_nxdomain;
+			break;
+		case METRICS_PAYLOAD_KIND_NODATA:
+		default:
+			counter = &metrics->value_nodata;
+			break;
+	}
+	resolver_cache_metrics_increment(cache, counter);
+	metrics_ttl_histogram_observe(&cache->metrics.ttl[query][kind], ttl, &cache->metrics.saturation_total);
 }
 
 static bool resolver_cache_name_valid(const char *source) {
@@ -252,10 +340,13 @@ static bool resolver_cache_expiry_calculate(const struct timespec *completed_at,
 
 static resolver_cache_publish_status resolver_cache_entry_payload_publish(resolver_cache_entry *entry, resolver_cache_payload_type payload_type, resolver_cache_view_status view_status,
 	const struct timespec *completed_at, uint32_t ttl, size_t result_size, void *result) {
+	resolver_cache *cache = entry->cache;
+	resolver_cache_metrics_query *metrics = &cache->metrics.query[resolver_cache_metrics_query_type(entry->query_type)];
 	if (!timeutil_valid(completed_at)) {
 		return RESOLVER_CACHE_PUBLISH_TIME;
 	}
 	if (result_size > (size_t)RESOLVER_CACHE_RESULT_BYTE_LIMIT) {
+		resolver_cache_metrics_increment(cache, &metrics->publish_limit_result_bytes);
 		return RESOLVER_CACHE_PUBLISH_LIMIT;
 	}
 	if (ttl == 0) {
@@ -266,10 +357,10 @@ static resolver_cache_publish_status resolver_cache_entry_payload_publish(resolv
 	if (!resolver_cache_expiry_calculate(completed_at, ttl, &expires_at)) {
 		return RESOLVER_CACHE_PUBLISH_TIME;
 	}
-	resolver_cache *cache = entry->cache;
 	size_t old_payload_size = entry->payload == NULL ? 0 : entry->payload->owned_bytes;
 	size_t retained_size = cache->owned_bytes - old_payload_size;
 	if (result_size > (size_t)RESOLVER_CACHE_OWNED_BYTE_LIMIT || retained_size > (size_t)RESOLVER_CACHE_OWNED_BYTE_LIMIT - result_size) {
+		resolver_cache_metrics_increment(cache, &metrics->publish_limit_owned_bytes);
 		return RESOLVER_CACHE_PUBLISH_LIMIT;
 	}
 	resolver_cache_payload *payload = calloc(1, sizeof(*payload));
@@ -291,6 +382,7 @@ static resolver_cache_publish_status resolver_cache_entry_payload_publish(resolv
 	resolver_cache_entry_payload_clear(entry);
 	entry->payload = payload;
 	cache->owned_bytes += result_size;
+	metrics_high_water_update(&cache->metrics.owned_bytes_high_water, cache->owned_bytes);
 	return RESOLVER_CACHE_PUBLISH_STORED;
 }
 
@@ -316,6 +408,7 @@ resolver_cache *resolver_cache_create(void) {
 	cache->bucket_count = (size_t)RESOLVER_CACHE_ENTRY_LIMIT;
 	cache->next_entry_id = 1;
 	cache->owned_bytes = sizeof(*cache) + bucket_bytes;
+	cache->metrics.owned_bytes_high_water = cache->owned_bytes;
 	return cache;
 }
 
@@ -340,25 +433,40 @@ resolver_cache_acquire_status resolver_cache_entry_acquire(resolver_cache *cache
 	if (result != NULL) {
 		*result = NULL;
 	}
+	metrics_query_type metrics_query = resolver_cache_metrics_query_type(query_type);
 	char normalized[NS_MAXDNAME];
 	if (cache == NULL || result == NULL || !resolver_cache_query_type_valid(query_type) || !resolver_name_normalize(query_name, normalized)) {
+		if (cache != NULL) {
+			resolver_cache_metrics_increment(cache, &cache->metrics.query[metrics_query].acquire_bad_argument);
+		}
 		return RESOLVER_CACHE_ACQUIRE_BAD_ARGUMENT;
 	}
 	uint64_t hash = resolver_cache_hash(normalized, query_type);
 	resolver_cache_entry *entry = resolver_cache_entry_find(cache, normalized, query_type, hash);
 	if (entry != NULL) {
 		if (!resolver_cache_entry_retain(entry)) {
+			resolver_cache_metrics_increment(cache, &cache->metrics.query[metrics_query].acquire_reference_limit);
 			return RESOLVER_CACHE_ACQUIRE_LIMIT;
 		}
 		*result = entry;
+		resolver_cache_metrics_increment(cache, &cache->metrics.query[metrics_query].acquire_reused);
 		return RESOLVER_CACHE_ACQUIRE_OK;
 	}
-	if (cache->entry_count == (size_t)RESOLVER_CACHE_ENTRY_LIMIT || cache->next_entry_id == 0 || sizeof(*entry) > (size_t)RESOLVER_CACHE_OWNED_BYTE_LIMIT
-		|| cache->owned_bytes > (size_t)RESOLVER_CACHE_OWNED_BYTE_LIMIT - sizeof(*entry)) {
+	if (cache->entry_count == (size_t)RESOLVER_CACHE_ENTRY_LIMIT) {
+		resolver_cache_metrics_increment(cache, &cache->metrics.query[metrics_query].acquire_entry_limit);
+		return RESOLVER_CACHE_ACQUIRE_LIMIT;
+	}
+	if (cache->next_entry_id == 0) {
+		resolver_cache_metrics_increment(cache, &cache->metrics.query[metrics_query].acquire_id_limit);
+		return RESOLVER_CACHE_ACQUIRE_LIMIT;
+	}
+	if (sizeof(*entry) > (size_t)RESOLVER_CACHE_OWNED_BYTE_LIMIT || cache->owned_bytes > (size_t)RESOLVER_CACHE_OWNED_BYTE_LIMIT - sizeof(*entry)) {
+		resolver_cache_metrics_increment(cache, &cache->metrics.query[metrics_query].acquire_owned_byte_limit);
 		return RESOLVER_CACHE_ACQUIRE_LIMIT;
 	}
 	entry = calloc(1, sizeof(*entry));
 	if (entry == NULL) {
+		resolver_cache_metrics_increment(cache, &cache->metrics.query[metrics_query].acquire_memory);
 		return RESOLVER_CACHE_ACQUIRE_MEMORY;
 	}
 	entry->cache = cache;
@@ -372,8 +480,11 @@ resolver_cache_acquire_status resolver_cache_entry_acquire(resolver_cache *cache
 	cache->buckets[bucket_index] = entry;
 	cache->entry_count++;
 	cache->owned_bytes += sizeof(*entry);
+	metrics_high_water_update(&cache->metrics.entries_high_water, cache->entry_count);
+	metrics_high_water_update(&cache->metrics.owned_bytes_high_water, cache->owned_bytes);
 	cache->next_entry_id = cache->next_entry_id == UINT64_MAX ? 0 : cache->next_entry_id + 1;
 	*result = entry;
+	resolver_cache_metrics_increment(cache, &cache->metrics.query[metrics_query].acquire_created);
 	return RESOLVER_CACHE_ACQUIRE_OK;
 }
 
@@ -391,36 +502,60 @@ const char *resolver_cache_entry_name(const resolver_cache_entry *entry) {
 
 resolver_cache_publish_status resolver_cache_entry_publish_address(resolver_cache_entry *entry, dns_address_lookup_status lookup_status, const struct timespec *completed_at,
 	dns_address_result *result) {
-	if (entry == NULL || result == NULL || completed_at == NULL) {
+	if (entry == NULL) {
+		return RESOLVER_CACHE_PUBLISH_BAD_ARGUMENT;
+	}
+	resolver_cache *cache = entry->cache;
+	metrics_query_type metrics_query = resolver_cache_metrics_query_type(entry->query_type);
+	if (result == NULL || completed_at == NULL) {
+		resolver_cache_metrics_publication_record(cache, metrics_query, RESOLVER_CACHE_PUBLISH_BAD_ARGUMENT);
 		return RESOLVER_CACHE_PUBLISH_BAD_ARGUMENT;
 	}
 	uint32_t ttl;
 	resolver_cache_view_status view_status;
 	if (!resolver_cache_address_result_validate(entry, lookup_status, result, &ttl, &view_status)) {
+		resolver_cache_metrics_publication_record(cache, metrics_query, RESOLVER_CACHE_PUBLISH_INVALID);
 		return RESOLVER_CACHE_PUBLISH_INVALID;
 	}
+	resolver_cache_metrics_value_record(cache, metrics_query, view_status, ttl);
 	size_t result_size;
 	if (!resolver_cache_address_result_size(result, &result_size)) {
+		resolver_cache_metrics_increment(cache, &cache->metrics.query[metrics_query].publish_limit_result_bytes);
+		resolver_cache_metrics_publication_record(cache, metrics_query, RESOLVER_CACHE_PUBLISH_LIMIT);
 		return RESOLVER_CACHE_PUBLISH_LIMIT;
 	}
-	return resolver_cache_entry_payload_publish(entry, RESOLVER_CACHE_PAYLOAD_ADDRESS, view_status, completed_at, ttl, result_size, result);
+	resolver_cache_publish_status status = resolver_cache_entry_payload_publish(entry, RESOLVER_CACHE_PAYLOAD_ADDRESS, view_status, completed_at, ttl, result_size, result);
+	resolver_cache_metrics_publication_record(cache, metrics_query, status);
+	return status;
 }
 
 resolver_cache_publish_status resolver_cache_entry_publish_srv(resolver_cache_entry *entry, dns_srv_lookup_status lookup_status, const struct timespec *completed_at,
 	dns_srv_result *result) {
-	if (entry == NULL || result == NULL || completed_at == NULL) {
+	if (entry == NULL) {
+		return RESOLVER_CACHE_PUBLISH_BAD_ARGUMENT;
+	}
+	resolver_cache *cache = entry->cache;
+	metrics_query_type metrics_query = resolver_cache_metrics_query_type(entry->query_type);
+	if (result == NULL || completed_at == NULL) {
+		resolver_cache_metrics_publication_record(cache, metrics_query, RESOLVER_CACHE_PUBLISH_BAD_ARGUMENT);
 		return RESOLVER_CACHE_PUBLISH_BAD_ARGUMENT;
 	}
 	uint32_t ttl;
 	resolver_cache_view_status view_status;
 	if (!resolver_cache_srv_result_validate(entry, lookup_status, result, &ttl, &view_status)) {
+		resolver_cache_metrics_publication_record(cache, metrics_query, RESOLVER_CACHE_PUBLISH_INVALID);
 		return RESOLVER_CACHE_PUBLISH_INVALID;
 	}
+	resolver_cache_metrics_value_record(cache, metrics_query, view_status, ttl);
 	size_t result_size;
 	if (!resolver_cache_srv_result_size(result, &result_size)) {
+		resolver_cache_metrics_increment(cache, &cache->metrics.query[metrics_query].publish_limit_result_bytes);
+		resolver_cache_metrics_publication_record(cache, metrics_query, RESOLVER_CACHE_PUBLISH_LIMIT);
 		return RESOLVER_CACHE_PUBLISH_LIMIT;
 	}
-	return resolver_cache_entry_payload_publish(entry, RESOLVER_CACHE_PAYLOAD_SRV, view_status, completed_at, ttl, result_size, result);
+	resolver_cache_publish_status status = resolver_cache_entry_payload_publish(entry, RESOLVER_CACHE_PAYLOAD_SRV, view_status, completed_at, ttl, result_size, result);
+	resolver_cache_metrics_publication_record(cache, metrics_query, status);
+	return status;
 }
 
 uint16_t resolver_cache_entry_query_type(const resolver_cache_entry *entry) {
@@ -472,6 +607,20 @@ bool resolver_cache_entry_view(resolver_cache_entry *entry, const struct timespe
 		return false;
 	}
 	if (entry->payload != NULL && timeutil_compare(now, &entry->payload->expires_at) >= 0) {
+		metrics_query_type query = resolver_cache_metrics_query_type(entry->query_type);
+		resolver_cache_metrics_query *metrics = &entry->cache->metrics.query[query];
+		switch (resolver_cache_metrics_payload_kind(entry->payload->status)) {
+			case METRICS_PAYLOAD_KIND_POSITIVE:
+				resolver_cache_metrics_increment(entry->cache, &metrics->expiry_positive);
+				break;
+			case METRICS_PAYLOAD_KIND_NXDOMAIN:
+				resolver_cache_metrics_increment(entry->cache, &metrics->expiry_nxdomain);
+				break;
+			case METRICS_PAYLOAD_KIND_NODATA:
+			default:
+				resolver_cache_metrics_increment(entry->cache, &metrics->expiry_nodata);
+				break;
+		}
 		resolver_cache_entry_payload_clear(entry);
 	}
 	if (entry->payload == NULL) {
@@ -491,21 +640,63 @@ bool resolver_cache_entry_view(resolver_cache_entry *entry, const struct timespe
 	return true;
 }
 
+bool resolver_cache_metrics_get(const resolver_cache *cache, resolver_cache_metrics_snapshot *result) {
+	if (result != NULL) {
+		memset(result, 0, sizeof(*result));
+	}
+	if (cache == NULL || result == NULL) {
+		return false;
+	}
+	result->entries_current = cache->entry_count;
+	result->entries_high_water = cache->metrics.entries_high_water;
+	result->owned_bytes_current = cache->owned_bytes;
+	result->owned_bytes_high_water = cache->metrics.owned_bytes_high_water;
+	memcpy(result->query, cache->metrics.query, sizeof(result->query));
+	result->saturation_total = cache->metrics.saturation_total;
+	for (size_t query = 0; query < METRICS_RESOLVER_QUERY_TYPE_COUNT; query++) {
+		for (size_t kind = 0; kind < METRICS_PAYLOAD_KIND_COUNT; kind++) {
+			metrics_ttl_histogram_get(&cache->metrics.ttl[query][kind], &result->ttl[query][kind]);
+		}
+	}
+	for (size_t bucket = 0; bucket < cache->bucket_count; bucket++) {
+		for (resolver_cache_entry *entry = cache->buckets[bucket]; entry != NULL; entry = entry->next) {
+			if (entry->payload == NULL) {
+				continue;
+			}
+			resolver_cache_metrics_query *metrics = &result->query[resolver_cache_metrics_query_type(entry->query_type)];
+			switch (resolver_cache_metrics_payload_kind(entry->payload->status)) {
+				case METRICS_PAYLOAD_KIND_POSITIVE:
+					metrics->resident_positive++;
+					break;
+				case METRICS_PAYLOAD_KIND_NXDOMAIN:
+					metrics->resident_nxdomain++;
+					break;
+				case METRICS_PAYLOAD_KIND_NODATA:
+				default:
+					metrics->resident_nodata++;
+					break;
+			}
+		}
+	}
+	return true;
+}
+
 size_t resolver_cache_owned_bytes(const resolver_cache *cache) {
 	return cache == NULL ? 0 : cache->owned_bytes;
 }
 
-bool resolver_cache_result_fits(uint16_t query_type, size_t cname_count, size_t record_count) {
+resolver_cache_result_fit resolver_cache_result_classify(uint16_t query_type, size_t cname_count, size_t record_count) {
 	if (cname_count > DNS_CNAME_DEPTH_LIMIT || (query_type != ns_t_a && query_type != ns_t_aaaa && query_type != ns_t_srv)
 		|| ((query_type == ns_t_a || query_type == ns_t_aaaa) && record_count > DNS_ADDRESS_RECORD_LIMIT) || (query_type == ns_t_srv && record_count > DNS_SRV_RECORD_LIMIT)) {
-		return false;
+		return RESOLVER_CACHE_RESULT_FIT_SHAPE;
 	}
 	size_t size = sizeof(resolver_cache_payload);
 	size_t array_size;
 	if (cname_count > 0
 		&& (!resolver_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(dns_cname_record), &array_size) || !resolver_size_add(&size, array_size))) {
-		return false;
+		return RESOLVER_CACHE_RESULT_FIT_BYTES;
 	}
 	size_t record_size = query_type == ns_t_srv ? sizeof(dns_srv_record) : sizeof(dns_address_record);
-	return resolver_size_multiply(record_count, record_size, &array_size) && resolver_size_add(&size, array_size) && size <= (size_t)RESOLVER_CACHE_RESULT_BYTE_LIMIT;
+	return resolver_size_multiply(record_count, record_size, &array_size) && resolver_size_add(&size, array_size) && size <= (size_t)RESOLVER_CACHE_RESULT_BYTE_LIMIT
+		? RESOLVER_CACHE_RESULT_FIT_OK : RESOLVER_CACHE_RESULT_FIT_BYTES;
 }

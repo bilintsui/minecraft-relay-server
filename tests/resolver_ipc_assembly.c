@@ -34,6 +34,11 @@
 		} \
 	} while (0)
 
+/* section: global variables */
+static size_t assembly_calloc_failures;
+
+void *__real_calloc(size_t count, size_t size);
+
 /* section: functions (local) */
 static resolver_ipc_assembly_status assembly_address_send(resolver_ipc_assembly *assembly, const resolver_ipc_response_address *response) {
 	uint8_t packet[RESOLVER_IPC_PACKET_BYTE_LIMIT];
@@ -239,6 +244,10 @@ static bool assembly_test_budget(void) {
 	assembly = assembly_new(budget, "capacity.test", ns_t_a, 1001);
 	begin.query_id = 1001;
 	CHECK(assembly != NULL && assembly_begin_send(assembly, &begin) == RESOLVER_IPC_ASSEMBLY_OK, "reply allocation did not fit after aggregate capacity was released");
+	resolver_ipc_assembly_metrics_snapshot metrics;
+	CHECK(resolver_ipc_assembly_metrics_get(budget, &metrics) && metrics.query[METRICS_QUERY_TYPE_A].create_limit == 1
+		&& metrics.query[METRICS_QUERY_TYPE_A].limit_budget_bytes == 2 && metrics.query[METRICS_QUERY_TYPE_A].terminal_limit == 1,
+		"assembly budget-limit metrics were incorrect");
 	test_result = true;
 
 cleanup:
@@ -246,6 +255,105 @@ cleanup:
 	for (size_t index = 0; index < assembly_count; index++) {
 		resolver_ipc_assembly_destroy(assemblies[index]);
 	}
+	resolver_ipc_assembly_budget_destroy(budget);
+	return test_result;
+}
+
+static bool assembly_test_metrics(void) {
+	int test_result = false;
+	resolver_ipc_assembly_budget *budget = resolver_ipc_assembly_budget_create();
+	resolver_ipc_assembly *assembly = NULL;
+	resolver_ipc_assembly_result result = { 0 };
+	resolver_ipc_assembly_metrics_snapshot metrics;
+	memset(&metrics, 0xFF, sizeof(metrics));
+	CHECK(!resolver_ipc_assembly_metrics_get(NULL, &metrics) && metrics.nonterminal_current == 0
+		&& metrics.query[METRICS_QUERY_TYPE_A].create_ok == 0, "NULL assembly metrics input was accepted or left output data behind");
+	CHECK(budget != NULL && resolver_ipc_assembly_metrics_get(budget, &metrics), "assembly metrics budget could not be created or read");
+	uint64_t baseline_bytes = metrics.owned_bytes_current;
+	CHECK(baseline_bytes > 0 && metrics.owned_bytes_high_water == baseline_bytes, "initial assembly metrics gauges were incorrect");
+	CHECK(resolver_ipc_assembly_create(budget, NULL, ns_c_in, ns_t_a, 1, &assembly) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT && assembly == NULL,
+		"attributable bad assembly create was accepted");
+	CHECK(resolver_ipc_assembly_create(budget, "invalid.metrics.test", ns_c_in, ns_t_txt, 1, &assembly) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT && assembly == NULL,
+		"unattributable assembly create was accepted");
+	assembly_calloc_failures = 1;
+	CHECK(resolver_ipc_assembly_create(budget, "memory.metrics.test", ns_c_in, ns_t_aaaa, 2, &assembly) == RESOLVER_IPC_ASSEMBLY_MEMORY && assembly == NULL,
+		"assembly create allocation failure was not reported");
+	assembly = assembly_new(budget, "abandoned.metrics.test", ns_t_a, 3);
+	CHECK(assembly != NULL && resolver_ipc_assembly_metrics_get(budget, &metrics) && metrics.nonterminal_current == 1
+		&& metrics.query[METRICS_QUERY_TYPE_A].nonterminal_current == 1, "live assembly metrics were incorrect");
+	resolver_ipc_assembly_destroy(assembly);
+	assembly = assembly_new(budget, "complete.metrics.test", ns_t_aaaa, 4);
+	CHECK(assembly != NULL, "complete metrics assembly could not be created");
+	resolver_ipc_response_begin begin = {
+		.canonical_name = "complete.metrics.test",
+		.completed_at = { .tv_sec = 1 },
+		.question_name = "complete.metrics.test",
+		.query_class = ns_c_in,
+		.query_id = 4,
+		.query_type = ns_t_aaaa,
+		.rcode = ns_r_noerror,
+		.status = RESOLVER_IPC_LOOKUP_NODATA
+	};
+	resolver_ipc_response_end end = { .query_id = 4 };
+	CHECK(assembly_begin_send(assembly, &begin) == RESOLVER_IPC_ASSEMBLY_OK && assembly_end_send(assembly, &end) == RESOLVER_IPC_ASSEMBLY_COMPLETE
+		&& resolver_ipc_assembly_result_take(assembly, &result), "complete assembly metrics result did not finish");
+	resolver_ipc_assembly_destroy(assembly);
+	assembly = NULL;
+	resolver_ipc_assembly_result_destroy(&result);
+	assembly = assembly_new(budget, "memory.metrics.test", ns_t_a, 5);
+	CHECK(assembly != NULL, "terminal-memory metrics assembly could not be created");
+	begin = (resolver_ipc_response_begin){
+		.canonical_name = "memory.metrics.test",
+		.completed_at = { .tv_sec = 1 },
+		.question_name = "memory.metrics.test",
+		.query_class = ns_c_in,
+		.query_id = 5,
+		.query_type = ns_t_a,
+		.rcode = ns_r_noerror,
+		.record_count = 1,
+		.status = RESOLVER_IPC_LOOKUP_OK
+	};
+	assembly_calloc_failures = 1;
+	CHECK(assembly_begin_send(assembly, &begin) == RESOLVER_IPC_ASSEMBLY_MEMORY, "assembly terminal allocation failure was not reported");
+	resolver_ipc_assembly_destroy(assembly);
+	assembly = assembly_new(budget, "_minecraft._tcp.bytes.metrics.test", ns_t_srv, 7);
+	CHECK(assembly != NULL, "result-byte metrics assembly could not be created");
+	begin = (resolver_ipc_response_begin){
+		.canonical_name = "_minecraft._tcp.bytes.metrics.test",
+		.completed_at = { .tv_sec = 1 },
+		.question_name = "_minecraft._tcp.bytes.metrics.test",
+		.query_class = ns_c_in,
+		.query_id = 7,
+		.query_type = ns_t_srv,
+		.rcode = ns_r_noerror,
+		.record_count = DNS_SRV_RECORD_LIMIT,
+		.status = RESOLVER_IPC_LOOKUP_OK
+	};
+	CHECK(assembly_begin_send(assembly, &begin) == RESOLVER_IPC_ASSEMBLY_LIMIT, "assembly result-byte limit was not reported");
+	resolver_ipc_assembly_destroy(assembly);
+	assembly = NULL;
+	CHECK(resolver_ipc_assembly_metrics_get(budget, &metrics), "final assembly metrics could not be read");
+	const resolver_ipc_assembly_metrics_query *a = &metrics.query[METRICS_QUERY_TYPE_A];
+	const resolver_ipc_assembly_metrics_query *aaaa = &metrics.query[METRICS_QUERY_TYPE_AAAA];
+	const resolver_ipc_assembly_metrics_query *srv = &metrics.query[METRICS_QUERY_TYPE_SRV];
+	CHECK(a->create_ok == 2 && a->create_bad_argument == 1 && a->limit_result_shape == 0 && a->terminal_memory == 1
+		&& a->abandoned == 1 && a->nonterminal_current == 0, "A assembly metrics were incorrect");
+	CHECK(aaaa->create_ok == 1 && aaaa->create_memory == 1 && aaaa->terminal_complete == 1 && aaaa->nonterminal_current == 0
+		&& metrics.result_size[METRICS_QUERY_TYPE_AAAA].count == 1 && metrics.result_size[METRICS_QUERY_TYPE_AAAA].sum == 0,
+		"AAAA assembly metrics were incorrect");
+	CHECK(srv->create_ok == 1 && srv->limit_result_bytes == 1 && srv->terminal_limit == 1 && srv->nonterminal_current == 0,
+		"SRV assembly metrics were incorrect");
+	CHECK(metrics.nonterminal_current == 0 && metrics.owned_bytes_current == baseline_bytes && metrics.owned_bytes_high_water > baseline_bytes
+		&& metrics.saturation_total == 0, "assembly aggregate metrics were incorrect");
+	CHECK(a->create_ok == a->terminal_memory + a->abandoned + a->nonterminal_current
+		&& aaaa->create_ok == aaaa->terminal_complete + aaaa->nonterminal_current
+		&& srv->create_ok == srv->terminal_limit + srv->nonterminal_current, "assembly conservation identities did not hold");
+	test_result = true;
+
+cleanup:
+	assembly_calloc_failures = 0;
+	resolver_ipc_assembly_result_destroy(&result);
+	resolver_ipc_assembly_destroy(assembly);
 	resolver_ipc_assembly_budget_destroy(budget);
 	return test_result;
 }
@@ -390,7 +498,14 @@ static bool assembly_test_protocol(void) {
 	CHECK(assembly_address_send(assembly, &address) == RESOLVER_IPC_ASSEMBLY_OK, "post-END protocol address was rejected");
 	end = (resolver_ipc_response_end){ .query_id = 39, .record_count = 1 };
 	CHECK(assembly_end_send(assembly, &end) == RESOLVER_IPC_ASSEMBLY_COMPLETE, "post-END protocol result did not complete");
+	resolver_ipc_assembly_metrics_snapshot metrics_before;
+	resolver_ipc_assembly_metrics_snapshot metrics_after;
+	CHECK(resolver_ipc_assembly_metrics_get(budget, &metrics_before), "pre-duplicate-END metrics could not be read");
 	CHECK(assembly_end_send(assembly, &end) == RESOLVER_IPC_ASSEMBLY_PROTOCOL, "duplicate END was accepted");
+	CHECK(resolver_ipc_assembly_metrics_get(budget, &metrics_after)
+		&& metrics_after.query[METRICS_QUERY_TYPE_A].terminal_complete == metrics_before.query[METRICS_QUERY_TYPE_A].terminal_complete
+		&& metrics_after.query[METRICS_QUERY_TYPE_A].terminal_protocol == metrics_before.query[METRICS_QUERY_TYPE_A].terminal_protocol,
+		"duplicate END produced a second assembly terminal");
 	CHECK(!resolver_ipc_assembly_result_take(assembly, &(resolver_ipc_assembly_result){ 0 }), "result remained transferable after duplicate END");
 	CHECK(assembly_reset(budget, &assembly, "protocol.test", ns_t_a, 40), "protocol assembly could not be reset");
 	begin = (resolver_ipc_response_begin){
@@ -468,12 +583,23 @@ cleanup:
 	return test_result;
 }
 
+/* section: functions (exported) */
+void *__wrap_calloc(size_t count, size_t size) {
+	if (assembly_calloc_failures > 0) {
+		assembly_calloc_failures--;
+		errno = ENOMEM;
+		return NULL;
+	}
+	return __real_calloc(count, size);
+}
+
 /* section: functions (entry point) */
 int main(void) {
 	int test_result = EXIT_FAILURE;
 	CHECK(assembly_test_address(), "address assembly tests failed");
 	CHECK(assembly_test_arguments(), "assembly argument tests failed");
 	CHECK(assembly_test_budget(), "assembly budget tests failed");
+	CHECK(assembly_test_metrics(), "assembly metrics tests failed");
 	CHECK(assembly_test_negative(), "negative assembly tests failed");
 	CHECK(assembly_test_protocol(), "assembly protocol tests failed");
 	CHECK(assembly_test_srv(), "SRV assembly tests failed");

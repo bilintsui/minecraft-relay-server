@@ -16,6 +16,7 @@
 #include <time.h>
 
 /* section: headers (project) */
+#include "../metrics.h"
 #include "cache.h"
 #include "dns.h"
 #include "ipc.h"
@@ -34,6 +35,12 @@ typedef enum {
 	RESOLVER_IPC_ASSEMBLY_STATE_FAILED,
 	RESOLVER_IPC_ASSEMBLY_STATE_TAKEN
 } resolver_ipc_assembly_state;
+typedef struct {
+	uint64_t owned_bytes_high_water;
+	resolver_ipc_assembly_metrics_query query[METRICS_RESOLVER_QUERY_TYPE_COUNT];
+	metrics_histogram result_size[METRICS_RESOLVER_QUERY_TYPE_COUNT];
+	uint64_t saturation_total;
+} resolver_ipc_assembly_metrics_state;
 struct resolver_ipc_assembly {
 	resolver_ipc_assembly_budget *budget;
 	uint32_t chain_ttl;
@@ -55,10 +62,70 @@ struct resolver_ipc_assembly {
 };
 struct resolver_ipc_assembly_budget {
 	resolver_ipc_assembly *assemblies;
+	resolver_ipc_assembly_metrics_state metrics;
 	size_t owned_bytes;
 };
 
 /* section: functions (local) */
+static void resolver_ipc_assembly_metrics_increment(resolver_ipc_assembly_budget *budget, uint64_t *counter) {
+	(void)metrics_counter_add(counter, 1, &budget->metrics.saturation_total);
+}
+
+static size_t resolver_ipc_assembly_metrics_query_type(uint16_t query_type) {
+	switch (query_type) {
+		case ns_t_a:
+			return METRICS_QUERY_TYPE_A;
+		case ns_t_aaaa:
+			return METRICS_QUERY_TYPE_AAAA;
+		case ns_t_srv:
+		default:
+			return METRICS_QUERY_TYPE_SRV;
+	}
+}
+
+static void resolver_ipc_assembly_metrics_limit_record(resolver_ipc_assembly *assembly, resolver_cache_result_fit classification) {
+	resolver_ipc_assembly_metrics_query *metrics = &assembly->budget->metrics.query[resolver_ipc_assembly_metrics_query_type(assembly->query_type)];
+	if (classification == RESOLVER_CACHE_RESULT_FIT_SHAPE) {
+		resolver_ipc_assembly_metrics_increment(assembly->budget, &metrics->limit_result_shape);
+	} else {
+		resolver_ipc_assembly_metrics_increment(assembly->budget, &metrics->limit_result_bytes);
+	}
+}
+
+static bool resolver_ipc_assembly_state_nonterminal(resolver_ipc_assembly_state state) {
+	return state == RESOLVER_IPC_ASSEMBLY_STATE_BEGIN || state == RESOLVER_IPC_ASSEMBLY_STATE_CNAME || state == RESOLVER_IPC_ASSEMBLY_STATE_RECORD
+		|| state == RESOLVER_IPC_ASSEMBLY_STATE_END;
+}
+
+static void resolver_ipc_assembly_metrics_terminal_record(resolver_ipc_assembly *assembly, resolver_ipc_assembly_status status) {
+	if (!resolver_ipc_assembly_state_nonterminal(assembly->state)) {
+		return;
+	}
+	size_t query = resolver_ipc_assembly_metrics_query_type(assembly->query_type);
+	resolver_ipc_assembly_metrics_query *metrics = &assembly->budget->metrics.query[query];
+	uint64_t *counter;
+	switch (status) {
+		case RESOLVER_IPC_ASSEMBLY_COMPLETE:
+			counter = &metrics->terminal_complete;
+			metrics_size_histogram_observe(&assembly->budget->metrics.result_size[query], assembly->dynamic_bytes, &assembly->budget->metrics.saturation_total);
+			break;
+		case RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT:
+			counter = &metrics->terminal_bad_argument;
+			break;
+		case RESOLVER_IPC_ASSEMBLY_LIMIT:
+			counter = &metrics->terminal_limit;
+			break;
+		case RESOLVER_IPC_ASSEMBLY_MEMORY:
+			counter = &metrics->terminal_memory;
+			break;
+		case RESOLVER_IPC_ASSEMBLY_PROTOCOL:
+		default:
+			counter = &metrics->terminal_protocol;
+			break;
+	}
+	resolver_ipc_assembly_metrics_increment(assembly->budget, counter);
+}
+
 static void resolver_ipc_assembly_data_clear(resolver_ipc_assembly *assembly) {
 	if (assembly->query_type == ns_t_srv) {
 		dns_srv_result_destroy(&assembly->payload.srv);
@@ -88,7 +155,9 @@ static uint32_t resolver_ipc_assembly_ttl_expected(uint32_t record_ttl, uint32_t
 }
 
 static resolver_ipc_assembly_status resolver_ipc_assembly_arrays_allocate(resolver_ipc_assembly *assembly, size_t cname_count, size_t record_count) {
-	if (!resolver_cache_result_fits(assembly->query_type, cname_count, record_count)) {
+	resolver_cache_result_fit classification = resolver_cache_result_classify(assembly->query_type, cname_count, record_count);
+	if (classification != RESOLVER_CACHE_RESULT_FIT_OK) {
+		resolver_ipc_assembly_metrics_limit_record(assembly, classification);
 		return RESOLVER_IPC_ASSEMBLY_LIMIT;
 	}
 	size_t cname_bytes = 0;
@@ -96,11 +165,17 @@ static resolver_ipc_assembly_status resolver_ipc_assembly_arrays_allocate(resolv
 	size_t record_size = assembly->query_type == ns_t_srv ? sizeof(dns_srv_record) : sizeof(dns_address_record);
 	if ((cname_count > 0 && !resolver_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(dns_cname_record), &cname_bytes))
 		|| !resolver_size_multiply(record_count, record_size, &record_bytes)) {
+		resolver_ipc_assembly_metrics_limit_record(assembly, RESOLVER_CACHE_RESULT_FIT_BYTES);
 		return RESOLVER_IPC_ASSEMBLY_LIMIT;
 	}
 	size_t allocation_size = cname_bytes;
-	if (!resolver_size_add(&allocation_size, record_bytes) || allocation_size > (size_t)RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT
-		|| assembly->budget->owned_bytes > (size_t)RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT - allocation_size) {
+	if (!resolver_size_add(&allocation_size, record_bytes) || allocation_size > (size_t)RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT) {
+		resolver_ipc_assembly_metrics_limit_record(assembly, RESOLVER_CACHE_RESULT_FIT_BYTES);
+		return RESOLVER_IPC_ASSEMBLY_LIMIT;
+	}
+	if (assembly->budget->owned_bytes > (size_t)RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT - allocation_size) {
+		resolver_ipc_assembly_metrics_query *metrics = &assembly->budget->metrics.query[resolver_ipc_assembly_metrics_query_type(assembly->query_type)];
+		resolver_ipc_assembly_metrics_increment(assembly->budget, &metrics->limit_budget_bytes);
 		return RESOLVER_IPC_ASSEMBLY_LIMIT;
 	}
 	dns_cname_record *cnames = cname_count == 0 ? NULL : calloc(DNS_CNAME_DEPTH_LIMIT, sizeof(*cnames));
@@ -119,6 +194,7 @@ static resolver_ipc_assembly_status resolver_ipc_assembly_arrays_allocate(resolv
 	}
 	assembly->budget->owned_bytes += allocation_size;
 	assembly->dynamic_bytes = allocation_size;
+	metrics_high_water_update(&assembly->budget->metrics.owned_bytes_high_water, assembly->budget->owned_bytes);
 	return RESOLVER_IPC_ASSEMBLY_OK;
 }
 
@@ -264,11 +340,13 @@ static resolver_ipc_assembly_status resolver_ipc_assembly_end_consume(resolver_i
 		assembly->payload.address.address_count = assembly->declared_record_count;
 		assembly->payload.address.cname_count = assembly->declared_cname_count;
 	}
+	resolver_ipc_assembly_metrics_terminal_record(assembly, RESOLVER_IPC_ASSEMBLY_COMPLETE);
 	assembly->state = RESOLVER_IPC_ASSEMBLY_STATE_COMPLETE;
 	return RESOLVER_IPC_ASSEMBLY_COMPLETE;
 }
 
 static resolver_ipc_assembly_status resolver_ipc_assembly_fail(resolver_ipc_assembly *assembly, resolver_ipc_assembly_status status) {
+	resolver_ipc_assembly_metrics_terminal_record(assembly, status);
 	resolver_ipc_assembly_data_clear(assembly);
 	assembly->state = RESOLVER_IPC_ASSEMBLY_STATE_FAILED;
 	return status;
@@ -313,6 +391,7 @@ resolver_ipc_assembly_budget *resolver_ipc_assembly_budget_create(void) {
 	resolver_ipc_assembly_budget *budget = calloc(1, sizeof(*budget));
 	if (budget != NULL) {
 		budget->owned_bytes = sizeof(*budget);
+		budget->metrics.owned_bytes_high_water = sizeof(*budget);
 	}
 	return budget;
 }
@@ -336,17 +415,25 @@ resolver_ipc_assembly_status resolver_ipc_assembly_create(resolver_ipc_assembly_
 	if (result != NULL) {
 		*result = NULL;
 	}
+	bool attributable = budget != NULL && (query_type == ns_t_a || query_type == ns_t_aaaa || query_type == ns_t_srv);
+	size_t metrics_query = attributable ? resolver_ipc_assembly_metrics_query_type(query_type) : 0;
 	char normalized_name[NS_MAXDNAME];
-	if (budget == NULL || result == NULL || query_class != ns_c_in || (query_type != ns_t_a && query_type != ns_t_aaaa && query_type != ns_t_srv) || query_id == 0
+	if (!attributable || result == NULL || query_class != ns_c_in || query_id == 0
 		|| !resolver_name_normalize(query_name, normalized_name)) {
+		if (attributable) {
+			resolver_ipc_assembly_metrics_increment(budget, &budget->metrics.query[metrics_query].create_bad_argument);
+		}
 		return RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT;
 	}
 	if (sizeof(resolver_ipc_assembly) > (size_t)RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT
 		|| budget->owned_bytes > (size_t)RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT - sizeof(resolver_ipc_assembly)) {
+		resolver_ipc_assembly_metrics_increment(budget, &budget->metrics.query[metrics_query].create_limit);
+		resolver_ipc_assembly_metrics_increment(budget, &budget->metrics.query[metrics_query].limit_budget_bytes);
 		return RESOLVER_IPC_ASSEMBLY_LIMIT;
 	}
 	resolver_ipc_assembly *assembly = calloc(1, sizeof(*assembly));
 	if (assembly == NULL) {
+		resolver_ipc_assembly_metrics_increment(budget, &budget->metrics.query[metrics_query].create_memory);
 		return RESOLVER_IPC_ASSEMBLY_MEMORY;
 	}
 	assembly->budget = budget;
@@ -361,7 +448,9 @@ resolver_ipc_assembly_status resolver_ipc_assembly_create(resolver_ipc_assembly_
 	assembly->state = RESOLVER_IPC_ASSEMBLY_STATE_BEGIN;
 	budget->assemblies = assembly;
 	budget->owned_bytes += sizeof(*assembly);
+	metrics_high_water_update(&budget->metrics.owned_bytes_high_water, budget->owned_bytes);
 	*result = assembly;
+	resolver_ipc_assembly_metrics_increment(budget, &budget->metrics.query[metrics_query].create_ok);
 	return RESOLVER_IPC_ASSEMBLY_OK;
 }
 
@@ -370,6 +459,10 @@ void resolver_ipc_assembly_destroy(resolver_ipc_assembly *assembly) {
 		return;
 	}
 	resolver_ipc_assembly_budget *budget = assembly->budget;
+	if (resolver_ipc_assembly_state_nonterminal(assembly->state)) {
+		size_t query = resolver_ipc_assembly_metrics_query_type(assembly->query_type);
+		resolver_ipc_assembly_metrics_increment(budget, &budget->metrics.query[query].abandoned);
+	}
 	resolver_ipc_assembly_data_clear(assembly);
 	if (assembly->previous == NULL) {
 		budget->assemblies = assembly->next;
@@ -385,6 +478,31 @@ void resolver_ipc_assembly_destroy(resolver_ipc_assembly *assembly) {
 		budget->owned_bytes = 0;
 	}
 	free(assembly);
+}
+
+bool resolver_ipc_assembly_metrics_get(const resolver_ipc_assembly_budget *budget, resolver_ipc_assembly_metrics_snapshot *result) {
+	if (result != NULL) {
+		memset(result, 0, sizeof(*result));
+	}
+	if (budget == NULL || result == NULL) {
+		return false;
+	}
+	result->owned_bytes_current = budget->owned_bytes;
+	result->owned_bytes_high_water = budget->metrics.owned_bytes_high_water;
+	memcpy(result->query, budget->metrics.query, sizeof(result->query));
+	result->saturation_total = budget->metrics.saturation_total;
+	for (size_t query = 0; query < METRICS_RESOLVER_QUERY_TYPE_COUNT; query++) {
+		metrics_size_histogram_get(&budget->metrics.result_size[query], &result->result_size[query]);
+	}
+	for (resolver_ipc_assembly *assembly = budget->assemblies; assembly != NULL; assembly = assembly->next) {
+		if (!resolver_ipc_assembly_state_nonterminal(assembly->state)) {
+			continue;
+		}
+		size_t query = resolver_ipc_assembly_metrics_query_type(assembly->query_type);
+		result->query[query].nonterminal_current++;
+		result->nonterminal_current++;
+	}
+	return true;
 }
 
 resolver_ipc_assembly_status resolver_ipc_assembly_packet_consume(resolver_ipc_assembly *assembly, const void *packet, size_t packet_size) {

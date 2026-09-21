@@ -34,6 +34,11 @@
 		} \
 	} while (0)
 
+/* section: global variables */
+static size_t cache_calloc_failures;
+
+void *__real_calloc(size_t count, size_t size);
+
 /* section: functions (local) */
 static bool cache_address_result_create(dns_address_result *result, const char *question_name, sa_family_t family, size_t address_count, uint32_t effective_ttl, bool with_cname) {
 	if (result == NULL || question_name == NULL || (family != AF_INET && family != AF_INET6) || address_count == 0) {
@@ -179,10 +184,14 @@ static bool cache_test_arguments(void) {
 	CHECK(resolver_cache_entry_count(NULL) == 0 && resolver_cache_owned_bytes(NULL) == 0, "NULL cache getters returned data");
 	CHECK(resolver_cache_entry_id(NULL) == 0 && resolver_cache_entry_name(NULL) == NULL && resolver_cache_entry_query_type(NULL) == 0, "NULL entry getters returned data");
 	CHECK(!resolver_cache_entry_retain(NULL), "NULL entry was retained");
-	CHECK(resolver_cache_result_fits(ns_t_a, 0, 1) && resolver_cache_result_fits(ns_t_aaaa, 1, 1) && resolver_cache_result_fits(ns_t_srv, 0, 1),
+	CHECK(resolver_cache_result_classify(ns_t_a, 0, 1) == RESOLVER_CACHE_RESULT_FIT_OK
+		&& resolver_cache_result_classify(ns_t_aaaa, 1, 1) == RESOLVER_CACHE_RESULT_FIT_OK
+		&& resolver_cache_result_classify(ns_t_srv, 0, 1) == RESOLVER_CACHE_RESULT_FIT_OK,
 		"bounded cache result was rejected");
-	CHECK(!resolver_cache_result_fits(ns_t_txt, 0, 1) && !resolver_cache_result_fits(ns_t_a, DNS_CNAME_DEPTH_LIMIT + 1, 1)
-		&& !resolver_cache_result_fits(ns_t_srv, 0, DNS_SRV_RECORD_LIMIT), "invalid or oversized cache result was accepted");
+	CHECK(resolver_cache_result_classify(ns_t_txt, 0, 1) == RESOLVER_CACHE_RESULT_FIT_SHAPE
+		&& resolver_cache_result_classify(ns_t_a, DNS_CNAME_DEPTH_LIMIT + 1, 1) == RESOLVER_CACHE_RESULT_FIT_SHAPE
+		&& resolver_cache_result_classify(ns_t_srv, 0, DNS_SRV_RECORD_LIMIT) == RESOLVER_CACHE_RESULT_FIT_BYTES,
+		"cache result classification was incorrect");
 	CHECK(!resolver_cache_entry_view(NULL, &now, &view), "NULL entry view was accepted");
 	CHECK(!resolver_cache_entry_view(entry, &now, NULL), "NULL view result was accepted");
 	CHECK(resolver_cache_entry_publish_address(NULL, DNS_ADDRESS_LOOKUP_OK, &now, &address_result) == RESOLVER_CACHE_PUBLISH_BAD_ARGUMENT, "NULL address entry was accepted");
@@ -216,6 +225,7 @@ static bool cache_test_capacity(void) {
 	resolver_cache_entry *result_entry = NULL;
 	dns_srv_result large_result = { 0 };
 	dns_srv_result small_result = { 0 };
+	resolver_cache_metrics_snapshot metrics;
 	resolver_cache_view view = { 0 };
 	const struct timespec completed_at = { .tv_sec = 100 };
 	CHECK(entry_cache != NULL, "entry-limit cache could not be created");
@@ -226,6 +236,8 @@ static bool cache_test_capacity(void) {
 	}
 	CHECK(resolver_cache_entry_acquire(entry_cache, "overflow.cache.test", ns_t_a, &extra_entry) == RESOLVER_CACHE_ACQUIRE_LIMIT && extra_entry == NULL,
 		"entry above the entry limit was accepted");
+	CHECK(resolver_cache_metrics_get(entry_cache, &metrics) && metrics.query[METRICS_QUERY_TYPE_A].acquire_created == RESOLVER_CACHE_ENTRY_LIMIT
+		&& metrics.query[METRICS_QUERY_TYPE_A].acquire_entry_limit == 1, "cache entry-limit metrics were incorrect");
 
 	result_cache = resolver_cache_create();
 	CHECK(result_cache != NULL, "result-limit cache could not be created");
@@ -237,6 +249,9 @@ static bool cache_test_capacity(void) {
 		"oversized SRV result was consumed or accepted");
 	CHECK(resolver_cache_entry_view(result_entry, &completed_at, &view) && view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE && view.srv_record_count == 1,
 		"oversized replacement discarded the old SRV payload");
+	CHECK(resolver_cache_metrics_get(result_cache, &metrics) && metrics.query[METRICS_QUERY_TYPE_SRV].publish_stored == 1
+		&& metrics.query[METRICS_QUERY_TYPE_SRV].publish_limit == 1 && metrics.query[METRICS_QUERY_TYPE_SRV].publish_limit_result_bytes == 1
+		&& metrics.query[METRICS_QUERY_TYPE_SRV].value_positive == 2, "cache result-byte limit metrics were incorrect");
 
 	byte_cache = resolver_cache_create();
 	CHECK(byte_cache != NULL, "byte-limit cache could not be created");
@@ -252,6 +267,9 @@ static bool cache_test_capacity(void) {
 	CHECK(resolver_cache_entry_publish_address(byte_entries[0], DNS_ADDRESS_LOOKUP_OK, &completed_at, &byte_results[0]) == RESOLVER_CACHE_PUBLISH_STORED,
 		"same-size payload replacement did not discount the old payload from steady-state accounting");
 	CHECK(resolver_cache_owned_bytes(byte_cache) <= RESOLVER_CACHE_OWNED_BYTE_LIMIT, "cache exceeded its owned-byte limit");
+	CHECK(resolver_cache_metrics_get(byte_cache, &metrics) && metrics.query[METRICS_QUERY_TYPE_A].publish_stored == 2
+		&& metrics.query[METRICS_QUERY_TYPE_A].publish_limit == 1 && metrics.query[METRICS_QUERY_TYPE_A].publish_limit_owned_bytes == 1,
+		"cache owned-byte limit metrics were incorrect");
 	test_result = true;
 
 cleanup:
@@ -310,6 +328,80 @@ cleanup:
 	resolver_cache_entry_release(address_v6);
 	resolver_cache_entry_release(root);
 	resolver_cache_entry_release(srv);
+	resolver_cache_destroy(cache);
+	return test_result;
+}
+
+static bool cache_test_metrics(void) {
+	int test_result = false;
+	resolver_cache *cache = resolver_cache_create();
+	resolver_cache_entry *entry = NULL;
+	resolver_cache_entry *entry_again = NULL;
+	dns_address_result result = { 0 };
+	resolver_cache_metrics_snapshot snapshot;
+	const struct timespec completed_at = { .tv_sec = 100 };
+	const struct timespec expires_at = { .tv_sec = 130 };
+	memset(&snapshot, 0xFF, sizeof(snapshot));
+	CHECK(!resolver_cache_metrics_get(NULL, &snapshot) && snapshot.entries_current == 0 && snapshot.query[METRICS_QUERY_TYPE_A].acquire_created == 0,
+		"NULL cache metrics input was accepted or left output data behind");
+	CHECK(cache != NULL && resolver_cache_metrics_get(cache, &snapshot), "cache metrics state could not be created or read");
+	uint64_t baseline_bytes = snapshot.owned_bytes_current;
+	CHECK(baseline_bytes > 0 && snapshot.owned_bytes_high_water == baseline_bytes && snapshot.entries_current == 0 && snapshot.entries_high_water == 0,
+		"initial cache metrics gauges were incorrect");
+	CHECK(resolver_cache_entry_acquire(cache, "invalid.metrics.test", ns_t_txt, &entry) == RESOLVER_CACHE_ACQUIRE_BAD_ARGUMENT && entry == NULL,
+		"invalid metrics query type was accepted");
+	cache_calloc_failures = 1;
+	CHECK(resolver_cache_entry_acquire(cache, "metrics.test", ns_t_a, &entry) == RESOLVER_CACHE_ACQUIRE_MEMORY && entry == NULL,
+		"cache entry allocation failure was not reported");
+	CHECK(resolver_cache_entry_acquire(cache, "metrics.test", ns_t_a, &entry) == RESOLVER_CACHE_ACQUIRE_OK && entry != NULL,
+		"cache metrics entry could not be acquired");
+	CHECK(resolver_cache_entry_acquire(cache, "METRICS.TEST.", ns_t_a, &entry_again) == RESOLVER_CACHE_ACQUIRE_OK && entry_again == entry,
+		"cache metrics reuse was not detected");
+	resolver_cache_entry_release(entry_again);
+	entry_again = NULL;
+	CHECK(cache_address_result_create(&result, "metrics.test", AF_INET, 1, 30, false), "cache metrics result could not be created");
+	cache_calloc_failures = 1;
+	CHECK(resolver_cache_entry_publish_address(entry, DNS_ADDRESS_LOOKUP_OK, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_MEMORY && result.addresses != NULL,
+		"cache payload allocation failure was not reported or consumed its result");
+	CHECK(resolver_cache_entry_publish_address(entry, DNS_ADDRESS_LOOKUP_OK, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_STORED && result.addresses == NULL,
+		"cache metrics result was not stored");
+	CHECK(resolver_cache_metrics_get(cache, &snapshot), "stored cache metrics could not be read");
+	const resolver_cache_metrics_query *a = &snapshot.query[METRICS_QUERY_TYPE_A];
+	CHECK(snapshot.entries_current == 1 && snapshot.entries_high_water == 1 && snapshot.owned_bytes_current > baseline_bytes
+		&& snapshot.owned_bytes_high_water == snapshot.owned_bytes_current, "cache metrics gauges did not reflect the stored entry");
+	CHECK(a->acquire_created == 1 && a->acquire_reused == 1 && a->acquire_memory == 1 && a->publish_memory == 1 && a->publish_stored == 1
+		&& a->value_positive == 2 && a->resident_positive == 1, "cache metrics acquire, publication, value, or resident counters were incorrect");
+	CHECK(snapshot.query[METRICS_QUERY_TYPE_OTHER].acquire_bad_argument == 1 && snapshot.ttl[METRICS_QUERY_TYPE_A][METRICS_PAYLOAD_KIND_POSITIVE].count == 2
+		&& snapshot.ttl[METRICS_QUERY_TYPE_A][METRICS_PAYLOAD_KIND_POSITIVE].sum == 60, "cache metrics qtype or positive TTL attribution was incorrect");
+	resolver_cache_view view;
+	CHECK(resolver_cache_entry_view(entry, &expires_at, &view) && view.status == RESOLVER_CACHE_VIEW_EMPTY, "cache metrics payload did not expire");
+	CHECK(resolver_cache_metrics_get(cache, &snapshot) && snapshot.query[METRICS_QUERY_TYPE_A].expiry_positive == 1
+		&& snapshot.query[METRICS_QUERY_TYPE_A].resident_positive == 0, "cache expiry metrics were incorrect");
+	CHECK(snprintf(result.question_name, sizeof(result.question_name), "%s", "metrics.test") > 0
+		&& snprintf(result.canonical_name, sizeof(result.canonical_name), "%s", "metrics.test") > 0 && cache_negative_set(&result.negative, NULL, 0, false),
+		"cache metrics transient result could not be created");
+	result.rcode = ns_r_noerror;
+	CHECK(resolver_cache_entry_publish_address(entry, DNS_ADDRESS_LOOKUP_NODATA, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_TRANSIENT,
+		"cache metrics zero-TTL result was not transient");
+	CHECK(resolver_cache_entry_publish_address(entry, DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_INVALID,
+		"cache metrics invalid result was accepted");
+	CHECK(resolver_cache_metrics_get(cache, &snapshot), "final cache metrics could not be read");
+	a = &snapshot.query[METRICS_QUERY_TYPE_A];
+	CHECK(a->publish_transient == 1 && a->publish_invalid == 1 && a->value_nodata == 1
+		&& snapshot.ttl[METRICS_QUERY_TYPE_A][METRICS_PAYLOAD_KIND_NODATA].count == 1
+		&& snapshot.ttl[METRICS_QUERY_TYPE_A][METRICS_PAYLOAD_KIND_NODATA].sum == 0 && snapshot.saturation_total == 0,
+		"cache transient, invalid, or zero-TTL metrics were incorrect");
+	resolver_cache_entry_release(entry);
+	entry = NULL;
+	CHECK(resolver_cache_metrics_get(cache, &snapshot) && snapshot.entries_current == 0 && snapshot.entries_high_water == 1
+		&& snapshot.owned_bytes_current == baseline_bytes && snapshot.owned_bytes_high_water > baseline_bytes, "cache metrics high-water values did not survive release");
+	test_result = true;
+
+cleanup:
+	cache_calloc_failures = 0;
+	dns_address_result_destroy(&result);
+	resolver_cache_entry_release(entry);
+	resolver_cache_entry_release(entry_again);
 	resolver_cache_destroy(cache);
 	return test_result;
 }
@@ -505,12 +597,23 @@ cleanup:
 	return test_result;
 }
 
+/* section: functions (exported) */
+void *__wrap_calloc(size_t count, size_t size) {
+	if (cache_calloc_failures > 0) {
+		cache_calloc_failures--;
+		errno = ENOMEM;
+		return NULL;
+	}
+	return __real_calloc(count, size);
+}
+
 /* section: functions (entry point) */
 int main(void) {
 	int test_result = EXIT_FAILURE;
 	CHECK(cache_test_arguments(), "cache argument tests failed");
 	CHECK(cache_test_capacity(), "cache capacity tests failed");
 	CHECK(cache_test_key_lifetime(), "cache key-lifetime tests failed");
+	CHECK(cache_test_metrics(), "cache metrics tests failed");
 	CHECK(cache_test_negative(), "cache negative-result tests failed");
 	CHECK(cache_test_negative_srv(), "cache negative-SRV tests failed");
 	CHECK(cache_test_positive_address(), "cache positive-address tests failed");
