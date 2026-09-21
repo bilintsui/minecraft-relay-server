@@ -573,7 +573,7 @@ bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const ch
 }
 
 void config_log_duplicate_error(const char *logfile, uint8_t maxlevel, mksys_level msglevel, const char *suffix) {
-	const char *base = config_errmsg(CONF_ECPROXYDUP);
+	const char *const base = config_errmsg(CONF_ECPROXYDUP);
 	if (config_duperr[0] != '\0') {
 		MKSYS_LOG(logfile, maxlevel, msglevel, "%s. Affected: \"%s\"%s", base, config_duperr, suffix);
 		config_duperr[0] = '\0';
