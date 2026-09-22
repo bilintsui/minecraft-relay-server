@@ -6,6 +6,7 @@
  */
 
 /* section: headers (library) */
+#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -18,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -118,7 +120,7 @@ static int short_test_client_connect(in_port_t port) {
 	return result;
 }
 
-static int short_test_config_write_internal(const short_fixture *fixture, const char *address, in_port_t upstream_port, uint32_t metrics_interval) {
+static int short_test_config_write_internal(const short_fixture *fixture, const char *address, in_port_t upstream_port, uint32_t metrics_interval, bool pending_route) {
 	char content[PATH_MAX + 512];
 	int content_length;
 	int fd;
@@ -128,8 +130,9 @@ static int short_test_config_write_internal(const short_fixture *fixture, const 
 	}
 	content_length = snprintf(content, sizeof(content),
 		"{\"log\":{\"filename\":\"%s\",\"level\":4},\"listen\":{\"address\":\"127.0.0.1\",\"port\":%u},"
-		"\"metrics\":{\"interval\":%u},\"icon\":\"\",\"proxy\":[{\"vhost\":[\"test.example\"],\"address\":\"%s\",\"port\":%u}]}\n",
-		fixture->log_filename, (unsigned int)fixture->listener_port, metrics_interval, address, (unsigned int)upstream_port);
+		"\"metrics\":{\"interval\":%u},\"icon\":\"\",\"proxy\":[{\"vhost\":[\"test.example\"],\"address\":\"%s\",\"port\":%u}%s]}\n",
+		fixture->log_filename, (unsigned int)fixture->listener_port, metrics_interval, address, (unsigned int)upstream_port,
+		pending_route ? ",{\"vhost\":[\"pin.example\"],\"address\":\"pin.example\",\"port\":25565}" : "");
 	if (content_length < 0 || (size_t)content_length >= sizeof(content)) {
 		errno = EOVERFLOW;
 		return -1;
@@ -153,11 +156,11 @@ static int short_test_config_write_internal(const short_fixture *fixture, const 
 }
 
 static int short_test_config_write(const short_fixture *fixture, const char *address, in_port_t upstream_port) {
-	return short_test_config_write_internal(fixture, address, upstream_port, 0);
+	return short_test_config_write_internal(fixture, address, upstream_port, 0, false);
 }
 
 static int short_test_config_write_metrics(const short_fixture *fixture, const char *address, in_port_t upstream_port, uint32_t metrics_interval) {
-	return short_test_config_write_internal(fixture, address, upstream_port, metrics_interval);
+	return short_test_config_write_internal(fixture, address, upstream_port, metrics_interval, false);
 }
 
 static size_t short_test_file_count(const char *filename, const char *needle) {
@@ -215,6 +218,22 @@ static size_t short_test_file_reserved_record_count(const char *filename) {
 static bool short_test_file_wait_contains(const char *filename, const char *needle, int timeout_ms) {
 	for (int elapsed = 0; elapsed <= timeout_ms; elapsed += LISTENER_SHORT_TEST_POLL_MS) {
 		if (short_test_file_contains(filename, needle)) {
+			return true;
+		}
+		struct timespec delay = { .tv_nsec = LISTENER_SHORT_TEST_POLL_MS * 1000000L };
+		while (nanosleep(&delay, &delay) == -1) {
+			if (errno != EINTR) {
+				return false;
+			}
+		}
+	}
+	errno = ETIMEDOUT;
+	return false;
+}
+
+static bool short_test_file_wait_count(const char *filename, const char *needle, size_t expected, int timeout_ms) {
+	for (int elapsed = 0; elapsed <= timeout_ms; elapsed += LISTENER_SHORT_TEST_POLL_MS) {
+		if (short_test_file_count(filename, needle) >= expected) {
 			return true;
 		}
 		struct timespec delay = { .tv_nsec = LISTENER_SHORT_TEST_POLL_MS * 1000000L };
@@ -351,7 +370,7 @@ static int short_test_fixture_start_internal(short_fixture *fixture, const char 
 	}
 	fixture->listener_port = ntohs(reservation_address.sin_port);
 	close(reservation_fd);
-	if (short_test_config_write_metrics(fixture, upstream_address, upstream_port, metrics_interval) == -1) {
+	if (short_test_config_write_internal(fixture, upstream_address, upstream_port, metrics_interval, strcmp(suffix, "hosts-reload") == 0) == -1) {
 		return -1;
 	}
 	fixture->notify_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
@@ -376,7 +395,7 @@ static int short_test_fixture_start_internal(short_fixture *fixture, const char 
 		int devnull_fd = open("/dev/null", O_WRONLY);
 		if (devnull_fd == -1 || dup2(devnull_fd, STDOUT_FILENO) == -1 || dup2(devnull_fd, STDERR_FILENO) == -1
 			|| setenv("NOTIFY_SOCKET", fixture->notify_filename, 1) == -1
-			|| ((strcmp(suffix, "route-cancel") == 0 || strcmp(suffix, "reload-late") == 0 || strcmp(suffix, "reload-late-armed") == 0)
+			|| ((strcmp(suffix, "hosts-reload") == 0 || strcmp(suffix, "route-cancel") == 0 || strcmp(suffix, "reload-late") == 0 || strcmp(suffix, "reload-late-armed") == 0)
 				&& setenv("MCRELAY_TEST_DNS_PENDING", "1", 1) == -1)
 			|| ((strcmp(suffix, "reload-late-short") == 0 || strcmp(suffix, "reload-late-short-armed") == 0)
 				&& setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1)
@@ -393,6 +412,7 @@ static int short_test_fixture_start_internal(short_fixture *fixture, const char 
 			|| (strcmp(suffix, "metrics-eagain") == 0 && setenv("MCRELAY_TEST_METRICS_TIMER_READ", "eagain", 1) == -1)
 			|| (strcmp(suffix, "metrics-eintr") == 0 && setenv("MCRELAY_TEST_METRICS_TIMER_READ", "eintr", 1) == -1)
 			|| (strcmp(suffix, "metrics-eio") == 0 && setenv("MCRELAY_TEST_METRICS_TIMER_READ", "eio", 1) == -1)
+			|| (strcmp(suffix, "hosts-recovery") == 0 && setenv("MCRELAY_TEST_HOSTS_RECOVERY", "1", 1) == -1)
 			|| (strcmp(suffix, "metrics-reload-disable") == 0 && (setenv("MCRELAY_TEST_METRICS_TIMER_READ", "reload-disable", 1) == -1
 				|| setenv("MCRELAY_TEST_METRICS_RELOAD_TRIGGER", fixture->release_trigger_filename, 1) == -1))
 			|| (strcmp(suffix, "metrics-reload-interval") == 0 && (setenv("MCRELAY_TEST_METRICS_TIMER_READ", "reload-interval", 1) == -1
@@ -538,6 +558,62 @@ static size_t short_test_handshake_request_build(uint8_t *target, size_t capacit
 	return packet_prefix + body_length + 2U;
 }
 
+static bool short_test_hosts_write(const char *filename, const char *address, bool replace) {
+	char content[BUFSIZ];
+	char replacement[PATH_MAX];
+	const char *target = filename;
+	if (filename == NULL || address == NULL) {
+		errno = EINVAL;
+		return false;
+	}
+	if (replace) {
+		int replacement_length = snprintf(replacement, sizeof(replacement), "%s.new", filename);
+		if (replacement_length < 0 || (size_t)replacement_length >= sizeof(replacement)) {
+			errno = EOVERFLOW;
+			return false;
+		}
+		target = replacement;
+	}
+	int content_length = snprintf(content, sizeof(content), "127.0.0.1 localhost\n%s hosts-reload.test\n", address);
+	if (content_length < 0 || (size_t)content_length >= sizeof(content)) {
+		errno = EOVERFLOW;
+		return false;
+	}
+	int fd = open(target, O_CLOEXEC | O_CREAT | O_TRUNC | O_WRONLY, 0600);
+	if (fd == -1) {
+		return false;
+	}
+	size_t written = 0;
+	while (written < (size_t)content_length) {
+		ssize_t write_size = write(fd, content + written, (size_t)content_length - written);
+		if (write_size <= 0) {
+			int saved_errno = errno;
+			close(fd);
+			if (replace) {
+				unlink(replacement);
+			}
+			errno = saved_errno;
+			return false;
+		}
+		written += (size_t)write_size;
+	}
+	if (close(fd) == -1) {
+		int saved_errno = errno;
+		if (replace) {
+			unlink(replacement);
+		}
+		errno = saved_errno;
+		return false;
+	}
+	if (replace && rename(replacement, filename) == -1) {
+		int saved_errno = errno;
+		unlink(replacement);
+		errno = saved_errno;
+		return false;
+	}
+	return true;
+}
+
 static int short_test_listener_accept(int listener_fd) {
 	struct pollfd event = { .fd = listener_fd, .events = POLLIN };
 	int poll_result;
@@ -551,12 +627,15 @@ static int short_test_listener_accept(int listener_fd) {
 	return accept(listener_fd, NULL, NULL);
 }
 
-static int short_test_listener_open(in_port_t *port) {
+static int short_test_listener_open_address(const char *text, in_port_t *port) {
 	struct sockaddr_in address = {
 		.sin_family = AF_INET,
-		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
-		.sin_port = htons(0)
+		.sin_port = htons(port == NULL ? 0 : *port)
 	};
+	if (text == NULL || inet_pton(AF_INET, text, &address.sin_addr) != 1) {
+		errno = EINVAL;
+		return -1;
+	}
 	socklen_t address_size = sizeof(address);
 	int result = socket(AF_INET, SOCK_STREAM, 0);
 	if (result == -1) {
@@ -572,6 +651,13 @@ static int short_test_listener_open(in_port_t *port) {
 		*port = ntohs(address.sin_port);
 	}
 	return result;
+}
+
+static int short_test_listener_open(in_port_t *port) {
+	if (port != NULL) {
+		*port = 0;
+	}
+	return short_test_listener_open_address("127.0.0.1", port);
 }
 
 static int short_test_receive_exact(int socket_fd, uint8_t *data, size_t data_size) {
@@ -660,6 +746,256 @@ static int short_test_send_all(int socket_fd, const uint8_t *data, size_t data_s
 		offset += (size_t)send_size;
 	}
 	return 0;
+}
+
+static bool short_test_hosts_hardlink(const char *binary, const char *directory, const char *hosts_filename) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	char ready_filename[PATH_MAX] = { 0 };
+	int client_fd = -1;
+	int upstream_client_fd = -1;
+	int upstream_fd = -1;
+	in_port_t upstream_port = 0;
+	int length = snprintf(ready_filename, sizeof(ready_filename), "%s.ready", hosts_filename);
+	CHECK(length > 0 && (size_t)length < sizeof(ready_filename), "hosts-hardlink source filename overflowed");
+	upstream_fd = short_test_listener_open_address("127.0.0.2", &upstream_port);
+	CHECK(upstream_fd >= 0, "could not open hosts-hardlink upstream");
+	CHECK(short_test_hosts_write(ready_filename, "127.0.0.2", false) && unlink(hosts_filename) == 0, "could not prepare absent hosts-hardlink path");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "hosts-hardlink", "hosts-reload.test", upstream_port) == 0,
+		"could not start hosts-hardlink listener");
+	CHECK(link(ready_filename, hosts_filename) == 0 && unlink(ready_filename) == 0, "could not publish hosts hardlink and remove its source");
+	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 1, LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"hosts hardlink publication did not trigger automatic reload");
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0 && short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0,
+		"could not send hosts-hardlink request");
+	upstream_client_fd = short_test_listener_accept(upstream_fd);
+	CHECK(upstream_client_fd >= 0, "hosts-hardlink request did not reach the new upstream");
+	uint8_t forwarded[sizeof(short_status_request)];
+	CHECK(short_test_receive_exact(upstream_client_fd, forwarded, sizeof(forwarded)) == 0 && memcmp(forwarded, short_status_request, sizeof(forwarded)) == 0,
+		"hosts-hardlink request was not forwarded correctly");
+	CHECK(short_test_fixture_stop(&fixture) == 0, "hosts-hardlink listener did not stop cleanly");
+	test_result = true;
+
+cleanup:
+	if (client_fd >= 0) {
+		close(client_fd);
+	}
+	if (upstream_client_fd >= 0) {
+		close(upstream_client_fd);
+	}
+	if (upstream_fd >= 0) {
+		close(upstream_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	unlink(ready_filename);
+	unlink(hosts_filename);
+	short_test_hosts_write(hosts_filename, "127.0.0.1", false);
+	return test_result;
+}
+
+static bool short_test_hosts_recovery(const char *binary, const char *directory, const char *hosts_filename) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int client_fd = -1;
+	int upstream_a_fd = -1;
+	int upstream_b_client_fd = -1;
+	int upstream_b_fd = -1;
+	in_port_t upstream_port = 0;
+	upstream_a_fd = short_test_listener_open_address("127.0.0.1", &upstream_port);
+	CHECK(upstream_a_fd >= 0, "could not open initial hosts-recovery upstream");
+	upstream_b_fd = short_test_listener_open_address("127.0.0.2", &upstream_port);
+	CHECK(upstream_b_fd >= 0, "could not open replacement hosts-recovery upstream");
+	CHECK(short_test_hosts_write(hosts_filename, "127.0.0.1", false), "could not prepare initial hosts-recovery table");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "hosts-recovery", "hosts-reload.test", upstream_port) == 0,
+		"could not start hosts-recovery listener");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, "SIGUSR1 reload remains available.", LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"initial hosts monitor failure was not injected");
+	CHECK(short_test_fixture_reload(&fixture) == 0, "could not manually reload the degraded hosts monitor");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, "Automatic monitoring for local static host table", LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"hosts monitor was not restored before the manual read");
+	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 1, LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"change made during degraded-monitor recovery was not reloaded automatically");
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0 && short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0,
+		"could not send hosts-recovery request");
+	upstream_b_client_fd = short_test_listener_accept(upstream_b_fd);
+	CHECK(upstream_b_client_fd >= 0, "hosts-recovery request did not reach the updated upstream");
+	uint8_t forwarded[sizeof(short_status_request)];
+	CHECK(short_test_receive_exact(upstream_b_client_fd, forwarded, sizeof(forwarded)) == 0 && memcmp(forwarded, short_status_request, sizeof(forwarded)) == 0,
+		"hosts-recovery request was not forwarded correctly");
+	CHECK(short_test_fixture_stop(&fixture) == 0, "hosts-recovery listener did not stop cleanly");
+	test_result = true;
+
+cleanup:
+	if (client_fd >= 0) {
+		close(client_fd);
+	}
+	if (upstream_a_fd >= 0) {
+		close(upstream_a_fd);
+	}
+	if (upstream_b_client_fd >= 0) {
+		close(upstream_b_client_fd);
+	}
+	if (upstream_b_fd >= 0) {
+		close(upstream_b_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	short_test_hosts_write(hosts_filename, "127.0.0.1", false);
+	return test_result;
+}
+
+static bool short_test_hosts_reload(const char *binary, const char *directory, const char *hosts_filename) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int client_fd = -1;
+	int pinned_client_fd = -1;
+	int upstream_a_client_fd = -1;
+	int upstream_a_fd = -1;
+	int upstream_b_client_fd = -1;
+	int upstream_b_fd = -1;
+	in_port_t upstream_port = 0;
+	upstream_a_fd = short_test_listener_open_address("127.0.0.1", &upstream_port);
+	CHECK(upstream_a_fd >= 0, "could not open initial hosts-reload upstream");
+	upstream_b_fd = short_test_listener_open_address("127.0.0.2", &upstream_port);
+	CHECK(upstream_b_fd >= 0, "could not open replacement hosts-reload upstream");
+	CHECK(short_test_hosts_write(hosts_filename, "127.0.0.1", false), "could not prepare initial hosts-reload table");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "hosts-reload", "hosts-reload.test", upstream_port) == 0,
+		"could not start hosts-reload listener");
+	uint8_t pinned_request[BUFSIZ];
+	size_t pinned_request_size = short_test_handshake_request_build(pinned_request, sizeof(pinned_request), "pin.example");
+	pinned_client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(pinned_request_size > 0 && pinned_client_fd >= 0 && short_test_send_all(pinned_client_fd, pinned_request, pinned_request_size) == 0,
+		"could not start pinned hosts-reload request");
+	struct timespec pending_delay = { .tv_nsec = 100000000L };
+	while (nanosleep(&pending_delay, &pending_delay) == -1) {
+		CHECK(errno == EINTR, "could not wait for pinned hosts-reload generation");
+	}
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0 && short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0,
+		"could not send initial hosts-reload request");
+	upstream_a_client_fd = short_test_listener_accept(upstream_a_fd);
+	CHECK(upstream_a_client_fd >= 0, "initial hosts-reload request did not reach its upstream");
+	uint8_t forwarded[sizeof(short_status_request)];
+	CHECK(short_test_receive_exact(upstream_a_client_fd, forwarded, sizeof(forwarded)) == 0 && memcmp(forwarded, short_status_request, sizeof(forwarded)) == 0,
+		"initial hosts-reload request was not forwarded correctly");
+	CHECK(short_test_hosts_write(hosts_filename, "127.0.0.2", true), "could not atomically replace hosts-reload table");
+	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 1, LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"first automatic hosts reload was not published");
+	CHECK(close(client_fd) == 0 && close(upstream_a_client_fd) == 0, "could not close initial hosts-reload relay");
+	client_fd = -1;
+	upstream_a_client_fd = -1;
+	CHECK(short_test_hosts_write(hosts_filename, "127.0.0.1", true) && short_test_hosts_write(hosts_filename, "127.0.0.2", true),
+		"could not coalesce deferred hosts replacements");
+	struct timespec delay = { .tv_nsec = 300000000L };
+	while (nanosleep(&delay, &delay) == -1) {
+		CHECK(errno == EINTR, "could not wait for deferred hosts reload");
+	}
+	CHECK(short_test_file_count(fixture.log_filename, "Local static host table reloaded automatically.") == 1U,
+		"hosts reload was not deferred while a retired generation was pinned");
+	CHECK(close(pinned_client_fd) == 0, "could not release pinned hosts-reload generation");
+	pinned_client_fd = -1;
+	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 2, LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"deferred automatic hosts reload was not published");
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0 && short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0,
+		"could not send replacement hosts-reload request");
+	upstream_b_client_fd = short_test_listener_accept(upstream_b_fd);
+	CHECK(upstream_b_client_fd >= 0, "replacement hosts-reload request did not reach its upstream");
+	CHECK(short_test_receive_exact(upstream_b_client_fd, forwarded, sizeof(forwarded)) == 0 && memcmp(forwarded, short_status_request, sizeof(forwarded)) == 0,
+		"replacement hosts-reload request was not forwarded correctly");
+	CHECK(short_test_fixture_stop(&fixture) == 0, "hosts-reload listener did not stop cleanly");
+	test_result = true;
+
+cleanup:
+	if (client_fd >= 0) {
+		close(client_fd);
+	}
+	if (pinned_client_fd >= 0) {
+		close(pinned_client_fd);
+	}
+	if (upstream_a_client_fd >= 0) {
+		close(upstream_a_client_fd);
+	}
+	if (upstream_a_fd >= 0) {
+		close(upstream_a_fd);
+	}
+	if (upstream_b_client_fd >= 0) {
+		close(upstream_b_client_fd);
+	}
+	if (upstream_b_fd >= 0) {
+		close(upstream_b_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	short_test_hosts_write(hosts_filename, "127.0.0.1", false);
+	return test_result;
+}
+
+static bool short_test_hosts_symlink(const char *binary, const char *directory, const char *hosts_filename) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	char target_directory[PATH_MAX] = { 0 };
+	char target_filename[PATH_MAX] = { 0 };
+	int client_fd = -1;
+	int upstream_client_fd = -1;
+	int upstream_fd = -1;
+	in_port_t upstream_port = 0;
+	int length = snprintf(target_directory, sizeof(target_directory), "%s/hosts-link-targets", directory);
+	CHECK(length > 0 && (size_t)length < sizeof(target_directory) && mkdir(target_directory, 0700) == 0, "could not prepare hosts-symlink target directory");
+	length = snprintf(target_filename, sizeof(target_filename), "%s/target", target_directory);
+	CHECK(length > 0 && (size_t)length < sizeof(target_filename), "hosts-symlink target filename overflowed");
+	upstream_fd = short_test_listener_open_address("127.0.0.2", &upstream_port);
+	CHECK(upstream_fd >= 0, "could not open hosts-symlink upstream");
+	CHECK(short_test_hosts_write(target_filename, "127.0.0.2", false) && unlink(hosts_filename) == 0, "could not prepare absent hosts-symlink path");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "hosts-symlink", "hosts-reload.test", upstream_port) == 0,
+		"could not start hosts-symlink listener");
+	CHECK(symlink(target_filename, hosts_filename) == 0, "could not create watched hosts symlink");
+	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 1, LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"new hosts symlink did not publish its target");
+	CHECK(unlink(target_filename) == 0, "could not delete hosts symlink target");
+	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 2, LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"hosts symlink target deletion was not published");
+	CHECK(short_test_hosts_write(target_filename, "127.0.0.2", false), "could not recreate hosts symlink target");
+	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 3, LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"hosts symlink target recreation was not published");
+	CHECK(short_test_hosts_write(target_filename, "127.0.0.2", false), "could not update recreated hosts symlink target");
+	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 4, LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"recreated hosts symlink target lost automatic monitoring");
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0 && short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0,
+		"could not send hosts-symlink request");
+	upstream_client_fd = short_test_listener_accept(upstream_fd);
+	CHECK(upstream_client_fd >= 0, "hosts-symlink request did not reach the target upstream");
+	uint8_t forwarded[sizeof(short_status_request)];
+	CHECK(short_test_receive_exact(upstream_client_fd, forwarded, sizeof(forwarded)) == 0 && memcmp(forwarded, short_status_request, sizeof(forwarded)) == 0,
+		"hosts-symlink request was not forwarded correctly");
+	CHECK(short_test_fixture_stop(&fixture) == 0, "hosts-symlink listener did not stop cleanly");
+	test_result = true;
+
+cleanup:
+	if (client_fd >= 0) {
+		close(client_fd);
+	}
+	if (upstream_client_fd >= 0) {
+		close(upstream_client_fd);
+	}
+	if (upstream_fd >= 0) {
+		close(upstream_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	unlink(hosts_filename);
+	unlink(target_filename);
+	rmdir(target_directory);
+	short_test_hosts_write(hosts_filename, "127.0.0.1", false);
+	return test_result;
 }
 
 static bool short_test_admission(const char *binary, const char *directory) {
@@ -1498,16 +1834,24 @@ cleanup:
 int main(int argc, char **argv) {
 	bool test_result = false;
 	char temp_directory[] = "/tmp/mcrelay-listener-short-XXXXXX";
-	if (argc != 2) {
-		fprintf(stderr, "usage: %s <listener-short-daemon>\n", argv[0]);
+	if (argc != 3) {
+		fprintf(stderr, "usage: %s <listener-short-daemon> <hosts-file>\n", argv[0]);
 		return EXIT_FAILURE;
 	}
 	if (mkdtemp(temp_directory) == NULL) {
 		fprintf(stderr, "cannot create temporary directory (errno=%d)\n", errno);
 		return EXIT_FAILURE;
 	}
+	if (!short_test_hosts_write(argv[2], "127.0.0.1", false)) {
+		fprintf(stderr, "cannot create listener hosts fixture (errno=%d)\n", errno);
+		rmdir(temp_directory);
+		return EXIT_FAILURE;
+	}
 	test_result = short_test_admission(argv[1], temp_directory) && short_test_deadline(argv[1], temp_directory)
 		&& short_test_lifetime(argv[1], temp_directory) && short_test_log_forgery(argv[1], temp_directory)
+		&& short_test_hosts_hardlink(argv[1], temp_directory, argv[2]) && short_test_hosts_recovery(argv[1], temp_directory, argv[2])
+		&& short_test_hosts_reload(argv[1], temp_directory, argv[2])
+		&& short_test_hosts_symlink(argv[1], temp_directory, argv[2])
 		&& short_test_metrics_lifecycle(argv[1], temp_directory) && short_test_metrics_reload_batch(argv[1], temp_directory)
 		&& short_test_metrics_timer(argv[1], temp_directory) && short_test_refusal(argv[1], temp_directory)
 		&& short_test_release_fault_short(argv[1], temp_directory) && short_test_release_fault_dispatch(argv[1], temp_directory)
@@ -1520,6 +1864,7 @@ int main(int argc, char **argv) {
 		&& short_test_reload_ready_flip(argv[1], temp_directory)
 		&& short_test_route_cancel(argv[1], temp_directory)
 		&& short_test_stop(argv[1], temp_directory);
+	unlink(argv[2]);
 	if (rmdir(temp_directory) == -1 && errno != ENOENT) {
 		test_result = false;
 	}

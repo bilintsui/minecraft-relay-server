@@ -52,6 +52,7 @@
 #include "protocol/proxy.h"
 #include "resolver/cache.h"
 #include "resolver/hosts.h"
+#include "resolver/hosts_watch.h"
 #include "resolver/supervisor.h"
 #include "route/bindings.h"
 #include "route/generation.h"
@@ -181,6 +182,7 @@ typedef enum {
 } listener_connection_timer;
 typedef enum {
 	LISTENER_EVENT_CLIENT,
+	LISTENER_EVENT_HOSTS,
 	LISTENER_EVENT_LISTENER,
 	LISTENER_EVENT_METRICS_TIMER,
 	LISTENER_EVENT_RESOLVER,
@@ -298,6 +300,9 @@ typedef struct {
 } listener_endpoint;
 typedef struct {
 	int epoll_fd;
+	hosts_watch *hosts_watch;
+	bool hosts_watch_degraded;
+	listener_event_source hosts_watch_source;
 	listener_event_source listener_source;
 	bool mask_blocked;
 	bool metrics_timer_degraded;
@@ -322,6 +327,8 @@ typedef struct {
 typedef struct {
 	bool accept_ready;
 	bool child_ready;
+	bool hosts_watch_failed;
+	bool hosts_watch_ready;
 	listener_ready_event ready[LISTENER_EVENT_BATCH];
 	size_t ready_count;
 	bool reload;
@@ -1487,6 +1494,8 @@ static void listener_events_destroy(listener_events *events) {
 	if (events->epoll_fd != -1) {
 		close(events->epoll_fd);
 	}
+	hosts_watch_destroy(events->hosts_watch);
+	events->hosts_watch = NULL;
 	if (events->metrics_timer_fd != -1) {
 		close(events->metrics_timer_fd);
 	}
@@ -1517,6 +1526,7 @@ static int listener_events_init(listener_events *events) {
 	events->resolver_fd = -1;
 	events->route_timer_fd = -1;
 	events->signal_fd = -1;
+	events->hosts_watch_source.kind = LISTENER_EVENT_HOSTS;
 	events->listener_source.kind = LISTENER_EVENT_LISTENER;
 	events->metrics_timer_source.kind = LISTENER_EVENT_METRICS_TIMER;
 	events->resolver_source.kind = LISTENER_EVENT_RESOLVER;
@@ -1627,6 +1637,18 @@ static int listener_events_wait(const listener_events *events, listener_requests
 			return -1;
 		}
 		switch (source->kind) {
+		case LISTENER_EVENT_HOSTS:
+			if (source != &events->hosts_watch_source || events->hosts_watch == NULL) {
+				errno = EIO;
+				return -1;
+			}
+			if (event_flags & (EPOLLERR | EPOLLHUP)) {
+				requests->hosts_watch_failed = true;
+			}
+			if (event_flags & EPOLLIN) {
+				requests->hosts_watch_ready = true;
+			}
+			break;
 		case LISTENER_EVENT_SIGNAL:
 			if (source != &events->signal_source) {
 				errno = EIO;
@@ -1830,6 +1852,112 @@ static bool listener_hosts_prepare(listener_context *context, mksys_level failur
 		);
 	}
 	return true;
+}
+
+static void listener_hosts_watch_disable(listener_events *events) {
+	if (events->hosts_watch != NULL) {
+		(void)listener_events_remove(events, hosts_watch_descriptor(events->hosts_watch));
+		hosts_watch_destroy(events->hosts_watch);
+		events->hosts_watch = NULL;
+	}
+	events->hosts_watch_degraded = true;
+}
+
+static int listener_hosts_watch_establish(listener_events *events, bool *overlap_changed) {
+	hosts_watch *candidate = NULL;
+	if (overlap_changed != NULL) {
+		*overlap_changed = false;
+	}
+	if (events == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+	hosts_watch_create_status status = hosts_watch_create(LISTENER_HOSTS_FILENAME, &candidate);
+	if (status != HOSTS_WATCH_CREATE_OK) {
+		events->hosts_watch_degraded = true;
+		if (status == HOSTS_WATCH_CREATE_BAD_ARGUMENT) {
+			errno = EINVAL;
+		} else if (status == HOSTS_WATCH_CREATE_MEMORY) {
+			errno = ENOMEM;
+		}
+		return -1;
+	}
+	if (listener_events_add(events, hosts_watch_descriptor(candidate), EPOLLIN, &events->hosts_watch_source) == -1) {
+		int saved_errno = errno;
+		hosts_watch_destroy(candidate);
+		events->hosts_watch_degraded = true;
+		errno = saved_errno;
+		return -1;
+	}
+	hosts_watch *previous = events->hosts_watch;
+	events->hosts_watch = candidate;
+	events->hosts_watch_degraded = false;
+	if (previous != NULL) {
+		hosts_watch_events overlap_events;
+		hosts_watch_read_status overlap_status = hosts_watch_read(previous, &overlap_events);
+		if (overlap_changed != NULL) {
+			*overlap_changed = overlap_status != HOSTS_WATCH_READ_OK || overlap_events.changed;
+		}
+		(void)listener_events_remove(events, hosts_watch_descriptor(previous));
+		hosts_watch_destroy(previous);
+	}
+	return 0;
+}
+
+static bool listener_hosts_watch_process(listener_context *context, listener_events *events, bool failed, bool ready) {
+	bool changed = failed;
+	bool refresh = failed;
+	if (ready) {
+		hosts_watch_events watch_events;
+		hosts_watch_read_status status = hosts_watch_read(events->hosts_watch, &watch_events);
+		if (status == HOSTS_WATCH_READ_OK) {
+			changed = changed || watch_events.changed;
+			refresh = refresh || watch_events.refresh;
+		} else {
+			int saved_errno = errno;
+			changed = true;
+			refresh = true;
+			LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
+				"Cannot consume local static host table monitor events: %s; the latest table will still be reloaded.",
+				strerror(saved_errno)
+			);
+		}
+	}
+	if (refresh) {
+		bool was_degraded = events->hosts_watch_degraded;
+		bool overlap_changed = false;
+		if (listener_hosts_watch_establish(events, &overlap_changed) == -1) {
+			int saved_errno = errno;
+			listener_hosts_watch_disable(events);
+			LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
+				"Cannot refresh automatic monitoring for local static host table %s: %s; SIGUSR1 reload remains available.",
+				LISTENER_HOSTS_FILENAME, strerror(saved_errno)
+			);
+		} else if (was_degraded) {
+			LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION,
+				"Automatic monitoring for local static host table %s restored.",
+				LISTENER_HOSTS_FILENAME
+			);
+		}
+		changed = changed || overlap_changed;
+	}
+	return changed;
+}
+
+static void listener_hosts_watch_retry(listener_context *context, listener_events *events) {
+	bool was_degraded = events->hosts_watch_degraded;
+	if (listener_hosts_watch_establish(events, NULL) == -1) {
+		int saved_errno = errno;
+		LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
+			"Cannot monitor local static host table %s automatically: %s; SIGUSR1 reload remains available.",
+			LISTENER_HOSTS_FILENAME, strerror(saved_errno)
+		);
+	} else if (was_degraded) {
+		LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION,
+			"Automatic monitoring for local static host table %s restored.",
+			LISTENER_HOSTS_FILENAME
+		);
+	}
 }
 
 static bool listener_metrics_aggregate_snapshot_get(const listener_context *context, listener_metrics_aggregate_snapshot *snapshot) {
@@ -2048,6 +2176,53 @@ static listener_route_prepare_status listener_generation_prepare(listener_contex
 	route_bindings_destroy(bindings);
 	route_table_destroy(routes);
 	return status;
+}
+
+static int listener_hosts_reload(listener_context *context) {
+	conf *config_candidate = NULL;
+	hosts_table *hosts_candidate = NULL;
+	route_generation *generation_candidate = NULL;
+	int result = 0;
+	if (!listener_hosts_prepare(context, MKSYS_LEVEL_WARNING, ", keeping the existing table", &hosts_candidate)) {
+		return 0;
+	}
+	if (!config_clone(context->config, &config_candidate)) {
+		LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
+			"Cannot clone the active configuration for an automatic local static host table reload, keeping the existing generation."
+		);
+		goto cleanup;
+	}
+	listener_route_prepare_status prepare_status = listener_generation_prepare(context, &config_candidate, &hosts_candidate, MKSYS_LEVEL_WARNING,
+		", keeping the existing generation", &generation_candidate);
+	if (prepare_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+			"Cannot sample the monotonic clock while preparing automatic local static host route resolution: %s",
+			strerror(errno)
+		);
+		result = -1;
+		goto cleanup;
+	}
+	if (prepare_status != LISTENER_ROUTE_PREPARE_OK) {
+		goto cleanup;
+	}
+	route_generation_registry_publish_status publish_status = listener_generation_publish(context, &generation_candidate);
+	if (publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+			"Cannot publish the automatically reloaded local static host route generation: %s.",
+			publish_status == ROUTE_GENERATION_REGISTRY_PUBLISH_BLOCKED ? "a retired generation is still pinned" : strerror(errno)
+		);
+		result = -1;
+		goto cleanup;
+	}
+	LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION,
+		"Local static host table reloaded automatically."
+	);
+
+cleanup:
+	config_destroy(config_candidate);
+	hosts_table_destroy(hosts_candidate);
+	route_generation_release(generation_candidate);
+	return result;
 }
 
 #ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
@@ -2619,6 +2794,9 @@ static exit_code listener_worker_run(int client_fd, const listener_client_addres
 	if (events->metrics_timer_fd != -1) {
 		close(events->metrics_timer_fd);
 	}
+	if (events->hosts_watch != NULL) {
+		close(hosts_watch_descriptor(events->hosts_watch));
+	}
 	close(events->route_timer_fd);
 	close(events->signal_fd);
 	listener_socket_close(listener);
@@ -2749,6 +2927,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
 	}
+	listener_hosts_watch_retry(context, &events);
 	context->generations = route_generation_registry_create();
 	if (context->generations == NULL) {
 		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
@@ -2834,6 +3013,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 	exit_code exitcode = EXITCODE_OK;
 	size_t connection_count = 0;
 	listener_connection *connections = NULL;
+	bool hosts_reload_pending = false;
 	bool reload_pending = false;
 	bool shutting_down = false;
 	while (1) {
@@ -2845,6 +3025,9 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			);
 			exitcode = EXITCODE_INTERNAL;
 			break;
+		}
+		if (requests.hosts_watch_failed || requests.hosts_watch_ready) {
+			hosts_reload_pending = listener_hosts_watch_process(context, &events, requests.hosts_watch_failed, requests.hosts_watch_ready) || hosts_reload_pending;
 		}
 		/* Client cancellation wins when route completion and peer shutdown are ready in the same epoll batch. */
 		for (size_t ready_index = 0; ready_index < requests.ready_count; ready_index++) {
@@ -3029,11 +3212,25 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
+			if (events.hosts_watch_degraded || events.hosts_watch == NULL) {
+				listener_hosts_watch_retry(context, &events);
+			}
+			/* Arm monitoring before the manual hosts read so changes during that read remain observable. */
 			int reload_result = listener_reload(context, listener, &events, &metrics_readiness_invalidated);
 			/* Complete the reload handshake before acting on a fatal result; systemd observes the subsequent listener exit separately. */
 			listener_notify_ready();
+			hosts_reload_pending = false;
 			reload_pending = false;
 			if (reload_result == -1) {
+				exitcode = EXITCODE_INTERNAL;
+				break;
+			}
+			reload_processed = true;
+			route_runtime.pressure_logged = false;
+		}
+		if (route_runtime.ready && !reload_pending && hosts_reload_pending && route_generation_registry_retired(context->generations) == NULL) {
+			hosts_reload_pending = false;
+			if (listener_hosts_reload(context) == -1) {
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
@@ -3145,10 +3342,10 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
-		if (route_runtime.ready && reload_pending && route_generation_registry_retired(context->generations) == NULL) {
+		if (route_runtime.ready && (hosts_reload_pending || reload_pending) && route_generation_registry_retired(context->generations) == NULL) {
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1 || listener_route_timer_set(&events, &route_now) == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Cannot resume a deferred configuration reload: %s",
+					"Cannot resume a deferred route-generation reload: %s",
 					strerror(errno)
 				);
 				exitcode = EXITCODE_INTERNAL;

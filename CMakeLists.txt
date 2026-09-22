@@ -28,7 +28,7 @@ add_custom_target(version_header ALL
 add_executable(mcrelay${EXEC_SUFFIX}
 	src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener_metrics.c src/log.c src/main.c src/metrics.c src/network.c
 	src/timeutil.c
-	src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
+	src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/hosts_watch.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
 	src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c src/route/table.c src/route/waiter.c
 	src/protocol/common.c src/protocol/handshake.c
 	src/protocol/handshake_legacy.c src/protocol/proxy.c)
@@ -491,7 +491,7 @@ if(BUILD_TESTING)
 	add_executable(worker_cap_daemon
 		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener_metrics.c src/log.c src/main.c src/metrics.c src/network.c
 		src/timeutil.c
-		src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
+		src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/hosts_watch.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
 		src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c
 		src/route/table.c src/route/waiter.c
 		src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c
@@ -508,21 +508,23 @@ if(BUILD_TESTING)
 	add_executable(listener_short_runtime_daemon
 		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener_metrics.c src/log.c src/main.c src/metrics.c src/network.c
 		src/timeutil.c
-		src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
+		src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/hosts_watch.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
 		src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c
 		src/route/table.c src/route/waiter.c
 		src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c
-		tests/connect_pending.c tests/dns_pending.c tests/listener_runtime_hooks.c tests/metrics_timer_fault.c tests/route_waiter_destroy_fault.c)
+		tests/connect_pending.c tests/dns_pending.c tests/hosts_reload_fault.c tests/listener_runtime_hooks.c tests/metrics_timer_fault.c tests/route_waiter_destroy_fault.c)
 	add_dependencies(listener_short_runtime_daemon version_header)
+	set(LISTENER_SHORT_RUNTIME_HOSTS_FILENAME "${CMAKE_CURRENT_BINARY_DIR}/listener_short_runtime.hosts")
 	target_compile_definitions(listener_short_runtime_daemon PRIVATE _GNU_SOURCE CONF_METRICS_MINIMUM_INTERVAL=1 DEBUG_MODE=false LISTENER_CONNECTION_LIMIT=2 LISTENER_EARLY_COLLECT_TEST LISTENER_READY_FLIP_TEST
+		LISTENER_HOSTS_FILENAME="${LISTENER_SHORT_RUNTIME_HOSTS_FILENAME}"
 		LISTENER_INITIAL_TIMEOUT_SEC=5 LISTENER_WORKER_LIMIT=1
 		LISTENER_ROUTE_TIMER_ARMED_TEST LISTENER_ROUTE_WARMUP_TIMEOUT_SEC=1 LISTENER_SHORT_CONNECT_TIMEOUT_SEC=10 LISTENER_SHORT_LIFETIME_TIMEOUT_SEC=5
 		LISTENER_SHORT_RELAY_IDLE_TIMEOUT_SEC=10 LISTENER_TIMER_REARM_TEST)
 	target_include_directories(listener_short_runtime_daemon PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
 	target_link_libraries(listener_short_runtime_daemon -lresolv -lcjson -lsystemd)
 	set_target_properties(listener_short_runtime_daemon PROPERTIES
-		LINK_FLAGS "-Wl,--wrap=connect -Wl,--wrap=dns_address_lookup -Wl,--wrap=read -Wl,--wrap=route_waiter_destroy -Wl,--wrap=timerfd_settime")
+		LINK_FLAGS "-Wl,--wrap=connect -Wl,--wrap=dns_address_lookup -Wl,--wrap=hosts_table_load -Wl,--wrap=inotify_init1 -Wl,--wrap=read -Wl,--wrap=route_waiter_destroy -Wl,--wrap=timerfd_settime")
 	add_executable(listener_short_runtime_test tests/listener_short_runtime.c)
 	target_compile_definitions(listener_short_runtime_test PRIVATE _GNU_SOURCE)
-	add_test(NAME listener_short_runtime COMMAND listener_short_runtime_test $<TARGET_FILE:listener_short_runtime_daemon>)
+	add_test(NAME listener_short_runtime COMMAND listener_short_runtime_test $<TARGET_FILE:listener_short_runtime_daemon> "${LISTENER_SHORT_RUNTIME_HOSTS_FILENAME}")
 endif()
