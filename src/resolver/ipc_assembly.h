@@ -78,7 +78,6 @@ typedef enum {
 /* section: functions (exported) */
 resolver_ipc_assembly_budget *resolver_ipc_assembly_budget_create(void);
 void resolver_ipc_assembly_budget_destroy(resolver_ipc_assembly_budget *budget);
-size_t resolver_ipc_assembly_budget_owned_bytes(const resolver_ipc_assembly_budget *budget);
 resolver_ipc_assembly_status resolver_ipc_assembly_create(resolver_ipc_assembly_budget *budget, const char *query_name, uint16_t query_class, uint16_t query_type, uint64_t query_id,
 	resolver_ipc_assembly **result);
 void resolver_ipc_assembly_destroy(resolver_ipc_assembly *assembly);

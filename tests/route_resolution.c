@@ -102,6 +102,11 @@ static bool resolution_bindings_build(const char *json, const hosts_table *hosts
 		&& route_bindings_build(*routes, hosts, cache, bindings) == ROUTE_BINDINGS_BUILD_OK && *bindings != NULL;
 }
 
+static uint64_t resolution_cache_entry_count(const resolver_cache *cache) {
+	resolver_cache_metrics_snapshot metrics;
+	return resolver_cache_metrics_get(cache, &metrics) ? metrics.entries_current : UINT64_MAX;
+}
+
 static resolver_supervisor_completion resolution_completion(resolver_cache_entry *entry, resolver_cache_publish_status publication, resolver_ipc_lookup_status status) {
 	resolver_supervisor_completion completion = { 0 };
 	completion.entry = entry;
@@ -312,7 +317,7 @@ static bool resolution_test_generation(const hosts_table *hosts) {
 	CHECK(route_resolution_destination_target_get(resolution, 3, 2, &dns_target) && dns_target.source == ROUTE_RESOLUTION_TARGET_DNS
 		&& strcmp(dns_target.name, "dns.target") == 0 && dns_target.ipv4_entry != NULL && dns_target.ipv6_entry != NULL,
 		"DNS SRV target was incorrect");
-	CHECK(resolver_cache_entry_count(cache) == 5, "dynamic SRV target entries were not generation-owned or deduplicated");
+	CHECK(resolution_cache_entry_count(cache) == 5, "dynamic SRV target entries were not generation-owned or deduplicated");
 	resolution_schedule_reset(supervisor, &now);
 	resolution_schedule_fixtures[0] = (resolution_schedule_fixture){ .entry = dns_target.ipv4_entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_LIMIT };
 	resolution_schedule_fixture_count = 1;
@@ -372,17 +377,17 @@ static bool resolution_test_generation(const hosts_table *hosts) {
 	CHECK(route_bindings_build(routes, hosts, cache, &bindings_second) == ROUTE_BINDINGS_BUILD_OK && bindings_second != NULL,
 		"replacement bindings generation could not be built");
 	CHECK(route_resolution_build(bindings_second, hosts, cache, &now, &resolution_second) == ROUTE_RESOLUTION_BUILD_OK && resolution_second != NULL
-		&& resolver_cache_entry_count(cache) == 5, "replacement coordinator did not retain fresh SRV target entries before handoff");
+		&& resolution_cache_entry_count(cache) == 5, "replacement coordinator did not retain fresh SRV target entries before handoff");
 	route_resolution_destroy(resolution);
 	resolution = NULL;
 	route_bindings_destroy(bindings);
 	bindings = NULL;
-	CHECK(resolver_cache_entry_count(cache) == 5, "old generation destruction dropped target entries still used by its replacement");
+	CHECK(resolution_cache_entry_count(cache) == 5, "old generation destruction dropped target entries still used by its replacement");
 	route_resolution_destroy(resolution_second);
 	resolution_second = NULL;
 	route_bindings_destroy(bindings_second);
 	bindings_second = NULL;
-	CHECK(resolver_cache_entry_count(cache) == 0, "final generation destruction leaked cache entries");
+	CHECK(resolution_cache_entry_count(cache) == 0, "final generation destruction leaked cache entries");
 	test_result = true;
 
 cleanup:
@@ -528,7 +533,7 @@ static bool resolution_test_shared_targets(const hosts_table *hosts) {
 			&& resolution_srv_publish(binding.srv_entry, targets, 1, 30, &now), "shared-target SRV fixture could not be published");
 	}
 	CHECK(route_resolution_build(bindings, hosts, cache, &now, &resolution) == ROUTE_RESOLUTION_BUILD_OK && resolution != NULL
-		&& resolver_cache_entry_count(cache) == 4, "shared-target coordinator did not deduplicate dynamic cache entries generation-wide");
+		&& resolution_cache_entry_count(cache) == 4, "shared-target coordinator did not deduplicate dynamic cache entries generation-wide");
 	route_resolution_destination_view first_destination;
 	route_resolution_destination_view second_destination;
 	route_resolution_target_view first_target;

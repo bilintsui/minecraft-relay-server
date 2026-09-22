@@ -49,6 +49,16 @@ static bool route_test_address_equal(const net_addr *address, sa_family_t family
 	return memcmp(&address->addr, expected_address, address_size) == 0;
 }
 
+static uint64_t route_test_cache_entry_count(const resolver_cache *cache) {
+	resolver_cache_metrics_snapshot metrics;
+	return resolver_cache_metrics_get(cache, &metrics) ? metrics.entries_current : UINT64_MAX;
+}
+
+static uint64_t route_test_cache_owned_bytes(const resolver_cache *cache) {
+	resolver_cache_metrics_snapshot metrics;
+	return resolver_cache_metrics_get(cache, &metrics) ? metrics.owned_bytes_current : UINT64_MAX;
+}
+
 static int route_test_fixture_write(const char *filename) {
 	static const char fixture[] =
 		"192.0.2.10 local.example local-alias\n"
@@ -124,7 +134,7 @@ static bool route_test_bindings(const hosts_table *hosts) {
 	route_table *routes = NULL;
 	CHECK(cache != NULL && route_test_table_build(json, &config, &routes), "route binding inputs could not be prepared");
 	CHECK(route_bindings_build(routes, hosts, cache, &bindings) == ROUTE_BINDINGS_BUILD_OK && bindings != NULL, "route bindings could not be built");
-	CHECK(route_bindings_destination_count(bindings) == 10 && route_bindings_entry_count(bindings) == 3 && resolver_cache_entry_count(cache) == 3,
+	CHECK(route_bindings_destination_count(bindings) == 10 && route_bindings_entry_count(bindings) == 3 && route_test_cache_entry_count(cache) == 3,
 		"route binding or unique cache-entry count was incorrect");
 	route_binding_view binding;
 	CHECK(route_bindings_destination_get(bindings, 0, &binding) && binding.source == ROUTE_BINDING_SOURCE_NUMERIC && binding.port == 25565
@@ -161,16 +171,16 @@ static bool route_test_bindings(const hosts_table *hosts) {
 		&& strcmp(resolver_cache_entry_name(entry_aaaa), "dns.example") == 0 && resolver_cache_entry_query_type(entry_aaaa) == ns_t_aaaa
 		&& strcmp(resolver_cache_entry_name(entry_srv), "_minecraft._tcp.service.example") == 0 && resolver_cache_entry_query_type(entry_srv) == ns_t_srv,
 		"unique cache-entry enumeration order or identity was incorrect");
-	CHECK(route_bindings_build(routes, hosts, cache, &bindings_second) == ROUTE_BINDINGS_BUILD_OK && bindings_second != NULL && resolver_cache_entry_count(cache) == 3,
+	CHECK(route_bindings_build(routes, hosts, cache, &bindings_second) == ROUTE_BINDINGS_BUILD_OK && bindings_second != NULL && route_test_cache_entry_count(cache) == 3,
 		"second generation did not reuse existing cache entries");
 	resolver_cache_entry *second_entry = NULL;
 	CHECK(route_bindings_entry_get(bindings_second, 0, &second_entry) && second_entry == entry_a, "cache entry was not shared across generations");
 	route_bindings_destroy(bindings_second);
 	bindings_second = NULL;
-	CHECK(resolver_cache_entry_count(cache) == 3, "destroying one generation released shared cache entries too early");
+	CHECK(route_test_cache_entry_count(cache) == 3, "destroying one generation released shared cache entries too early");
 	route_bindings_destroy(bindings);
 	bindings = NULL;
-	CHECK(resolver_cache_entry_count(cache) == 0, "destroying the final generation did not release cache entries");
+	CHECK(route_test_cache_entry_count(cache) == 0, "destroying the final generation did not release cache entries");
 	test_result = true;
 
 cleanup:
@@ -195,7 +205,7 @@ static bool route_test_capacity(const hosts_table *hosts) {
 	route_table *routes = NULL;
 	CHECK(cache != NULL && route_test_table_build(json, &config, &routes), "capacity route inputs could not be prepared");
 	CHECK(route_bindings_build(routes, hosts, cache, &bindings) == ROUTE_BINDINGS_BUILD_LIMIT && bindings == NULL, "static cache-entry capacity overflow was accepted");
-	CHECK(resolver_cache_entry_count(cache) == 0 && resolver_cache_owned_bytes(cache) > 0, "failed generation leaked cache entries or destroyed cache metadata");
+	CHECK(route_test_cache_entry_count(cache) == 0 && route_test_cache_owned_bytes(cache) > 0, "failed generation leaked cache entries or destroyed cache metadata");
 	test_result = true;
 
 cleanup:

@@ -37,7 +37,7 @@ static bool route_test_arguments(void) {
 	CHECK(route_table_build(NULL, &table) == ROUTE_TABLE_BUILD_BAD_ARGUMENT && route_table_build(&config, NULL) == ROUTE_TABLE_BUILD_BAD_ARGUMENT, "invalid route-table build arguments were accepted");
 	config.proxy = cJSON_Parse("[]");
 	CHECK(config.proxy != NULL && route_table_build(&config, &table) == ROUTE_TABLE_BUILD_OK && table != NULL, "empty route table could not be built");
-	CHECK(route_table_route_count(table) == 0 && route_table_destination_count(table) == 0, "empty route table retained entries");
+	CHECK(!route_table_route_get(table, 0, &(route_view){ 0 }) && route_table_destination_count(table) == 0, "empty route table retained entries");
 	CHECK(route_table_build(&config, &table) == ROUTE_TABLE_BUILD_BAD_ARGUMENT, "non-empty route-table result was accepted");
 	CHECK(!route_table_find(NULL, "example", &(route_view){ 0 }) && !route_table_find(table, NULL, &(route_view){ 0 }) && !route_table_find(table, "example", NULL), "invalid route lookup succeeded");
 	CHECK(!route_table_route_get(table, 0, &(route_view){ 0 }) && !route_table_destination_get(table, 0, &(route_destination_view){ 0 }), "out-of-range route access succeeded");
@@ -99,6 +99,14 @@ cleanup:
 	return test_result;
 }
 
+static size_t route_test_route_count(const route_table *table) {
+	size_t count = 0;
+	while (route_table_route_get(table, count, &(route_view){ 0 })) {
+		count++;
+	}
+	return count;
+}
+
 static bool route_test_routes(void) {
 	static const char json[] = "["
 		"{\"vhost\":[\"Alpha.Example\",\"beta.example\",9],\"address\":\"192.0.2.1\",\"port\":25565,\"rewrite\":true},"
@@ -119,7 +127,7 @@ static bool route_test_routes(void) {
 	route_table *table = NULL;
 	config.proxy = cJSON_Parse(json);
 	CHECK(config.proxy != NULL && route_table_build(&config, &table) == ROUTE_TABLE_BUILD_OK && table != NULL, "route table could not be built");
-	CHECK(route_table_route_count(table) == 11 && route_table_destination_count(table) == 6, "route or deduplicated destination count was incorrect");
+	CHECK(route_test_route_count(table) == 11 && route_table_destination_count(table) == 6, "route or deduplicated destination count was incorrect");
 	route_view route;
 	CHECK(route_table_find(table, "alpha.example.", &route) && strcmp(route.vhost, "Alpha.Example") == 0 && strcmp(route.configured_address, "192.0.2.1") == 0
 		&& route.destination_index == 0 && route.rewrite && !route.pheader, "case-insensitive route lookup or flags were incorrect");

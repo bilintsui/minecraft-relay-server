@@ -85,6 +85,11 @@ static bool cache_address_result_create(dns_address_result *result, const char *
 	return true;
 }
 
+static uint64_t cache_entry_count(const resolver_cache *cache) {
+	resolver_cache_metrics_snapshot metrics;
+	return resolver_cache_metrics_get(cache, &metrics) ? metrics.entries_current : UINT64_MAX;
+}
+
 static bool cache_negative_set(dns_negative_record *negative, const char *owner, uint32_t effective_ttl, bool valid) {
 	if (negative == NULL) {
 		return false;
@@ -101,6 +106,11 @@ static bool cache_negative_set(dns_negative_record *negative, const char *owner,
 	negative->record_ttl = effective_ttl + 20;
 	negative->valid = true;
 	return true;
+}
+
+static uint64_t cache_owned_bytes(const resolver_cache *cache) {
+	resolver_cache_metrics_snapshot metrics;
+	return resolver_cache_metrics_get(cache, &metrics) ? metrics.owned_bytes_current : UINT64_MAX;
 }
 
 static bool cache_srv_result_create(dns_srv_result *result, const char *question_name, size_t record_count, uint32_t effective_ttl, bool with_cname) {
@@ -181,7 +191,6 @@ static bool cache_test_arguments(void) {
 	CHECK(resolver_cache_entry_acquire(cache, oversized_name, ns_t_a, &entry) == RESOLVER_CACHE_ACQUIRE_BAD_ARGUMENT && entry == NULL, "oversized query name was accepted");
 	CHECK(resolver_cache_entry_acquire(cache, "example.test", ns_t_txt, &entry) == RESOLVER_CACHE_ACQUIRE_BAD_ARGUMENT && entry == NULL, "unsupported query type was accepted");
 	CHECK(resolver_cache_entry_acquire(cache, "example.test", ns_t_a, NULL) == RESOLVER_CACHE_ACQUIRE_BAD_ARGUMENT, "NULL entry result was accepted");
-	CHECK(resolver_cache_entry_count(NULL) == 0 && resolver_cache_owned_bytes(NULL) == 0, "NULL cache getters returned data");
 	CHECK(resolver_cache_entry_id(NULL) == 0 && resolver_cache_entry_name(NULL) == NULL && resolver_cache_entry_query_type(NULL) == 0, "NULL entry getters returned data");
 	CHECK(!resolver_cache_entry_retain(NULL), "NULL entry was retained");
 	CHECK(resolver_cache_result_classify(ns_t_a, 0, 1) == RESOLVER_CACHE_RESULT_FIT_OK
@@ -266,7 +275,7 @@ static bool cache_test_capacity(void) {
 	CHECK(cache_address_result_create(&byte_results[0], "first.bytes.cache.test", AF_INET, 1, 25, true), "same-size replacement result could not be created");
 	CHECK(resolver_cache_entry_publish_address(byte_entries[0], DNS_ADDRESS_LOOKUP_OK, &completed_at, &byte_results[0]) == RESOLVER_CACHE_PUBLISH_STORED,
 		"same-size payload replacement did not discount the old payload from steady-state accounting");
-	CHECK(resolver_cache_owned_bytes(byte_cache) <= RESOLVER_CACHE_OWNED_BYTE_LIMIT, "cache exceeded its owned-byte limit");
+	CHECK(cache_owned_bytes(byte_cache) <= RESOLVER_CACHE_OWNED_BYTE_LIMIT, "cache exceeded its owned-byte limit");
 	CHECK(resolver_cache_metrics_get(byte_cache, &metrics) && metrics.query[METRICS_QUERY_TYPE_A].publish_stored == 2
 		&& metrics.query[METRICS_QUERY_TYPE_A].publish_limit == 1 && metrics.query[METRICS_QUERY_TYPE_A].publish_limit_owned_bytes == 1,
 		"cache owned-byte limit metrics were incorrect");
@@ -310,13 +319,13 @@ static bool cache_test_key_lifetime(void) {
 	CHECK(resolver_cache_entry_acquire(cache, ".", ns_t_a, &root) == RESOLVER_CACHE_ACQUIRE_OK && strcmp(resolver_cache_entry_name(root), ".") == 0, "root query name was not preserved");
 	CHECK(resolver_cache_entry_retain(root), "entry could not be explicitly retained");
 	resolver_cache_entry_release(root);
-	CHECK(resolver_cache_entry_count(cache) == 4, "cache returned the wrong deduplicated entry count");
+	CHECK(cache_entry_count(cache) == 4, "cache returned the wrong deduplicated entry count");
 	resolver_cache_entry_release(address);
 	address = NULL;
-	CHECK(resolver_cache_entry_count(cache) == 4, "entry was removed while another reference remained");
+	CHECK(cache_entry_count(cache) == 4, "entry was removed while another reference remained");
 	resolver_cache_entry_release(address_again);
 	address_again = NULL;
-	CHECK(resolver_cache_entry_count(cache) == 3, "zero-reference entry was not removed");
+	CHECK(cache_entry_count(cache) == 3, "zero-reference entry was not removed");
 	CHECK(resolver_cache_entry_acquire(cache, "EXAMPLE.COM.", ns_t_a, &address_new) == RESOLVER_CACHE_ACQUIRE_OK && resolver_cache_entry_id(address_new) > old_id,
 		"recreated entry reused its listener-local ID");
 	test_result = true;
@@ -493,15 +502,15 @@ static bool cache_test_positive_address(void) {
 	dns_address_result result = { 0 };
 	resolver_cache_view view = { 0 };
 	const struct timespec completed_at = { .tv_sec = 100, .tv_nsec = 321 };
-	size_t empty_bytes = 0;
+	uint64_t empty_bytes = 0;
 	CHECK(cache != NULL, "address cache could not be created");
 	CHECK(resolver_cache_entry_acquire(cache, "address.cache.test", ns_t_a, &entry) == RESOLVER_CACHE_ACQUIRE_OK, "address entry could not be acquired");
-	empty_bytes = resolver_cache_owned_bytes(cache);
+	empty_bytes = cache_owned_bytes(cache);
 	CHECK(cache_address_result_create(&result, "ADDRESS.CACHE.TEST.", AF_INET, 2, 30, true), "address result could not be created");
 	result.addresses[1].effective_ttl = 12;
 	CHECK(resolver_cache_entry_publish_address(entry, DNS_ADDRESS_LOOKUP_OK, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_STORED, "address result was not stored");
 	CHECK(result.addresses == NULL && result.cnames == NULL && result.question_name[0] == '\0', "stored address result ownership was not transferred");
-	CHECK(resolver_cache_owned_bytes(cache) > empty_bytes, "stored address payload was not counted");
+	CHECK(cache_owned_bytes(cache) > empty_bytes, "stored address payload was not counted");
 	const struct timespec fresh_now = { .tv_sec = 112, .tv_nsec = 320 };
 	const struct timespec expected_expiry = { .tv_sec = 112, .tv_nsec = 321 };
 	CHECK(resolver_cache_entry_view(entry, &fresh_now, &view) && view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE && view.address_count == 2 && view.addresses != NULL,
@@ -511,7 +520,7 @@ static bool cache_test_positive_address(void) {
 	CHECK(view.addresses[0].address.family == AF_INET && view.addresses[1].effective_ttl == 12, "address record order or data was not preserved");
 	CHECK(resolver_cache_entry_view(entry, &expected_expiry, &view) && view.status == RESOLVER_CACHE_VIEW_EMPTY && view.addresses == NULL,
 		"address payload remained visible at its exact expiry");
-	CHECK(resolver_cache_owned_bytes(cache) == empty_bytes, "expired address payload was not removed from the byte budget");
+	CHECK(cache_owned_bytes(cache) == empty_bytes, "expired address payload was not removed from the byte budget");
 	test_result = true;
 
 cleanup:

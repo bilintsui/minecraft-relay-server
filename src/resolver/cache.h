@@ -112,7 +112,6 @@ resolver_cache *resolver_cache_create(void);
 void resolver_cache_destroy(resolver_cache *cache);
 /* Acquiring or retaining an entry creates one caller-owned reference. Zero references remove the entry immediately. */
 resolver_cache_acquire_status resolver_cache_entry_acquire(resolver_cache *cache, const char *query_name, uint16_t query_type, resolver_cache_entry **result);
-size_t resolver_cache_entry_count(const resolver_cache *cache);
 uint64_t resolver_cache_entry_id(const resolver_cache_entry *entry);
 const char *resolver_cache_entry_name(const resolver_cache_entry *entry);
 /* A stored publication moves result ownership. A transient publication clears the old payload but leaves result ownership with the caller. Other failures change neither. */
@@ -124,7 +123,6 @@ bool resolver_cache_entry_retain(resolver_cache_entry *entry);
 /* Views and their record pointers are borrowed until the next publication, expiry check, or final entry release. */
 bool resolver_cache_entry_view(resolver_cache_entry *entry, const struct timespec *now, resolver_cache_view *result);
 bool resolver_cache_metrics_get(const resolver_cache *cache, resolver_cache_metrics_snapshot *result);
-size_t resolver_cache_owned_bytes(const resolver_cache *cache);
 resolver_cache_result_fit resolver_cache_result_classify(uint16_t query_type, size_t cname_count, size_t record_count);
 
 #endif

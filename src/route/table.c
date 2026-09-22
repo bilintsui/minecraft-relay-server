@@ -349,10 +349,6 @@ bool route_table_find(const route_table *table, const char *vhost, route_view *r
 	return false;
 }
 
-size_t route_table_route_count(const route_table *table) {
-	return table == NULL ? 0 : table->route_count;
-}
-
 bool route_table_route_get(const route_table *table, size_t route_index, route_view *result) {
 	if (table == NULL || route_index >= table->route_count || result == NULL) {
 		return false;

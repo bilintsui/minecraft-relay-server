@@ -58,6 +58,11 @@ static resolver_ipc_assembly_status assembly_begin_send(resolver_ipc_assembly *a
 	return resolver_ipc_assembly_packet_consume(assembly, packet, packet_size);
 }
 
+static uint64_t assembly_budget_owned_bytes(const resolver_ipc_assembly_budget *budget) {
+	resolver_ipc_assembly_metrics_snapshot metrics;
+	return resolver_ipc_assembly_metrics_get(budget, &metrics) ? metrics.owned_bytes_current : UINT64_MAX;
+}
+
 static resolver_ipc_assembly_status assembly_cname_send(resolver_ipc_assembly *assembly, const resolver_ipc_response_cname *response) {
 	uint8_t packet[RESOLVER_IPC_PACKET_BYTE_LIMIT];
 	size_t packet_size;
@@ -131,9 +136,9 @@ static bool assembly_test_address(void) {
 	CHECK(assembly_address_send(assembly, &address) == RESOLVER_IPC_ASSEMBLY_OK, "second address response record was rejected");
 	resolver_ipc_response_end end = { .cname_count = 1, .query_id = 11, .record_count = 2 };
 	CHECK(assembly_end_send(assembly, &end) == RESOLVER_IPC_ASSEMBLY_COMPLETE, "address response END did not complete the assembly");
-	size_t owned_before_take = resolver_ipc_assembly_budget_owned_bytes(budget);
+	uint64_t owned_before_take = assembly_budget_owned_bytes(budget);
 	CHECK(resolver_ipc_assembly_result_take(assembly, &result), "complete address result could not be transferred");
-	CHECK(resolver_ipc_assembly_budget_owned_bytes(budget) == owned_before_take, "transferred address arrays escaped the assembly budget");
+	CHECK(assembly_budget_owned_bytes(budget) == owned_before_take, "transferred address arrays escaped the assembly budget");
 	CHECK(result.query_id == 11 && result.query_type == ns_t_a && result.status == RESOLVER_IPC_LOOKUP_OK && result.completed_at.tv_sec == 100 && result.completed_at.tv_nsec == 200,
 		"address result metadata was not preserved");
 	CHECK(result.payload.address.address_count == 2 && result.payload.address.cname_count == 1 && strcmp(result.payload.address.question_name, "alias.address.test") == 0
@@ -147,7 +152,7 @@ static bool assembly_test_address(void) {
 	CHECK(resolver_cache_entry_publish_address(entry, lookup_status, &result.completed_at, &result.payload.address) == RESOLVER_CACHE_PUBLISH_STORED,
 		"assembled address result could not be published");
 	resolver_ipc_assembly_result_destroy(&result);
-	CHECK(resolver_ipc_assembly_budget_owned_bytes(budget) < owned_before_take, "destroyed address result remained charged to the assembly budget");
+	CHECK(assembly_budget_owned_bytes(budget) < owned_before_take, "destroyed address result remained charged to the assembly budget");
 	resolver_cache_view view;
 	struct timespec now = { .tv_sec = 119 };
 	CHECK(resolver_cache_entry_view(entry, &now, &view) && view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE && view.address_count == 2,
@@ -182,7 +187,6 @@ static bool assembly_test_arguments(void) {
 	CHECK(resolver_ipc_assembly_packet_consume(NULL, packet, sizeof(packet)) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT, "NULL assembly consumed a packet");
 	CHECK(resolver_ipc_assembly_packet_consume(assembly, NULL, 0) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT, "NULL packet was consumed");
 	CHECK(!resolver_ipc_assembly_result_take(NULL, &result) && !resolver_ipc_assembly_result_take(assembly, NULL), "NULL result-transfer argument was accepted");
-	CHECK(resolver_ipc_assembly_budget_owned_bytes(NULL) == 0, "NULL assembly budget reported owned bytes");
 	resolver_ipc_assembly_destroy(NULL);
 	resolver_ipc_assembly_result_destroy(NULL);
 	resolver_ipc_assembly_budget_destroy(NULL);
@@ -211,7 +215,7 @@ static bool assembly_test_budget(void) {
 		assembly_count++;
 	}
 	CHECK(assembly_count > 0 && assembly_count < sizeof(assemblies) / sizeof(assemblies[0]), "assembly metadata limit was not enforced");
-	CHECK(resolver_ipc_assembly_budget_owned_bytes(budget) <= RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT, "assembly metadata exceeded its budget");
+	CHECK(assembly_budget_owned_bytes(budget) <= RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT, "assembly metadata exceeded its budget");
 	resolver_ipc_assembly_destroy(assemblies[--assembly_count]);
 	assemblies[assembly_count] = NULL;
 	CHECK(resolver_ipc_assembly_create(budget, "capacity.test", ns_c_in, ns_t_a, 1000, &assembly) == RESOLVER_IPC_ASSEMBLY_OK && assembly != NULL,
@@ -229,7 +233,7 @@ static bool assembly_test_budget(void) {
 		.status = RESOLVER_IPC_LOOKUP_OK
 	};
 	CHECK(assembly_begin_send(assembly, &begin) == RESOLVER_IPC_ASSEMBLY_LIMIT, "oversized aggregate reply allocation was accepted");
-	CHECK(resolver_ipc_assembly_budget_owned_bytes(budget) <= RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT, "failed reply allocation changed the budget incorrectly");
+	CHECK(assembly_budget_owned_bytes(budget) <= RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT, "failed reply allocation changed the budget incorrectly");
 	resolver_ipc_assembly_destroy(assembly);
 	assembly = NULL;
 	for (size_t index = 0; index < assembly_count; index++) {

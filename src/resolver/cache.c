@@ -485,10 +485,6 @@ resolver_cache_acquire_status resolver_cache_entry_acquire(resolver_cache *cache
 	return RESOLVER_CACHE_ACQUIRE_OK;
 }
 
-size_t resolver_cache_entry_count(const resolver_cache *cache) {
-	return cache == NULL ? 0 : cache->entry_count;
-}
-
 uint64_t resolver_cache_entry_id(const resolver_cache_entry *entry) {
 	return entry == NULL ? 0 : entry->id;
 }
@@ -674,10 +670,6 @@ bool resolver_cache_metrics_get(const resolver_cache *cache, resolver_cache_metr
 		}
 	}
 	return true;
-}
-
-size_t resolver_cache_owned_bytes(const resolver_cache *cache) {
-	return cache == NULL ? 0 : cache->owned_bytes;
 }
 
 resolver_cache_result_fit resolver_cache_result_classify(uint16_t query_type, size_t cname_count, size_t record_count) {

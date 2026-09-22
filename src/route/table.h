@@ -46,7 +46,6 @@ size_t route_table_destination_count(const route_table *table);
 bool route_table_destination_get(const route_table *table, size_t destination_index, route_destination_view *result);
 void route_table_destroy(route_table *table);
 bool route_table_find(const route_table *table, const char *vhost, route_view *result);
-size_t route_table_route_count(const route_table *table);
 bool route_table_route_get(const route_table *table, size_t route_index, route_view *result);
 
 #endif
