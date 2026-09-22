@@ -230,8 +230,7 @@ static bool resolver_cache_address_result_size(const dns_address_result *result,
 	if (!resolver_size_multiply(result->address_count, sizeof(*result->addresses), &array_size) || !resolver_size_add(&size, array_size)) {
 		return false;
 	}
-	if (result->cnames != NULL
-		&& (!resolver_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(*result->cnames), &array_size) || !resolver_size_add(&size, array_size))) {
+	if (result->cnames != NULL && (!resolver_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(*result->cnames), &array_size) || !resolver_size_add(&size, array_size))) {
 		return false;
 	}
 	*result_size = size;
@@ -279,16 +278,14 @@ static bool resolver_cache_srv_result_size(const dns_srv_result *result, size_t 
 	if (!resolver_size_multiply(result->record_count, sizeof(*result->records), &array_size) || !resolver_size_add(&size, array_size)) {
 		return false;
 	}
-	if (result->cnames != NULL
-		&& (!resolver_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(*result->cnames), &array_size) || !resolver_size_add(&size, array_size))) {
+	if (result->cnames != NULL && (!resolver_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(*result->cnames), &array_size) || !resolver_size_add(&size, array_size))) {
 		return false;
 	}
 	*result_size = size;
 	return true;
 }
 
-static bool resolver_cache_srv_result_validate(const resolver_cache_entry *entry, dns_srv_lookup_status lookup_status, const dns_srv_result *result, uint32_t *ttl,
-	resolver_cache_view_status *view_status) {
+static bool resolver_cache_srv_result_validate(const resolver_cache_entry *entry, dns_srv_lookup_status lookup_status, const dns_srv_result *result, uint32_t *ttl, resolver_cache_view_status *view_status) {
 	if (entry->query_type != ns_t_srv || result == NULL || ttl == NULL || view_status == NULL || !resolver_cache_question_matches(entry, result->question_name)
 		|| !resolver_cache_name_valid(result->canonical_name) || !resolver_cache_cnames_valid(result->cnames, result->cname_count) || !resolver_cache_negative_valid(&result->negative)) {
 		return false;
@@ -500,8 +497,7 @@ const char *resolver_cache_entry_name(const resolver_cache_entry *entry) {
 	return entry == NULL ? NULL : entry->name;
 }
 
-resolver_cache_publish_status resolver_cache_entry_publish_address(resolver_cache_entry *entry, dns_address_lookup_status lookup_status, const struct timespec *completed_at,
-	dns_address_result *result) {
+resolver_cache_publish_status resolver_cache_entry_publish_address(resolver_cache_entry *entry, dns_address_lookup_status lookup_status, const struct timespec *completed_at, dns_address_result *result) {
 	if (entry == NULL) {
 		return RESOLVER_CACHE_PUBLISH_BAD_ARGUMENT;
 	}
@@ -529,8 +525,7 @@ resolver_cache_publish_status resolver_cache_entry_publish_address(resolver_cach
 	return status;
 }
 
-resolver_cache_publish_status resolver_cache_entry_publish_srv(resolver_cache_entry *entry, dns_srv_lookup_status lookup_status, const struct timespec *completed_at,
-	dns_srv_result *result) {
+resolver_cache_publish_status resolver_cache_entry_publish_srv(resolver_cache_entry *entry, dns_srv_lookup_status lookup_status, const struct timespec *completed_at, dns_srv_result *result) {
 	if (entry == NULL) {
 		return RESOLVER_CACHE_PUBLISH_BAD_ARGUMENT;
 	}
@@ -692,8 +687,7 @@ resolver_cache_result_fit resolver_cache_result_classify(uint16_t query_type, si
 	}
 	size_t size = sizeof(resolver_cache_payload);
 	size_t array_size;
-	if (cname_count > 0
-		&& (!resolver_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(dns_cname_record), &array_size) || !resolver_size_add(&size, array_size))) {
+	if (cname_count > 0 && (!resolver_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(dns_cname_record), &array_size) || !resolver_size_add(&size, array_size))) {
 		return RESOLVER_CACHE_RESULT_FIT_BYTES;
 	}
 	size_t record_size = query_type == ns_t_srv ? sizeof(dns_srv_record) : sizeof(dns_address_record);

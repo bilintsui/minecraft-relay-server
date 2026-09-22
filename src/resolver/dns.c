@@ -237,8 +237,7 @@ static bool dns_negative_record_parse(const ns_msg *response, const ns_rr *autho
 	return dns_name_normalize(ns_rr_name(*authority), record->owner, sizeof(record->owner));
 }
 
-static dns_negative_parse_status dns_negative_response_parse(ns_msg *response, const char *canonical_name, const dns_cname_record *cnames, size_t cname_count,
-	dns_negative_record *result) {
+static dns_negative_parse_status dns_negative_response_parse(ns_msg *response, const char *canonical_name, const dns_cname_record *cnames, size_t cname_count, dns_negative_record *result) {
 	int authority_count = ns_msg_count(*response, ns_s_ns);
 	if (authority_count > DNS_AUTHORITY_RECORD_LIMIT) {
 		return DNS_NEGATIVE_PARSE_LIMIT;
@@ -328,8 +327,7 @@ static bool dns_resolver_init(res_state resolver) {
 	return true;
 }
 
-static dns_address_parse_status dns_response_addresses_collect(ns_msg *response, sa_family_t family, dns_address_candidate *addresses, size_t *address_count, dns_cname_record *cnames,
-	size_t *cname_count) {
+static dns_address_parse_status dns_response_addresses_collect(ns_msg *response, sa_family_t family, dns_address_candidate *addresses, size_t *address_count, dns_cname_record *cnames, size_t *cname_count) {
 	const unsigned char *message_begin = ns_msg_base(*response);
 	const unsigned char *message_end = ns_msg_end(*response);
 	ns_type address_type = family == AF_INET ? ns_t_a : ns_t_aaaa;
@@ -502,8 +500,7 @@ static dns_srv_lookup_status dns_srv_lookup_parse_status(dns_srv_parse_status pa
 }
 
 static bool dns_srv_lookup_status_keeps_result(dns_srv_lookup_status status) {
-	return status == DNS_SRV_LOOKUP_OK || status == DNS_SRV_LOOKUP_NODATA || status == DNS_SRV_LOOKUP_NOT_FOUND || status == DNS_SRV_LOOKUP_PERMANENT_ERROR
-		|| status == DNS_SRV_LOOKUP_TEMPORARY_ERROR;
+	return status == DNS_SRV_LOOKUP_OK || status == DNS_SRV_LOOKUP_NODATA || status == DNS_SRV_LOOKUP_NOT_FOUND || status == DNS_SRV_LOOKUP_PERMANENT_ERROR || status == DNS_SRV_LOOKUP_TEMPORARY_ERROR;
 }
 
 static dns_srv_parse_status dns_srv_response_chain_build(const dns_srv_candidate *records, size_t record_count, const dns_cname_record *cnames, size_t cname_count, dns_srv_result *result) {
@@ -752,8 +749,7 @@ dns_address_lookup_status dns_address_lookup(const char *hostname, sa_family_t f
 	return lookup_status;
 }
 
-dns_address_parse_status dns_address_response_parse(const void *message, size_t message_size, const char *expected_name, uint16_t expected_id, sa_family_t family,
-	dns_address_result *result) {
+dns_address_parse_status dns_address_response_parse(const void *message, size_t message_size, const char *expected_name, uint16_t expected_id, sa_family_t family, dns_address_result *result) {
 	if (message == NULL || message_size > INT_MAX || expected_name == NULL || (family != AF_INET && family != AF_INET6) || result == NULL || !dns_address_result_empty(result)) {
 		return DNS_ADDRESS_PARSE_BAD_ARGUMENT;
 	}

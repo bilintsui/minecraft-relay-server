@@ -58,10 +58,8 @@ static void route_waiter_entry_overlay_clear(route_waiter_entry *entry) {
 	entry->overlay.entry = entry->entry;
 }
 
-static route_waiter_completion_status route_waiter_entry_overlay_records_copy(route_waiter_entry *entry, size_t record_count, size_t record_limit,
-	size_t record_size, const void *source, void **result) {
-	if (record_count == 0 || record_count > record_limit || record_size == 0 || source == NULL || result == NULL
-		|| record_count > SIZE_MAX / record_size) {
+static route_waiter_completion_status route_waiter_entry_overlay_records_copy(route_waiter_entry *entry, size_t record_count, size_t record_limit, size_t record_size, const void *source, void **result) {
+	if (record_count == 0 || record_count > record_limit || record_size == 0 || source == NULL || result == NULL || record_count > SIZE_MAX / record_size) {
 		entry->overlay.status = ROUTE_ENDPOINT_OVERLAY_UNAVAILABLE;
 		return ROUTE_WAITER_COMPLETION_BAD_ARGUMENT;
 	}
@@ -186,8 +184,7 @@ static route_waiter_destroy_status route_waiter_entries_interests_release(route_
 	return result;
 }
 
-static route_waiter_status route_waiter_entries_reconcile(route_waiter *waiter, const route_endpoint_requirements *requirements, resolver_supervisor *supervisor,
-	const struct timespec *now) {
+static route_waiter_status route_waiter_entries_reconcile(route_waiter *waiter, const route_endpoint_requirements *requirements, resolver_supervisor *supervisor, const struct timespec *now) {
 	bool needed[ROUTE_ENDPOINT_REQUIREMENT_LIMIT] = { false };
 	for (size_t requirement_index = 0; requirement_index < requirements->count; requirement_index++) {
 		route_waiter_entry *existing = route_waiter_entry_find(waiter, requirements->items[requirement_index].entry);
@@ -312,8 +309,7 @@ route_waiter_completion_status route_waiter_completion_observe(route_waiter *wai
 	return ROUTE_WAITER_COMPLETION_OK;
 }
 
-route_waiter_create_status route_waiter_create(route_generation *generation, const char *vhost, const p_proxy *inbound_proxy, const struct timespec *now,
-	route_waiter **result) {
+route_waiter_create_status route_waiter_create(route_generation *generation, const char *vhost, const p_proxy *inbound_proxy, const struct timespec *now, route_waiter **result) {
 	if (generation == NULL || vhost == NULL || inbound_proxy == NULL || !timeutil_valid(now) || result == NULL || *result != NULL
 		|| LISTENER_ROUTE_WAIT_TIMEOUT_SEC == 0 || (inbound_proxy->family != AF_INET && inbound_proxy->family != AF_INET6)
 		|| inbound_proxy->srcaddr.family != inbound_proxy->family || inbound_proxy->dstaddr.family != inbound_proxy->family
@@ -391,8 +387,7 @@ route_waiter_status route_waiter_progress(route_waiter *waiter, resolver_supervi
 	for (size_t iteration = 0; iteration < ROUTE_WAITER_PROGRESS_ITERATION_LIMIT; iteration++) {
 		route_endpoint_requirements requirements;
 		const route_endpoint_overlay *overlays = route_waiter_entry_overlays_link(waiter);
-		route_endpoint_select_status endpoint_status = route_endpoint_evaluate(waiter->generation, waiter->vhost, now, &waiter->inbound_proxy, overlays, &requirements,
-			&waiter->snapshot);
+		route_endpoint_select_status endpoint_status = route_endpoint_evaluate(waiter->generation, waiter->vhost, now, &waiter->inbound_proxy, overlays, &requirements, &waiter->snapshot);
 		route_waiter_status status = route_waiter_status_from_endpoint(endpoint_status);
 		if (status != ROUTE_WAITER_PENDING) {
 			return route_waiter_terminal_set(waiter, status, supervisor, now);

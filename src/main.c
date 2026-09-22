@@ -267,10 +267,7 @@ static void print_help(help_topic topic, const char *progname) {
 			);
 			break;
 	}
-	fputs(
-		"\nSee more: https://github.com/bilintsui/minecraft-relay-server\n",
-		stdout
-	);
+	fputs("\nSee more: https://github.com/bilintsui/minecraft-relay-server\n", stdout);
 }
 
 /* section: functions (entry point) */

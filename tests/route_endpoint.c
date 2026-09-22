@@ -86,8 +86,7 @@ static bool endpoint_address_publish(resolver_cache_entry *entry, const char *co
 	result.address_count = address_count;
 	result.rcode = ns_r_noerror;
 	const char *name = resolver_cache_entry_name(entry);
-	if (snprintf(result.question_name, sizeof(result.question_name), "%s", name) <= 0
-		|| snprintf(result.canonical_name, sizeof(result.canonical_name), "%s", name) <= 0) {
+	if (snprintf(result.question_name, sizeof(result.question_name), "%s", name) <= 0 || snprintf(result.canonical_name, sizeof(result.canonical_name), "%s", name) <= 0) {
 		dns_address_result_destroy(&result);
 		return false;
 	}
@@ -220,8 +219,7 @@ static bool endpoint_srv_publish(endpoint_fixture *fixture, resolver_cache_entry
 	result.record_count = record_count;
 	result.rcode = ns_r_noerror;
 	const char *name = resolver_cache_entry_name(entry);
-	if (snprintf(result.question_name, sizeof(result.question_name), "%s", name) <= 0
-		|| snprintf(result.canonical_name, sizeof(result.canonical_name), "%s", name) <= 0) {
+	if (snprintf(result.question_name, sizeof(result.question_name), "%s", name) <= 0 || snprintf(result.canonical_name, sizeof(result.canonical_name), "%s", name) <= 0) {
 		dns_srv_result_destroy(&result);
 		return false;
 	}
@@ -446,6 +444,20 @@ cleanup:
 }
 
 /* section: functions (exported) */
+resolver_supervisor_release_status __wrap_resolver_supervisor_entry_background_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
+	(void)supervisor;
+	(void)entry;
+	(void)now;
+	return RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT;
+}
+
+resolver_supervisor_schedule_status __wrap_resolver_supervisor_entry_schedule(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
+	(void)supervisor;
+	(void)entry;
+	(void)now;
+	return RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT;
+}
+
 const route_bindings *__wrap_route_generation_bindings(const route_generation *generation) {
 	const endpoint_fixture *fixture = (const endpoint_fixture *)generation;
 	return fixture == NULL ? NULL : fixture->bindings;
@@ -466,20 +478,6 @@ const route_table *__wrap_route_generation_routes(const route_generation *genera
 	return fixture == NULL ? NULL : fixture->routes;
 }
 
-resolver_supervisor_release_status __wrap_resolver_supervisor_entry_background_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
-	(void)supervisor;
-	(void)entry;
-	(void)now;
-	return RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT;
-}
-
-resolver_supervisor_schedule_status __wrap_resolver_supervisor_entry_schedule(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
-	(void)supervisor;
-	(void)entry;
-	(void)now;
-	return RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT;
-}
-
 /* section: functions (entry point) */
 int main(void) {
 	int test_result = EXIT_FAILURE;
@@ -490,8 +488,7 @@ int main(void) {
 	CHECK(mkdtemp(directory) != NULL, "cannot create route-endpoint test directory");
 	CHECK(snprintf(filename, sizeof(filename), "%s/hosts", directory) > 0, "cannot create route-endpoint hosts path");
 	CHECK(endpoint_fixture_write(filename) == 0, "cannot write route-endpoint hosts fixture");
-	CHECK(hosts_table_load(filename, &hosts, &malformed_line_count) == HOSTS_LOAD_OK && hosts != NULL && malformed_line_count == 0,
-		"cannot load route-endpoint hosts fixture");
+	CHECK(hosts_table_load(filename, &hosts, &malformed_line_count) == HOSTS_LOAD_OK && hosts != NULL && malformed_line_count == 0, "cannot load route-endpoint hosts fixture");
 	CHECK(endpoint_test_arguments(hosts), "route-endpoint argument tests failed");
 	CHECK(endpoint_test_dns(hosts), "route-endpoint DNS tests failed");
 	CHECK(endpoint_test_snapshot(hosts), "route-endpoint snapshot tests failed");

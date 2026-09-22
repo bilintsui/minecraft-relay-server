@@ -45,8 +45,7 @@ typedef enum {
 } route_bindings_entry_status;
 
 /* section: functions (local) */
-static route_bindings_entry_status route_bindings_cache_entry_acquire(route_bindings *bindings, resolver_cache *cache, const char *query_name, uint16_t query_type,
-	resolver_cache_entry **result) {
+static route_bindings_entry_status route_bindings_cache_entry_acquire(route_bindings *bindings, resolver_cache *cache, const char *query_name, uint16_t query_type, resolver_cache_entry **result) {
 	resolver_cache_entry *entry = NULL;
 	resolver_cache_acquire_status status = resolver_cache_entry_acquire(cache, query_name, query_type, &entry);
 	switch (status) {
@@ -170,21 +169,6 @@ route_bindings_build_status route_bindings_build(const route_table *routes, cons
 	return ROUTE_BINDINGS_BUILD_OK;
 }
 
-void route_bindings_destroy(route_bindings *bindings) {
-	if (bindings == NULL) {
-		return;
-	}
-	for (size_t destination_index = 0; destination_index < bindings->destination_count; destination_index++) {
-		hosts_address_result_destroy(&bindings->destinations[destination_index].hosts);
-	}
-	for (size_t entry_index = 0; entry_index < bindings->entry_count; entry_index++) {
-		resolver_cache_entry_release(bindings->entries[entry_index]);
-	}
-	free(bindings->destinations);
-	free(bindings->entries);
-	free(bindings);
-}
-
 size_t route_bindings_destination_count(const route_bindings *bindings) {
 	return bindings == NULL ? 0 : bindings->destination_count;
 }
@@ -206,6 +190,21 @@ bool route_bindings_destination_get(const route_bindings *bindings, size_t desti
 	result->srv_entry = binding->srv_entry;
 	result->source = binding->source;
 	return true;
+}
+
+void route_bindings_destroy(route_bindings *bindings) {
+	if (bindings == NULL) {
+		return;
+	}
+	for (size_t destination_index = 0; destination_index < bindings->destination_count; destination_index++) {
+		hosts_address_result_destroy(&bindings->destinations[destination_index].hosts);
+	}
+	for (size_t entry_index = 0; entry_index < bindings->entry_count; entry_index++) {
+		resolver_cache_entry_release(bindings->entries[entry_index]);
+	}
+	free(bindings->destinations);
+	free(bindings->entries);
+	free(bindings);
 }
 
 size_t route_bindings_entry_count(const route_bindings *bindings) {

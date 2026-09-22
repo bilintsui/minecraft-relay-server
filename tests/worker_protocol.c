@@ -754,8 +754,7 @@ int main(int argc, char **argv) {
 	CHECK(client_fd != -1, "cannot connect generation-pinning test client");
 	CHECK(socket_send_all(client_fd, valid_request, 1) == 0, "cannot send generation-pinning handshake prefix");
 	uint8_t quiet_response;
-	CHECK(message_receive(client_fd, &quiet_response, sizeof(quiet_response), QUIET_TIMEOUT_MS) == -1 && errno == ETIMEDOUT,
-		"generation-pinning handshake prefix produced an unexpected response");
+	CHECK(message_receive(client_fd, &quiet_response, sizeof(quiet_response), QUIET_TIMEOUT_MS) == -1 && errno == ETIMEDOUT, "generation-pinning handshake prefix produced an unexpected response");
 	CHECK(write_config(config_filename, log_filename, listener_port, replacement_port) == 0, "cannot write replacement route generation");
 	CHECK(kill(listener, SIGUSR1) == 0, "cannot request route generation reload");
 	ready_length = message_receive(notify_fd, ready_message, sizeof(ready_message) - 1, TEST_TIMEOUT_MS);

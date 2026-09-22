@@ -88,8 +88,7 @@ static bool route_test_arguments(const hosts_table *hosts) {
 	CHECK(route_bindings_destination_count(bindings) == 0 && route_bindings_entry_count(bindings) == 0, "empty route bindings retained state");
 	route_binding_view binding;
 	memset(&binding, 0xFF, sizeof(binding));
-	CHECK(!route_bindings_destination_get(bindings, 0, &binding) && binding.source == ROUTE_BINDING_SOURCE_UNAVAILABLE && binding.addresses == NULL,
-		"invalid destination access did not clear its result");
+	CHECK(!route_bindings_destination_get(bindings, 0, &binding) && binding.source == ROUTE_BINDING_SOURCE_UNAVAILABLE && binding.addresses == NULL, "invalid destination access did not clear its result");
 	resolver_cache_entry *entry = (resolver_cache_entry *)(uintptr_t)1;
 	CHECK(!route_bindings_entry_get(bindings, 0, &entry) && entry == NULL, "invalid cache-entry access did not clear its result");
 	CHECK(route_bindings_build(routes, hosts, cache, &bindings) == ROUTE_BINDINGS_BUILD_BAD_ARGUMENT, "non-empty binding output was accepted");

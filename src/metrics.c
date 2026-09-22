@@ -75,8 +75,7 @@ static bool metrics_value_add(uint64_t *value, uint64_t amount) {
 	return true;
 }
 
-static void metrics_histogram_observe(metrics_histogram *histogram, const uint64_t *bounds, size_t bound_count, uint64_t bucket_sample, uint64_t sum_sample,
-		uint64_t *saturation_total) {
+static void metrics_histogram_observe(metrics_histogram *histogram, const uint64_t *bounds, size_t bound_count, uint64_t bucket_sample, uint64_t sum_sample, uint64_t *saturation_total) {
 	size_t bucket = 0;
 	while (bucket < bound_count && bucket_sample > bounds[bucket]) {
 		bucket++;
@@ -129,8 +128,7 @@ bool metrics_duration_histogram_observe(metrics_histogram *histogram, const stru
 		}
 		return false;
 	}
-	metrics_histogram_observe(histogram, metrics_duration_bounds, sizeof(metrics_duration_bounds) / sizeof(metrics_duration_bounds[0]), nanoseconds,
-		nanoseconds / UINT64_C(1000), saturation_total);
+	metrics_histogram_observe(histogram, metrics_duration_bounds, sizeof(metrics_duration_bounds) / sizeof(metrics_duration_bounds[0]), nanoseconds, nanoseconds / UINT64_C(1000), saturation_total);
 	return true;
 }
 

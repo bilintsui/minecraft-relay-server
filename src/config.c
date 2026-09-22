@@ -535,10 +535,7 @@ bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const ch
 		size_t b64_size = (blocks + (icon_size % 3 > 0)) * 4;
 		if (b64_size > CONF_ICON_B64MAX) {
 			free(icon_raw);
-			MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING,
-				"Icon too large (base64: %zu > %u bytes), %s.",
-				b64_size, CONF_ICON_B64MAX, failure_action
-			);
+			MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING, "Icon too large (base64: %zu > %u bytes), %s.", b64_size, CONF_ICON_B64MAX, failure_action);
 		} else {
 			char *icon_b64 = (char *)malloc(b64_size + 1);
 			if (icon_b64 != NULL) {
@@ -551,44 +548,26 @@ bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const ch
 				return true;
 			} else {
 				free(icon_raw);
-				MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING,
-					"No memory for icon, %s.",
-					failure_action
-				);
+				MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING, "No memory for icon, %s.", failure_action);
 			}
 		}
 	} else {
 		free(icon_raw);
 		if (icon_size == 0) {
-			MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING,
-				"Icon file %s is empty, %s.",
-				cfg->icon_path, failure_action
-			);
+			MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING, "Icon file %s is empty, %s.", cfg->icon_path, failure_action);
 		} else if (icon_size == -1) {
 			switch (errno) {
 				case FREADALL_ERFAIL:
-					MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING,
-						"Cannot open icon file %s, %s.",
-						cfg->icon_path, failure_action
-					);
+					MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING, "Cannot open icon file %s, %s.", cfg->icon_path, failure_action);
 					break;
 				case FREADALL_ELARGE:
-					MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING,
-						"Icon file %s too large, %s.",
-						cfg->icon_path, failure_action
-					);
+					MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING, "Icon file %s too large, %s.", cfg->icon_path, failure_action);
 					break;
 				case FREADALL_ENOMEM:
-					MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING,
-						"No memory to read icon file %s, %s.",
-						cfg->icon_path, failure_action
-					);
+					MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING, "No memory to read icon file %s, %s.", cfg->icon_path, failure_action);
 					break;
 				default:
-					MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING,
-						"Cannot read icon file %s, %s.",
-						cfg->icon_path, failure_action
-					);
+					MKSYS_LOG(logfile, loglevel, MKSYS_LEVEL_WARNING, "Cannot read icon file %s, %s.", cfg->icon_path, failure_action);
 					break;
 			}
 		}
@@ -615,7 +594,8 @@ conf_read_status config_read(const char *filename, const conf_cache *active_cach
 	if (result != NULL) {
 		*result = NULL;
 	}
-	if ((filename == NULL) || (active_cache == NULL) || (candidate_cache == NULL) || (result == NULL) || (active_cache == candidate_cache) || (candidate_cache->data != NULL) || (candidate_cache->size != 0)) {
+	if ((filename == NULL) || (active_cache == NULL) || (candidate_cache == NULL) || (result == NULL) || (active_cache == candidate_cache) || (candidate_cache->data != NULL)
+		|| (candidate_cache->size != 0)) {
 		errno = CONF_EARGUMENT;
 		return CONF_READ_ERROR;
 	}

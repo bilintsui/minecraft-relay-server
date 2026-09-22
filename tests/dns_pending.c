@@ -31,8 +31,7 @@ static dns_address_lookup_status dns_pending_fixed(const char *hostname, sa_fami
 	result->addresses[0].effective_ttl = 0;
 	result->addresses[0].record_ttl = 0;
 	result->rcode = ns_r_noerror;
-	if (snprintf(result->canonical_name, sizeof(result->canonical_name), "%s", hostname) <= 0
-		|| snprintf(result->question_name, sizeof(result->question_name), "%s", hostname) <= 0) {
+	if (snprintf(result->canonical_name, sizeof(result->canonical_name), "%s", hostname) <= 0 || snprintf(result->question_name, sizeof(result->question_name), "%s", hostname) <= 0) {
 		dns_address_result_destroy(result);
 		return DNS_ADDRESS_LOOKUP_MALFORMED;
 	}

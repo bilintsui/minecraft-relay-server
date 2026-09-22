@@ -366,10 +366,7 @@ static void listener_backoff(void) {
 
 static void listener_bind_success_msg(const listener_context *context) {
 	mksysmsg(MKSYS_PREFIX_ON, context->log_filename, context->config->log.level, MKSYS_LEVEL_INFORMATION, MKSYS_PARAGRAPH_END, "Bind Successful.");
-	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, context->config->log.level, MKSYS_LEVEL_INFORMATION, MKSYS_PARAGRAPH_END,
-		"For more information, see log file: %s",
-		context->config->log.filename
-	);
+	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, context->config->log.level, MKSYS_LEVEL_INFORMATION, MKSYS_PARAGRAPH_END, "For more information, see log file: %s", context->config->log.filename);
 }
 
 static net_addrbundle listener_client_address_parse(const listener_client_address *addr) {
@@ -466,8 +463,7 @@ static int listener_connection_timer_test_rearm(const listener_requests *request
 	}
 	for (size_t ready_index = 0; ready_index < requests->ready_count; ready_index++) {
 		const listener_ready_event *ready = &requests->ready[ready_index];
-		if (ready->source == NULL || ready->source->kind != LISTENER_EVENT_TIMEOUT || ready->source->connection == NULL
-			|| ready->source->connection->closing) {
+		if (ready->source == NULL || ready->source->kind != LISTENER_EVENT_TIMEOUT || ready->source->connection == NULL || ready->source->connection->closing) {
 			continue;
 		}
 		listener_connection *connection = ready->source->connection;
@@ -530,8 +526,7 @@ static int listener_connection_buffer_receive(listener_connection_buffer *buffer
 }
 
 static int listener_connection_buffer_send(listener_connection_buffer *buffer, int socket_fd, size_t *activity) {
-	if (buffer == NULL || buffer->data == NULL || buffer->capacity == 0 || buffer->offset > buffer->capacity || buffer->size > buffer->capacity - buffer->offset
-		|| activity == NULL) {
+	if (buffer == NULL || buffer->data == NULL || buffer->capacity == 0 || buffer->offset > buffer->capacity || buffer->size > buffer->capacity - buffer->offset || activity == NULL) {
 		errno = EINVAL;
 		return -1;
 	}
@@ -834,8 +829,7 @@ static listener_connection_progress listener_connection_receive(listener_connect
 			size_t packet_size;
 			protocol_packet_status packet_status = protocol_packet_length(connection->inbound, connection->inbound_size, &packet_size);
 			if (packet_status == PROTOCOL_PACKET_COMPLETE) {
-				return protocol_identify(connection->inbound, connection->inbound_size, NULL) == PVER_UNIDENT
-					? LISTENER_CONNECTION_ABORT : LISTENER_CONNECTION_READY;
+				return protocol_identify(connection->inbound, connection->inbound_size, NULL) == PVER_UNIDENT ? LISTENER_CONNECTION_ABORT : LISTENER_CONNECTION_READY;
 			}
 			if (packet_status == PROTOCOL_PACKET_INVALID || packet_size > sizeof(connection->inbound)) {
 				return LISTENER_CONNECTION_ABORT;
@@ -863,8 +857,7 @@ static listener_connection_progress listener_connection_receive(listener_connect
 }
 
 static bool listener_connection_route_cancelled(const listener_connection *connection, listener_event_kind kind, uint32_t event_flags) {
-	return connection != NULL && connection->state == LISTENER_CONNECTION_ROUTE_WAITING && kind == LISTENER_EVENT_CLIENT
-		&& (event_flags & (EPOLLERR | EPOLLHUP | EPOLLRDHUP));
+	return connection != NULL && connection->state == LISTENER_CONNECTION_ROUTE_WAITING && kind == LISTENER_EVENT_CLIENT && (event_flags & (EPOLLERR | EPOLLHUP | EPOLLRDHUP));
 }
 
 static listener_metrics_selected_family listener_connection_route_metrics_family(const listener_connection *connection) {
@@ -939,8 +932,7 @@ static listener_connection_route listener_connection_route_parse(listener_connec
 			break;
 		case PVER_MODERN2:
 			modern = packet_read((void *)connection->inbound, (void *)(connection->inbound + connection->inbound_size));
-			if (modern.version == 0 || (modern.nextstate != CLIENT_INTENT_STATUS && modern.nextstate != CLIENT_INTENT_LOGIN
-				&& modern.nextstate != CLIENT_INTENT_TRANSFER)) {
+			if (modern.version == 0 || (modern.nextstate != CLIENT_INTENT_STATUS && modern.nextstate != CLIENT_INTENT_LOGIN && modern.nextstate != CLIENT_INTENT_TRANSFER)) {
 				packet_destroy(modern);
 				return LISTENER_CONNECTION_ROUTE_INVALID;
 			}
@@ -969,8 +961,7 @@ static listener_connection_route listener_connection_route_parse(listener_connec
 	return valid ? route : LISTENER_CONNECTION_ROUTE_INVALID;
 }
 
-static listener_connection_progress listener_connection_route_progress(listener_connection *connection, listener_metrics_state *metrics, resolver_supervisor *supervisor,
-	const struct timespec *now) {
+static listener_connection_progress listener_connection_route_progress(listener_connection *connection, listener_metrics_state *metrics, resolver_supervisor *supervisor, const struct timespec *now) {
 	connection->waiter_status = route_waiter_progress(connection->waiter, supervisor, now);
 	if (connection->waiter_status == ROUTE_WAITER_PENDING) {
 		(void)listener_metrics_route_pending(metrics, &connection->route_metrics);
@@ -1047,21 +1038,22 @@ static listener_connection_progress listener_connection_route_start(listener_con
 	if (route == LISTENER_CONNECTION_ROUTE_SHORT_LOCAL || route == LISTENER_CONNECTION_ROUTE_WORKER_BYPASS) {
 		(void)listener_metrics_route_resolution_record(metrics, &connection->route_metrics,
 			route == LISTENER_CONNECTION_ROUTE_SHORT_LOCAL ? LISTENER_METRICS_RESOLUTION_LOCAL : LISTENER_METRICS_RESOLUTION_BYPASS);
-		(void)listener_metrics_route_settle(metrics, &connection->route_metrics, LISTENER_METRICS_OUTCOME_READY, LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
+		(void)listener_metrics_route_settle(metrics, &connection->route_metrics,
+			LISTENER_METRICS_OUTCOME_READY, LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
 		return LISTENER_CONNECTION_READY;
 	}
 	p_proxy inbound_proxy;
 	if (!protocol_proxy_socket_read(connection->socket_fd, &inbound_proxy)) {
-		(void)listener_metrics_route_settle(metrics, &connection->route_metrics, LISTENER_METRICS_OUTCOME_INTERNAL_ERROR,
-			LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
+		(void)listener_metrics_route_settle(metrics, &connection->route_metrics,
+			LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
 		return LISTENER_CONNECTION_ABORT;
 	}
 	connection->state = LISTENER_CONNECTION_ROUTE_WAITING;
 	route_waiter_create_status create_status = route_waiter_create(connection->generation, connection->vhost, &inbound_proxy, now, &connection->waiter);
 	if (create_status != ROUTE_WAITER_CREATE_OK) {
 		if (create_status == ROUTE_WAITER_CREATE_BAD_ARGUMENT || create_status == ROUTE_WAITER_CREATE_TIME) {
-			(void)listener_metrics_route_settle(metrics, &connection->route_metrics, LISTENER_METRICS_OUTCOME_INTERNAL_ERROR,
-				LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
+			(void)listener_metrics_route_settle(metrics, &connection->route_metrics,
+				LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
 			errno = create_status == ROUTE_WAITER_CREATE_TIME ? EOVERFLOW : EINVAL;
 			return LISTENER_CONNECTION_FATAL;
 		}
@@ -1079,17 +1071,17 @@ static listener_connection_progress listener_connection_route_start(listener_con
 	struct timespec deadline;
 	if (!route_waiter_deadline(connection->waiter, &deadline) || listener_connection_timer_set(connection, LISTENER_CONNECTION_TIMER_ROUTE, &deadline) == -1
 		|| listener_connection_interests_update(connection, events) == -1) {
-		(void)listener_metrics_route_resolution_record(metrics, &connection->route_metrics, LISTENER_METRICS_RESOLUTION_WAITED);
-		(void)listener_metrics_route_settle(metrics, &connection->route_metrics, LISTENER_METRICS_OUTCOME_INTERNAL_ERROR,
-			LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
+		(void)listener_metrics_route_resolution_record(metrics, &connection->route_metrics,
+			LISTENER_METRICS_RESOLUTION_WAITED);
+		(void)listener_metrics_route_settle(metrics, &connection->route_metrics,
+			LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
 		return LISTENER_CONNECTION_FATAL;
 	}
 	return LISTENER_CONNECTION_PENDING;
 }
 
 static bool listener_connection_short_buffer_prepare(listener_connection *connection) {
-	if (connection->short_plan.response == NULL || connection->short_plan.response_size == 0
-		|| connection->short_plan.response_size > LISTENER_SHORT_RELAY_BUFFER_BYTES) {
+	if (connection->short_plan.response == NULL || connection->short_plan.response_size == 0 || connection->short_plan.response_size > LISTENER_SHORT_RELAY_BUFFER_BYTES) {
 		return false;
 	}
 	connection->upstream_buffer.data = malloc(LISTENER_SHORT_RELAY_BUFFER_BYTES);
@@ -1151,8 +1143,7 @@ static void listener_connection_upstream_close(listener_connection *connection, 
 	connection->upstream_source.generation = connection->upstream_source.generation == UINT64_MAX ? 1 : connection->upstream_source.generation + 1U;
 }
 
-static listener_connection_progress listener_connection_short_drive(listener_connection *connection, const listener_events *events, const struct timespec *now,
-	size_t activity) {
+static listener_connection_progress listener_connection_short_drive(listener_connection *connection, const listener_events *events, const struct timespec *now, size_t activity) {
 	if (timeutil_compare(now, &connection->lifetime_deadline) >= 0) {
 		return LISTENER_CONNECTION_CLOSED;
 	}
@@ -1172,8 +1163,7 @@ static listener_connection_progress listener_connection_short_drive(listener_con
 	if (connection->state != LISTENER_CONNECTION_SHORT_RELAYING) {
 		return listener_connection_interests_update(connection, events) == -1 ? LISTENER_CONNECTION_FATAL : LISTENER_CONNECTION_PENDING;
 	}
-	if (listener_connection_data_send(connection->upstream_fd, connection->short_plan.request, connection->short_plan.request_size,
-		&connection->request_offset, &activity) == -1) {
+	if (listener_connection_data_send(connection->upstream_fd, connection->short_plan.request, connection->short_plan.request_size, &connection->request_offset, &activity) == -1) {
 		return LISTENER_CONNECTION_CLOSED;
 	}
 	if (connection->request_offset == connection->short_plan.request_size && connection->short_plan.request_size > 0) {
@@ -1204,12 +1194,10 @@ static listener_connection_progress listener_connection_short_drive(listener_con
 		}
 		connection->client_write_closed = true;
 	}
-	if (connection->client_read_closed && connection->upstream_read_closed && connection->short_plan.request_size == 0 && connection->client_buffer.size == 0
-		&& connection->upstream_buffer.size == 0) {
+	if (connection->client_read_closed && connection->upstream_read_closed && connection->short_plan.request_size == 0 && connection->client_buffer.size == 0 && connection->upstream_buffer.size == 0) {
 		return LISTENER_CONNECTION_CLOSED;
 	}
-	if (activity > 0 && listener_connection_timer_arm_short(connection, LISTENER_CONNECTION_TIMER_SHORT_IDLE, now,
-		LISTENER_SHORT_RELAY_IDLE_TIMEOUT_SEC) == -1) {
+	if (activity > 0 && listener_connection_timer_arm_short(connection, LISTENER_CONNECTION_TIMER_SHORT_IDLE, now, LISTENER_SHORT_RELAY_IDLE_TIMEOUT_SEC) == -1) {
 		return LISTENER_CONNECTION_ABORT;
 	}
 	return listener_connection_interests_update(connection, events) == -1 ? LISTENER_CONNECTION_FATAL : LISTENER_CONNECTION_PENDING;
@@ -1267,8 +1255,7 @@ static listener_connection_progress listener_connection_short_failure(listener_c
 	return listener_connection_short_drive(connection, events, now, 0);
 }
 
-static listener_connection_progress listener_connection_short_connect_complete(listener_connection *connection, const listener_events *events,
-	const struct timespec *now) {
+static listener_connection_progress listener_connection_short_connect_complete(listener_connection *connection, const listener_events *events, const struct timespec *now) {
 	net_connect_status status = net_connect_nonblocking_complete(connection->upstream_fd);
 	if (status != NET_CONNECT_OK) {
 		return listener_connection_short_failure(connection, events, now);
@@ -1330,8 +1317,7 @@ static listener_connection_progress listener_connection_short_event(listener_con
 	return listener_connection_short_drive(connection, events, now, activity);
 }
 
-static listener_connection_progress listener_connection_short_start(listener_connection *connection, const listener_events *events, listener_context *context,
-	const struct timespec *now) {
+static listener_connection_progress listener_connection_short_start(listener_connection *connection, const listener_events *events, listener_context *context, const struct timespec *now) {
 	connection_setup_snapshot snapshot;
 	if (!listener_connection_snapshot_prepare(connection, context, &snapshot)) {
 		return LISTENER_CONNECTION_ABORT;
@@ -1352,8 +1338,7 @@ static listener_connection_progress listener_connection_short_start(listener_con
 		}
 		return listener_connection_short_drive(connection, events, now, 0);
 	}
-	net_connect_status connect_status = net_connect_nonblocking(&connection->short_plan.snapshot.endpoint.address,
-		connection->short_plan.snapshot.endpoint.port, &connection->upstream_fd);
+	net_connect_status connect_status = net_connect_nonblocking(&connection->short_plan.snapshot.endpoint.address, connection->short_plan.snapshot.endpoint.port, &connection->upstream_fd);
 	if (connect_status != NET_CONNECT_OK && connect_status != NET_CONNECT_PENDING) {
 		return listener_connection_short_failure(connection, events, now);
 	}
@@ -1404,8 +1389,7 @@ static listener_connection_progress listener_connection_timeout(listener_connect
 	if (connection->timer == LISTENER_CONNECTION_TIMER_SHORT_CONNECT) {
 		return listener_connection_short_failure(connection, events, &current_now);
 	}
-	if (connection->timer == LISTENER_CONNECTION_TIMER_SHORT_IDLE || connection->timer == LISTENER_CONNECTION_TIMER_SHORT_LIFETIME
-		|| connection->timer == LISTENER_CONNECTION_TIMER_WORKER_REFUSAL) {
+	if (connection->timer == LISTENER_CONNECTION_TIMER_SHORT_IDLE || connection->timer == LISTENER_CONNECTION_TIMER_SHORT_LIFETIME || connection->timer == LISTENER_CONNECTION_TIMER_WORKER_REFUSAL) {
 		return LISTENER_CONNECTION_CLOSED;
 	}
 	return connection->timer == LISTENER_CONNECTION_TIMER_GRACE && protocol_identify(connection->inbound, connection->inbound_size, NULL) != PVER_UNIDENT
@@ -1820,15 +1804,24 @@ static bool listener_hosts_prepare(listener_context *context, mksys_level failur
 	size_t malformed_line_count = 0;
 	hosts_load_status status = hosts_table_load(LISTENER_HOSTS_FILENAME, result, &malformed_line_count);
 	if (status != HOSTS_LOAD_OK && status != HOSTS_LOAD_FILE_ERROR) {
-		LISTENER_LOG(context, failure_level, "Cannot prepare local static host table from %s: %s%s.", LISTENER_HOSTS_FILENAME, listener_hosts_load_error(status), failure_action);
+		LISTENER_LOG(context, failure_level,
+			"Cannot prepare local static host table from %s: %s%s.",
+			LISTENER_HOSTS_FILENAME, listener_hosts_load_error(status), failure_action
+		);
 		return false;
 	}
 	if (*result == NULL) {
-		LISTENER_LOG(context, failure_level, "Cannot prepare local static host table from %s: loader returned no table%s.", LISTENER_HOSTS_FILENAME, failure_action);
+		LISTENER_LOG(context, failure_level,
+			"Cannot prepare local static host table from %s: loader returned no table%s.",
+			LISTENER_HOSTS_FILENAME, failure_action
+		);
 		return false;
 	}
 	if (status == HOSTS_LOAD_FILE_ERROR) {
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot read local static host table from %s; using guaranteed localhost entries.", LISTENER_HOSTS_FILENAME);
+		LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
+			"Cannot read local static host table from %s; using guaranteed localhost entries.",
+			LISTENER_HOSTS_FILENAME
+		);
 	}
 	if (malformed_line_count > 0) {
 		LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
@@ -1854,12 +1847,10 @@ static void listener_metrics_observations_drain(listener_context *context, const
 	while (resolver_supervisor_observation_take(context->resolver, &observation)) {
 		listener_metrics_helper_observation_log(&context->metrics_runtime, &observation, context->log_filename, context->config->log.level, now);
 	}
-	listener_metrics_helper_observation_loss_log(&context->metrics_runtime, resolver_supervisor_observation_dropped(context->resolver), context->log_filename,
-		context->config->log.level, now);
+	listener_metrics_helper_observation_loss_log(&context->metrics_runtime, resolver_supervisor_observation_dropped(context->resolver), context->log_filename, context->config->log.level, now);
 }
 
-static void listener_metrics_snapshot_output(listener_context *context, listener_metrics_output_reason reason, const char *log_filename, uint8_t log_level,
-	const struct timespec *now) {
+static void listener_metrics_snapshot_output(listener_context *context, listener_metrics_output_reason reason, const char *log_filename, uint8_t log_level, const struct timespec *now) {
 	int saved_errno = errno;
 	listener_metrics_aggregate_snapshot snapshot;
 	if (listener_metrics_aggregate_snapshot_get(context, &snapshot)) {
@@ -2134,8 +2125,7 @@ static int listener_ready_flip_test_timer_disarm(const void *context) {
 }
 #endif
 
-static int listener_route_runtime_ready(listener_context *context, listener_route_runtime *runtime, listener_events *events, const listener_socket *listener,
-	bool warmup_complete, const struct timespec *now) {
+static int listener_route_runtime_ready(listener_context *context, listener_route_runtime *runtime, listener_events *events, const listener_socket *listener, bool warmup_complete, const struct timespec *now) {
 	if (listener_events_socket_add(events, listener->fd) == -1) {
 		return -1;
 	}
@@ -2169,8 +2159,7 @@ static int listener_route_runtime_ready(listener_context *context, listener_rout
 	return 0;
 }
 
-static int listener_route_runtime_schedule(listener_context *context, listener_route_runtime *runtime, listener_events *events, const listener_socket *listener,
-	const struct timespec *now) {
+static int listener_route_runtime_schedule(listener_context *context, listener_route_runtime *runtime, listener_events *events, const listener_socket *listener, const struct timespec *now) {
 	route_prewarm_status status = route_resolution_schedule(context->route_resolution, context->resolver, now, LISTENER_ROUTE_PREWARM_BATCH_LIMIT);
 	if (status == ROUTE_PREWARM_BAD_ARGUMENT || status == ROUTE_PREWARM_IO || status == ROUTE_PREWARM_TIME) {
 		errno = status == ROUTE_PREWARM_TIME ? EOVERFLOW : status == ROUTE_PREWARM_IO ? EIO : EINVAL;
@@ -2185,7 +2174,9 @@ static int listener_route_runtime_schedule(listener_context *context, listener_r
 			runtime->pressure_logged = true;
 		}
 	} else if (runtime->pressure_logged) {
-		LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION, "Proxy route prewarming resumed after local resolver pressure.");
+		LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION,
+			"Proxy route prewarming resumed after local resolver pressure."
+		);
 		runtime->pressure_logged = false;
 	}
 	bool deadline_reached = timeutil_compare(now, &runtime->deadline) >= 0;
@@ -2213,8 +2204,7 @@ static int listener_route_runtime_schedule(listener_context *context, listener_r
 
 static int listener_route_runtime_start(listener_route_runtime *runtime, const listener_events *events, const struct timespec *now) {
 	memset(runtime, 0, sizeof(*runtime));
-	if (LISTENER_ROUTE_PREWARM_BATCH_LIMIT == 0 || LISTENER_ROUTE_WARMUP_TIMEOUT_SEC == 0
-		|| !timeutil_add_seconds(now, LISTENER_ROUTE_WARMUP_TIMEOUT_SEC, &runtime->deadline)) {
+	if (LISTENER_ROUTE_PREWARM_BATCH_LIMIT == 0 || LISTENER_ROUTE_WARMUP_TIMEOUT_SEC == 0 || !timeutil_add_seconds(now, LISTENER_ROUTE_WARMUP_TIMEOUT_SEC, &runtime->deadline)) {
 		errno = EINVAL;
 		return -1;
 	}
@@ -2444,7 +2434,8 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 				case CONF_ECPROXY:
 					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
 						"%s%s%s",
-						config_errmsg((conf_error)errno), (errno == CONF_EROPENFAIL || errno == CONF_EROPENEMPTY) ? context->config_filename : "", ", will keep your old configurations"
+						config_errmsg((conf_error)errno),
+						(errno == CONF_EROPENFAIL || errno == CONF_EROPENEMPTY) ? context->config_filename : "", ", will keep your old configurations"
 					);
 					break;
 				case CONF_ECPROXYDUP:
@@ -2500,7 +2491,9 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 					);
 					result = -1;
 				} else if (publish_hosts) {
-					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION, "Local static host table reloaded.");
+					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
+						"Local static host table reloaded."
+					);
 				}
 			}
 		}
@@ -2582,8 +2575,7 @@ static void listener_worker_refusal_log(listener_context *context) {
 		return;
 	}
 	struct timespec next_log;
-	if (workers->refusal_logged && timeutil_add_seconds(&workers->refusal_logged_at, LISTENER_WORKER_LOG_INTERVAL_SEC, &next_log)
-		&& timeutil_compare(&now, &next_log) < 0) {
+	if (workers->refusal_logged && timeutil_add_seconds(&workers->refusal_logged_at, LISTENER_WORKER_LOG_INTERVAL_SEC, &next_log) && timeutil_compare(&now, &next_log) < 0) {
 		return;
 	}
 	LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Worker process limit reached; refusing a new LOGIN or TRANSFER connection until a worker exits.");
@@ -2750,13 +2742,18 @@ static int listener_connections_route_progress(listener_connection *connections,
 static exit_code listener_loop(listener_context *context, listener_socket *listener) {
 	listener_events events;
 	if (listener_events_init(&events) == -1) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize listener event loop: %s", strerror(errno));
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+			"Cannot initialize listener event loop: %s",
+			strerror(errno)
+		);
 		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
 	}
 	context->generations = route_generation_registry_create();
 	if (context->generations == NULL) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize proxy route generation ownership: memory allocation failed.");
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+			"Cannot initialize proxy route generation ownership: memory allocation failed."
+		);
 		listener_events_destroy(&events);
 		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
@@ -2767,7 +2764,10 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		return EXITCODE_INTERNAL;
 	}
 	if (listener_resolver_init(context, &events) == -1) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize resolver runtime: %s", strerror(errno));
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+			"Cannot initialize resolver runtime: %s",
+			strerror(errno)
+		);
 		listener_resolver_destroy(context);
 		listener_events_destroy(&events);
 		listener_socket_close(listener);
@@ -2779,11 +2779,13 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
 	}
-	listener_route_prepare_status resolution_status = listener_route_resolution_prepare(context, context->route_bindings, context->hosts, MKSYS_LEVEL_CRITICAL, "",
-		&context->route_resolution);
+	listener_route_prepare_status resolution_status = listener_route_resolution_prepare(context, context->route_bindings, context->hosts, MKSYS_LEVEL_CRITICAL, "", &context->route_resolution);
 	if (resolution_status != LISTENER_ROUTE_PREPARE_OK) {
 		if (resolution_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock while preparing proxy route resolution: %s", strerror(errno));
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+				"Cannot sample the monotonic clock while preparing proxy route resolution: %s",
+				strerror(errno)
+			);
 		}
 		listener_resolver_destroy(context);
 		listener_events_destroy(&events);
@@ -2791,8 +2793,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		return EXITCODE_INTERNAL;
 	}
 	route_generation *initial_generation = NULL;
-	if (!listener_generation_create(context, context->config, context->hosts, context->routes, context->route_bindings, context->route_resolution,
-		MKSYS_LEVEL_CRITICAL, "", &initial_generation)) {
+	if (!listener_generation_create(context, context->config, context->hosts, context->routes, context->route_bindings, context->route_resolution, MKSYS_LEVEL_CRITICAL, "", &initial_generation)) {
 		listener_resolver_destroy(context);
 		listener_events_destroy(&events);
 		listener_socket_close(listener);
@@ -2838,7 +2839,10 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 	while (1) {
 		listener_requests requests;
 		if (listener_events_wait(&events, &requests) == -1) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Listener event loop failed: %s", strerror(errno));
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+				"Listener event loop failed: %s",
+				strerror(errno)
+			);
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
@@ -2851,37 +2855,55 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		}
 		if (requests.resolver_ready || requests.route_timer_ready) {
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock for route resolution: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot sample the monotonic clock for route resolution: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 			if (requests.resolver_ready && listener_resolver_events_process(context, connections, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Resolver event processing failed: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Resolver event processing failed: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 			if (requests.route_timer_ready && listener_route_timer_drain(&events) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot consume the route warm-up timer: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot consume the route warm-up timer: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 #ifdef LISTENER_READY_FLIP_TEST
 			if (requests.route_timer_ready && listener_test_ready_flip_timer_event() == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the ready-flip timer test: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot notify the ready-flip timer test: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 #endif
 		}
 		if (requests.child_ready && listener_workers_reap(context) == -1) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot reap a worker process: %s", strerror(errno));
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+				"Cannot reap a worker process: %s",
+				strerror(errno)
+			);
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
 		if (requests.stop && !shutting_down) {
 			listener_metrics_timer_disarm(context, &events, context->log_filename, context->config->log.level);
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock while closing listener connections: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot sample the monotonic clock while closing listener connections: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
@@ -2895,12 +2917,18 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			connection_count = 0;
 			if (connection_destroy_errno != 0) {
 				errno = connection_destroy_errno;
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot release connection route interests during shutdown: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot release connection route interests during shutdown: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 			if (listener_route_timer_set(&events, NULL) == -1 || listener_resolver_shutdown(context) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot shut down resolver runtime: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot shut down resolver runtime: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
@@ -2924,21 +2952,30 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			reload_pending = true;
 #ifdef LISTENER_READY_FLIP_TEST
 			if (listener_test_ready_flip_release() == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the ready-flip reload test: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot notify the ready-flip reload test: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 #endif
 #ifdef LISTENER_EARLY_COLLECT_TEST
 			if (listener_test_early_collect_reload_ack() == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the early-collect reload test: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot notify the early-collect reload test: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 #endif
 		}
 		if (requests.resolver_ready && listener_connections_route_progress(connections, listener, &events, listener_pid, context, &route_now) == -1) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Connection route resolution failed: %s", strerror(errno));
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+				"Connection route resolution failed: %s",
+				strerror(errno)
+			);
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
@@ -2946,7 +2983,10 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		bool retired_before_collect = route_generation_registry_retired(context->generations) != NULL;
 #endif
 		if (!listener_generation_collect(context, &route_now)) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot collect a retired proxy route generation: %s", strerror(errno));
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+				"Cannot collect a retired proxy route generation: %s",
+				strerror(errno)
+			);
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
@@ -2957,7 +2997,10 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		bool ready_flip_timer_ready = listener_test_ready_flip_timer_ready();
 		if (!route_runtime.ready && reload_pending) {
 			if (listener_test_ready_flip_reload_blocked() == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the ready-flip reload test: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot notify the ready-flip reload test: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
@@ -2970,13 +3013,19 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		) {
 #ifdef LISTENER_EARLY_COLLECT_TEST
 			if (listener_test_early_collect_observe(requests.resolver_ready, retired_before_collect) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the early-collect test: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot notify the early-collect test: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 #endif
 			if (listener_notify_reloading() == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot create systemd reload timestamp: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot create systemd reload timestamp: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
@@ -2993,9 +3042,11 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		}
 		bool route_activity = requests.accept_ready || requests.ready_count > 0 || requests.reload || requests.resolver_ready || requests.route_timer_ready || reload_processed;
 		if (route_activity) {
-			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1
-				|| listener_route_runtime_schedule(context, &route_runtime, &events, listener, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Proxy route prewarming failed: %s", strerror(errno));
+			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1 || listener_route_runtime_schedule(context, &route_runtime, &events, listener, &route_now) == -1) {
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Proxy route prewarming failed: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
@@ -3003,7 +3054,10 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		/* Consume socket data before timers from the same epoll batch, then reject only a still-current deadline. */
 		for (int timeout_pass = 0; timeout_pass <= 1; timeout_pass++) {
 			if (timeout_pass == 1 && clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock while processing connection deadlines: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot sample the monotonic clock while processing connection deadlines: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				goto cleanup;
 			}
@@ -3024,11 +3078,9 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				} else if (connection->state == LISTENER_CONNECTION_INITIAL) {
 					progress = kind == LISTENER_EVENT_CLIENT ? listener_connection_receive(connection, requests.ready[ready_index].flags) : LISTENER_CONNECTION_PENDING;
 				} else if (connection->state == LISTENER_CONNECTION_ROUTE_WAITING) {
-					progress = listener_connection_route_cancelled(connection, kind, requests.ready[ready_index].flags)
-						? LISTENER_CONNECTION_CLOSED : LISTENER_CONNECTION_PENDING;
+					progress = listener_connection_route_cancelled(connection, kind, requests.ready[ready_index].flags) ? LISTENER_CONNECTION_CLOSED : LISTENER_CONNECTION_PENDING;
 				} else {
-					progress = listener_connection_short_event(connection, kind, requests.ready[ready_index].flags,
-						requests.ready[ready_index].source_generation, &events, &route_now);
+					progress = listener_connection_short_event(connection, kind, requests.ready[ready_index].flags, requests.ready[ready_index].source_generation, &events, &route_now);
 				}
 				if (progress == LISTENER_CONNECTION_READY && connection->state == LISTENER_CONNECTION_INITIAL) {
 					progress = listener_connection_route_start(connection, &events, &context->metrics, context->resolver, &route_now);
@@ -3040,7 +3092,10 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 					progress = listener_connection_ready(connections, connection, listener, &events, listener_pid, context, &route_now);
 				}
 				if (progress == LISTENER_CONNECTION_FATAL) {
-					LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Connection state processing failed: %s", strerror(errno));
+					LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+						"Connection state processing failed: %s",
+						strerror(errno)
+					);
 					exitcode = EXITCODE_INTERNAL;
 					goto cleanup;
 				} else if (progress == LISTENER_CONNECTION_ABORT) {
@@ -3056,7 +3111,10 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			}
 #ifdef LISTENER_TIMER_REARM_TEST
 			if (timeout_pass == 0 && listener_connection_timer_test_rearm(&requests) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot run the timer rearm regression hook: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot run the timer rearm regression hook: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				goto cleanup;
 			}
@@ -3064,30 +3122,44 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		}
 		size_t destroyed_count;
 		if (!listener_connections_destroy_closed(&connections, &events, &context->metrics, context->resolver, &route_now, &destroyed_count)) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot release closed connection route interests: %s", strerror(errno));
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+				"Cannot release closed connection route interests: %s",
+				strerror(errno)
+			);
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
 		if (destroyed_count > connection_count) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Listener connection accounting failed.");
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+				"Listener connection accounting failed."
+			);
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
 		connection_count -= destroyed_count;
 		if (!listener_generation_collect(context, &route_now)) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot collect a retired proxy route generation after connection processing: %s", strerror(errno));
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+				"Cannot collect a retired proxy route generation after connection processing: %s",
+				strerror(errno)
+			);
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
 		if (route_runtime.ready && reload_pending && route_generation_registry_retired(context->generations) == NULL) {
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1 || listener_route_timer_set(&events, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot resume a deferred configuration reload: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot resume a deferred configuration reload: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 #ifdef LISTENER_READY_FLIP_TEST
 			if (listener_test_ready_flip_timer_arm() == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the ready-flip late-wake test: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot notify the ready-flip late-wake test: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
@@ -3123,11 +3195,17 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				}
 				if (errno == EMFILE || errno == ENFILE) {
 					listener_metrics_accept_fd_exhausted_record(&context->metrics);
-					LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot accept client connection: %s", strerror(errno));
+					LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
+						"Cannot accept client connection: %s",
+						strerror(errno)
+					);
 					listener_backoff();
 					break;
 				}
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot accept client connection: %s", strerror(errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot accept client connection: %s",
+					strerror(errno)
+				);
 				exitcode = EXITCODE_INTERNAL;
 				goto cleanup;
 			}
@@ -3140,7 +3218,9 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			route_generation *generation = route_generation_registry_active_retain(context->generations);
 			if (generation == NULL) {
 				close(client_fd);
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot retain the active route generation for a client connection.");
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
+					"Cannot retain the active route generation for a client connection."
+				);
 				exitcode = EXITCODE_INTERNAL;
 				goto cleanup;
 			}
@@ -3148,7 +3228,10 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			if (connection == NULL) {
 				int saved_errno = errno;
 				listener_metrics_connection_track_failure_record(&context->metrics);
-				LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot track client connection: %s", strerror(saved_errno));
+				LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
+					"Cannot track client connection: %s",
+					strerror(saved_errno)
+				);
 				listener_backoff();
 				break;
 			}
@@ -3204,10 +3287,7 @@ exit_code listener_run(conf *config, conf_cache *config_cache, const char *confi
 	}
 	route_table_build_status route_status = route_table_build(context.config, &context.routes);
 	if (route_status != ROUTE_TABLE_BUILD_OK) {
-		LISTENER_LOG(&context, MKSYS_LEVEL_CRITICAL,
-			"Cannot prepare proxy routes: %s.",
-			route_status == ROUTE_TABLE_BUILD_MEMORY ? "memory allocation failed" : "invalid internal route state"
-		);
+		LISTENER_LOG(&context, MKSYS_LEVEL_CRITICAL, "Cannot prepare proxy routes: %s.", route_status == ROUTE_TABLE_BUILD_MEMORY ? "memory allocation failed" : "invalid internal route state");
 		exitcode = EXITCODE_INTERNAL;
 		goto cleanup;
 	}

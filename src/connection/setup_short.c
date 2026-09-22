@@ -276,8 +276,7 @@ connection_setup_short_action connection_setup_short_prepare(connection_setup_sh
 		plan->result = CONNECTION_SETUP_EOLDCLIENT;
 		return connection_setup_short_plan_response_legacy(plan, "Proxy: Please use direct connect.", plan->protocol, 0) ? CONNECTION_SETUP_SHORT_RESPOND : CONNECTION_SETUP_SHORT_ABORT;
 	}
-	if (plan->protocol == PVER_ORIGPRO || plan->protocol == PVER_LEGACYL1 || plan->protocol == PVER_LEGACYL2 || plan->protocol == PVER_LEGACYL3
-		|| plan->protocol == PVER_LEGACYL4) {
+	if (plan->protocol == PVER_ORIGPRO || plan->protocol == PVER_LEGACYL1 || plan->protocol == PVER_LEGACYL2 || plan->protocol == PVER_LEGACYL3 || plan->protocol == PVER_LEGACYL4) {
 		return CONNECTION_SETUP_SHORT_ABORT;
 	}
 	if (plan->protocol == PVER_MODERN1) {

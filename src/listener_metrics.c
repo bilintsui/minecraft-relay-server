@@ -81,8 +81,7 @@ static bool listener_metrics_duration_milliseconds(const struct timespec *start,
 	return true;
 }
 
-static void listener_metrics_helper_line_emit(listener_metrics_runtime *runtime, const char *log_filename, uint8_t log_level, mksys_level message_level,
-	const char *helper_line) {
+static void listener_metrics_helper_line_emit(listener_metrics_runtime *runtime, const char *log_filename, uint8_t log_level, mksys_level message_level, const char *helper_line) {
 	if (mksysmsg(MKSYS_PREFIX_ON, log_filename, log_level, message_level, MKSYS_LINE_END, "%s", helper_line) != 0) {
 		listener_metrics_counter_add(&runtime->logger_errors, 1);
 	}
@@ -108,8 +107,7 @@ static bool listener_metrics_line_append(listener_metrics_line_builder *builder,
 	return true;
 }
 
-static void listener_metrics_line_begin(listener_metrics_line_builder *builder, char *line, size_t line_size, const listener_metrics_runtime *runtime, uint64_t sequence,
-	const char *family) {
+static void listener_metrics_line_begin(listener_metrics_line_builder *builder, char *line, size_t line_size, const listener_metrics_runtime *runtime, uint64_t sequence, const char *family) {
 	memset(builder, 0, sizeof(*builder));
 	builder->data = line;
 	builder->size = line_size;
@@ -117,8 +115,7 @@ static void listener_metrics_line_begin(listener_metrics_line_builder *builder, 
 		(intmax_t)runtime->process_id, (intmax_t)runtime->started_at.tv_sec, runtime->started_at.tv_nsec);
 }
 
-static void listener_metrics_line_emit(listener_metrics_runtime *runtime, const char *log_filename, uint8_t log_level, listener_metrics_line_builder *builder,
-	const char *metrics_line) {
+static void listener_metrics_line_emit(listener_metrics_runtime *runtime, const char *log_filename, uint8_t log_level, listener_metrics_line_builder *builder, const char *metrics_line) {
 	if (builder->failed || builder->length == 0 || builder->length >= LISTENER_METRICS_LINE_SIZE) {
 		listener_metrics_counter_add(&runtime->format_drops, 1);
 		return;
@@ -254,8 +251,7 @@ void listener_metrics_helper_observation_log(listener_metrics_runtime *runtime, 
 	errno = saved_errno;
 }
 
-void listener_metrics_helper_observation_loss_log(listener_metrics_runtime *runtime, uint64_t observation_dropped, const char *log_filename, uint8_t log_level,
-	const struct timespec *processed_at) {
+void listener_metrics_helper_observation_loss_log(listener_metrics_runtime *runtime, uint64_t observation_dropped, const char *log_filename, uint8_t log_level, const struct timespec *processed_at) {
 	int saved_errno = errno;
 	if (runtime == NULL || log_filename == NULL || !timeutil_valid(processed_at) || observation_dropped <= runtime->observation_dropped_seen) {
 		errno = saved_errno;
@@ -646,8 +642,7 @@ bool listener_metrics_route_settle(listener_metrics_state *metrics, listener_met
 	return true;
 }
 
-bool listener_metrics_route_start(listener_metrics_state *metrics, listener_metrics_route_request *request, listener_metrics_request_mode mode,
-	const struct timespec *now) {
+bool listener_metrics_route_start(listener_metrics_state *metrics, listener_metrics_route_request *request, listener_metrics_request_mode mode, const struct timespec *now) {
 	if (metrics == NULL || request == NULL || request->started || mode >= LISTENER_METRICS_REQUEST_COUNT || now == NULL) {
 		return false;
 	}

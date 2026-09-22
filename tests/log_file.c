@@ -257,8 +257,7 @@ static void log_file_cleanup(const char *directory) {
 static bool prefix_off_failure_test(const char *directory) {
 	char filename[256];
 	snprintf(filename, sizeof(filename), "%s/missing/prefix-off.log", directory);
-	CHECK(mksysmsg(MKSYS_PREFIX_OFF, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "prefix-off failure") == 1,
-		"prefix-off non-TTY path discarded the file sink failure");
+	CHECK(mksysmsg(MKSYS_PREFIX_OFF, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "prefix-off failure") == 1, "prefix-off non-TTY path discarded the file sink failure");
 	return true;
 }
 

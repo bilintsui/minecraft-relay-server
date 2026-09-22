@@ -59,8 +59,7 @@ static int connect_test_listener(in_port_t *port) {
 		.sin_addr = { .s_addr = htonl(INADDR_LOOPBACK) },
 		.sin_port = htons(0)
 	};
-	if (bind(result, (const struct sockaddr *)&address, sizeof(address)) == -1 || listen(result, 8) == -1
-		|| getsockname(result, (struct sockaddr *)&address, &address_size) == -1) {
+	if (bind(result, (const struct sockaddr *)&address, sizeof(address)) == -1 || listen(result, 8) == -1 || getsockname(result, (struct sockaddr *)&address, &address_size) == -1) {
 		close(result);
 		return -1;
 	}
@@ -84,27 +83,21 @@ static bool connect_test_arguments(void) {
 	int pipe_fds[2] = { -1, -1 };
 	int socket_fd = 42;
 	net_addr invalid = { .family = AF_UNSPEC };
-	CHECK(net_connect_nonblocking(NULL, 1, &socket_fd) == NET_CONNECT_BAD_ARGUMENT && socket_fd == -1,
-		"NULL address was accepted");
+	CHECK(net_connect_nonblocking(NULL, 1, &socket_fd) == NET_CONNECT_BAD_ARGUMENT && socket_fd == -1, "NULL address was accepted");
 	socket_fd = 42;
-	CHECK(net_connect_nonblocking(&invalid, 1, &socket_fd) == NET_CONNECT_BAD_ARGUMENT && socket_fd == -1,
-		"invalid address family was accepted");
+	CHECK(net_connect_nonblocking(&invalid, 1, &socket_fd) == NET_CONNECT_BAD_ARGUMENT && socket_fd == -1, "invalid address family was accepted");
 	socket_fd = 42;
-	CHECK(net_connect_nonblocking(&invalid, 1, NULL) == NET_CONNECT_BAD_ARGUMENT,
-		"NULL socket output was accepted");
-	CHECK(net_connect_nonblocking_complete(-1) == NET_CONNECT_BAD_ARGUMENT,
-		"negative completion socket was accepted");
+	CHECK(net_connect_nonblocking(&invalid, 1, NULL) == NET_CONNECT_BAD_ARGUMENT, "NULL socket output was accepted");
+	CHECK(net_connect_nonblocking_complete(-1) == NET_CONNECT_BAD_ARGUMENT, "negative completion socket was accepted");
 	CHECK(pipe(pipe_fds) == 0, "could not create completion internal-error pipe");
-	CHECK(net_connect_nonblocking_complete(pipe_fds[0]) == NET_CONNECT_INTERNAL,
-		"non-socket completion descriptor was not rejected internally");
+	CHECK(net_connect_nonblocking_complete(pipe_fds[0]) == NET_CONNECT_INTERNAL, "non-socket completion descriptor was not rejected internally");
 	close(pipe_fds[0]);
 	close(pipe_fds[1]);
 	pipe_fds[0] = -1;
 	pipe_fds[1] = -1;
 	socket_fd = socket(AF_INET, SOCK_STREAM, 0);
 	CHECK(socket_fd != -1, "could not create completion argument socket");
-	CHECK(net_connect_nonblocking_complete(socket_fd) == NET_CONNECT_OK,
-		"unconnected socket did not report a zero SO_ERROR");
+	CHECK(net_connect_nonblocking_complete(socket_fd) == NET_CONNECT_OK, "unconnected socket did not report a zero SO_ERROR");
 	test_result = true;
 
 cleanup:
@@ -163,8 +156,7 @@ static bool connect_test_immediate_success(void) {
 	listener_fd = connect_test_listener(&port);
 	CHECK(listener_fd >= 0, "could not create immediate-connect listener");
 	connect_force_success = true;
-	CHECK(net_connect_nonblocking(&address, port, &socket_fd) == NET_CONNECT_OK,
-		"immediate connect was not accepted");
+	CHECK(net_connect_nonblocking(&address, port, &socket_fd) == NET_CONNECT_OK, "immediate connect was not accepted");
 	CHECK(socket_fd >= 0, "immediate connect did not return a socket");
 	close(socket_fd);
 	socket_fd = -1;

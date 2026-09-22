@@ -351,8 +351,7 @@ static bool resolver_ipc_writer_u64(resolver_ipc_writer *writer, uint64_t value)
 	return true;
 }
 
-static resolver_ipc_codec_status resolver_ipc_header_decode(const void *packet, size_t packet_size, resolver_ipc_packet_kind expected_kind, resolver_ipc_reader *reader,
-	resolver_ipc_packet_header *result) {
+static resolver_ipc_codec_status resolver_ipc_header_decode(const void *packet, size_t packet_size, resolver_ipc_packet_kind expected_kind, resolver_ipc_reader *reader, resolver_ipc_packet_header *result) {
 	if (packet == NULL || reader == NULL || result == NULL) {
 		return RESOLVER_IPC_CODEC_BAD_ARGUMENT;
 	}
@@ -390,8 +389,7 @@ static resolver_ipc_codec_status resolver_ipc_header_decode(const void *packet, 
 	return RESOLVER_IPC_CODEC_OK;
 }
 
-static resolver_ipc_codec_status resolver_ipc_header_encode(resolver_ipc_packet_kind kind, uint64_t query_id, void *packet, size_t packet_capacity, size_t packet_size,
-	resolver_ipc_writer *writer) {
+static resolver_ipc_codec_status resolver_ipc_header_encode(resolver_ipc_packet_kind kind, uint64_t query_id, void *packet, size_t packet_capacity, size_t packet_size, resolver_ipc_writer *writer) {
 	if (packet == NULL || writer == NULL || query_id == 0) {
 		return RESOLVER_IPC_CODEC_BAD_ARGUMENT;
 	}
@@ -675,8 +673,7 @@ resolver_ipc_codec_status resolver_ipc_response_begin_encode(const resolver_ipc_
 		|| !resolver_ipc_name_size(response->negative.owner, !response->negative.valid, &negative_owner_size)) {
 		return RESOLVER_IPC_CODEC_BAD_ARGUMENT;
 	}
-	size_t encoded_size = RESOLVER_IPC_HEADER_SIZE + sizeof(uint16_t) * 8 + sizeof(uint8_t) * 2 + sizeof(uint64_t) + sizeof(uint32_t) * 4
-		+ question_size + canonical_size + negative_owner_size;
+	size_t encoded_size = RESOLVER_IPC_HEADER_SIZE + sizeof(uint16_t) * 8 + sizeof(uint8_t) * 2 + sizeof(uint64_t) + sizeof(uint32_t) * 4 + question_size + canonical_size + negative_owner_size;
 	resolver_ipc_writer writer;
 	resolver_ipc_codec_status status = resolver_ipc_header_encode(RESOLVER_IPC_PACKET_RESPONSE_BEGIN, response->query_id, packet, packet_capacity, encoded_size, &writer);
 	if (status != RESOLVER_IPC_CODEC_OK) {

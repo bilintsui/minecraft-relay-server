@@ -169,8 +169,7 @@ static bool dns_builder_record_add(dns_message_builder *builder, const char *own
 	return true;
 }
 
-static bool dns_builder_authority_add(dns_message_builder *builder, const char *owner, size_t owner_pointer, uint16_t type, uint16_t record_class, uint32_t ttl, const void *rdata,
-	size_t rdata_size) {
+static bool dns_builder_authority_add(dns_message_builder *builder, const char *owner, size_t owner_pointer, uint16_t type, uint16_t record_class, uint32_t ttl, const void *rdata, size_t rdata_size) {
 	if (!dns_builder_record_add(builder, owner, owner_pointer, type, record_class, ttl, rdata, rdata_size)) {
 		return false;
 	}

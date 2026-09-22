@@ -211,8 +211,7 @@ int main(void) {
 		parsed = NULL;
 		config_cache_destroy(&candidate_cache);
 	}
-	CHECK(write_config(fd, "{\"metrics\":{\"interval\":NaN},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}") == 0,
-		"cannot write NaN metrics configuration");
+	CHECK(write_config(fd, "{\"metrics\":{\"interval\":NaN},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}") == 0, "cannot write NaN metrics configuration");
 	status = config_read(filename, &active_cache, &candidate_cache, &parsed);
 	CHECK(status == CONF_READ_ERROR && errno == CONF_ERPARSE && parsed == NULL, "NaN metrics configuration did not fail during JSON parsing");
 	config_cache_destroy(&candidate_cache);
@@ -232,9 +231,7 @@ int main(void) {
 		config_test_fail_at = fail_at;
 		status = config_read(filename, &active_cache, &candidate_cache, &parsed);
 		config_test_fail_at = 0;
-		CHECK((status == CONF_READ_ERROR) && (errno != 0) && (parsed == NULL)
-			&& ((errno == CONF_ECMEMORY) || (errno == CONF_ERPARSE)),
-			"allocation fault injection was tolerated");
+		CHECK((status == CONF_READ_ERROR) && (errno != 0) && (parsed == NULL) && ((errno == CONF_ECMEMORY) || (errno == CONF_ERPARSE)), "allocation fault injection was tolerated");
 		config_destroy(parsed);
 		parsed = NULL;
 		config_cache_destroy(&candidate_cache);

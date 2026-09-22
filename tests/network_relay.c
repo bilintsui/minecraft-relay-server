@@ -418,8 +418,7 @@ static bool relay_test_hup_queued(void) {
 	close(session.client_fd);
 	session.client_fd = -1;
 	poll(NULL, 0, 250);
-	CHECK(relay_read_exact(session.upstream_fd, received, sent, RELAY_TEST_IO_TIMEOUT_MS) && memcmp(payload, received, sent) == 0,
-		"queued HUP payload was truncated or reordered");
+	CHECK(relay_read_exact(session.upstream_fd, received, sent, RELAY_TEST_IO_TIMEOUT_MS) && memcmp(payload, received, sent) == 0, "queued HUP payload was truncated or reordered");
 	CHECK(relay_expect_eof(session.upstream_fd, RELAY_TEST_IO_TIMEOUT_MS), "queued HUP EOF was not propagated");
 	CHECK(relay_shutdown_write(session.upstream_fd), "could not close queued HUP reverse direction");
 	CHECK(relay_session_wait(&session, NET_RELAY_CLOSED, RELAY_TEST_IO_TIMEOUT_MS), "queued HUP relay did not close cleanly");
@@ -441,8 +440,7 @@ static bool relay_test_hup_unread(void) {
 	CHECK(relay_write_all(session.client_fd, payload, sizeof(payload), RELAY_TEST_IO_TIMEOUT_MS), "could not send HUP payload");
 	close(session.client_fd);
 	session.client_fd = -1;
-	CHECK(relay_read_exact(session.upstream_fd, received, sizeof(received), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(received, payload, sizeof(payload)) == 0,
-		"HUP discarded unread payload");
+	CHECK(relay_read_exact(session.upstream_fd, received, sizeof(received), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(received, payload, sizeof(payload)) == 0, "HUP discarded unread payload");
 	CHECK(relay_expect_eof(session.upstream_fd, RELAY_TEST_IO_TIMEOUT_MS), "HUP did not propagate EOF after unread payload");
 	CHECK(relay_shutdown_write(session.upstream_fd), "could not close reverse HUP test direction");
 	CHECK(relay_session_wait(&session, NET_RELAY_CLOSED, RELAY_TEST_IO_TIMEOUT_MS), "HUP relay did not close cleanly");
@@ -476,11 +474,9 @@ static bool relay_test_seed(void) {
 	bool test_result = false;
 	CHECK(relay_session_start(&session, seed, sizeof(seed), false), "could not start seed relay");
 	CHECK(relay_write_all(session.client_fd, client_bytes, sizeof(client_bytes), RELAY_TEST_IO_TIMEOUT_MS), "could not send seeded client bytes");
-	CHECK(relay_read_exact(session.upstream_fd, received, sizeof(received), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(received, expected, sizeof(expected)) == 0,
-		"seed was not sent before client bytes");
+	CHECK(relay_read_exact(session.upstream_fd, received, sizeof(received), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(received, expected, sizeof(expected)) == 0, "seed was not sent before client bytes");
 	CHECK(relay_write_all(session.upstream_fd, response, sizeof(response), RELAY_TEST_IO_TIMEOUT_MS), "could not send seed response");
-	CHECK(relay_read_exact(session.client_fd, returned, sizeof(returned), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(returned, response, sizeof(response)) == 0,
-		"seed relay reverse traffic failed");
+	CHECK(relay_read_exact(session.client_fd, returned, sizeof(returned), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(returned, response, sizeof(response)) == 0, "seed relay reverse traffic failed");
 	CHECK(relay_shutdown_write(session.client_fd) && relay_shutdown_write(session.upstream_fd), "could not close seed relay");
 	CHECK(relay_session_wait(&session, NET_RELAY_CLOSED, RELAY_TEST_IO_TIMEOUT_MS), "seed relay did not close cleanly");
 	test_result = true;

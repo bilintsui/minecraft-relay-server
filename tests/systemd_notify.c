@@ -155,7 +155,8 @@ static int port_find(in_port_t *result) {
 static int write_config(const char *filename, const char *log_filename, in_port_t port) {
 	char content[PATH_MAX + 512];
 	int content_length = snprintf(content, sizeof(content),
-		"{\"log\":{\"filename\":\"%s\",\"level\":4},\"listen\":{\"address\":\"127.0.0.1\",\"port\":%u},\"icon\":\"\",\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"127.0.0.1\",\"port\":25565}]}\n",
+		"{\"log\":{\"filename\":\"%s\",\"level\":4},\"listen\":{\"address\":\"127.0.0.1\",\"port\":%u},\"icon\":\"\","
+		"\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"127.0.0.1\",\"port\":25565}]}\n",
 		log_filename, (unsigned int)port
 	);
 	if (content_length < 0 || (size_t)content_length >= sizeof(content)) {

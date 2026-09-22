@@ -47,9 +47,9 @@ typedef enum {
 
 /* section: functions (exported) */
 route_bindings_build_status route_bindings_build(const route_table *routes, const hosts_table *hosts, resolver_cache *cache, route_bindings **result);
-void route_bindings_destroy(route_bindings *bindings);
 size_t route_bindings_destination_count(const route_bindings *bindings);
 bool route_bindings_destination_get(const route_bindings *bindings, size_t destination_index, route_binding_view *result);
+void route_bindings_destroy(route_bindings *bindings);
 size_t route_bindings_entry_count(const route_bindings *bindings);
 /* Returned entries are borrowed from the generation and must not be released by the caller. */
 bool route_bindings_entry_get(const route_bindings *bindings, size_t entry_index, resolver_cache_entry **result);

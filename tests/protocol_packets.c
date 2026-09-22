@@ -87,8 +87,7 @@ static bool kickreason_bounds_test(void) {
 			return false;
 		}
 	}
-	if (make_kickreason(output, modern_size, message) != modern_size || make_kickreason(NULL, modern_size, message) != 0
-		|| make_kickreason(output, sizeof(output), NULL) != 0) {
+	if (make_kickreason(output, modern_size, message) != modern_size || make_kickreason(NULL, modern_size, message) != 0 || make_kickreason(output, sizeof(output), NULL) != 0) {
 		return false;
 	}
 	memset(output, 0xA5, sizeof(output));
@@ -105,8 +104,7 @@ static bool kickreason_bounds_test(void) {
 			return false;
 		}
 	}
-	return make_kickreason_legacy(output, legacy_size, message) == legacy_size && make_kickreason_legacy(NULL, legacy_size, message) == 0
-		&& make_kickreason_legacy(output, sizeof(output), NULL) == 0;
+	return make_kickreason_legacy(output, legacy_size, message) == legacy_size && make_kickreason_legacy(NULL, legacy_size, message) == 0 && make_kickreason_legacy(output, sizeof(output), NULL) == 0;
 }
 
 static bool legacy_message_validate(const uint8_t *data, size_t size, size_t *field_count) {
@@ -309,24 +307,19 @@ static bool motd_bounds_test(void) {
 		return false;
 	}
 	/* Legacy goldens for M1/M2/M3 captured from the previous encoder. */
-	if (make_motd_legacy(target, sizeof(target), "hi", PVER_LEGACYM1, 77) != sizeof(golden_m1)
-		|| memcmp(target, golden_m1, sizeof(golden_m1)) != 0) {
+	if (make_motd_legacy(target, sizeof(target), "hi", PVER_LEGACYM1, 77) != sizeof(golden_m1) || memcmp(target, golden_m1, sizeof(golden_m1)) != 0) {
 		return false;
 	}
-	if (make_motd_legacy(target_other, sizeof(target_other), "hi", PVER_LEGACYM1, 255) != sizeof(golden_m1)
-		|| memcmp(target, target_other, sizeof(golden_m1)) != 0) {
+	if (make_motd_legacy(target_other, sizeof(target_other), "hi", PVER_LEGACYM1, 255) != sizeof(golden_m1) || memcmp(target, target_other, sizeof(golden_m1)) != 0) {
 		return false;
 	}
-	if (make_motd_legacy(target, sizeof(target), "hi", PVER_LEGACYM2, 47) != sizeof(golden_m2)
-		|| memcmp(target, golden_m2, sizeof(golden_m2)) != 0) {
+	if (make_motd_legacy(target, sizeof(target), "hi", PVER_LEGACYM2, 47) != sizeof(golden_m2) || memcmp(target, golden_m2, sizeof(golden_m2)) != 0) {
 		return false;
 	}
-	if (make_motd_legacy(target, sizeof(target), "hi", PVER_LEGACYM3, 255) != sizeof(golden_m3)
-		|| memcmp(target, golden_m3, sizeof(golden_m3)) != 0) {
+	if (make_motd_legacy(target, sizeof(target), "hi", PVER_LEGACYM3, 255) != sizeof(golden_m3) || memcmp(target, golden_m3, sizeof(golden_m3)) != 0) {
 		return false;
 	}
-	if (make_motd_legacy(target, sizeof(target), "", PVER_LEGACYM3, 0) != sizeof(golden_m3empty)
-		|| memcmp(target, golden_m3empty, sizeof(golden_m3empty)) != 0) {
+	if (make_motd_legacy(target, sizeof(target), "", PVER_LEGACYM3, 0) != sizeof(golden_m3empty) || memcmp(target, golden_m3empty, sizeof(golden_m3empty)) != 0) {
 		return false;
 	}
 	/* Legacy capacity and argument failures must leave the destination untouched. */
@@ -339,8 +332,7 @@ static bool motd_bounds_test(void) {
 			return false;
 		}
 	}
-	if (make_motd_legacy(target, sizeof(golden_m3), "hi", PVER_LEGACYM3, 255) != sizeof(golden_m3)
-		|| memcmp(target, golden_m3, sizeof(golden_m3)) != 0) {
+	if (make_motd_legacy(target, sizeof(golden_m3), "hi", PVER_LEGACYM3, 255) != sizeof(golden_m3) || memcmp(target, golden_m3, sizeof(golden_m3)) != 0) {
 		return false;
 	}
 	memset(target, 0xA5, sizeof(target));

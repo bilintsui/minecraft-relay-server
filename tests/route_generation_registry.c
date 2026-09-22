@@ -421,16 +421,6 @@ bool __wrap_route_generation_retain(route_generation *generation) {
 	return true;
 }
 
-route_resolution_completion_status __wrap_route_resolution_completion_observe_with_supervisor(route_resolution *resolution, resolver_supervisor *supervisor,
-	const resolver_supervisor_completion *completion, const struct timespec *now) {
-	generation_registry_fixture *fixture = generation_fixture_find_resolution(resolution);
-	if (fixture == NULL || completion == NULL || supervisor == NULL || now == NULL) {
-		return ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT;
-	}
-	fixture->completion_count++;
-	return fixture->completion_status;
-}
-
 route_resolution_release_status __wrap_route_resolution_background_release(route_resolution *resolution, resolver_supervisor *supervisor, const struct timespec *now) {
 	generation_registry_fixture *fixture = generation_fixture_find_resolution(resolution);
 	if (fixture == NULL || supervisor == NULL || now == NULL) {
@@ -448,6 +438,16 @@ route_resolution_release_status __wrap_route_resolution_background_release(route
 		default:
 			return ROUTE_RESOLUTION_RELEASE_BAD_ARGUMENT;
 	}
+}
+
+route_resolution_completion_status __wrap_route_resolution_completion_observe_with_supervisor(route_resolution *resolution, resolver_supervisor *supervisor,
+	const resolver_supervisor_completion *completion, const struct timespec *now) {
+	generation_registry_fixture *fixture = generation_fixture_find_resolution(resolution);
+	if (fixture == NULL || completion == NULL || supervisor == NULL || now == NULL) {
+		return ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT;
+	}
+	fixture->completion_count++;
+	return fixture->completion_status;
 }
 
 /* section: functions (entry point) */

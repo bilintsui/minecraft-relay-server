@@ -65,8 +65,7 @@ typedef enum {
 /* Call only after every live generation coordinator has observed the completion. This function borrows the completion and copies any accepted transient payload. */
 route_waiter_completion_status route_waiter_completion_observe(route_waiter *waiter, const resolver_supervisor_completion *completion);
 /* The waiter retains generation until destruction. */
-route_waiter_create_status route_waiter_create(route_generation *generation, const char *vhost, const p_proxy *inbound_proxy, const struct timespec *now,
-	route_waiter **result);
+route_waiter_create_status route_waiter_create(route_generation *generation, const char *vhost, const p_proxy *inbound_proxy, const struct timespec *now, route_waiter **result);
 bool route_waiter_deadline(const route_waiter *waiter, struct timespec *result);
 /* Destroy pending waiters before their supervisor. SATISFIED release outcomes are normal. */
 route_waiter_destroy_status route_waiter_destroy(route_waiter *waiter, resolver_supervisor *supervisor, const struct timespec *now);

@@ -516,8 +516,7 @@ static int pending_connect_test(const char *binary) {
 	listener_pid = daemon_start(binary, config_filename, notify_filename, true, NULL);
 	CHECK(listener_pid > 0, "cannot start pending-connect daemon");
 	char message[256];
-	CHECK(notification_receive(notify_fd, message, sizeof(message), WORKER_CAP_TEST_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0,
-		"pending daemon READY notification is missing");
+	CHECK(notification_receive(notify_fd, message, sizeof(message), WORKER_CAP_TEST_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "pending daemon READY notification is missing");
 	CHECK(child_snapshot_read(listener_pid, &baseline) == 0, "cannot read pending daemon child baseline");
 	static const char username[] = "pending01";
 	size_t packet_size = handshake_build(login_packet, "test.example", 25565, 2);
@@ -534,8 +533,7 @@ static int pending_connect_test(const char *binary) {
 	CHECK(socket_expect_close(client_fd, WORKER_CAP_TEST_TIMEOUT_MS) == 0, "pending-connect worker did not close its client on deadline");
 	CHECK(clock_gettime(CLOCK_MONOTONIC, &end_time) == 0, "cannot sample pending-connect end time");
 	client_drop(&client_fd);
-	int64_t elapsed_ms = ((int64_t)end_time.tv_sec - (int64_t)start_time.tv_sec) * INT64_C(1000)
-		+ ((int64_t)end_time.tv_nsec - (int64_t)start_time.tv_nsec) / INT64_C(1000000);
+	int64_t elapsed_ms = ((int64_t)end_time.tv_sec - (int64_t)start_time.tv_sec) * INT64_C(1000) + ((int64_t)end_time.tv_nsec - (int64_t)start_time.tv_nsec) / INT64_C(1000000);
 	CHECK(elapsed_ms >= WORKER_CAP_PENDING_MIN_MS && elapsed_ms <= WORKER_CAP_PENDING_MAX_MS, "pending-connect deadline was not close to one second");
 	CHECK(child_snapshot_wait(listener_pid, baseline.workers, WORKER_CAP_TEST_TIMEOUT_MS, NULL) == 0, "pending worker slot was not reaped");
 	CHECK(kill(listener_pid, 0) == 0, "listener died after pending-connect timeout");
@@ -653,8 +651,7 @@ static bool refusal_response_validate(const uint8_t *response, size_t response_s
 	}
 	if (legacy) {
 		size_t notice_size = sizeof(notice) - 1U;
-		if (response_size != 3U + notice_size * sizeof(uint16_t) || response[0] != 0xFF
-			|| response[1] != (uint8_t)(notice_size >> 8) || response[2] != (uint8_t)notice_size) {
+		if (response_size != 3U + notice_size * sizeof(uint16_t) || response[0] != 0xFF || response[1] != (uint8_t)(notice_size >> 8) || response[2] != (uint8_t)notice_size) {
 			return false;
 		}
 		for (size_t index = 0; index < notice_size; index++) {

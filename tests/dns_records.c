@@ -178,8 +178,7 @@ static bool dns_builder_record_add(dns_message_builder *builder, const char *own
 	return true;
 }
 
-static bool dns_builder_authority_add(dns_message_builder *builder, const char *owner, size_t owner_pointer, uint16_t type, uint16_t record_class, uint32_t ttl, const void *rdata,
-	size_t rdata_size) {
+static bool dns_builder_authority_add(dns_message_builder *builder, const char *owner, size_t owner_pointer, uint16_t type, uint16_t record_class, uint32_t ttl, const void *rdata, size_t rdata_size) {
 	if (!dns_builder_record_add(builder, owner, owner_pointer, type, record_class, ttl, rdata, rdata_size, NULL)) {
 		return false;
 	}
@@ -379,7 +378,8 @@ static bool dns_test_lookup(void) {
 	dns_address_result_destroy(&result);
 
 	CHECK(dns_builder_response_start(&address_response, "unexpected.lookup", ns_t_a), "cannot start mismatched-question lookup response");
-	CHECK(dns_builder_record_add(&address_response, NULL, address_response.question_name_offset, ns_t_a, ns_c_in, 30, address_first, sizeof(address_first), NULL), "cannot add mismatched-question lookup address");
+	CHECK(dns_builder_record_add(&address_response, NULL, address_response.question_name_offset, ns_t_a, ns_c_in, 30, address_first, sizeof(address_first), NULL),
+		"cannot add mismatched-question lookup address");
 	dns_test_query_reset();
 	dns_query_fixtures[0] = (dns_query_fixture){ .name = "expected.lookup", .response = &address_response, .type = ns_t_a };
 	dns_query_fixture_count = 1;
@@ -518,8 +518,7 @@ static bool dns_test_lookup_depth(void) {
 	for (size_t index = 0; index < DNS_CNAME_DEPTH_LIMIT + 1; index++) {
 		CHECK(dns_builder_response_start(&responses[index], query_names[index], ns_t_a), "cannot start cross-response depth fixture");
 		CHECK(dns_builder_wire_name_create(query_names[index + 1], wire_name, sizeof(wire_name), &wire_name_size), "cannot encode cross-response depth target");
-		CHECK(dns_builder_record_add(&responses[index], NULL, responses[index].question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL),
-			"cannot add cross-response depth alias");
+		CHECK(dns_builder_record_add(&responses[index], NULL, responses[index].question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add cross-response depth alias");
 		dns_query_fixtures[index] = (dns_query_fixture){ .name = query_names[index], .response = &responses[index], .type = ns_t_a };
 	}
 	dns_query_fixture_count = DNS_CNAME_DEPTH_LIMIT + 1;
@@ -793,7 +792,8 @@ static bool dns_test_records(void) {
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_aaaa, ns_c_in, 400, address_v6_first, sizeof(address_v6_first), NULL), "cannot add first IPv6 address");
 	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_aaaa, ns_c_in, 40, address_v6_second, sizeof(address_v6_second), NULL), "cannot add second IPv6 address");
 	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET6, &result) == DNS_ADDRESS_PARSE_OK, "cannot parse IPv6 RRset");
-	CHECK(result.address_count == 2 && dns_result_address_equal(&result.addresses[0], "2001:db8::1") && dns_result_address_equal(&result.addresses[1], "2001:db8::2"), "IPv6 addresses did not preserve DNS order");
+	CHECK(result.address_count == 2 && dns_result_address_equal(&result.addresses[0], "2001:db8::1") && dns_result_address_equal(&result.addresses[1], "2001:db8::2"),
+		"IPv6 addresses did not preserve DNS order");
 	CHECK(result.addresses[0].effective_ttl == 400 && result.addresses[1].effective_ttl == 40, "IPv6 TTLs were parsed incorrectly");
 
 	test_result = true;

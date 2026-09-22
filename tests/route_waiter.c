@@ -84,8 +84,7 @@ static bool waiter_address_equal(const net_addr *address, sa_family_t family, co
 	return memcmp(&address->addr, expected_address, address_size) == 0;
 }
 
-static bool waiter_address_publish(resolver_cache_entry *entry, const char *address, uint32_t ttl, const struct timespec *completed_at,
-	resolver_cache_publish_status *publication) {
+static bool waiter_address_publish(resolver_cache_entry *entry, const char *address, uint32_t ttl, const struct timespec *completed_at, resolver_cache_publish_status *publication) {
 	if (entry == NULL || address == NULL || completed_at == NULL || publication == NULL) {
 		return false;
 	}
@@ -116,8 +115,7 @@ static bool waiter_address_publish(resolver_cache_entry *entry, const char *addr
 
 static bool waiter_binding_get(const waiter_fixture *fixture, const char *vhost, route_binding_view *result, size_t *destination_index) {
 	route_view route;
-	if (fixture == NULL || vhost == NULL || result == NULL || !route_table_find(fixture->routes, vhost, &route)
-		|| !route_bindings_destination_get(fixture->bindings, route.destination_index, result)) {
+	if (fixture == NULL || vhost == NULL || result == NULL || !route_table_find(fixture->routes, vhost, &route) || !route_bindings_destination_get(fixture->bindings, route.destination_index, result)) {
 		return false;
 	}
 	if (destination_index != NULL) {
@@ -150,15 +148,13 @@ static bool waiter_completion_address(resolver_cache_entry *entry, resolver_cach
 	return true;
 }
 
-static bool waiter_completion_observe(waiter_fixture *fixture, route_waiter *waiter, const resolver_supervisor_completion *completion,
-	const struct timespec *processed_at) {
+static bool waiter_completion_observe(waiter_fixture *fixture, route_waiter *waiter, const resolver_supervisor_completion *completion, const struct timespec *processed_at) {
 	return route_resolution_completion_observe_with_supervisor(fixture->resolution, (resolver_supervisor *)(uintptr_t)1, completion, processed_at)
 		== ROUTE_RESOLUTION_COMPLETION_OK
 		&& route_waiter_completion_observe(waiter, completion) == ROUTE_WAITER_COMPLETION_OK;
 }
 
-static bool waiter_completion_srv(resolver_cache_entry *entry, const struct timespec *completed_at, dns_srv_record *records, size_t record_count,
-	resolver_supervisor_completion *result) {
+static bool waiter_completion_srv(resolver_cache_entry *entry, const struct timespec *completed_at, dns_srv_record *records, size_t record_count, resolver_supervisor_completion *result) {
 	if (entry == NULL || completed_at == NULL || records == NULL || record_count == 0 || result == NULL) {
 		return false;
 	}
@@ -797,8 +793,7 @@ resolver_supervisor_schedule_status __wrap_resolver_supervisor_entry_schedule(re
 	return RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT;
 }
 
-resolver_supervisor_schedule_status __wrap_resolver_supervisor_entry_schedule_interactive(resolver_supervisor *supervisor, resolver_cache_entry *entry,
-	const struct timespec *now) {
+resolver_supervisor_schedule_status __wrap_resolver_supervisor_entry_schedule_interactive(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
 	if (supervisor == NULL || entry == NULL || now == NULL || supervisor_mock.schedule_count >= sizeof(supervisor_mock.scheduled) / sizeof(supervisor_mock.scheduled[0])) {
 		return RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT;
 	}
@@ -854,8 +849,7 @@ int main(void) {
 	CHECK(mkdtemp(directory) != NULL, "cannot create route-waiter test directory");
 	CHECK(snprintf(filename, sizeof(filename), "%s/hosts", directory) > 0, "cannot create route-waiter hosts path");
 	CHECK(waiter_fixture_write(filename) == 0, "cannot write route-waiter hosts fixture");
-	CHECK(hosts_table_load(filename, &hosts, &malformed_line_count) == HOSTS_LOAD_OK && hosts != NULL && malformed_line_count == 0,
-		"cannot load route-waiter hosts fixture");
+	CHECK(hosts_table_load(filename, &hosts, &malformed_line_count) == HOSTS_LOAD_OK && hosts != NULL && malformed_line_count == 0, "cannot load route-waiter hosts fixture");
 	CHECK(waiter_test_arguments(hosts), "route-waiter argument tests failed");
 	CHECK(waiter_test_complete(hosts), "route-waiter queued-completion tests failed");
 	CHECK(waiter_test_completion_clears_interest(hosts), "route-waiter completion-interest tests failed");

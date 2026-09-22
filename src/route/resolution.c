@@ -294,8 +294,7 @@ static route_resolution_operation_status route_resolution_entry_remove(route_res
 	return status;
 }
 
-static route_resolution_operation_status route_resolution_dependency_unlink(route_resolution *resolution, route_resolution_dependency *dependency,
-	const route_resolution_operation_context *context) {
+static route_resolution_operation_status route_resolution_dependency_unlink(route_resolution *resolution, route_resolution_dependency *dependency, const route_resolution_operation_context *context) {
 	route_resolution_entry *entry = dependency->entry;
 	if (entry == NULL) {
 		return ROUTE_RESOLUTION_OPERATION_OK;
@@ -463,8 +462,7 @@ static route_resolution_target *route_resolution_target_create(route_resolution 
 	return target;
 }
 
-static route_resolution_operation_status route_resolution_target_remove(route_resolution *resolution, route_resolution_target *target,
-	const route_resolution_operation_context *context) {
+static route_resolution_operation_status route_resolution_target_remove(route_resolution *resolution, route_resolution_target *target, const route_resolution_operation_context *context) {
 	if (target == NULL || target->use_count != 0) {
 		return ROUTE_RESOLUTION_OPERATION_OK;
 	}
@@ -508,8 +506,7 @@ static void route_resolution_target_set_destroy_data(route_resolution_target_set
 	memset(targets, 0, sizeof(*targets));
 }
 
-static bool route_resolution_target_set_name_add(route_resolution *resolution, route_resolution_target_set *targets, const char *name, route_resolution_target **result,
-	bool *created) {
+static bool route_resolution_target_set_name_add(route_resolution *resolution, route_resolution_target_set *targets, const char *name, route_resolution_target **result, bool *created) {
 	route_resolution_target *target = route_resolution_target_create(resolution, name, created);
 	if (target == NULL) {
 		return false;
@@ -597,8 +594,7 @@ fail:
 	return false;
 }
 
-static route_resolution_operation_status route_resolution_target_set_unlink(route_resolution *resolution, route_resolution_target_set *targets,
-	const route_resolution_operation_context *context) {
+static route_resolution_operation_status route_resolution_target_set_unlink(route_resolution *resolution, route_resolution_target_set *targets, const route_resolution_operation_context *context) {
 	route_resolution_operation_status status = ROUTE_RESOLUTION_OPERATION_OK;
 	if (targets == NULL) {
 		return status;
@@ -780,7 +776,8 @@ static route_resolution_completion_status route_resolution_completion_observe_in
 			return ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT;
 		}
 	}
-	return route_resolution_completion_from_operation(route_resolution_entry_terminal_observe(resolution, entry, positive, srv_records, srv_record_count, false, context));
+	return route_resolution_completion_from_operation(
+		route_resolution_entry_terminal_observe(resolution, entry, positive, srv_records, srv_record_count, false, context));
 }
 
 /* section: functions (exported) */
@@ -801,8 +798,7 @@ route_resolution_release_status route_resolution_background_release(route_resolu
 	return route_resolution_release_from_operation(status);
 }
 
-route_resolution_build_status route_resolution_build(const route_bindings *bindings, const hosts_table *hosts, resolver_cache *cache, const struct timespec *now,
-	route_resolution **result) {
+route_resolution_build_status route_resolution_build(const route_bindings *bindings, const hosts_table *hosts, resolver_cache *cache, const struct timespec *now, route_resolution **result) {
 	if (bindings == NULL || hosts == NULL || cache == NULL || !timeutil_valid(now) || result == NULL || *result != NULL || RESOLVER_CACHE_ENTRY_LIMIT == 0) {
 		return ROUTE_RESOLUTION_BUILD_BAD_ARGUMENT;
 	}
@@ -913,6 +909,45 @@ route_resolution_completion_status route_resolution_completion_observe_with_supe
 	return route_resolution_completion_observe_internal(resolution, &context, completion, now);
 }
 
+size_t route_resolution_destination_count(const route_resolution *resolution) {
+	return resolution == NULL ? 0 : resolution->destination_count;
+}
+
+bool route_resolution_destination_get(const route_resolution *resolution, size_t destination_index, route_resolution_destination_view *result) {
+	if (result != NULL) {
+		memset(result, 0, sizeof(*result));
+	}
+	if (resolution == NULL || destination_index >= resolution->destination_count || result == NULL) {
+		return false;
+	}
+	const route_resolution_destination *destination = &resolution->destinations[destination_index];
+	result->first_terminal = destination->first_terminal;
+	result->pending_entry_count = destination->pending_entry_count;
+	result->result = destination->result;
+	result->srv_records = destination->targets.records;
+	result->srv_record_count = destination->targets.record_count;
+	result->target_count = destination->targets.target_count;
+	return true;
+}
+
+bool route_resolution_destination_target_get(const route_resolution *resolution, size_t destination_index, size_t target_index, route_resolution_target_view *result) {
+	if (result != NULL) {
+		memset(result, 0, sizeof(*result));
+	}
+	if (resolution == NULL || destination_index >= resolution->destination_count || result == NULL || target_index >= resolution->destinations[destination_index].targets.target_count) {
+		return false;
+	}
+	const route_resolution_target *target = resolution->destinations[destination_index].targets.targets[target_index];
+	result->addresses = target->hosts.addresses;
+	result->address_count = target->hosts.address_count;
+	result->ipv4_entry = target->ipv4_entry == NULL ? NULL : target->ipv4_entry->cache_entry;
+	result->ipv6_entry = target->ipv6_entry == NULL ? NULL : target->ipv6_entry->cache_entry;
+	result->name = target->name;
+	result->numeric_address = target->numeric_address;
+	result->source = target->source;
+	return true;
+}
+
 void route_resolution_destroy(route_resolution *resolution) {
 	if (resolution == NULL) {
 		return;
@@ -941,46 +976,6 @@ void route_resolution_destroy(route_resolution *resolution) {
 	free(resolution->destinations);
 	free(resolution->target_buckets);
 	free(resolution);
-}
-
-size_t route_resolution_destination_count(const route_resolution *resolution) {
-	return resolution == NULL ? 0 : resolution->destination_count;
-}
-
-bool route_resolution_destination_get(const route_resolution *resolution, size_t destination_index, route_resolution_destination_view *result) {
-	if (result != NULL) {
-		memset(result, 0, sizeof(*result));
-	}
-	if (resolution == NULL || destination_index >= resolution->destination_count || result == NULL) {
-		return false;
-	}
-	const route_resolution_destination *destination = &resolution->destinations[destination_index];
-	result->first_terminal = destination->first_terminal;
-	result->pending_entry_count = destination->pending_entry_count;
-	result->result = destination->result;
-	result->srv_records = destination->targets.records;
-	result->srv_record_count = destination->targets.record_count;
-	result->target_count = destination->targets.target_count;
-	return true;
-}
-
-bool route_resolution_destination_target_get(const route_resolution *resolution, size_t destination_index, size_t target_index, route_resolution_target_view *result) {
-	if (result != NULL) {
-		memset(result, 0, sizeof(*result));
-	}
-	if (resolution == NULL || destination_index >= resolution->destination_count || result == NULL
-		|| target_index >= resolution->destinations[destination_index].targets.target_count) {
-		return false;
-	}
-	const route_resolution_target *target = resolution->destinations[destination_index].targets.targets[target_index];
-	result->addresses = target->hosts.addresses;
-	result->address_count = target->hosts.address_count;
-	result->ipv4_entry = target->ipv4_entry == NULL ? NULL : target->ipv4_entry->cache_entry;
-	result->ipv6_entry = target->ipv6_entry == NULL ? NULL : target->ipv6_entry->cache_entry;
-	result->name = target->name;
-	result->numeric_address = target->numeric_address;
-	result->source = target->source;
-	return true;
 }
 
 route_prewarm_status route_resolution_schedule(route_resolution *resolution, resolver_supervisor *supervisor, const struct timespec *now, size_t batch_limit) {

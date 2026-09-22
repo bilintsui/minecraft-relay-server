@@ -136,8 +136,7 @@ typedef struct {
 /* DNS lookup names are exact QNAMEs; these functions do not apply search domains or replace the system NSS resolver. */
 dns_address_lookup_status dns_address_lookup(const char *hostname, sa_family_t family, dns_address_result *result);
 /* Parses a response only when its TXID matches expected_id and its question name matches expected_name (case-insensitive, one trailing root dot ignored). */
-dns_address_parse_status dns_address_response_parse(const void *message, size_t message_size, const char *expected_name, uint16_t expected_id, sa_family_t family,
-	dns_address_result *result);
+dns_address_parse_status dns_address_response_parse(const void *message, size_t message_size, const char *expected_name, uint16_t expected_id, sa_family_t family, dns_address_result *result);
 void dns_address_result_destroy(dns_address_result *result);
 dns_srv_lookup_status dns_srv_lookup(const char *query_name, dns_srv_result *result);
 /* Parses a response only when its TXID matches expected_id and its question name matches expected_name (case-insensitive, one trailing root dot ignored). */

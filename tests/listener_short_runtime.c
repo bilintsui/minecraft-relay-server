@@ -201,8 +201,7 @@ static size_t short_test_file_reserved_record_count(const char *filename) {
 		char *message = level == NULL ? NULL : strstr(level + 3, "] ");
 		if (message != NULL) {
 			message += 2;
-			if (strncmp(message, "metrics schema=", strlen("metrics schema=")) == 0
-				|| strncmp(message, "resolver_helper", strlen("resolver_helper")) == 0) {
+			if (strncmp(message, "metrics schema=", strlen("metrics schema=")) == 0 || strncmp(message, "resolver_helper", strlen("resolver_helper")) == 0) {
 				result++;
 			}
 		}
@@ -430,8 +429,7 @@ static int short_test_fixture_start_internal(short_fixture *fixture, const char 
 	return 0;
 }
 
-static int short_test_fixture_start(short_fixture *fixture, const char *binary, const char *directory, const char *suffix,
-	const char *upstream_address, in_port_t upstream_port) {
+static int short_test_fixture_start(short_fixture *fixture, const char *binary, const char *directory, const char *suffix, const char *upstream_address, in_port_t upstream_port) {
 	return short_test_fixture_start_internal(fixture, binary, directory, suffix, upstream_address, upstream_port, 0);
 }
 
@@ -564,8 +562,7 @@ static int short_test_listener_open(in_port_t *port) {
 	if (result == -1) {
 		return -1;
 	}
-	if (bind(result, (const struct sockaddr *)&address, sizeof(address)) == -1 || listen(result, 8) == -1
-		|| getsockname(result, (struct sockaddr *)&address, &address_size) == -1) {
+	if (bind(result, (const struct sockaddr *)&address, sizeof(address)) == -1 || listen(result, 8) == -1 || getsockname(result, (struct sockaddr *)&address, &address_size) == -1) {
 		int saved_errno = errno;
 		close(result);
 		errno = saved_errno;
@@ -673,8 +670,7 @@ static bool short_test_admission(const char *binary, const char *directory) {
 	in_port_t upstream_port = 0;
 	upstream_fd = short_test_listener_open(&upstream_port);
 	CHECK(upstream_fd >= 0, "could not open admission upstream");
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "admission", "127.0.0.1", upstream_port) == 0,
-		"could not start admission listener");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "admission", "127.0.0.1", upstream_port) == 0, "could not start admission listener");
 	struct pollfd events[3];
 	for (size_t connection_index = 0; connection_index < sizeof(client_fds) / sizeof(client_fds[0]); connection_index++) {
 		client_fds[connection_index] = short_test_client_connect(fixture.listener_port);
@@ -721,8 +717,7 @@ static bool short_test_deadline(const char *binary, const char *directory) {
 	bool test_result = false;
 	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
 	int client_fd = -1;
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "deadline", "127.0.0.1", 9) == 0,
-		"could not start deadline listener");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "deadline", "127.0.0.1", 9) == 0, "could not start deadline listener");
 	client_fd = short_test_client_connect(fixture.listener_port);
 	CHECK(client_fd >= 0, "could not connect deadline client");
 	CHECK(short_test_send_all(client_fd, short_status_request, 1) == 0, "could not send deadline request prefix");
@@ -730,16 +725,13 @@ static bool short_test_deadline(const char *binary, const char *directory) {
 	while (nanosleep(&delay, &delay) == -1) {
 		CHECK(errno == EINTR, "could not wait before completing deadline request");
 	}
-	CHECK(short_test_send_all(client_fd, short_status_request + 1, sizeof(short_status_request) - 1U) == 0,
-		"could not finish deadline request");
+	CHECK(short_test_send_all(client_fd, short_status_request + 1, sizeof(short_status_request) - 1U) == 0, "could not finish deadline request");
 	char notification[128];
 	ssize_t notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_TIMER_REARM=1") == 0,
-		"timer rearm regression hook did not run");
+	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_TIMER_REARM=1") == 0, "timer rearm regression hook did not run");
 	uint8_t response[BUFSIZ];
 	size_t response_size = 0;
-	CHECK(short_test_receive_until_close(client_fd, response, sizeof(response), &response_size, 3000) == 0,
-		"absolute lifetime did not close the pending connection");
+	CHECK(short_test_receive_until_close(client_fd, response, sizeof(response), &response_size, 3000) == 0, "absolute lifetime did not close the pending connection");
 	CHECK(response_size == 0, "absolute lifetime synthesized a connect-timeout response");
 	CHECK(kill(fixture.listener, 0) == 0, "deadline connection terminated listener");
 	test_result = true;
@@ -768,24 +760,20 @@ static bool short_test_lifetime(const char *binary, const char *directory) {
 	memcpy(request + sizeof(short_status_request), "tail", 4);
 	upstream_fd = short_test_listener_open(&upstream_port);
 	CHECK(upstream_fd >= 0, "could not open lifetime upstream");
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "lifetime", "127.0.0.1", upstream_port) == 0,
-		"could not start lifetime listener");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "lifetime", "127.0.0.1", upstream_port) == 0, "could not start lifetime listener");
 	client_fd = short_test_client_connect(fixture.listener_port);
 	CHECK(client_fd >= 0, "could not connect lifetime client");
 	CHECK(short_test_send_all(client_fd, request, sizeof(request)) == 0, "could not send lifetime request");
 	upstream_client_fd = short_test_listener_accept(upstream_fd);
 	CHECK(upstream_client_fd >= 0, "lifetime request did not reach upstream");
 	uint8_t forwarded[sizeof(request)];
-	CHECK(short_test_receive_exact(upstream_client_fd, forwarded, sizeof(forwarded)) == 0 && memcmp(forwarded, request, sizeof(request)) == 0,
-		"lifetime request was not forwarded in order");
+	CHECK(short_test_receive_exact(upstream_client_fd, forwarded, sizeof(forwarded)) == 0 && memcmp(forwarded, request, sizeof(request)) == 0, "lifetime request was not forwarded in order");
 	struct timespec delay = { .tv_sec = 2, .tv_nsec = 600000000L };
 	nanosleep(&delay, NULL);
 	static const uint8_t activity[] = "upstream-activity";
 	CHECK(short_test_send_all(upstream_client_fd, activity, sizeof(activity) - 1U) == 0, "could not send upstream activity");
-	CHECK(short_test_receive_until_close(client_fd, received, sizeof(received), &received_size, 4000) == 0,
-		"lifetime did not close the client connection");
-	CHECK(received_size == sizeof(activity) - 1U && memcmp(received, activity, sizeof(activity) - 1U) == 0,
-		"lifetime response contained unexpected or synthesized data");
+	CHECK(short_test_receive_until_close(client_fd, received, sizeof(received), &received_size, 4000) == 0, "lifetime did not close the client connection");
+	CHECK(received_size == sizeof(activity) - 1U && memcmp(received, activity, sizeof(activity) - 1U) == 0, "lifetime response contained unexpected or synthesized data");
 	test_result = true;
 
 cleanup:
@@ -879,8 +867,7 @@ cleanup:
 	return test_result;
 }
 
-static bool short_test_metrics_reload_batch_case(const char *binary, const char *directory, const char *suffix, uint32_t interval,
-	const char *expected_reason) {
+static bool short_test_metrics_reload_batch_case(const char *binary, const char *directory, const char *suffix, uint32_t interval, const char *expected_reason) {
 	bool test_result = false;
 	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
 	int status = 0;
@@ -996,13 +983,11 @@ static bool short_test_refusal(const char *binary, const char *directory) {
 	CHECK(reservation_fd >= 0, "could not reserve refused upstream port");
 	CHECK(close(reservation_fd) == 0, "could not release refused upstream port");
 	reservation_fd = -1;
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "refusal", "127.0.0.1", refused_port) == 0,
-		"could not start refusal listener");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "refusal", "127.0.0.1", refused_port) == 0, "could not start refusal listener");
 	client_fd = short_test_client_connect(fixture.listener_port);
 	CHECK(client_fd >= 0, "could not connect refusal client");
 	CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send refusal request");
-	CHECK(short_test_receive_until_close(client_fd, response, sizeof(response), &response_size, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0,
-		"refused connection did not close after response");
+	CHECK(short_test_receive_until_close(client_fd, response, sizeof(response), &response_size, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0, "refused connection did not close after response");
 	CHECK(short_test_bytes_contain(response, response_size, "Server Temporarily Unavailable."), "refused connection response was not temporary-unavailable");
 	test_result = true;
 
@@ -1314,8 +1299,7 @@ cleanup:
 	return test_result;
 }
 
-static bool short_test_reload_late_case(const char *binary, const char *directory, const char *suffix, const char *address, in_port_t port,
-	bool release_with_short_start, bool route_timer_armed) {
+static bool short_test_reload_late_case(const char *binary, const char *directory, const char *suffix, const char *address, in_port_t port, bool release_with_short_start, bool route_timer_armed) {
 	bool test_result = false;
 	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
 	int client_fd = -1;
@@ -1477,8 +1461,7 @@ static bool short_test_stop(const char *binary, const char *directory) {
 	in_port_t upstream_port = 0;
 	upstream_fd = short_test_listener_open(&upstream_port);
 	CHECK(upstream_fd >= 0, "could not open stop upstream");
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "stop", "127.0.0.1", upstream_port) == 0,
-		"could not start stop listener");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "stop", "127.0.0.1", upstream_port) == 0, "could not start stop listener");
 	client_fd = short_test_client_connect(fixture.listener_port);
 	CHECK(client_fd >= 0, "could not connect stop client");
 	CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send stop request");
@@ -1489,11 +1472,9 @@ static bool short_test_stop(const char *binary, const char *directory) {
 	CHECK(kill(fixture.listener, SIGTERM) == 0, "could not stop listener with an active short relay");
 	uint8_t end_byte;
 	size_t end_size = 0;
-	CHECK(short_test_receive_until_close(client_fd, &end_byte, sizeof(end_byte), &end_size, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0 && end_size == 0,
-		"listener stop did not close short client");
+	CHECK(short_test_receive_until_close(client_fd, &end_byte, sizeof(end_byte), &end_size, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0 && end_size == 0, "listener stop did not close short client");
 	end_size = 0;
-	CHECK(short_test_receive_until_close(upstream_client_fd, &end_byte, sizeof(end_byte), &end_size, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0 && end_size == 0,
-		"listener stop did not close short upstream");
+	CHECK(short_test_receive_until_close(upstream_client_fd, &end_byte, sizeof(end_byte), &end_size, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0 && end_size == 0, "listener stop did not close short upstream");
 	CHECK(short_test_fixture_stop(&fixture) == 0, "listener did not finish orderly resolver shutdown after closing short relay");
 	test_result = true;
 

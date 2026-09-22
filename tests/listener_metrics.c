@@ -218,8 +218,7 @@ static bool listener_metrics_keys_valid(const char *record, const char *baseline
 
 static bool listener_metrics_record_valid(const char *record, const char *baseline, const char *optional, bool allow_extensions) {
 	static const char prefix[] = "metrics ";
-	return record != NULL && strncmp(record, prefix, sizeof(prefix) - 1U) == 0
-		&& listener_metrics_keys_valid(record + sizeof(prefix) - 1U, baseline, optional, allow_extensions);
+	return record != NULL && strncmp(record, prefix, sizeof(prefix) - 1U) == 0 && listener_metrics_keys_valid(record + sizeof(prefix) - 1U, baseline, optional, allow_extensions);
 }
 
 static bool listener_metrics_helper_record_valid(const char *record) {
@@ -342,12 +341,9 @@ static bool listener_metrics_test_capacity(void) {
 	listener_metrics_worker_remove(&metrics);
 	listener_metrics_snapshot snapshot;
 	CHECK(listener_metrics_snapshot_get(&metrics, &snapshot), "capacity snapshot failed");
-	CHECK(snapshot.accepted == 2 && snapshot.accept_capacity_rejected == 1 && snapshot.accept_fd_exhausted == 1,
-		"accept counters were incorrect");
-	CHECK(snapshot.connection_track_failure == 1 && snapshot.connections_current == 1 && snapshot.connections_high_water == 2,
-		"connection counters were incorrect");
-	CHECK(snapshot.worker_spawn == 2 && snapshot.worker_fork_failure == 1 && snapshot.worker_capacity_refusal == 1,
-		"worker counters were incorrect");
+	CHECK(snapshot.accepted == 2 && snapshot.accept_capacity_rejected == 1 && snapshot.accept_fd_exhausted == 1, "accept counters were incorrect");
+	CHECK(snapshot.connection_track_failure == 1 && snapshot.connections_current == 1 && snapshot.connections_high_water == 2, "connection counters were incorrect");
+	CHECK(snapshot.worker_spawn == 2 && snapshot.worker_fork_failure == 1 && snapshot.worker_capacity_refusal == 1, "worker counters were incorrect");
 	CHECK(snapshot.workers_current == 1 && snapshot.workers_high_water == 2, "worker gauges were incorrect");
 	CHECK(snapshot.connection_limit == 100 && snapshot.worker_limit == 20 && snapshot.saturation_total == 0, "listener limits or saturation were incorrect");
 	metrics.accepted = UINT64_MAX;
@@ -417,8 +413,7 @@ static bool listener_metrics_test_consumer_grammar(void) {
 	CHECK(!listener_metrics_helper_record_valid("resolver_helper status=event_loss dropped=3 dropped=4"), "helper record with a duplicate field was accepted");
 	CHECK(!listener_metrics_helper_record_valid("resolver_helper status=event_loss"), "helper record with a missing field was accepted");
 	CHECK(!listener_metrics_helper_record_valid("resolver_helper dropped=3 status=event_loss"), "helper record with a misplaced field was accepted");
-	const char *message = listener_metrics_file_message(
-		"[2026-09-22 12:34:56 UTC+08:00] [INFO] metrics schema=1 seq=1 family=meta instance=1-1-1", "INFO");
+	const char *message = listener_metrics_file_message("[2026-09-22 12:34:56 UTC+08:00] [INFO] metrics schema=1 seq=1 family=meta instance=1-1-1", "INFO");
 	CHECK(message != NULL && strncmp(message, "metrics schema=1", strlen("metrics schema=1")) == 0, "normal metrics file prefix was rejected");
 	message = listener_metrics_file_message("[] [WARN] resolver_helper status=event_loss dropped=1", "WARN");
 	CHECK(message != NULL && listener_metrics_helper_record_valid(message), "empty timestamp or helper WARNING prefix was rejected");
@@ -512,16 +507,11 @@ static bool listener_metrics_test_helper_logs(void) {
 	size_t content_size;
 	char *content = file_read(filename, &content_size);
 	CHECK(content != NULL && content_size > 0, "cannot read helper metrics log");
-	CHECK(strstr(content, "status=degraded slot=0 pid=2001 failure=io streak=1 backoff_ms=1000 suppressed=0") != NULL,
-		"first degraded helper log was incorrect");
-	CHECK(strstr(content, "status=degraded slot=0 pid=2001 failure=protocol streak=3 backoff_ms=1000 suppressed=1") != NULL,
-		"later degraded helper log did not retain cumulative suppression");
-	CHECK(strstr(content, "status=recovered slot=0 pid=2002 recovery=stable_uptime degraded_ms=12000 suppressed=1 last_failure=exit") != NULL,
-		"self-contained helper recovery log was incorrect");
-	CHECK(strstr(content, "status=recovered slot=0 pid=2004 recovery=success_streak degraded_ms=2000 suppressed=1 last_failure=protocol") != NULL,
-		"cross-cycle helper recovery log was incorrect");
-	CHECK(strstr(content, "status=event_loss dropped=1") != NULL && strstr(content, "status=event_loss dropped=2") != NULL,
-		"event-loss logs did not retain a rate-limited update");
+	CHECK(strstr(content, "status=degraded slot=0 pid=2001 failure=io streak=1 backoff_ms=1000 suppressed=0") != NULL, "first degraded helper log was incorrect");
+	CHECK(strstr(content, "status=degraded slot=0 pid=2001 failure=protocol streak=3 backoff_ms=1000 suppressed=1") != NULL, "later degraded helper log did not retain cumulative suppression");
+	CHECK(strstr(content, "status=recovered slot=0 pid=2002 recovery=stable_uptime degraded_ms=12000 suppressed=1 last_failure=exit") != NULL, "self-contained helper recovery log was incorrect");
+	CHECK(strstr(content, "status=recovered slot=0 pid=2004 recovery=success_streak degraded_ms=2000 suppressed=1 last_failure=protocol") != NULL, "cross-cycle helper recovery log was incorrect");
+	CHECK(strstr(content, "status=event_loss dropped=1") != NULL && strstr(content, "status=event_loss dropped=2") != NULL, "event-loss logs did not retain a rate-limited update");
 	free(content);
 	CHECK(unlink(filename) == 0, "cannot remove helper metrics log");
 	return true;
@@ -539,12 +529,9 @@ static bool listener_metrics_test_invalid(void) {
 	CHECK(listener_metrics_route_start(&metrics, &request, LISTENER_METRICS_REQUEST_SHORT, &now), "valid route start failed");
 	CHECK(!listener_metrics_route_start(&metrics, &request, LISTENER_METRICS_REQUEST_SHORT, &now), "duplicate route start succeeded");
 	CHECK(!listener_metrics_route_resolution_record(&metrics, &request, LISTENER_METRICS_RESOLUTION_COUNT), "invalid resolution succeeded");
-	CHECK(!listener_metrics_route_settle(&metrics, &request, LISTENER_METRICS_OUTCOME_COUNT, LISTENER_METRICS_SELECTED_FAMILY_NONE, &now),
-		"invalid outcome succeeded");
-	CHECK(!listener_metrics_route_settle(&metrics, &request, LISTENER_METRICS_OUTCOME_READY, LISTENER_METRICS_SELECTED_FAMILY_COUNT, &now),
-		"invalid family succeeded");
-	CHECK(metrics.route[LISTENER_METRICS_REQUEST_SHORT].requests_started == 1 && metrics.route[LISTENER_METRICS_REQUEST_SHORT].outcome[0] == 0,
-		"invalid route operations changed counters");
+	CHECK(!listener_metrics_route_settle(&metrics, &request, LISTENER_METRICS_OUTCOME_COUNT, LISTENER_METRICS_SELECTED_FAMILY_NONE, &now), "invalid outcome succeeded");
+	CHECK(!listener_metrics_route_settle(&metrics, &request, LISTENER_METRICS_OUTCOME_READY, LISTENER_METRICS_SELECTED_FAMILY_COUNT, &now), "invalid family succeeded");
+	CHECK(metrics.route[LISTENER_METRICS_REQUEST_SHORT].requests_started == 1 && metrics.route[LISTENER_METRICS_REQUEST_SHORT].outcome[0] == 0, "invalid route operations changed counters");
 	CHECK(listener_metrics_effectively_enabled(&config), "valid metrics configuration was not effectively enabled");
 	config.log.level = MKSYS_LEVEL_WARNING;
 	CHECK(!listener_metrics_effectively_enabled(&config), "filtered metrics configuration remained effectively enabled");
@@ -655,13 +642,11 @@ static bool listener_metrics_test_route_duration_error(void) {
 	CHECK(listener_metrics_route_pending(&metrics, &request), "duration-error route did not become pending");
 	CHECK(listener_metrics_route_resolution_record(&metrics, &request, LISTENER_METRICS_RESOLUTION_WAITED), "duration-error resolution failed");
 	errno = EDOM;
-	CHECK(listener_metrics_route_settle(&metrics, &request, LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_NONE, &end),
-		"duration-error route did not settle");
+	CHECK(listener_metrics_route_settle(&metrics, &request, LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_NONE, &end), "duration-error route did not settle");
 	CHECK(errno == EDOM, "duration-error settlement changed errno");
 	listener_metrics_snapshot snapshot;
 	CHECK(listener_metrics_snapshot_get(&metrics, &snapshot), "duration-error snapshot failed");
-	CHECK(snapshot.route_duration[LISTENER_METRICS_REQUEST_SHORT].count == 0
-		&& snapshot.route_duration[LISTENER_METRICS_REQUEST_SHORT].sample_errors == 1, "invalid route duration was not isolated");
+	CHECK(snapshot.route_duration[LISTENER_METRICS_REQUEST_SHORT].count == 0 && snapshot.route_duration[LISTENER_METRICS_REQUEST_SHORT].sample_errors == 1, "invalid route duration was not isolated");
 	return true;
 }
 
@@ -702,8 +687,7 @@ static bool listener_metrics_test_route_pending(void) {
 	CHECK(!listener_metrics_route_pending(&metrics, &request), "pending route entered pending twice");
 	CHECK(listener_metrics_route_resolution_record(&metrics, &request, LISTENER_METRICS_RESOLUTION_WAITED), "waited resolution failed");
 	CHECK(!listener_metrics_route_resolution_record(&metrics, &request, LISTENER_METRICS_RESOLUTION_IMMEDIATE), "route recorded two resolutions");
-	CHECK(listener_metrics_route_settle(&metrics, &request, LISTENER_METRICS_OUTCOME_READY, LISTENER_METRICS_SELECTED_FAMILY_IPV6, &end),
-		"pending route settlement failed");
+	CHECK(listener_metrics_route_settle(&metrics, &request, LISTENER_METRICS_OUTCOME_READY, LISTENER_METRICS_SELECTED_FAMILY_IPV6, &end), "pending route settlement failed");
 	CHECK(!request.pending && request.settled, "pending route latch was incorrect");
 	listener_metrics_state original = metrics;
 	listener_metrics_snapshot snapshot;
@@ -711,12 +695,9 @@ static bool listener_metrics_test_route_pending(void) {
 	CHECK(memcmp(&metrics, &original, sizeof(metrics)) == 0, "listener snapshot changed its source");
 	const listener_metrics_route *route = &snapshot.route[LISTENER_METRICS_REQUEST_WORKER];
 	CHECK(route->requests_started == 1 && route->pending_current == 0 && route->pending_high_water == 1, "pending route gauges were incorrect");
-	CHECK(route->resolution[LISTENER_METRICS_RESOLUTION_WAITED] == 1 && route->outcome[LISTENER_METRICS_OUTCOME_READY] == 1,
-		"pending route resolution or outcome was incorrect");
-	CHECK(route->selected_family[LISTENER_METRICS_SELECTED_FAMILY_IPV6] == 1 && route->selected_family[LISTENER_METRICS_SELECTED_FAMILY_IPV4] == 0,
-		"selected family was incorrect");
-	CHECK(snapshot.route_duration[LISTENER_METRICS_REQUEST_WORKER].count == 1 && snapshot.route_duration[LISTENER_METRICS_REQUEST_WORKER].sum == 50000,
-		"route duration sample was incorrect");
+	CHECK(route->resolution[LISTENER_METRICS_RESOLUTION_WAITED] == 1 && route->outcome[LISTENER_METRICS_OUTCOME_READY] == 1, "pending route resolution or outcome was incorrect");
+	CHECK(route->selected_family[LISTENER_METRICS_SELECTED_FAMILY_IPV6] == 1 && route->selected_family[LISTENER_METRICS_SELECTED_FAMILY_IPV4] == 0, "selected family was incorrect");
+	CHECK(snapshot.route_duration[LISTENER_METRICS_REQUEST_WORKER].count == 1 && snapshot.route_duration[LISTENER_METRICS_REQUEST_WORKER].sum == 50000, "route duration sample was incorrect");
 	CHECK(route->requests_started == route->pending_current + route->outcome[LISTENER_METRICS_OUTCOME_READY], "route conservation failed");
 	return true;
 }
@@ -727,18 +708,15 @@ static bool listener_metrics_test_route_terminal_variants(void) {
 	const struct timespec end = { .tv_sec = 2, .tv_nsec = 0 };
 	listener_metrics_route_request create_failure = { 0 };
 	CHECK(listener_metrics_route_start(&metrics, &create_failure, LISTENER_METRICS_REQUEST_SHORT, &start), "create-failure route start failed");
-	CHECK(listener_metrics_route_settle(&metrics, &create_failure, LISTENER_METRICS_OUTCOME_LIMIT, LISTENER_METRICS_SELECTED_FAMILY_IPV4, &end),
-		"create-failure route settlement failed");
+	CHECK(listener_metrics_route_settle(&metrics, &create_failure, LISTENER_METRICS_OUTCOME_LIMIT, LISTENER_METRICS_SELECTED_FAMILY_IPV4, &end), "create-failure route settlement failed");
 	listener_metrics_route_request abandoned = { 0 };
 	CHECK(listener_metrics_route_start(&metrics, &abandoned, LISTENER_METRICS_REQUEST_SHORT, &start), "abandoned route start failed");
 	CHECK(listener_metrics_route_duration_enable(&abandoned) && listener_metrics_route_pending(&metrics, &abandoned), "abandoned route did not become pending");
 	CHECK(listener_metrics_route_resolution_record(&metrics, &abandoned, LISTENER_METRICS_RESOLUTION_WAITED), "abandoned resolution failed");
-	CHECK(listener_metrics_route_settle(&metrics, &abandoned, LISTENER_METRICS_OUTCOME_ABANDONED, LISTENER_METRICS_SELECTED_FAMILY_NONE, &end),
-		"abandoned route settlement failed");
+	CHECK(listener_metrics_route_settle(&metrics, &abandoned, LISTENER_METRICS_OUTCOME_ABANDONED, LISTENER_METRICS_SELECTED_FAMILY_NONE, &end), "abandoned route settlement failed");
 	CHECK(listener_metrics_route_release_failure_record(&metrics, &abandoned), "route release failure was not recorded");
 	const listener_metrics_route *route = &metrics.route[LISTENER_METRICS_REQUEST_SHORT];
-	CHECK(route->requests_started == 2 && route->outcome[LISTENER_METRICS_OUTCOME_LIMIT] == 1 && route->outcome[LISTENER_METRICS_OUTCOME_ABANDONED] == 1,
-		"terminal route outcomes were incorrect");
+	CHECK(route->requests_started == 2 && route->outcome[LISTENER_METRICS_OUTCOME_LIMIT] == 1 && route->outcome[LISTENER_METRICS_OUTCOME_ABANDONED] == 1, "terminal route outcomes were incorrect");
 	CHECK(route->selected_family[LISTENER_METRICS_SELECTED_FAMILY_IPV4] == 0, "failed route recorded a selected family");
 	CHECK(route->release_failure == 1 && route->requests_started == route->pending_current + 2, "release failure or route conservation was incorrect");
 	CHECK(metrics.route_duration[LISTENER_METRICS_REQUEST_SHORT].count == 1, "route duration eligibility was incorrect");

@@ -170,16 +170,12 @@ static bool assembly_test_arguments(void) {
 	resolver_ipc_assembly_result result = { 0 };
 	uint8_t packet[1] = { 0 };
 	CHECK(budget != NULL, "assembly budget could not be created");
-	CHECK(resolver_ipc_assembly_create(NULL, "argument.test", ns_c_in, ns_t_a, 1, &assembly) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT && assembly == NULL,
-		"NULL assembly budget was accepted");
+	CHECK(resolver_ipc_assembly_create(NULL, "argument.test", ns_c_in, ns_t_a, 1, &assembly) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT && assembly == NULL, "NULL assembly budget was accepted");
 	CHECK(resolver_ipc_assembly_create(budget, NULL, ns_c_in, ns_t_a, 1, &assembly) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT && assembly == NULL, "NULL assembly name was accepted");
 	CHECK(resolver_ipc_assembly_create(budget, "", ns_c_in, ns_t_a, 1, &assembly) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT && assembly == NULL, "empty assembly name was accepted");
-	CHECK(resolver_ipc_assembly_create(budget, "argument.test", ns_c_chaos, ns_t_a, 1, &assembly) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT && assembly == NULL,
-		"unsupported assembly class was accepted");
-	CHECK(resolver_ipc_assembly_create(budget, "argument.test", ns_c_in, ns_t_txt, 1, &assembly) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT && assembly == NULL,
-		"unsupported assembly type was accepted");
-	CHECK(resolver_ipc_assembly_create(budget, "argument.test", ns_c_in, ns_t_a, 0, &assembly) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT && assembly == NULL,
-		"zero assembly query ID was accepted");
+	CHECK(resolver_ipc_assembly_create(budget, "argument.test", ns_c_chaos, ns_t_a, 1, &assembly) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT && assembly == NULL, "unsupported assembly class was accepted");
+	CHECK(resolver_ipc_assembly_create(budget, "argument.test", ns_c_in, ns_t_txt, 1, &assembly) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT && assembly == NULL, "unsupported assembly type was accepted");
+	CHECK(resolver_ipc_assembly_create(budget, "argument.test", ns_c_in, ns_t_a, 0, &assembly) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT && assembly == NULL, "zero assembly query ID was accepted");
 	CHECK(resolver_ipc_assembly_create(budget, "argument.test", ns_c_in, ns_t_a, 1, NULL) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT, "NULL assembly result was accepted");
 	assembly = assembly_new(budget, "argument.test", ns_t_a, 1);
 	CHECK(assembly != NULL, "argument assembly could not be created");

@@ -322,8 +322,7 @@ size_t packet_write(void *dst, size_t dst_capacity, const p_handshake src) {
 		}
 		username_length = strlen(src.username);
 		/* The 8-byte reserve covers the id, username-length, and legacy placeholder varints, keeping both staging buffers within BUFSIZ. */
-		if (username_length > PROTOHANDSHAKE_USERNAMEMAXLEN || (src.signature_data_length > 0 && src.signature_data == NULL)
-			|| src.signature_data_length > BUFSIZ - username_length - 8U) {
+		if (username_length > PROTOHANDSHAKE_USERNAMEMAXLEN || (src.signature_data_length > 0 && src.signature_data == NULL) || src.signature_data_length > BUFSIZ - username_length - 8U) {
 			return 0;
 		}
 	}

@@ -27,8 +27,7 @@ struct route_generation_registry {
 };
 
 /* section: functions (local) */
-static route_resolution_completion_status route_generation_registry_completion_status_merge(route_resolution_completion_status current,
-	route_resolution_completion_status update) {
+static route_resolution_completion_status route_generation_registry_completion_status_merge(route_resolution_completion_status current, route_resolution_completion_status update) {
 	if (current == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT || current == ROUTE_RESOLUTION_COMPLETION_IO || current == ROUTE_RESOLUTION_COMPLETION_TIME) {
 		return current;
 	}
@@ -129,8 +128,7 @@ void route_generation_registry_dispose_in_child(route_generation_registry *regis
 	free(registry);
 }
 
-route_generation_registry_publish_status route_generation_registry_publish(route_generation_registry *registry, route_generation **candidate, resolver_supervisor *supervisor,
-	const struct timespec *now) {
+route_generation_registry_publish_status route_generation_registry_publish(route_generation_registry *registry, route_generation **candidate, resolver_supervisor *supervisor, const struct timespec *now) {
 	if (registry == NULL || candidate == NULL || *candidate == NULL || supervisor == NULL || now == NULL || route_generation_identity(*candidate) == 0
 		|| route_generation_reference_count(*candidate) != 1 || (registry->active != NULL && route_generation_identity(*candidate) <= route_generation_identity(registry->active))) {
 		return ROUTE_GENERATION_REGISTRY_PUBLISH_BAD_ARGUMENT;

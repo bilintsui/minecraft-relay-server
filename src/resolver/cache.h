@@ -116,10 +116,8 @@ size_t resolver_cache_entry_count(const resolver_cache *cache);
 uint64_t resolver_cache_entry_id(const resolver_cache_entry *entry);
 const char *resolver_cache_entry_name(const resolver_cache_entry *entry);
 /* A stored publication moves result ownership. A transient publication clears the old payload but leaves result ownership with the caller. Other failures change neither. */
-resolver_cache_publish_status resolver_cache_entry_publish_address(resolver_cache_entry *entry, dns_address_lookup_status lookup_status, const struct timespec *completed_at,
-	dns_address_result *result);
-resolver_cache_publish_status resolver_cache_entry_publish_srv(resolver_cache_entry *entry, dns_srv_lookup_status lookup_status, const struct timespec *completed_at,
-	dns_srv_result *result);
+resolver_cache_publish_status resolver_cache_entry_publish_address(resolver_cache_entry *entry, dns_address_lookup_status lookup_status, const struct timespec *completed_at, dns_address_result *result);
+resolver_cache_publish_status resolver_cache_entry_publish_srv(resolver_cache_entry *entry, dns_srv_lookup_status lookup_status, const struct timespec *completed_at, dns_srv_result *result);
 uint16_t resolver_cache_entry_query_type(const resolver_cache_entry *entry);
 void resolver_cache_entry_release(resolver_cache_entry *entry);
 bool resolver_cache_entry_retain(resolver_cache_entry *entry);

@@ -37,8 +37,7 @@ static bool prewarm_test_arguments(const route_bindings *bindings) {
 	route_prewarmer prewarmer = { 0 };
 	resolver_cache_entry *entry = (resolver_cache_entry *)(uintptr_t)1;
 	CHECK(!route_prewarmer_complete(NULL) && !route_prewarmer_complete(&prewarmer), "invalid prewarmer appeared complete");
-	CHECK(!route_prewarmer_entry_get(NULL, &entry) && entry == NULL && !route_prewarmer_entry_get(&prewarmer, &entry) && entry == NULL,
-		"invalid prewarmer entry access was accepted");
+	CHECK(!route_prewarmer_entry_get(NULL, &entry) && entry == NULL && !route_prewarmer_entry_get(&prewarmer, &entry) && entry == NULL, "invalid prewarmer entry access was accepted");
 	route_prewarmer_reset(NULL, bindings);
 	route_prewarmer_reset(&prewarmer, bindings);
 	CHECK(!route_prewarmer_entry_get(&prewarmer, NULL), "NULL entry output was accepted");
@@ -91,8 +90,7 @@ int main(void) {
 	config.proxy = cJSON_Parse(json);
 	cache = resolver_cache_create();
 	CHECK(config.proxy != NULL && cache != NULL, "prewarm fixture allocation failed");
-	CHECK(hosts_table_load("/definitely/missing/mcrelay-hosts", &hosts, &malformed_line_count) == HOSTS_LOAD_FILE_ERROR && hosts != NULL,
-		"prewarm hosts fixture could not be prepared");
+	CHECK(hosts_table_load("/definitely/missing/mcrelay-hosts", &hosts, &malformed_line_count) == HOSTS_LOAD_FILE_ERROR && hosts != NULL, "prewarm hosts fixture could not be prepared");
 	CHECK(route_table_build(&config, &routes) == ROUTE_TABLE_BUILD_OK && routes != NULL, "prewarm route table could not be prepared");
 	CHECK(route_bindings_build(routes, hosts, cache, &bindings) == ROUTE_BINDINGS_BUILD_OK && bindings != NULL, "prewarm bindings could not be prepared");
 	CHECK(prewarm_test_arguments(bindings) && prewarm_test_cursor(bindings), "prewarm cursor tests failed");

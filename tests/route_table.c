@@ -34,14 +34,12 @@ static bool route_test_arguments(void) {
 	conf config;
 	memset(&config, 0, sizeof(config));
 	route_table *table = NULL;
-	CHECK(route_table_build(NULL, &table) == ROUTE_TABLE_BUILD_BAD_ARGUMENT && route_table_build(&config, NULL) == ROUTE_TABLE_BUILD_BAD_ARGUMENT,
-		"invalid route-table build arguments were accepted");
+	CHECK(route_table_build(NULL, &table) == ROUTE_TABLE_BUILD_BAD_ARGUMENT && route_table_build(&config, NULL) == ROUTE_TABLE_BUILD_BAD_ARGUMENT, "invalid route-table build arguments were accepted");
 	config.proxy = cJSON_Parse("[]");
 	CHECK(config.proxy != NULL && route_table_build(&config, &table) == ROUTE_TABLE_BUILD_OK && table != NULL, "empty route table could not be built");
 	CHECK(route_table_route_count(table) == 0 && route_table_destination_count(table) == 0, "empty route table retained entries");
 	CHECK(route_table_build(&config, &table) == ROUTE_TABLE_BUILD_BAD_ARGUMENT, "non-empty route-table result was accepted");
-	CHECK(!route_table_find(NULL, "example", &(route_view){ 0 }) && !route_table_find(table, NULL, &(route_view){ 0 }) && !route_table_find(table, "example", NULL),
-		"invalid route lookup succeeded");
+	CHECK(!route_table_find(NULL, "example", &(route_view){ 0 }) && !route_table_find(table, NULL, &(route_view){ 0 }) && !route_table_find(table, "example", NULL), "invalid route lookup succeeded");
 	CHECK(!route_table_route_get(table, 0, &(route_view){ 0 }) && !route_table_destination_get(table, 0, &(route_destination_view){ 0 }), "out-of-range route access succeeded");
 	test_result = true;
 
@@ -91,10 +89,8 @@ static bool route_test_names(void) {
 	CHECK(config.proxy != NULL && route_table_build(&config, &table) == ROUTE_TABLE_BUILD_OK && table != NULL, "double-dot route table could not be built");
 	CHECK(route_table_destination_count(table) == 2, "double-dot destinations were incorrectly deduplicated");
 	route_destination_view destination;
-	CHECK(route_table_destination_get(table, 0, &destination) && !destination.srv && strcmp(destination.query_name, "example.com..") == 0,
-		"explicit-port double-dot name was silently normalized");
-	CHECK(route_table_destination_get(table, 1, &destination) && destination.srv && strcmp(destination.query_name, "_minecraft._tcp.example.com..") == 0,
-		"SRV double-dot name was silently normalized");
+	CHECK(route_table_destination_get(table, 0, &destination) && !destination.srv && strcmp(destination.query_name, "example.com..") == 0, "explicit-port double-dot name was silently normalized");
+	CHECK(route_table_destination_get(table, 1, &destination) && destination.srv && strcmp(destination.query_name, "_minecraft._tcp.example.com..") == 0, "SRV double-dot name was silently normalized");
 	test_result = true;
 
 cleanup:

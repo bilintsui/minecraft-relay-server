@@ -158,8 +158,7 @@ bool listener_metrics_effectively_enabled(const conf *config);
 void listener_metrics_format_drop_record(listener_metrics_runtime *runtime);
 void listener_metrics_helper_observation_log(listener_metrics_runtime *runtime, const resolver_supervisor_observation *observation, const char *log_filename, uint8_t log_level,
 	const struct timespec *processed_at);
-void listener_metrics_helper_observation_loss_log(listener_metrics_runtime *runtime, uint64_t observation_dropped, const char *log_filename, uint8_t log_level,
-	const struct timespec *processed_at);
+void listener_metrics_helper_observation_loss_log(listener_metrics_runtime *runtime, uint64_t observation_dropped, const char *log_filename, uint8_t log_level, const struct timespec *processed_at);
 void listener_metrics_limits_set(listener_metrics_state *metrics, uint64_t connection_limit, uint64_t worker_limit);
 void listener_metrics_missed_intervals_record(listener_metrics_runtime *runtime, uint64_t amount);
 void listener_metrics_output(listener_metrics_runtime *runtime, listener_metrics_output_reason reason, const listener_metrics_aggregate_snapshot *snapshot,
@@ -170,8 +169,7 @@ bool listener_metrics_route_release_failure_record(listener_metrics_state *metri
 bool listener_metrics_route_resolution_record(listener_metrics_state *metrics, listener_metrics_route_request *request, listener_metrics_resolution resolution);
 bool listener_metrics_route_settle(listener_metrics_state *metrics, listener_metrics_route_request *request, listener_metrics_outcome outcome,
 	listener_metrics_selected_family selected_family, const struct timespec *now);
-bool listener_metrics_route_start(listener_metrics_state *metrics, listener_metrics_route_request *request, listener_metrics_request_mode mode,
-	const struct timespec *now);
+bool listener_metrics_route_start(listener_metrics_state *metrics, listener_metrics_route_request *request, listener_metrics_request_mode mode, const struct timespec *now);
 bool listener_metrics_runtime_init(listener_metrics_runtime *runtime, pid_t process_id, const struct timespec *started_at);
 void listener_metrics_scheduler_failure_record(listener_metrics_runtime *runtime);
 bool listener_metrics_snapshot_get(const listener_metrics_state *metrics, listener_metrics_snapshot *result);

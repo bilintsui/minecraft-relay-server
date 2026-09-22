@@ -144,8 +144,7 @@ static bool connection_setup_short_test_icon_bounds(void) {
 	snapshot.icon_b64[sizeof(snapshot.icon_b64) - 1U] = '\0';
 	CHECK(connection_setup_short_prepare(&plan, &snapshot, client, initial, initial_size) == CONNECTION_SETUP_SHORT_RESPOND, "maximum icon did not respond");
 	size_t expected_size = make_motd(expected, sizeof(expected), "[Proxy] Server Temporarily Unavailable.", PVERDB_R_1_20_1 + 1U, snapshot.icon_b64);
-	CHECK(expected_size > CONF_ICON_B64MAX && plan.response_size == expected_size && memcmp(plan.response, expected, expected_size) == 0,
-		"maximum icon response mismatch");
+	CHECK(expected_size > CONF_ICON_B64MAX && plan.response_size == expected_size && memcmp(plan.response, expected, expected_size) == 0, "maximum icon response mismatch");
 	connection_setup_short_destroy(&plan);
 	/* An icon without terminator is rejected by the snapshot validation. */
 	memset(snapshot.icon_b64, 'A', sizeof(snapshot.icon_b64));

@@ -161,8 +161,7 @@ static bool metrics_test_saturation(void) {
 	histogram.sum = UINT64_MAX;
 	uint64_t saturation = 0;
 	metrics_ttl_histogram_observe(&histogram, 0, &saturation);
-	CHECK(histogram.buckets[0] == UINT64_MAX && histogram.count == UINT64_MAX && histogram.sum == UINT64_MAX,
-		"histogram fields wrapped after saturation");
+	CHECK(histogram.buckets[0] == UINT64_MAX && histogram.count == UINT64_MAX && histogram.sum == UINT64_MAX, "histogram fields wrapped after saturation");
 	CHECK(saturation == 1, "one histogram update did not produce exactly one saturation event");
 	histogram = (metrics_histogram){ 0 };
 	histogram.sum = UINT64_MAX - 1U;
@@ -202,17 +201,14 @@ static bool metrics_test_snapshot(void) {
 	metrics_histogram_snapshot snapshot;
 	metrics_duration_histogram_get(&histogram, &snapshot);
 	CHECK(snapshot.cumulative[0] == 1 && snapshot.cumulative[1] == 3 && snapshot.cumulative[2] == 6, "duration cumulative buckets were incorrect");
-	CHECK(snapshot.cumulative[METRICS_DURATION_BUCKET_COUNT - 1U] == 10 && snapshot.count == 10 && snapshot.sample_errors == 4 && snapshot.sum == 20,
-		"duration histogram totals were incorrect");
+	CHECK(snapshot.cumulative[METRICS_DURATION_BUCKET_COUNT - 1U] == 10 && snapshot.count == 10 && snapshot.sample_errors == 4 && snapshot.sum == 20, "duration histogram totals were incorrect");
 	CHECK(memcmp(&histogram, &original, sizeof(histogram)) == 0, "histogram snapshot changed its source");
 	histogram = (metrics_histogram){ .buckets = { UINT64_MAX, 1 }, .count = UINT64_MAX, .sum = UINT64_MAX };
 	metrics_size_histogram_get(&histogram, &snapshot);
 	CHECK(snapshot.cumulative[0] == UINT64_MAX && snapshot.cumulative[1] == UINT64_MAX, "cumulative snapshot wrapped");
-	CHECK(snapshot.cumulative[METRICS_SIZE_BUCKET_COUNT - 1U] == UINT64_MAX && snapshot.cumulative[METRICS_SIZE_BUCKET_COUNT] == 0,
-		"size snapshot bounds were incorrect");
+	CHECK(snapshot.cumulative[METRICS_SIZE_BUCKET_COUNT - 1U] == UINT64_MAX && snapshot.cumulative[METRICS_SIZE_BUCKET_COUNT] == 0, "size snapshot bounds were incorrect");
 	metrics_ttl_histogram_get(&histogram, &snapshot);
-	CHECK(snapshot.cumulative[METRICS_TTL_BUCKET_COUNT - 1U] == UINT64_MAX && snapshot.cumulative[METRICS_TTL_BUCKET_COUNT] == 0,
-		"TTL snapshot bounds were incorrect");
+	CHECK(snapshot.cumulative[METRICS_TTL_BUCKET_COUNT - 1U] == UINT64_MAX && snapshot.cumulative[METRICS_TTL_BUCKET_COUNT] == 0, "TTL snapshot bounds were incorrect");
 	return true;
 }
 

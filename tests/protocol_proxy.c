@@ -238,8 +238,7 @@ static bool proxy_test_malformed(void) {
 	/* Embedded NUL: the literal keeps full length; sizeof covers it, strlen would not. */
 	static const char nul_address[] = "PROXY TCP4 127.0.0.1\0junk 127.0.0.1 1 2\r\n";
 	p_proxy parsed = protocol_proxy_read(valid4, sizeof(valid4) - 1U);
-	if ((parsed.family != AF_INET) || (parsed.srcport != 1) || (parsed.dstport != 2)
-		|| (parsed.srcaddr.family != AF_INET) || (parsed.dstaddr.family != AF_INET)) {
+	if ((parsed.family != AF_INET) || (parsed.srcport != 1) || (parsed.dstport != 2) || (parsed.srcaddr.family != AF_INET) || (parsed.dstaddr.family != AF_INET)) {
 		return false;
 	}
 	char *exact_fit = (char *)malloc(sizeof(valid4) - 1U);

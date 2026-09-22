@@ -23,8 +23,7 @@ bool resolver_name_encloses(const char *zone, const char *name) {
 	}
 	size_t name_length = strlen(name);
 	size_t zone_length = strlen(zone);
-	return (name_length == zone_length && strcmp(name, zone) == 0)
-		|| (name_length > zone_length && name[name_length - zone_length - 1] == '.' && strcmp(name + name_length - zone_length, zone) == 0);
+	return (name_length == zone_length && strcmp(name, zone) == 0) || (name_length > zone_length && name[name_length - zone_length - 1] == '.' && strcmp(name + name_length - zone_length, zone) == 0);
 }
 
 bool resolver_name_normalize(const char *source, char target[NS_MAXDNAME]) {

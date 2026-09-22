@@ -85,18 +85,17 @@ route_resolution_release_status route_resolution_background_release(route_resolu
 /* The bindings, hosts table, and cache must outlive the returned generation coordinator. Building observes fresh entries at now so a replacement generation retains discovered targets
  * before the old generation is destroyed. A forked worker may destroy its private copy without affecting listener-owned references.
  */
-route_resolution_build_status route_resolution_build(const route_bindings *bindings, const hosts_table *hosts, resolver_cache *cache, const struct timespec *now,
-	route_resolution **result);
+route_resolution_build_status route_resolution_build(const route_bindings *bindings, const hosts_table *hosts, resolver_cache *cache, const struct timespec *now, route_resolution **result);
 /* Observing a completion never consumes it; the caller remains responsible for completion destruction. */
 /* Completion observation also releases obsolete dynamic background interests through this temporary supervisor context. */
 route_resolution_completion_status route_resolution_completion_observe_with_supervisor(route_resolution *resolution, resolver_supervisor *supervisor,
 	const resolver_supervisor_completion *completion, const struct timespec *now);
-void route_resolution_destroy(route_resolution *resolution);
 size_t route_resolution_destination_count(const route_resolution *resolution);
 /* first_terminal is monotonic for READY gating; result and targets describe the generation's current route-level resolution state. */
 bool route_resolution_destination_get(const route_resolution *resolution, size_t destination_index, route_resolution_destination_view *result);
 /* Target views and all pointed-to data are borrowed until the coordinator is updated or destroyed. */
 bool route_resolution_destination_target_get(const route_resolution *resolution, size_t destination_index, size_t target_index, route_resolution_target_view *result);
+void route_resolution_destroy(route_resolution *resolution);
 /* CAPACITY and MEMORY are recoverable prewarm pressure; BAD_ARGUMENT, IO, and TIME retire the owning listener resolver runtime. */
 route_prewarm_status route_resolution_schedule(route_resolution *resolution, resolver_supervisor *supervisor, const struct timespec *now, size_t batch_limit);
 bool route_resolution_scheduling_complete(const route_resolution *resolution);

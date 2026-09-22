@@ -475,20 +475,17 @@ static bool resolution_test_schedule_statuses(const hosts_table *hosts) {
 	for (size_t fixture_index = 0; fixture_index < sizeof(fixtures) / sizeof(fixtures[0]); fixture_index++) {
 		cache = resolver_cache_create();
 		CHECK(cache != NULL && resolution_bindings_build(json, hosts, cache, &config, &routes, &bindings), "schedule-status fixtures could not be prepared");
-		CHECK(route_resolution_build(bindings, hosts, cache, &now, &resolution) == ROUTE_RESOLUTION_BUILD_OK && resolution != NULL,
-			"schedule-status coordinator could not be built");
+		CHECK(route_resolution_build(bindings, hosts, cache, &now, &resolution) == ROUTE_RESOLUTION_BUILD_OK && resolution != NULL, "schedule-status coordinator could not be built");
 		resolver_cache_entry *entry = NULL;
 		CHECK(route_bindings_entry_get(bindings, 0, &entry), "schedule-status entry could not be read");
 		resolution_schedule_reset(supervisor, &now);
 		resolution_schedule_fixtures[0] = (resolution_schedule_fixture){ .entry = entry, .status = fixtures[fixture_index].input };
 		resolution_schedule_fixture_count = 1;
-		CHECK(route_resolution_schedule(resolution, supervisor, &now, 1) == fixtures[fixture_index].output && resolution_schedule_fixture_index == 1,
-			"schedule status was mapped incorrectly");
+		CHECK(route_resolution_schedule(resolution, supervisor, &now, 1) == fixtures[fixture_index].output && resolution_schedule_fixture_index == 1, "schedule status was mapped incorrectly");
 		resolution_schedule_reset(supervisor, &now);
 		resolution_schedule_fixtures[0] = (resolution_schedule_fixture){ .entry = entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_STARTED };
 		resolution_schedule_fixture_count = 1;
-		CHECK(route_resolution_schedule(resolution, supervisor, &now, 1) == ROUTE_PREWARM_MORE && resolution_schedule_fixture_index == 1,
-			"failed schedule advanced past its rejected entry");
+		CHECK(route_resolution_schedule(resolution, supervisor, &now, 1) == ROUTE_PREWARM_MORE && resolution_schedule_fixture_index == 1, "failed schedule advanced past its rejected entry");
 		route_resolution_destroy(resolution);
 		resolution = NULL;
 		route_bindings_destroy(bindings);
@@ -670,15 +667,6 @@ cleanup:
 }
 
 /* section: functions (exported) */
-resolver_supervisor_schedule_status __wrap_resolver_supervisor_entry_schedule(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
-	if (resolution_schedule_fixture_index >= resolution_schedule_fixture_count || supervisor != resolution_schedule_supervisor || now == NULL
-		|| now->tv_sec != resolution_schedule_time.tv_sec || now->tv_nsec != resolution_schedule_time.tv_nsec
-		|| entry != resolution_schedule_fixtures[resolution_schedule_fixture_index].entry) {
-		return RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT;
-	}
-	return resolution_schedule_fixtures[resolution_schedule_fixture_index++].status;
-}
-
 resolver_supervisor_release_status __wrap_resolver_supervisor_entry_background_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
 	if (supervisor != resolution_schedule_supervisor || entry == NULL || now == NULL || now->tv_sec != resolution_schedule_time.tv_sec
 		|| now->tv_nsec != resolution_schedule_time.tv_nsec || resolution_release_count >= sizeof(resolution_release_entries) / sizeof(resolution_release_entries[0])) {
@@ -692,6 +680,15 @@ resolver_supervisor_release_status __wrap_resolver_supervisor_entry_background_r
 	return resolution_release_statuses[resolution_release_status_index < resolution_release_status_count ? resolution_release_status_index++ : resolution_release_status_count - 1U];
 }
 
+resolver_supervisor_schedule_status __wrap_resolver_supervisor_entry_schedule(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now) {
+	if (resolution_schedule_fixture_index >= resolution_schedule_fixture_count || supervisor != resolution_schedule_supervisor || now == NULL
+		|| now->tv_sec != resolution_schedule_time.tv_sec || now->tv_nsec != resolution_schedule_time.tv_nsec
+		|| entry != resolution_schedule_fixtures[resolution_schedule_fixture_index].entry) {
+		return RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT;
+	}
+	return resolution_schedule_fixtures[resolution_schedule_fixture_index++].status;
+}
+
 /* section: functions (entry point) */
 int main(void) {
 	int test_result = EXIT_FAILURE;
@@ -702,8 +699,7 @@ int main(void) {
 	CHECK(mkdtemp(directory) != NULL, "cannot create route-resolution test directory");
 	CHECK(snprintf(filename, sizeof(filename), "%s/hosts", directory) > 0, "cannot create route-resolution hosts path");
 	CHECK(resolution_fixture_write(filename) == 0, "cannot write route-resolution hosts fixture");
-	CHECK(hosts_table_load(filename, &hosts, &malformed_line_count) == HOSTS_LOAD_OK && hosts != NULL && malformed_line_count == 0,
-		"cannot load route-resolution hosts fixture");
+	CHECK(hosts_table_load(filename, &hosts, &malformed_line_count) == HOSTS_LOAD_OK && hosts != NULL && malformed_line_count == 0, "cannot load route-resolution hosts fixture");
 	CHECK(resolution_test_arguments(hosts), "route-resolution argument tests failed");
 	CHECK(resolution_test_generation(hosts), "route-resolution generation tests failed");
 	CHECK(resolution_test_release_statuses(hosts), "route-resolution release-status tests failed");

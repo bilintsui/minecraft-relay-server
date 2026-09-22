@@ -163,8 +163,7 @@ static route_endpoint_address_status route_endpoint_cache_select(resolver_cache_
 	if (alternate_status == ROUTE_ENDPOINT_ADDRESS_OK || alternate_status == ROUTE_ENDPOINT_ADDRESS_BAD_ARGUMENT || alternate_status == ROUTE_ENDPOINT_ADDRESS_LIMIT) {
 		return alternate_status;
 	}
-	return preferred_status == ROUTE_ENDPOINT_ADDRESS_PENDING || alternate_status == ROUTE_ENDPOINT_ADDRESS_PENDING ? ROUTE_ENDPOINT_ADDRESS_PENDING
-		: ROUTE_ENDPOINT_ADDRESS_UNAVAILABLE;
+	return preferred_status == ROUTE_ENDPOINT_ADDRESS_PENDING || alternate_status == ROUTE_ENDPOINT_ADDRESS_PENDING ? ROUTE_ENDPOINT_ADDRESS_PENDING : ROUTE_ENDPOINT_ADDRESS_UNAVAILABLE;
 }
 
 static route_endpoint_select_status route_endpoint_select_status_from_address(route_endpoint_address_status status) {
@@ -238,8 +237,7 @@ static bool route_endpoint_string_copy(char *destination, size_t destination_siz
 	return true;
 }
 
-static bool route_endpoint_target_find(const route_resolution *resolution, size_t destination_index, size_t target_count, const char *name,
-	route_resolution_target_view *result) {
+static bool route_endpoint_target_find(const route_resolution *resolution, size_t destination_index, size_t target_count, const char *name, route_resolution_target_view *result) {
 	for (size_t target_index = 0; target_index < target_count; target_index++) {
 		route_resolution_target_view candidate;
 		if (!route_resolution_destination_target_get(resolution, destination_index, target_index, &candidate)) {
@@ -329,8 +327,7 @@ route_endpoint_select_status route_endpoint_evaluate(route_generation *generatio
 			break;
 		case ROUTE_BINDING_SOURCE_DNS_SRV: {
 			resolver_cache_view srv_view;
-			if (binding.srv_entry == NULL || resolver_cache_entry_query_type(binding.srv_entry) != ns_t_srv
-				|| !route_endpoint_entry_view(binding.srv_entry, now, overlays, &srv_view)) {
+			if (binding.srv_entry == NULL || resolver_cache_entry_query_type(binding.srv_entry) != ns_t_srv || !route_endpoint_entry_view(binding.srv_entry, now, overlays, &srv_view)) {
 				return ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT;
 			}
 			if (!route_endpoint_requirement_add(requirements, binding.srv_entry, srv_view.status == RESOLVER_CACHE_VIEW_EMPTY)) {

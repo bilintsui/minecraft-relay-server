@@ -42,8 +42,7 @@ typedef struct {
 
 /* section: functions (local) */
 static bool net_relay_finished(const net_relay_queue *queue_c2o, const net_relay_queue *queue_o2c) {
-	return queue_c2o->peer_eof && queue_o2c->peer_eof && queue_c2o->offset == queue_c2o->length && queue_o2c->offset == queue_o2c->length
-		&& queue_c2o->shutdown_sent && queue_o2c->shutdown_sent;
+	return queue_c2o->peer_eof && queue_o2c->peer_eof && queue_c2o->offset == queue_c2o->length && queue_o2c->offset == queue_o2c->length && queue_c2o->shutdown_sent && queue_o2c->shutdown_sent;
 }
 
 static int net_relay_idle_remaining_ms(const struct timespec *last_activity, const struct timespec *now) {
@@ -61,8 +60,7 @@ static int net_relay_idle_remaining_ms(const struct timespec *last_activity, con
 	if (elapsed_seconds < 0) {
 		return 0;
 	}
-	if (elapsed_seconds > (int64_t)NET_RELAY_IDLE_TIMEOUT_SEC
-		|| (elapsed_seconds == (int64_t)NET_RELAY_IDLE_TIMEOUT_SEC && elapsed_nanoseconds > 0)) {
+	if (elapsed_seconds > (int64_t)NET_RELAY_IDLE_TIMEOUT_SEC || (elapsed_seconds == (int64_t)NET_RELAY_IDLE_TIMEOUT_SEC && elapsed_nanoseconds > 0)) {
 		return 0;
 	}
 	remaining_seconds = (int64_t)NET_RELAY_IDLE_TIMEOUT_SEC - elapsed_seconds;
@@ -263,8 +261,7 @@ net_relay_status net_relay(int socket_in, int socket_out, const void *pending_ou
 	struct timespec last_activity;
 	net_relay_status result = NET_RELAY_ERROR;
 	int cleanup_errno;
-	if ((socket_in < 0) || (socket_out < 0) || (socket_in == socket_out) || ((pending_out == NULL) && (pending_size > 0))
-		|| (pending_size > NET_RELAY_BUFFER_BYTES)) {
+	if ((socket_in < 0) || (socket_out < 0) || (socket_in == socket_out) || ((pending_out == NULL) && (pending_size > 0)) || (pending_size > NET_RELAY_BUFFER_BYTES)) {
 		errno = EINVAL;
 		goto cleanup;
 	}
@@ -273,8 +270,7 @@ net_relay_status net_relay(int socket_in, int socket_out, const void *pending_ou
 	}
 	int flags_in = fcntl(socket_in, F_GETFL);
 	int flags_out = fcntl(socket_out, F_GETFL);
-	if ((flags_in == -1) || (flags_out == -1) || (fcntl(socket_in, F_SETFL, flags_in | O_NONBLOCK) == -1)
-		|| (fcntl(socket_out, F_SETFL, flags_out | O_NONBLOCK) == -1)) {
+	if ((flags_in == -1) || (flags_out == -1) || (fcntl(socket_in, F_SETFL, flags_in | O_NONBLOCK) == -1) || (fcntl(socket_out, F_SETFL, flags_out | O_NONBLOCK) == -1)) {
 		goto cleanup;
 	}
 	if (pending_size > 0) {
@@ -333,8 +329,7 @@ net_relay_status net_relay(int socket_in, int socket_out, const void *pending_ou
 				&& (!net_relay_queue_fill(read_queue, socket_fd, &last_activity))) {
 				goto cleanup;
 			}
-			if ((write_queue->offset < write_queue->length) && (events[event_index].revents & (POLLOUT | POLLHUP | POLLERR))
-				&& (!net_relay_queue_drain(write_queue, socket_fd, &last_activity))) {
+			if ((write_queue->offset < write_queue->length) && (events[event_index].revents & (POLLOUT | POLLHUP | POLLERR)) && (!net_relay_queue_drain(write_queue, socket_fd, &last_activity))) {
 				goto cleanup;
 			}
 			if ((events[event_index].revents & (POLLHUP | POLLERR)) && (!read_queue->peer_eof)

@@ -51,8 +51,7 @@ void route_generation_registry_destroy(route_generation_registry *registry);
 /* Use only in a forked non-listener child. This destroys both private COW generation copies regardless of inherited reference counts. */
 void route_generation_registry_dispose_in_child(route_generation_registry *registry);
 /* Candidate ownership transfers at the active/retired swap, including a post-commit fatal status. Publication is blocked while a pinned retired generation remains live. */
-route_generation_registry_publish_status route_generation_registry_publish(route_generation_registry *registry, route_generation **candidate, resolver_supervisor *supervisor,
-	const struct timespec *now);
+route_generation_registry_publish_status route_generation_registry_publish(route_generation_registry *registry, route_generation **candidate, resolver_supervisor *supervisor, const struct timespec *now);
 route_generation *route_generation_registry_retired(const route_generation_registry *registry);
 
 #endif

@@ -375,8 +375,7 @@ resolver_helper_status resolver_helper_run(int socket_fd) {
 		if (resolver_ipc_request_decode(packet, packet_size, &request) != RESOLVER_IPC_CODEC_OK) {
 			return RESOLVER_HELPER_PROTOCOL;
 		}
-		resolver_helper_status status = request.query_type == ns_t_srv ? resolver_helper_response_srv_send(socket_fd, &request)
-			: resolver_helper_response_address_send(socket_fd, &request);
+		resolver_helper_status status = request.query_type == ns_t_srv ? resolver_helper_response_srv_send(socket_fd, &request) : resolver_helper_response_address_send(socket_fd, &request);
 		if (status != RESOLVER_HELPER_OK) {
 			return status;
 		}

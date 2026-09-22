@@ -305,8 +305,7 @@ static metrics_query_type resolver_supervisor_metrics_query_type(const resolver_
 	return METRICS_QUERY_TYPE_OTHER;
 }
 
-static void resolver_supervisor_metrics_schedule_record(resolver_supervisor *supervisor, const resolver_cache_entry *entry, resolver_supervisor_priority priority,
-	resolver_supervisor_schedule_status status) {
+static void resolver_supervisor_metrics_schedule_record(resolver_supervisor *supervisor, const resolver_cache_entry *entry, resolver_supervisor_priority priority, resolver_supervisor_schedule_status status) {
 	if (supervisor == NULL || priority >= RESOLVER_SUPERVISOR_PRIORITY_COUNT || status >= RESOLVER_SUPERVISOR_SCHEDULE_STATUS_COUNT) {
 		return;
 	}
@@ -314,11 +313,9 @@ static void resolver_supervisor_metrics_schedule_record(resolver_supervisor *sup
 	resolver_supervisor_metrics_increment(supervisor, &supervisor->metrics.schedule[priority][query].status[status]);
 }
 
-static void resolver_supervisor_metrics_attempt_failure_record(resolver_supervisor *supervisor, const resolver_supervisor_job *job,
-	resolver_supervisor_helper_failure failure, const struct timespec *now) {
+static void resolver_supervisor_metrics_attempt_failure_record(resolver_supervisor *supervisor, const resolver_supervisor_job *job, resolver_supervisor_helper_failure failure, const struct timespec *now) {
 	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
-	if (metrics == NULL || failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE || failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN
-		|| failure >= RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT) {
+	if (metrics == NULL || failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE || failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN || failure >= RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT) {
 		return;
 	}
 	resolver_supervisor_metrics_increment(supervisor, &metrics->failure[failure]);
@@ -333,8 +330,7 @@ static void resolver_supervisor_metrics_dispatch_record(resolver_supervisor *sup
 	}
 	resolver_supervisor_metrics_increment(supervisor, &metrics->dispatched);
 	metrics_query_type query = resolver_supervisor_metrics_query_type(job->entry);
-	(void)metrics_duration_histogram_observe(&supervisor->metrics.dispatch_wait[job->priority][query], &job->dispatch_wait_at, now,
-		&supervisor->metrics.saturation_total);
+	(void)metrics_duration_histogram_observe(&supervisor->metrics.dispatch_wait[job->priority][query], &job->dispatch_wait_at, now, &supervisor->metrics.saturation_total);
 }
 
 static void resolver_supervisor_metrics_response_record(resolver_supervisor *supervisor, const resolver_supervisor_job *job, const resolver_ipc_assembly_result *response) {
@@ -348,12 +344,10 @@ static void resolver_supervisor_metrics_response_record(resolver_supervisor *sup
 		resolver_supervisor_metrics_increment(supervisor, &metrics->orphan_response[outcome]);
 	}
 	metrics_query_type query = resolver_supervisor_metrics_query_type(job->entry);
-	(void)metrics_duration_histogram_observe(&supervisor->metrics.attempt_duration[query], &job->dispatched_at, &response->completed_at,
-		&supervisor->metrics.saturation_total);
+	(void)metrics_duration_histogram_observe(&supervisor->metrics.attempt_duration[query], &job->dispatched_at, &response->completed_at, &supervisor->metrics.saturation_total);
 }
 
-static void resolver_supervisor_job_complete(resolver_supervisor *supervisor, resolver_supervisor_job *job, resolver_cache_publish_status publication,
-	resolver_ipc_assembly_result *response) {
+static void resolver_supervisor_job_complete(resolver_supervisor *supervisor, resolver_supervisor_job *job, resolver_cache_publish_status publication, resolver_ipc_assembly_result *response) {
 	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
 	if (metrics != NULL) {
 		resolver_supervisor_metrics_increment(supervisor, &metrics->completion_enqueued);
@@ -531,8 +525,7 @@ static void resolver_supervisor_job_retry(resolver_supervisor *supervisor, resol
 		job->retry_count++;
 	}
 	uint64_t base_delay = resolver_supervisor_delay_query_base(job->retry_count);
-	uint64_t delay = resolver_supervisor_delay_jitter(base_delay, RESOLVER_SUPERVISOR_QUERY_RETRY_MAX_MS, RESOLVER_SUPERVISOR_JITTER_QUERY_DOMAIN,
-		resolver_cache_entry_id(job->entry), job->retry_count);
+	uint64_t delay = resolver_supervisor_delay_jitter(base_delay, RESOLVER_SUPERVISOR_QUERY_RETRY_MAX_MS, RESOLVER_SUPERVISOR_JITTER_QUERY_DOMAIN, resolver_cache_entry_id(job->entry), job->retry_count);
 	if (!timeutil_add_milliseconds(now, delay, &job->retry_at)) {
 		resolver_ipc_assembly_result response = {
 			.query_type = resolver_cache_entry_query_type(job->entry),
@@ -549,8 +542,7 @@ static void resolver_supervisor_job_retry(resolver_supervisor *supervisor, resol
 }
 
 static bool resolver_supervisor_job_timestamp_valid(const resolver_supervisor_job *job, const struct timespec *completed_at, const struct timespec *now) {
-	return timeutil_valid(completed_at) && timeutil_compare(completed_at, &job->dispatched_at) >= 0
-		&& timeutil_compare(completed_at, &job->deadline) <= 0 && timeutil_compare(completed_at, now) <= 0;
+	return timeutil_valid(completed_at) && timeutil_compare(completed_at, &job->dispatched_at) >= 0 && timeutil_compare(completed_at, &job->deadline) <= 0 && timeutil_compare(completed_at, now) <= 0;
 }
 
 static void resolver_supervisor_process_reap(pid_t process_id) {
@@ -675,8 +667,7 @@ static void resolver_supervisor_helper_respawn_schedule(resolver_supervisor *sup
 	}
 	helper->state = RESOLVER_SUPERVISOR_HELPER_BACKOFF;
 	uint64_t base_delay = resolver_supervisor_delay_respawn_base(helper->failure_count);
-	uint64_t delay = base_delay == 0 ? 0 : resolver_supervisor_delay_jitter(base_delay, RESOLVER_SUPERVISOR_RESPAWN_MAX_MS, RESOLVER_SUPERVISOR_JITTER_RESPAWN_DOMAIN,
-		helper_index, helper->failure_count);
+	uint64_t delay = base_delay == 0 ? 0 : resolver_supervisor_delay_jitter(base_delay, RESOLVER_SUPERVISOR_RESPAWN_MAX_MS, RESOLVER_SUPERVISOR_JITTER_RESPAWN_DOMAIN, helper_index, helper->failure_count);
 	if (!timeutil_add_milliseconds(now, delay, &helper->next_event_at)) {
 		helper->next_event_at = *now;
 	}
@@ -1174,10 +1165,8 @@ static void resolver_supervisor_resources_destroy(resolver_supervisor *superviso
 	free(supervisor);
 }
 
-static resolver_supervisor_release_status resolver_supervisor_entry_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now,
-	resolver_supervisor_priority priority) {
-	if (supervisor == NULL || entry == NULL || now == NULL || supervisor->shutting_down
-		|| (priority != RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND && priority != RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE)) {
+static resolver_supervisor_release_status resolver_supervisor_entry_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now, resolver_supervisor_priority priority) {
+	if (supervisor == NULL || entry == NULL || now == NULL || supervisor->shutting_down || (priority != RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND && priority != RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE)) {
 		return RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT;
 	}
 	if (!resolver_supervisor_time_update(supervisor, now)) {
@@ -1228,8 +1217,7 @@ static resolver_supervisor_release_status resolver_supervisor_entry_release(reso
 
 static resolver_supervisor_schedule_status resolver_supervisor_entry_schedule_priority(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now,
 	resolver_supervisor_priority priority) {
-	if (supervisor == NULL || entry == NULL || now == NULL || supervisor->shutting_down
-		|| (priority != RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND && priority != RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE)) {
+	if (supervisor == NULL || entry == NULL || now == NULL || supervisor->shutting_down || (priority != RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND && priority != RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE)) {
 		return RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT;
 	}
 	if (!resolver_supervisor_time_update(supervisor, now)) {
@@ -1354,8 +1342,7 @@ resolver_supervisor *resolver_supervisor_create(const sigset_t *helper_signal_ma
 	supervisor->next_query_id = 1;
 	supervisor->last_now = *now;
 	supervisor->helper_signal_mask = *helper_signal_mask;
-	if ((size_t)RESOLVER_SUPERVISOR_JOB_LIMIT > SIZE_MAX / sizeof(*supervisor->buckets)
-		|| (size_t)RESOLVER_SUPERVISOR_HELPER_COUNT > SIZE_MAX / sizeof(*supervisor->helpers)) {
+	if ((size_t)RESOLVER_SUPERVISOR_JOB_LIMIT > SIZE_MAX / sizeof(*supervisor->buckets) || (size_t)RESOLVER_SUPERVISOR_HELPER_COUNT > SIZE_MAX / sizeof(*supervisor->helpers)) {
 		errno = EOVERFLOW;
 		goto fail;
 	}

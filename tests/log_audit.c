@@ -102,8 +102,7 @@ static bool ascii_space(char character) {
 static bool path_has_suffix(const char *path, const char *suffix) {
 	size_t path_length = strlen(path);
 	size_t suffix_length = strlen(suffix);
-	return path_length >= suffix_length && strcmp(path + path_length - suffix_length, suffix) == 0
-		&& (path_length == suffix_length || path[path_length - suffix_length - 1U] == '/');
+	return path_length >= suffix_length && strcmp(path + path_length - suffix_length, suffix) == 0 && (path_length == suffix_length || path[path_length - suffix_length - 1U] == '/');
 }
 
 static bool prefix_matches(const char *text, size_t text_size, const char *prefix) {
@@ -297,8 +296,7 @@ static bool code_compact(const char *text, size_t begin, size_t end, char *resul
 	return true;
 }
 
-static bool macro_registered_parse(const char *text, size_t line_begin, size_t line_end, size_t name_begin, size_t name_end, const char *path, audit_span *spans,
-		size_t *span_count, audit_state *state) {
+static bool macro_registered_parse(const char *text, size_t line_begin, size_t line_end, size_t name_begin, size_t name_end, const char *path, audit_span *spans, size_t *span_count, audit_state *state) {
 	int index = symbol_index(text + name_begin, name_end - name_begin);
 	char compact[AUDIT_TEXT_LIMIT];
 	if (index == 0) {
@@ -397,8 +395,7 @@ static bool position_in_spans(size_t position, const audit_span *spans, size_t s
 	return false;
 }
 
-static bool call_arguments_parse(const char *text, size_t size, size_t open, call_argument *arguments, size_t *argument_count, size_t *close, audit_state *state,
-		const char *path) {
+static bool call_arguments_parse(const char *text, size_t size, size_t open, call_argument *arguments, size_t *argument_count, size_t *close, audit_state *state, const char *path) {
 	size_t begin = open + 1U;
 	size_t brace_depth = 0;
 	size_t bracket_depth = 0;
@@ -608,8 +605,7 @@ static bool format_message_safe(const char *format, size_t format_size) {
 
 static bool exception_match(const char *path, const char *format, const char *expression, audit_state *state) {
 	for (size_t index = 0; index < ARRAY_SIZE(log_exceptions); index++) {
-		if (path_has_suffix(path, log_exceptions[index].path) && strcmp(format, log_exceptions[index].format) == 0
-			&& strcmp(expression, log_exceptions[index].first_expression) == 0) {
+		if (path_has_suffix(path, log_exceptions[index].path) && strcmp(format, log_exceptions[index].format) == 0 && strcmp(expression, log_exceptions[index].first_expression) == 0) {
 			state->exception_count[index]++;
 			return true;
 		}
@@ -744,8 +740,7 @@ static bool config_errmsg_body_audit(const char *text, size_t body_begin, size_t
 		if (strcmp(compact, "NULL") != 0) {
 			char message[AUDIT_TEXT_LIMIT];
 			size_t message_size;
-			if (!string_expression_decode(text, expression_begin, position, message, sizeof(message), &message_size, state, path)
-				|| !config_message_safe(message, message_size)) {
+			if (!string_expression_decode(text, expression_begin, position, message, sizeof(message), &message_size, state, path) || !config_message_safe(message, message_size)) {
 				return audit_error(state, path, expression_begin, "config_errmsg return can produce a reserved prefix");
 			}
 			state->config_message_count++;
@@ -875,8 +870,7 @@ static bool source_scan(const char *text, size_t size, const char *path, audit_s
 			}
 			continue;
 		}
-		if ((position + 1U < size && text[position] == '#' && text[position + 1U] == '#')
-			|| (position + 3U < size && memcmp(text + position, "%:%:", 4U) == 0)) {
+		if ((position + 1U < size && text[position] == '#' && text[position + 1U] == '#') || (position + 3U < size && memcmp(text + position, "%:%:", 4U) == 0)) {
 			return audit_error(state, path, position, "token-pasting operator in production source");
 		}
 		if (!ascii_identifier_start(text[position])) {
@@ -1021,13 +1015,15 @@ static bool audit_finalize(const audit_state *state) {
 	}
 	for (size_t index = 1; index < ARRAY_SIZE(log_symbols); index++) {
 		if (state->macro_definition_count[index] != 1) {
-			fprintf(stderr, "log audit macro definition mismatch for %s: %zu\n", log_symbols[index].name, state->macro_definition_count[index]);
+			fprintf(stderr, "log audit macro definition mismatch for %s: %zu\n",
+				log_symbols[index].name, state->macro_definition_count[index]);
 			return false;
 		}
 	}
 	for (size_t index = 0; index < ARRAY_SIZE(log_exceptions); index++) {
 		if (state->exception_count[index] != 1) {
-			fprintf(stderr, "log audit exception mismatch for %s/%s: %zu\n", log_exceptions[index].path, log_exceptions[index].format, state->exception_count[index]);
+			fprintf(stderr, "log audit exception mismatch for %s/%s: %zu\n", log_exceptions[index].path,
+				log_exceptions[index].format, state->exception_count[index]);
 			return false;
 		}
 	}

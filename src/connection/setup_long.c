@@ -174,8 +174,7 @@ static connection_setup_long_proxy connection_setup_long_proxyinfo_prepare(const
 }
 
 static bool connection_setup_long_seed_append(uint8_t *seed, size_t *seed_size, const void *data, size_t data_size) {
-	if (seed_size == NULL || *seed_size > CONNECTION_SETUP_LONG_PENDING_MAX || data_size > CONNECTION_SETUP_LONG_PENDING_MAX - *seed_size
-		|| (data_size > 0 && (seed == NULL || data == NULL))) {
+	if (seed_size == NULL || *seed_size > CONNECTION_SETUP_LONG_PENDING_MAX || data_size > CONNECTION_SETUP_LONG_PENDING_MAX - *seed_size || (data_size > 0 && (seed == NULL || data == NULL))) {
 		return false;
 	}
 	if (data_size > 0) {
@@ -419,10 +418,7 @@ static connection_setup_status connection_setup_long_reject_modern1(int socket_i
 	uint8_t rewrited[BUFSIZ];
 	size_t packlen_rewrited = 0;
 	memset(rewrited, 0, sizeof(rewrited));
-	CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING,
-		"src: %s:%d, type: game, status: reject_gamerelay_13w41*",
-		(char *)&(addrinfo_in.address), addrinfo_in.port
-	);
+	CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING, "src: %s:%d, type: game, status: reject_gamerelay_13w41*", (char *)&(addrinfo_in.address), addrinfo_in.port);
 	packlen_rewrited = make_kickreason(rewrited, sizeof(rewrited), "Proxy: Unsupported client, use 13w42a or later!");
 	connection_setup_long_send_client(socket_in, rewrited, packlen_rewrited);
 	close(socket_in);
@@ -452,10 +448,7 @@ static connection_setup_status connection_setup_long_prepared_run(int socket_in,
 	intent_t intent;
 	protocol_version protocol = protocol_identify(inbound, inbound_size, &intent);
 	if (protocol == PVER_UNIDENT) {
-		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING,
-			"src: %s:%d, status: reject_unidentproto",
-			(char *)&(addrinfo_in.address), addrinfo_in.port
-		);
+		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING, "src: %s:%d, status: reject_unidentproto", (char *)&(addrinfo_in.address), addrinfo_in.port);
 		close(socket_in);
 		return CONNECTION_SETUP_EUNIDENT;
 	}
