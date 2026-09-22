@@ -1585,6 +1585,10 @@ size_t resolver_supervisor_job_count(const resolver_supervisor *supervisor) {
 }
 #endif
 
+bool resolver_supervisor_metrics_assembly_get(const resolver_supervisor *supervisor, resolver_ipc_assembly_metrics_snapshot *result) {
+	return supervisor != NULL && result != NULL && resolver_ipc_assembly_metrics_get(supervisor->assembly_budget, result);
+}
+
 bool resolver_supervisor_metrics_get(const resolver_supervisor *supervisor, resolver_supervisor_metrics_snapshot *result) {
 	if (result != NULL) {
 		memset(result, 0, sizeof(*result));
@@ -1640,6 +1644,10 @@ bool resolver_supervisor_metrics_get(const resolver_supervisor *supervisor, reso
 		}
 	}
 	return true;
+}
+
+uint64_t resolver_supervisor_observation_dropped(const resolver_supervisor *supervisor) {
+	return supervisor == NULL ? 0 : supervisor->metrics.helper.observation_dropped;
 }
 
 bool resolver_supervisor_observation_take(resolver_supervisor *supervisor, resolver_supervisor_observation *result) {

@@ -41,6 +41,7 @@ static bool config_clone_test(void) {
 	source->log.level = 4;
 	source->listen.address = strdup("2001:db8::10");
 	source->listen.port = 25570;
+	source->metrics.interval = 3600;
 	source->icon_path = strdup("/tmp/icon.png");
 	source->icon_b64 = strdup("YWJj");
 	source->icon_cache.data = malloc(3);
@@ -61,6 +62,7 @@ static bool config_clone_test(void) {
 		"cloned log configuration was shallow or incorrect");
 	CHECK(clone->listen.address != source->listen.address && strcmp(clone->listen.address, source->listen.address) == 0 && clone->listen.port == source->listen.port,
 		"cloned listener configuration was shallow or incorrect");
+	CHECK(clone->metrics.interval == source->metrics.interval, "cloned metrics configuration was incorrect");
 	CHECK(clone->icon_path != source->icon_path && strcmp(clone->icon_path, source->icon_path) == 0 && clone->icon_b64 != source->icon_b64
 		&& strcmp(clone->icon_b64, source->icon_b64) == 0 && clone->icon_cache.data != source->icon_cache.data && clone->icon_cache.size == source->icon_cache.size
 		&& memcmp(clone->icon_cache.data, source->icon_cache.data, source->icon_cache.size) == 0, "cloned icon state was shallow or incorrect");

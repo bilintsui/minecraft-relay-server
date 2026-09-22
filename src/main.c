@@ -72,6 +72,7 @@ static exit_code config_exitcode(conf_error err) {
 		case CONF_ERPARSE:
 			return EXITCODE_BADJSON;
 		case CONF_ECLISTENPORT:
+		case CONF_ECMETRICS:
 		case CONF_ECPROXY:
 		case CONF_ECPROXYDUP:
 			return EXITCODE_BADARG;
@@ -102,6 +103,7 @@ static exit_code load_config(const char *filename, const char *filename_full, co
 		case CONF_ECMEMORY:
 		case CONF_ERPARSE:
 		case CONF_ECLISTENPORT:
+		case CONF_ECMETRICS:
 		case CONF_ECPROXY:
 			LOG(MKSYS_LEVEL_CRITICAL, "%s", config_errmsg(config_error));
 			return config_exitcode(config_error);

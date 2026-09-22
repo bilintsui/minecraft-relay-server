@@ -52,7 +52,7 @@ typedef struct {
 	size_t declaration_count;
 	size_t definition_count;
 	size_t direct_root_call_count;
-	size_t exception_count[5];
+	size_t exception_count[7];
 	size_t macro_definition_count[6];
 	bool quiet;
 } audit_state;
@@ -63,7 +63,9 @@ static const log_exception log_exceptions[] = {
 	{ "base", "%s%s", "src/config.c" },
 	{ "config_errmsg((conf_error)errno)", "%s%s%s", "src/listener.c" },
 	{ "config_errmsg(config_error)", "%s%s", "src/main.c" },
-	{ "config_errmsg(config_error)", "%s", "src/main.c" }
+	{ "config_errmsg(config_error)", "%s", "src/main.c" },
+	{ "helper_line", "%s", "src/listener_metrics.c" },
+	{ "metrics_line", "%s", "src/listener_metrics.c" }
 };
 
 static const log_symbol log_symbols[] = {
@@ -1010,7 +1012,7 @@ static bool self_tests(void) {
 }
 
 static bool audit_finalize(const audit_state *state) {
-	if (state->call_count == 0 || state->definition_count != 1 || state->declaration_count != 1 || state->direct_root_call_count != 4
+	if (state->call_count == 0 || state->definition_count != 1 || state->declaration_count != 1 || state->direct_root_call_count != 6
 		|| state->config_binding_count != 1 || state->config_definition_count != 1 || state->config_message_count == 0) {
 		fprintf(stderr, "log audit inventory mismatch: calls=%zu root_calls=%zu definitions=%zu declarations=%zu binding=%zu config_definition=%zu config_messages=%zu\n",
 			state->call_count, state->direct_root_call_count, state->definition_count, state->declaration_count, state->config_binding_count, state->config_definition_count,

@@ -120,6 +120,24 @@ int main(void) {
 		"{\"listen\":{\"port\":-0.5},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}",
 		"{\"listen\":{\"port\":\"25565\"},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}"
 	};
+	static const char *config_invalid_metrics[] = {
+		"{\"metrics\":true,\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}",
+		"{\"metrics\":{\"interval\":false},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}",
+		"{\"metrics\":{\"interval\":\"300\"},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}",
+		"{\"metrics\":{\"interval\":null},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}",
+		"{\"metrics\":{\"interval\":2.5},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}",
+		"{\"metrics\":{\"interval\":-1},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}",
+		"{\"metrics\":{\"interval\":1},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}",
+		"{\"metrics\":{\"interval\":299},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}",
+		"{\"metrics\":{\"interval\":86401},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}",
+		"{\"metrics\":{\"interval\":1e400},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}"
+	};
+	static const char *config_valid_metrics[] = {
+		"{\"metrics\":{\"interval\":0},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}",
+		"{\"metrics\":{\"interval\":300},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}",
+		"{\"metrics\":{\"interval\":86400,\"unknown\":true},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}"
+	};
+	static const uint32_t config_valid_metrics_interval[] = { 0, 300, 86400 };
 	char filename[] = "/tmp/mcrelay-config-parse-XXXXXX";
 	int fd = -1;
 	int result = EXIT_FAILURE;
@@ -138,6 +156,7 @@ int main(void) {
 	CHECK(status == CONF_READ_CHANGED, "mixed configuration was rejected");
 	CHECK(errno == 0, "mixed configuration returned an error");
 	CHECK(parsed != NULL, "mixed configuration returned no object");
+	CHECK(parsed->metrics.interval == 0, "missing metrics configuration did not default to disabled");
 	CHECK(cJSON_IsArray(parsed->proxy) && (cJSON_GetArraySize(parsed->proxy) == 4), "mixed configuration kept wrong number of entries");
 	CHECK(proxy_entry_check(parsed, 0, "kept1", "up1.example", true, 25565), "surviving entry 0 was corrupted");
 	CHECK(proxy_entry_check(parsed, 1, "kept2", "up2.example", false, 0), "surviving entry 1 was corrupted");
@@ -175,6 +194,28 @@ int main(void) {
 		CHECK(parsed == NULL, "invalid listen port returned an object");
 		config_cache_destroy(&candidate_cache);
 	}
+	for (size_t index = 0; index < sizeof(config_invalid_metrics) / sizeof(config_invalid_metrics[0]); index++) {
+		CHECK(write_config(fd, config_invalid_metrics[index]) == 0, "cannot write invalid metrics configuration");
+		status = config_read(filename, &active_cache, &candidate_cache, &parsed);
+		CHECK(status == CONF_READ_ERROR, "invalid metrics interval was accepted");
+		CHECK(errno == CONF_ECMETRICS, "invalid metrics interval returned the wrong error");
+		CHECK(parsed == NULL, "invalid metrics interval returned an object");
+		config_cache_destroy(&candidate_cache);
+	}
+	for (size_t index = 0; index < sizeof(config_valid_metrics) / sizeof(config_valid_metrics[0]); index++) {
+		CHECK(write_config(fd, config_valid_metrics[index]) == 0, "cannot write valid metrics configuration");
+		status = config_read(filename, &active_cache, &candidate_cache, &parsed);
+		CHECK(status == CONF_READ_CHANGED && errno == 0 && parsed != NULL, "valid metrics interval was rejected");
+		CHECK(parsed->metrics.interval == config_valid_metrics_interval[index], "valid metrics interval was not retained");
+		config_destroy(parsed);
+		parsed = NULL;
+		config_cache_destroy(&candidate_cache);
+	}
+	CHECK(write_config(fd, "{\"metrics\":{\"interval\":NaN},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"up.example\"}]}") == 0,
+		"cannot write NaN metrics configuration");
+	status = config_read(filename, &active_cache, &candidate_cache, &parsed);
+	CHECK(status == CONF_READ_ERROR && errno == CONF_ERPARSE && parsed == NULL, "NaN metrics configuration did not fail during JSON parsing");
+	config_cache_destroy(&candidate_cache);
 
 	cJSON_InitHooks(&config_hooks);
 	CHECK(write_config(fd, config_mixed) == 0, "cannot rewrite mixed configuration");

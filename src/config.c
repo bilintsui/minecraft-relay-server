@@ -8,6 +8,7 @@
 /* section: headers (library) */
 #include <cjson/cJSON.h>
 #include <errno.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -275,6 +276,24 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 			result->listen.port = (in_port_t)port;
 		}
 	}
+	cJSON *config_json_metrics = cJSON_GetObjectItemCaseSensitive(config_json, "metrics");
+	if (config_json_metrics != NULL) {
+		if (!cJSON_IsObject(config_json_metrics)) {
+			return config_parse_failure(config_json, result, CONF_ECMETRICS);
+		}
+		cJSON *config_json_metrics_interval = cJSON_GetObjectItemCaseSensitive(config_json_metrics, "interval");
+		if (config_json_metrics_interval != NULL) {
+			if (!cJSON_IsNumber(config_json_metrics_interval)) {
+				return config_parse_failure(config_json, result, CONF_ECMETRICS);
+			}
+			const double interval = config_json_metrics_interval->valuedouble;
+			if (!isfinite(interval) || interval < 0.0 || interval > CONF_METRICS_MAXIMUM_INTERVAL || (interval > 0.0 && interval < CONF_METRICS_MINIMUM_INTERVAL)
+				|| (double)(uint32_t)interval != interval) {
+				return config_parse_failure(config_json, result, CONF_ECMETRICS);
+			}
+			result->metrics.interval = (uint32_t)interval;
+		}
+	}
 	cJSON *config_json_icon = cJSON_GetObjectItemCaseSensitive(config_json, "icon");
 	if (cJSON_IsString(config_json_icon) && config_json_icon->valuestring != NULL && config_json_icon->valuestring[0] != '\0') {
 		result->icon_path = (char *)malloc(strlen(config_json_icon->valuestring) + 1);
@@ -369,6 +388,7 @@ bool config_clone(const conf *source, conf **result) {
 	}
 	candidate->listen.port = source->listen.port;
 	candidate->log.level = source->log.level;
+	candidate->metrics.interval = source->metrics.interval;
 	if (!config_string_duplicate(source->log.filename, &candidate->log.filename) || !config_string_duplicate(source->listen.address, &candidate->listen.address)
 		|| !config_string_duplicate(source->icon_path, &candidate->icon_path) || !config_string_duplicate(source->icon_b64, &candidate->icon_b64)) {
 		config_destroy(candidate);
@@ -416,6 +436,8 @@ void config_dumper(conf *src) {
 	printf("\n[LISTEN]\n");
 	printf("Address\t\t%s\n", src->listen.address);
 	printf("Port\t\t%d\n", src->listen.port);
+	printf("\n[METRICS]\n");
+	printf("Interval\t%u\n", src->metrics.interval);
 	printf("\n[ICON]\t\t");
 	if (src->icon_path != NULL && src->icon_path[0] != '\0') {
 		printf("%s\n", src->icon_path);
@@ -473,6 +495,8 @@ const char *config_errmsg(conf_error err) {
 			return "Error in processing configurations: Failed to allocate memory during internal processing";
 		case CONF_ECLISTENPORT:
 			return "Error in configurations: Entry \"listen.port\" must be an unsigned short integer (0-65535)";
+		case CONF_ECMETRICS:
+			return "Error in configurations: Entry \"metrics.interval\" must be 0 or an integer from 300 to 86400";
 		case CONF_ECPROXY:
 			return "Error in configurations: Entry \"proxy\" is missing";
 		case CONF_ECPROXYDUP:

@@ -152,6 +152,9 @@ file(WRITE "${valid_config}" [=[
     "address": "127.0.0.1",
     "port": 25566
   },
+  "metrics": {
+    "interval": 300
+  },
   "icon": "/tmp/mcrelay-icon.png",
   "proxy": [
     {
@@ -176,6 +179,8 @@ assert_contains("${CLI_STDOUT}" "Config Detail:" "dumpconfig heading")
 assert_contains("${CLI_STDOUT}" "dump.example.com" "dumpconfig virtual host")
 assert_contains("${CLI_STDOUT}" "backend.example.com" "dumpconfig backend")
 assert_contains("${CLI_STDOUT}" "/tmp/mcrelay-icon.png" "dumpconfig icon")
+assert_contains("${CLI_STDOUT}" "[METRICS]" "dumpconfig metrics heading")
+assert_contains("${CLI_STDOUT}" "Interval\t300" "dumpconfig metrics interval")
 assert_not_contains("${CLI_STDOUT}" "[INFO]" "dumpconfig informational log")
 assert_not_contains("${CLI_STDOUT}" "[WARN]" "dumpconfig warning log")
 assert_not_contains("${CLI_STDOUT}" "Binary" "dumpconfig removed binary setting")

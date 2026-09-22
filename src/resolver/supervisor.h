@@ -288,7 +288,9 @@ size_t resolver_supervisor_helper_count(const resolver_supervisor *supervisor);
 bool resolver_supervisor_helper_view_get(const resolver_supervisor *supervisor, size_t helper_index, resolver_supervisor_helper_view *result);
 size_t resolver_supervisor_job_count(const resolver_supervisor *supervisor);
 #endif
+bool resolver_supervisor_metrics_assembly_get(const resolver_supervisor *supervisor, resolver_ipc_assembly_metrics_snapshot *result);
 bool resolver_supervisor_metrics_get(const resolver_supervisor *supervisor, resolver_supervisor_metrics_snapshot *result);
+uint64_t resolver_supervisor_observation_dropped(const resolver_supervisor *supervisor);
 bool resolver_supervisor_observation_take(resolver_supervisor *supervisor, resolver_supervisor_observation *result);
 bool resolver_supervisor_shutdown(resolver_supervisor *supervisor, const struct timespec *now);
 bool resolver_supervisor_shutdown_complete(const resolver_supervisor *supervisor);

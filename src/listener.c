@@ -182,6 +182,7 @@ typedef enum {
 typedef enum {
 	LISTENER_EVENT_CLIENT,
 	LISTENER_EVENT_LISTENER,
+	LISTENER_EVENT_METRICS_TIMER,
 	LISTENER_EVENT_RESOLVER,
 	LISTENER_EVENT_ROUTE_TIMER,
 	LISTENER_EVENT_SIGNAL,
@@ -204,6 +205,11 @@ typedef enum {
 	LISTENER_SOCKET_REPLACE_ACTIVE_ERROR,
 	LISTENER_SOCKET_REPLACE_ROLLBACK_ERROR
 } listener_socket_replace_status;
+typedef enum {
+	LISTENER_METRICS_TIMER_EMPTY,
+	LISTENER_METRICS_TIMER_EXPIRED,
+	LISTENER_METRICS_TIMER_FAILED
+} listener_metrics_timer_read_status;
 typedef union {
 	struct sockaddr_in v4;
 	struct sockaddr_in6 v6;
@@ -278,6 +284,7 @@ typedef struct {
 	hosts_table *hosts;
 	char log_filename[PATH_MAX];
 	listener_metrics_state metrics;
+	listener_metrics_runtime metrics_runtime;
 	resolver_supervisor *resolver;
 	route_bindings *route_bindings;
 	route_resolution *route_resolution;
@@ -293,6 +300,11 @@ typedef struct {
 	int epoll_fd;
 	listener_event_source listener_source;
 	bool mask_blocked;
+	bool metrics_timer_degraded;
+	bool metrics_timer_established;
+	int metrics_timer_fd;
+	bool metrics_timer_registered;
+	listener_event_source metrics_timer_source;
 	sigset_t previous_signal_mask;
 	int resolver_fd;
 	listener_event_source resolver_source;
@@ -313,6 +325,8 @@ typedef struct {
 	listener_ready_event ready[LISTENER_EVENT_BATCH];
 	size_t ready_count;
 	bool reload;
+	bool metrics_timer_failed;
+	bool metrics_timer_ready;
 	bool resolver_ready;
 	bool route_timer_ready;
 	bool stop;
@@ -1489,6 +1503,9 @@ static void listener_events_destroy(listener_events *events) {
 	if (events->epoll_fd != -1) {
 		close(events->epoll_fd);
 	}
+	if (events->metrics_timer_fd != -1) {
+		close(events->metrics_timer_fd);
+	}
 	if (events->signal_fd != -1) {
 		close(events->signal_fd);
 	}
@@ -1512,10 +1529,12 @@ static int listener_events_init(listener_events *events) {
 	int saved_errno;
 	memset(events, 0, sizeof(*events));
 	events->epoll_fd = -1;
+	events->metrics_timer_fd = -1;
 	events->resolver_fd = -1;
 	events->route_timer_fd = -1;
 	events->signal_fd = -1;
 	events->listener_source.kind = LISTENER_EVENT_LISTENER;
+	events->metrics_timer_source.kind = LISTENER_EVENT_METRICS_TIMER;
 	events->resolver_source.kind = LISTENER_EVENT_RESOLVER;
 	events->route_timer_source.kind = LISTENER_EVENT_ROUTE_TIMER;
 	events->signal_source.kind = LISTENER_EVENT_SIGNAL;
@@ -1648,6 +1667,18 @@ static int listener_events_wait(const listener_events *events, listener_requests
 			}
 			if (event_flags & EPOLLIN) {
 				requests->accept_ready = true;
+			}
+			break;
+		case LISTENER_EVENT_METRICS_TIMER:
+			if (source != &events->metrics_timer_source || events->metrics_timer_fd == -1 || !events->metrics_timer_registered) {
+				errno = EIO;
+				return -1;
+			}
+			if (event_flags & (EPOLLERR | EPOLLHUP)) {
+				requests->metrics_timer_failed = true;
+			}
+			if (event_flags & EPOLLIN) {
+				requests->metrics_timer_ready = true;
 			}
 			break;
 		case LISTENER_EVENT_RESOLVER:
@@ -1806,6 +1837,130 @@ static bool listener_hosts_prepare(listener_context *context, mksys_level failur
 		);
 	}
 	return true;
+}
+
+static bool listener_metrics_aggregate_snapshot_get(const listener_context *context, listener_metrics_aggregate_snapshot *snapshot) {
+	return context != NULL && snapshot != NULL && listener_metrics_snapshot_get(&context->metrics, &snapshot->listener)
+		&& resolver_cache_metrics_get(context->dns_cache, &snapshot->cache)
+		&& resolver_supervisor_metrics_assembly_get(context->resolver, &snapshot->assembly)
+		&& resolver_supervisor_metrics_get(context->resolver, &snapshot->supervisor);
+}
+
+static void listener_metrics_observations_drain(listener_context *context, const struct timespec *now) {
+	if (context == NULL || context->resolver == NULL || !timeutil_valid(now)) {
+		return;
+	}
+	resolver_supervisor_observation observation;
+	while (resolver_supervisor_observation_take(context->resolver, &observation)) {
+		listener_metrics_helper_observation_log(&context->metrics_runtime, &observation, context->log_filename, context->config->log.level, now);
+	}
+	listener_metrics_helper_observation_loss_log(&context->metrics_runtime, resolver_supervisor_observation_dropped(context->resolver), context->log_filename,
+		context->config->log.level, now);
+}
+
+static void listener_metrics_snapshot_output(listener_context *context, listener_metrics_output_reason reason, const char *log_filename, uint8_t log_level,
+	const struct timespec *now) {
+	int saved_errno = errno;
+	listener_metrics_aggregate_snapshot snapshot;
+	if (listener_metrics_aggregate_snapshot_get(context, &snapshot)) {
+		listener_metrics_output(&context->metrics_runtime, reason, &snapshot, log_filename, log_level, now);
+	} else {
+		listener_metrics_format_drop_record(&context->metrics_runtime);
+	}
+	errno = saved_errno;
+}
+
+static void listener_metrics_timer_failure(listener_context *context, listener_events *events, int failure_errno, const char *log_filename, uint8_t log_level) {
+	int saved_errno = errno;
+	listener_metrics_scheduler_failure_record(&context->metrics_runtime);
+	if (events->metrics_timer_fd != -1) {
+		if (events->metrics_timer_registered) {
+			(void)listener_events_remove(events, events->metrics_timer_fd);
+			events->metrics_timer_registered = false;
+		}
+		struct itimerspec disarmed;
+		memset(&disarmed, 0, sizeof(disarmed));
+		(void)timerfd_settime(events->metrics_timer_fd, 0, &disarmed, NULL);
+		if (events->metrics_timer_established) {
+			events->metrics_timer_degraded = true;
+		} else {
+			close(events->metrics_timer_fd);
+			events->metrics_timer_fd = -1;
+		}
+	}
+	MKSYS_LOG(log_filename, log_level, MKSYS_LEVEL_WARNING, "Metrics timer disabled after an observation-subsystem failure: %s", strerror(failure_errno));
+	errno = saved_errno;
+}
+
+static void listener_metrics_timer_disarm(listener_context *context, listener_events *events, const char *log_filename, uint8_t log_level) {
+	int saved_errno = errno;
+	if (events->metrics_timer_fd != -1 && !events->metrics_timer_degraded) {
+		struct itimerspec disarmed;
+		memset(&disarmed, 0, sizeof(disarmed));
+		if (timerfd_settime(events->metrics_timer_fd, 0, &disarmed, NULL) == -1) {
+			listener_metrics_timer_failure(context, events, errno, log_filename, log_level);
+		}
+	}
+	errno = saved_errno;
+}
+
+static bool listener_metrics_timer_establish(listener_context *context, listener_events *events, uint32_t interval, const char *log_filename, uint8_t log_level) {
+	int saved_errno = errno;
+	if (events->metrics_timer_degraded) {
+		errno = saved_errno;
+		return false;
+	}
+	if (events->metrics_timer_fd == -1) {
+		events->metrics_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+		if (events->metrics_timer_fd == -1) {
+			listener_metrics_timer_failure(context, events, errno, log_filename, log_level);
+			errno = saved_errno;
+			return false;
+		}
+		if (listener_events_add(events, events->metrics_timer_fd, EPOLLIN, &events->metrics_timer_source) == -1) {
+			listener_metrics_timer_failure(context, events, errno, log_filename, log_level);
+			errno = saved_errno;
+			return false;
+		}
+		events->metrics_timer_registered = true;
+	}
+	struct itimerspec timer = {
+		.it_interval = { .tv_sec = interval },
+		.it_value = { .tv_sec = interval }
+	};
+	if (timerfd_settime(events->metrics_timer_fd, 0, &timer, NULL) == -1) {
+		listener_metrics_timer_failure(context, events, errno, log_filename, log_level);
+		errno = saved_errno;
+		return false;
+	}
+	events->metrics_timer_established = true;
+	errno = saved_errno;
+	return true;
+}
+
+static listener_metrics_timer_read_status listener_metrics_timer_read(listener_context *context, listener_events *events, bool event_failed, uint64_t *expirations) {
+	int saved_errno = errno;
+	if (event_failed) {
+		listener_metrics_timer_failure(context, events, EIO, context->log_filename, context->config->log.level);
+		errno = saved_errno;
+		return LISTENER_METRICS_TIMER_FAILED;
+	}
+	ssize_t size;
+	do {
+		size = read(events->metrics_timer_fd, expirations, sizeof(*expirations));
+	} while (size == -1 && errno == EINTR);
+	if (size == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+		errno = saved_errno;
+		return LISTENER_METRICS_TIMER_EMPTY;
+	}
+	if (size != (ssize_t)sizeof(*expirations)) {
+		int failure_errno = size == -1 ? errno : EIO;
+		listener_metrics_timer_failure(context, events, failure_errno, context->log_filename, context->config->log.level);
+		errno = saved_errno;
+		return LISTENER_METRICS_TIMER_FAILED;
+	}
+	errno = saved_errno;
+	return LISTENER_METRICS_TIMER_EXPIRED;
 }
 
 static void listener_notify_ready(void) {
@@ -1979,8 +2134,8 @@ static int listener_ready_flip_test_timer_disarm(const void *context) {
 }
 #endif
 
-static int listener_route_runtime_ready(listener_context *context, listener_route_runtime *runtime, const listener_events *events, const listener_socket *listener,
-	bool warmup_complete) {
+static int listener_route_runtime_ready(listener_context *context, listener_route_runtime *runtime, listener_events *events, const listener_socket *listener,
+	bool warmup_complete, const struct timespec *now) {
 	if (listener_events_socket_add(events, listener->fd) == -1) {
 		return -1;
 	}
@@ -2007,10 +2162,14 @@ static int listener_route_runtime_ready(listener_context *context, listener_rout
 			"Initial proxy route warm-up deadline reached; accepting connections while prewarming continues."
 		);
 	}
+	if (listener_metrics_effectively_enabled(context->config)) {
+		(void)listener_metrics_timer_establish(context, events, context->config->metrics.interval, context->log_filename, context->config->log.level);
+		listener_metrics_snapshot_output(context, LISTENER_METRICS_OUTPUT_STARTUP, context->log_filename, context->config->log.level, now);
+	}
 	return 0;
 }
 
-static int listener_route_runtime_schedule(listener_context *context, listener_route_runtime *runtime, const listener_events *events, const listener_socket *listener,
+static int listener_route_runtime_schedule(listener_context *context, listener_route_runtime *runtime, listener_events *events, const listener_socket *listener,
 	const struct timespec *now) {
 	route_prewarm_status status = route_resolution_schedule(context->route_resolution, context->resolver, now, LISTENER_ROUTE_PREWARM_BATCH_LIMIT);
 	if (status == ROUTE_PREWARM_BAD_ARGUMENT || status == ROUTE_PREWARM_IO || status == ROUTE_PREWARM_TIME) {
@@ -2040,7 +2199,7 @@ static int listener_route_runtime_schedule(listener_context *context, listener_r
 		return 0;
 	}
 #endif
-	if (!runtime->ready && (warmup_complete || deadline_reached) && listener_route_runtime_ready(context, runtime, events, listener, warmup_complete) == -1) {
+	if (!runtime->ready && (warmup_complete || deadline_reached) && listener_route_runtime_ready(context, runtime, events, listener, warmup_complete, now) == -1) {
 		return -1;
 	}
 	if (status == ROUTE_PREWARM_MORE) {
@@ -2129,9 +2288,12 @@ static listener_socket_replace_status listener_socket_replace(listener_socket *t
 	return LISTENER_SOCKET_REPLACE_OK;
 }
 
-static int listener_reload(listener_context *context, listener_socket *listener, const listener_events *events) {
+static int listener_reload(listener_context *context, listener_socket *listener, listener_events *events, bool *metrics_readiness_invalidated) {
 	uint8_t config_maxlevel = context->config->log.level;
+	bool metrics_effective_old = listener_metrics_effectively_enabled(context->config);
+	uint32_t metrics_interval_old = context->config->metrics.interval;
 	int result = 0;
+	*metrics_readiness_invalidated = false;
 	char config_logfull_old[PATH_MAX];
 	snprintf(config_logfull_old, sizeof(config_logfull_old), "%s", context->log_filename);
 	MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
@@ -2232,9 +2394,33 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 				result = -1;
 				break;
 			}
+			bool metrics_effective_new = listener_metrics_effectively_enabled(context->config);
+			bool metrics_transition = metrics_effective_old != metrics_effective_new
+				|| (metrics_effective_new && metrics_interval_old != context->config->metrics.interval);
+			*metrics_readiness_invalidated = metrics_transition;
+			if (metrics_effective_old && !metrics_effective_new) {
+				struct timespec metrics_now;
+				if (clock_gettime(CLOCK_MONOTONIC, &metrics_now) == 0) {
+					listener_metrics_snapshot_output(context, LISTENER_METRICS_OUTPUT_DISABLE, config_logfull_old, config_maxlevel, &metrics_now);
+				} else {
+					listener_metrics_format_drop_record(&context->metrics_runtime);
+				}
+				listener_metrics_timer_disarm(context, events, config_logfull_old, config_maxlevel);
+			}
 			snprintf(context->log_filename, sizeof(context->log_filename), "%s", config_logfull_candidate);
 			config_cache_commit(context->config_cache, &config_cache_candidate);
 			primary_published = true;
+			if (metrics_effective_new && metrics_transition) {
+				(void)listener_metrics_timer_establish(context, events, context->config->metrics.interval, context->log_filename, context->config->log.level);
+				struct timespec metrics_now;
+				if (clock_gettime(CLOCK_MONOTONIC, &metrics_now) == 0) {
+					listener_metrics_snapshot_output(context, LISTENER_METRICS_OUTPUT_RECONFIGURE, context->log_filename, context->config->log.level, &metrics_now);
+				} else {
+					listener_metrics_format_drop_record(&context->metrics_runtime);
+				}
+			} else if (metrics_effective_new && events->metrics_timer_fd == -1 && !events->metrics_timer_degraded) {
+				(void)listener_metrics_timer_establish(context, events, context->config->metrics.interval, context->log_filename, context->config->log.level);
+			}
 			MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
 				"Configuration reloaded."
 			);
@@ -2254,6 +2440,7 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 				case CONF_ERPARSE:
 				case CONF_ECMEMORY:
 				case CONF_ECLISTENPORT:
+				case CONF_ECMETRICS:
 				case CONF_ECPROXY:
 					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
 						"%s%s%s",
@@ -2317,6 +2504,9 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 				}
 			}
 		}
+	}
+	if (result == 0 && read_status == CONF_READ_UNCHANGED && metrics_effective_old && events->metrics_timer_fd == -1 && !events->metrics_timer_degraded) {
+		(void)listener_metrics_timer_establish(context, events, metrics_interval_old, config_logfull_old, config_maxlevel);
 	}
 	route_generation_release(generation_candidate);
 	config_destroy(config_candidate);
@@ -2434,6 +2624,9 @@ static exit_code listener_worker_run(int client_fd, const listener_client_addres
 		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING, "Cannot set worker process name: %s", strerror(errno));
 	}
 	close(events->epoll_fd);
+	if (events->metrics_timer_fd != -1) {
+		close(events->metrics_timer_fd);
+	}
 	close(events->route_timer_fd);
 	close(events->signal_fd);
 	listener_socket_close(listener);
@@ -2622,10 +2815,14 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
 	}
+	const size_t connection_limit = listener_connection_limit();
+	listener_metrics_limits_set(&context->metrics, connection_limit, LISTENER_WORKER_LIMIT);
 	listener_bind_success_msg(context);
 	struct timespec route_now;
 	listener_route_runtime route_runtime;
-	if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1 || listener_route_runtime_start(&route_runtime, &events, &route_now) == -1
+	pid_t listener_pid = getpid();
+	if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1 || !listener_metrics_runtime_init(&context->metrics_runtime, listener_pid, &route_now)
+		|| listener_route_runtime_start(&route_runtime, &events, &route_now) == -1
 		|| listener_route_runtime_schedule(context, &route_runtime, &events, listener, &route_now) == -1) {
 		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot start proxy route prewarming: %s", strerror(errno));
 		listener_resolver_destroy(context);
@@ -2635,10 +2832,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 	}
 	exit_code exitcode = EXITCODE_OK;
 	size_t connection_count = 0;
-	const size_t connection_limit = listener_connection_limit();
-	listener_metrics_limits_set(&context->metrics, connection_limit, LISTENER_WORKER_LIMIT);
 	listener_connection *connections = NULL;
-	pid_t listener_pid = getpid();
 	bool reload_pending = false;
 	bool shutting_down = false;
 	while (1) {
@@ -2685,6 +2879,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			break;
 		}
 		if (requests.stop && !shutting_down) {
+			listener_metrics_timer_disarm(context, &events, context->log_filename, context->config->log.level);
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock while closing listener connections: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
@@ -2712,7 +2907,15 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			shutting_down = true;
 		}
 		if (shutting_down) {
+			struct timespec metrics_now = { 0 };
+			bool metrics_time_valid = clock_gettime(CLOCK_MONOTONIC, &metrics_now) == 0;
+			if (metrics_time_valid) {
+				listener_metrics_observations_drain(context, &metrics_now);
+			}
 			if (resolver_supervisor_shutdown_complete(context->resolver)) {
+				if (listener_metrics_effectively_enabled(context->config) && metrics_time_valid) {
+					listener_metrics_snapshot_output(context, LISTENER_METRICS_OUTPUT_SHUTDOWN, context->log_filename, context->config->log.level, &metrics_now);
+				}
 				break;
 			}
 			continue;
@@ -2748,6 +2951,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			break;
 		}
 		bool reload_processed = false;
+		bool metrics_readiness_invalidated = false;
 #ifdef LISTENER_READY_FLIP_TEST
 		/* Exclude unrelated test-daemon events: this scenario may reload only after the late-arm timer actually fires. */
 		bool ready_flip_timer_ready = listener_test_ready_flip_timer_ready();
@@ -2776,7 +2980,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
-			int reload_result = listener_reload(context, listener, &events);
+			int reload_result = listener_reload(context, listener, &events, &metrics_readiness_invalidated);
 			/* Complete the reload handshake before acting on a fatal result; systemd observes the subsequent listener exit separately. */
 			listener_notify_ready();
 			reload_pending = false;
@@ -2889,6 +3093,17 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			}
 #endif
 		}
+		listener_metrics_observations_drain(context, &route_now);
+		if (!metrics_readiness_invalidated && (requests.metrics_timer_ready || requests.metrics_timer_failed)) {
+			uint64_t expirations = 0;
+			listener_metrics_timer_read_status metrics_status = listener_metrics_timer_read(context, &events, requests.metrics_timer_failed, &expirations);
+			if (metrics_status == LISTENER_METRICS_TIMER_EXPIRED && listener_metrics_effectively_enabled(context->config)) {
+				if (expirations > 1) {
+					listener_metrics_missed_intervals_record(&context->metrics_runtime, expirations - 1U);
+				}
+				listener_metrics_snapshot_output(context, LISTENER_METRICS_OUTPUT_PERIODIC, context->log_filename, context->config->log.level, &route_now);
+			}
+		}
 		if (!route_runtime.ready || !requests.accept_ready) {
 			continue;
 		}
@@ -2946,6 +3161,9 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 cleanup: {
 	struct timespec cleanup_now;
 	const struct timespec *cleanup_now_ptr = clock_gettime(CLOCK_MONOTONIC, &cleanup_now) == 0 ? &cleanup_now : NULL;
+	if (cleanup_now_ptr != NULL && context->resolver != NULL) {
+		listener_metrics_observations_drain(context, cleanup_now_ptr);
+	}
 	while (connections != NULL) {
 		listener_connection_destroy(&connections, connections, &events, &context->metrics, LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, NULL, cleanup_now_ptr);
 	}

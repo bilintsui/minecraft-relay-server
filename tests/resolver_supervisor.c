@@ -805,6 +805,7 @@ static bool supervisor_test_helper_observation(void) {
 		&& metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN] == 1 && metrics.helper.spawn_attempt == 37 && metrics.helper.spawn_success == 36
 		&& metrics.helper.recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_SUCCESS_STREAK] == 1
 		&& metrics.helper.recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_STABLE_UPTIME] == 2 && metrics.helper.observation_dropped == 4
+		&& resolver_supervisor_observation_dropped(supervisor) == metrics.helper.observation_dropped
 		&& metrics.helper.state_current[RESOLVER_SUPERVISOR_HELPER_IDLE] == RESOLVER_SUPERVISOR_HELPER_COUNT,
 		"helper lifecycle metrics or identifier-exhaustion drops were incorrect");
 	CHECK(resolver_supervisor_shutdown(supervisor, &now), "helper-observation supervisor could not shut down");

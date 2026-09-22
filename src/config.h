@@ -29,6 +29,12 @@
  */
 #define CONF_ICON_B64MAX	7000
 
+/* metrics */
+#ifndef CONF_METRICS_MINIMUM_INTERVAL
+#define CONF_METRICS_MINIMUM_INTERVAL	300U
+#endif
+#define CONF_METRICS_MAXIMUM_INTERVAL	86400U
+
 /* section: types */
 typedef struct {
 	void *data;
@@ -43,6 +49,9 @@ typedef struct {
 		char *address;
 		in_port_t port;
 	} listen;
+	struct {
+		uint32_t interval;
+	} metrics;
 	char *icon_path, *icon_b64;
 	conf_cache icon_cache;
 	cJSON *proxy;
@@ -57,6 +66,7 @@ typedef enum {
 	CONF_ERPARSE,
 	CONF_ECMEMORY,
 	CONF_ECLISTENPORT,
+	CONF_ECMETRICS,
 	CONF_ECPROXY,
 	CONF_ECPROXYDUP
 } conf_error;

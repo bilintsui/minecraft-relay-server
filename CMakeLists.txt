@@ -89,7 +89,7 @@ if(BUILD_TESTING)
 	target_compile_definitions(hosts_test PRIVATE _GNU_SOURCE)
 	target_link_libraries(hosts_test -lresolv)
 	add_test(NAME hosts COMMAND hosts_test)
-	add_executable(listener_metrics_test tests/listener_metrics.c src/listener_metrics.c src/metrics.c src/timeutil.c)
+	add_executable(listener_metrics_test tests/listener_metrics.c src/basic.c src/listener_metrics.c src/log.c src/metrics.c src/timeutil.c)
 	target_include_directories(listener_metrics_test PRIVATE src)
 	target_compile_definitions(listener_metrics_test PRIVATE _GNU_SOURCE)
 	add_test(NAME listener_metrics COMMAND listener_metrics_test)
@@ -280,7 +280,7 @@ if(BUILD_TESTING)
 		target_link_libraries(hosts_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all -lresolv)
 		add_test(NAME hosts_ubsan COMMAND hosts_ubsan_test)
 		set_tests_properties(hosts_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
-		add_executable(listener_metrics_ubsan_test tests/listener_metrics.c src/listener_metrics.c src/metrics.c src/timeutil.c)
+		add_executable(listener_metrics_ubsan_test tests/listener_metrics.c src/basic.c src/listener_metrics.c src/log.c src/metrics.c src/timeutil.c)
 		target_include_directories(listener_metrics_ubsan_test PRIVATE src)
 		target_compile_definitions(listener_metrics_ubsan_test PRIVATE _GNU_SOURCE)
 		target_compile_options(listener_metrics_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
@@ -508,15 +508,16 @@ if(BUILD_TESTING)
 		src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c
 		src/route/table.c src/route/waiter.c
 		src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c
-		tests/connect_pending.c tests/dns_pending.c tests/listener_runtime_hooks.c tests/route_waiter_destroy_fault.c)
+		tests/connect_pending.c tests/dns_pending.c tests/listener_runtime_hooks.c tests/metrics_timer_fault.c tests/route_waiter_destroy_fault.c)
 	add_dependencies(listener_short_runtime_daemon version_header)
-	target_compile_definitions(listener_short_runtime_daemon PRIVATE _GNU_SOURCE DEBUG_MODE=false LISTENER_CONNECTION_LIMIT=2 LISTENER_EARLY_COLLECT_TEST LISTENER_READY_FLIP_TEST
+	target_compile_definitions(listener_short_runtime_daemon PRIVATE _GNU_SOURCE CONF_METRICS_MINIMUM_INTERVAL=1 DEBUG_MODE=false LISTENER_CONNECTION_LIMIT=2 LISTENER_EARLY_COLLECT_TEST LISTENER_READY_FLIP_TEST
 		LISTENER_INITIAL_TIMEOUT_SEC=5 LISTENER_WORKER_LIMIT=1
 		LISTENER_ROUTE_TIMER_ARMED_TEST LISTENER_ROUTE_WARMUP_TIMEOUT_SEC=1 LISTENER_SHORT_CONNECT_TIMEOUT_SEC=10 LISTENER_SHORT_LIFETIME_TIMEOUT_SEC=5
 		LISTENER_SHORT_RELAY_IDLE_TIMEOUT_SEC=10 LISTENER_TIMER_REARM_TEST)
 	target_include_directories(listener_short_runtime_daemon PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}/generated")
 	target_link_libraries(listener_short_runtime_daemon -lresolv -lcjson -lsystemd)
-	set_target_properties(listener_short_runtime_daemon PROPERTIES LINK_FLAGS "-Wl,--wrap=connect -Wl,--wrap=dns_address_lookup -Wl,--wrap=route_waiter_destroy")
+	set_target_properties(listener_short_runtime_daemon PROPERTIES
+		LINK_FLAGS "-Wl,--wrap=connect -Wl,--wrap=dns_address_lookup -Wl,--wrap=read -Wl,--wrap=route_waiter_destroy -Wl,--wrap=timerfd_settime")
 	add_executable(listener_short_runtime_test tests/listener_short_runtime.c)
 	target_compile_definitions(listener_short_runtime_test PRIVATE _GNU_SOURCE)
 	add_test(NAME listener_short_runtime COMMAND listener_short_runtime_test $<TARGET_FILE:listener_short_runtime_daemon>)

@@ -118,7 +118,7 @@ static int short_test_client_connect(in_port_t port) {
 	return result;
 }
 
-static int short_test_config_write(const short_fixture *fixture, const char *address, in_port_t upstream_port) {
+static int short_test_config_write_internal(const short_fixture *fixture, const char *address, in_port_t upstream_port, uint32_t metrics_interval) {
 	char content[PATH_MAX + 512];
 	int content_length;
 	int fd;
@@ -127,8 +127,9 @@ static int short_test_config_write(const short_fixture *fixture, const char *add
 		return -1;
 	}
 	content_length = snprintf(content, sizeof(content),
-		"{\"log\":{\"filename\":\"%s\",\"level\":4},\"listen\":{\"address\":\"127.0.0.1\",\"port\":%u},\"icon\":\"\",\"proxy\":[{\"vhost\":[\"test.example\"],\"address\":\"%s\",\"port\":%u}]}\n",
-		fixture->log_filename, (unsigned int)fixture->listener_port, address, (unsigned int)upstream_port);
+		"{\"log\":{\"filename\":\"%s\",\"level\":4},\"listen\":{\"address\":\"127.0.0.1\",\"port\":%u},"
+		"\"metrics\":{\"interval\":%u},\"icon\":\"\",\"proxy\":[{\"vhost\":[\"test.example\"],\"address\":\"%s\",\"port\":%u}]}\n",
+		fixture->log_filename, (unsigned int)fixture->listener_port, metrics_interval, address, (unsigned int)upstream_port);
 	if (content_length < 0 || (size_t)content_length >= sizeof(content)) {
 		errno = EOVERFLOW;
 		return -1;
@@ -151,27 +152,81 @@ static int short_test_config_write(const short_fixture *fixture, const char *add
 	return close(fd);
 }
 
-static bool short_test_file_contains(const char *filename, const char *needle) {
+static int short_test_config_write(const short_fixture *fixture, const char *address, in_port_t upstream_port) {
+	return short_test_config_write_internal(fixture, address, upstream_port, 0);
+}
+
+static int short_test_config_write_metrics(const short_fixture *fixture, const char *address, in_port_t upstream_port, uint32_t metrics_interval) {
+	return short_test_config_write_internal(fixture, address, upstream_port, metrics_interval);
+}
+
+static size_t short_test_file_count(const char *filename, const char *needle) {
 	if (filename == NULL || needle == NULL) {
 		errno = EINVAL;
-		return false;
+		return 0;
 	}
 	FILE *file = fopen(filename, "r");
 	if (file == NULL) {
-		return false;
+		return 0;
 	}
 	char line[BUFSIZ];
-	bool result = false;
+	size_t result = 0;
 	while (fgets(line, sizeof(line), file) != NULL) {
 		if (strstr(line, needle) != NULL) {
-			result = true;
-			break;
+			result++;
 		}
 	}
-	if (fclose(file) == EOF && !result) {
-		return false;
+	if (fclose(file) == EOF) {
+		return 0;
 	}
 	return result;
+}
+
+static bool short_test_file_contains(const char *filename, const char *needle) {
+	return short_test_file_count(filename, needle) > 0;
+}
+
+static size_t short_test_file_reserved_record_count(const char *filename) {
+	FILE *file = fopen(filename, "r");
+	if (file == NULL) {
+		return 0;
+	}
+	char line[BUFSIZ];
+	size_t result = 0;
+	while (fgets(line, sizeof(line), file) != NULL) {
+		if (line[0] != '[') {
+			continue;
+		}
+		char *level = strstr(line, "] [");
+		char *message = level == NULL ? NULL : strstr(level + 3, "] ");
+		if (message != NULL) {
+			message += 2;
+			if (strncmp(message, "metrics schema=", strlen("metrics schema=")) == 0
+				|| strncmp(message, "resolver_helper", strlen("resolver_helper")) == 0) {
+				result++;
+			}
+		}
+	}
+	if (fclose(file) == EOF) {
+		return 0;
+	}
+	return result;
+}
+
+static bool short_test_file_wait_contains(const char *filename, const char *needle, int timeout_ms) {
+	for (int elapsed = 0; elapsed <= timeout_ms; elapsed += LISTENER_SHORT_TEST_POLL_MS) {
+		if (short_test_file_contains(filename, needle)) {
+			return true;
+		}
+		struct timespec delay = { .tv_nsec = LISTENER_SHORT_TEST_POLL_MS * 1000000L };
+		while (nanosleep(&delay, &delay) == -1) {
+			if (errno != EINTR) {
+				return false;
+			}
+		}
+	}
+	errno = ETIMEDOUT;
+	return false;
 }
 
 static ssize_t short_test_fixture_notification_timeout(short_fixture *fixture, char *message, size_t capacity, int timeout_ms) {
@@ -225,8 +280,30 @@ static int short_test_fixture_release_trigger(const short_fixture *fixture) {
 	return close(fd);
 }
 
-static int short_test_fixture_start(short_fixture *fixture, const char *binary, const char *directory, const char *suffix,
-	const char *upstream_address, in_port_t upstream_port) {
+static int short_test_fixture_reload_wait(short_fixture *fixture) {
+	if (fixture == NULL || fixture->listener <= 0) {
+		return -1;
+	}
+	char notification[128];
+	ssize_t notification_size = short_test_fixture_notification(fixture, notification, sizeof(notification));
+	if (notification_size <= 0 || strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) != 0) {
+		errno = EPROTO;
+		return -1;
+	}
+	notification_size = short_test_fixture_notification(fixture, notification, sizeof(notification));
+	if (notification_size <= 0 || strcmp(notification, "READY=1") != 0) {
+		errno = EPROTO;
+		return -1;
+	}
+	return 0;
+}
+
+static int short_test_fixture_reload(short_fixture *fixture) {
+	return fixture != NULL && fixture->listener > 0 && kill(fixture->listener, SIGUSR1) == 0 ? short_test_fixture_reload_wait(fixture) : -1;
+}
+
+static int short_test_fixture_start_internal(short_fixture *fixture, const char *binary, const char *directory, const char *suffix,
+	const char *upstream_address, in_port_t upstream_port, uint32_t metrics_interval) {
 	struct sockaddr_un notify_address;
 	int filename_length;
 	if (fixture == NULL || binary == NULL || directory == NULL || suffix == NULL || upstream_address == NULL) {
@@ -275,7 +352,7 @@ static int short_test_fixture_start(short_fixture *fixture, const char *binary, 
 	}
 	fixture->listener_port = ntohs(reservation_address.sin_port);
 	close(reservation_fd);
-	if (short_test_config_write(fixture, upstream_address, upstream_port) == -1) {
+	if (short_test_config_write_metrics(fixture, upstream_address, upstream_port, metrics_interval) == -1) {
 		return -1;
 	}
 	fixture->notify_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
@@ -312,6 +389,17 @@ static int short_test_fixture_start(short_fixture *fixture, const char *binary, 
 			|| (strcmp(suffix, "reload-ready-flip") == 0 && setenv("MCRELAY_TEST_READY_FLIP", "1", 1) == -1)
 			|| (strcmp(suffix, "deadline") == 0 && (setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1
 				|| setenv("MCRELAY_TEST_TIMER_REARM_RACE", "1", 1) == -1))
+			|| ((strcmp(suffix, "metrics-arm-fail-changed") == 0 || strcmp(suffix, "metrics-arm-fail-unchanged") == 0)
+				&& setenv("MCRELAY_TEST_METRICS_TIMER_ARM_FAIL", "1", 1) == -1)
+			|| (strcmp(suffix, "metrics-eagain") == 0 && setenv("MCRELAY_TEST_METRICS_TIMER_READ", "eagain", 1) == -1)
+			|| (strcmp(suffix, "metrics-eintr") == 0 && setenv("MCRELAY_TEST_METRICS_TIMER_READ", "eintr", 1) == -1)
+			|| (strcmp(suffix, "metrics-eio") == 0 && setenv("MCRELAY_TEST_METRICS_TIMER_READ", "eio", 1) == -1)
+			|| (strcmp(suffix, "metrics-reload-disable") == 0 && (setenv("MCRELAY_TEST_METRICS_TIMER_READ", "reload-disable", 1) == -1
+				|| setenv("MCRELAY_TEST_METRICS_RELOAD_TRIGGER", fixture->release_trigger_filename, 1) == -1))
+			|| (strcmp(suffix, "metrics-reload-interval") == 0 && (setenv("MCRELAY_TEST_METRICS_TIMER_READ", "reload-interval", 1) == -1
+				|| setenv("MCRELAY_TEST_METRICS_RELOAD_TRIGGER", fixture->release_trigger_filename, 1) == -1))
+			|| (strcmp(suffix, "metrics-reload-same") == 0 && (setenv("MCRELAY_TEST_METRICS_TIMER_READ", "reload-same", 1) == -1
+				|| setenv("MCRELAY_TEST_METRICS_RELOAD_TRIGGER", fixture->release_trigger_filename, 1) == -1))
 			|| short_test_fixture_release_environment(fixture, suffix) == -1) {
 			_exit(EXIT_FAILURE);
 		}
@@ -340,6 +428,11 @@ static int short_test_fixture_start(short_fixture *fixture, const char *binary, 
 		return -1;
 	}
 	return 0;
+}
+
+static int short_test_fixture_start(short_fixture *fixture, const char *binary, const char *directory, const char *suffix,
+	const char *upstream_address, in_port_t upstream_port) {
+	return short_test_fixture_start_internal(fixture, binary, directory, suffix, upstream_address, upstream_port, 0);
 }
 
 static int short_test_fixture_stop(short_fixture *fixture) {
@@ -403,6 +496,48 @@ static int short_test_fixture_wait_exit(short_fixture *fixture, int *status, int
 	}
 	errno = ETIMEDOUT;
 	return -1;
+}
+
+static size_t short_test_varint_write(uint8_t *target, size_t capacity, uint32_t value) {
+	size_t length = 0;
+	do {
+		if (length >= capacity) {
+			return 0;
+		}
+		uint8_t byte = (uint8_t)(value & UINT32_C(0x7f));
+		value >>= 7;
+		target[length++] = value == 0 ? byte : (uint8_t)(byte | UINT8_C(0x80));
+	} while (value != 0);
+	return length;
+}
+
+static size_t short_test_handshake_request_build(uint8_t *target, size_t capacity, const char *vhost) {
+	if (target == NULL || vhost == NULL) {
+		return 0;
+	}
+	size_t vhost_length = strlen(vhost);
+	uint8_t body[BUFSIZ];
+	size_t body_length = 0;
+	body[body_length++] = 0;
+	body[body_length++] = 47;
+	size_t encoded = short_test_varint_write(body + body_length, sizeof(body) - body_length, (uint32_t)vhost_length);
+	if (encoded == 0 || vhost_length > sizeof(body) - body_length - encoded - 3U) {
+		return 0;
+	}
+	body_length += encoded;
+	memcpy(body + body_length, vhost, vhost_length);
+	body_length += vhost_length;
+	body[body_length++] = 0x63;
+	body[body_length++] = 0xdd;
+	body[body_length++] = 1;
+	size_t packet_prefix = short_test_varint_write(target, capacity, (uint32_t)body_length);
+	if (packet_prefix == 0 || capacity < packet_prefix + 2U || body_length > capacity - packet_prefix - 2U) {
+		return 0;
+	}
+	memcpy(target + packet_prefix, body, body_length);
+	target[packet_prefix + body_length] = 1;
+	target[packet_prefix + body_length + 1U] = 0;
+	return packet_prefix + body_length + 2U;
 }
 
 static int short_test_listener_accept(int listener_fd) {
@@ -667,6 +802,186 @@ cleanup:
 		short_test_fixture_stop(&fixture);
 	}
 	return test_result;
+}
+
+static bool short_test_log_forgery(const char *binary, const char *directory) {
+	static const char vhost[] =
+		"evil\r\n[2026-09-22 12:34:56 UTC+08:00] [INFO] metrics schema=1 seq=7 family=meta instance=1-1-1"
+		"\r\n[] [INFO] metrics schema=2 seq=8 family=meta instance=1-1-1"
+		"\r\n[] [WARN] resolver_helper status=event_loss dropped=4";
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int client_fd = -1;
+	uint8_t request[BUFSIZ];
+	size_t request_size = short_test_handshake_request_build(request, sizeof(request), vhost);
+	CHECK(request_size > 0, "could not build forged-vhost request");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "log-forgery", "127.0.0.1", 9) == 0,
+		"could not start forged-vhost listener");
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0, "could not connect forged-vhost client");
+	CHECK(short_test_send_all(client_fd, request, request_size) == 0, "could not send forged-vhost request");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, "status: reject_vhostinvalid", LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"forged-vhost rejection log was missing");
+	CHECK(short_test_file_contains(fixture.log_filename, "evil\\r\\n[2026-09-22 12:34:56 UTC+08:00] [INFO] metrics schema=1")
+		&& short_test_file_contains(fixture.log_filename, "\\r\\n[] [INFO] metrics schema=2")
+		&& short_test_file_contains(fixture.log_filename, "\\r\\n[] [WARN] resolver_helper status=event_loss dropped=4"),
+		"forged-vhost CR/LF or reserved prefixes were not escaped as printable text");
+	CHECK(short_test_file_reserved_record_count(fixture.log_filename) == 0, "client-controlled text forged a line-start metrics or helper record");
+	test_result = true;
+
+cleanup:
+	if (client_fd >= 0) {
+		close(client_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
+static bool short_test_metrics_lifecycle(const char *binary, const char *directory) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int status = 0;
+	CHECK(short_test_fixture_start_internal(&fixture, binary, directory, "metrics", "127.0.0.1", 9, 1) == 0,
+		"could not start metrics lifecycle listener");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=startup lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"metrics startup snapshot was missing");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=periodic lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"metrics periodic snapshot was missing");
+	CHECK(short_test_file_count(fixture.log_filename, " reason=reconfigure lines=48 ") == 0, "metrics reconfigured before a configuration transition");
+	CHECK(short_test_config_write_metrics(&fixture, "127.0.0.2", 9, 1) == 0 && short_test_fixture_reload(&fixture) == 0,
+		"same-interval metrics reload failed");
+	CHECK(short_test_file_count(fixture.log_filename, " reason=reconfigure lines=48 ") == 0, "same metrics interval reset cadence or emitted reconfigure");
+	CHECK(short_test_config_write_metrics(&fixture, "127.0.0.1", 9, 2) == 0 && short_test_fixture_reload(&fixture) == 0,
+		"metrics interval-change reload failed");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=reconfigure lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"metrics interval change did not emit reconfigure");
+	CHECK(short_test_config_write_metrics(&fixture, "127.0.0.2", 9, 0) == 0 && short_test_fixture_reload(&fixture) == 0,
+		"metrics disable reload failed");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=disable lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"metrics disable snapshot was missing");
+	CHECK(short_test_config_write_metrics(&fixture, "127.0.0.1", 9, 1) == 0 && short_test_fixture_reload(&fixture) == 0,
+		"metrics re-enable reload failed");
+	CHECK(short_test_file_count(fixture.log_filename, " reason=reconfigure lines=48 ") == 2, "metrics re-enable did not emit exactly one additional reconfigure");
+	CHECK(kill(fixture.listener, SIGTERM) == 0 && short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
+		&& WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS, "metrics lifecycle listener did not stop cleanly");
+	CHECK(short_test_file_contains(fixture.log_filename, " reason=shutdown lines=48 "), "metrics shutdown snapshot was missing");
+	CHECK(short_test_file_count(fixture.log_filename, " reason=startup lines=48 ") == 1
+		&& short_test_file_count(fixture.log_filename, " reason=disable lines=48 ") == 1
+		&& short_test_file_count(fixture.log_filename, " reason=shutdown lines=48 ") == 1, "metrics lifecycle reasons were not emitted exactly once");
+	test_result = true;
+
+cleanup:
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
+static bool short_test_metrics_reload_batch_case(const char *binary, const char *directory, const char *suffix, uint32_t interval,
+	const char *expected_reason) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int status = 0;
+	CHECK(short_test_fixture_start_internal(&fixture, binary, directory, suffix, "127.0.0.1", 9, 1) == 0,
+		"could not start same-batch metrics reload listener");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=startup lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"same-batch metrics reload startup snapshot was missing");
+	CHECK(short_test_config_write_metrics(&fixture, "127.0.0.2", 9, interval) == 0, "could not prepare same-batch metrics reload candidate");
+	CHECK(short_test_fixture_release_trigger(&fixture) == 0, "could not arm same-batch metrics reload trigger");
+	CHECK(short_test_fixture_reload_wait(&fixture) == 0, "same-batch metrics reload did not complete");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, expected_reason, LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"same-batch metrics reload expected snapshot was missing");
+	if (strcmp(suffix, "metrics-reload-same") == 0) {
+		CHECK(short_test_file_count(fixture.log_filename, " reason=periodic lines=48 ") == 1
+			&& short_test_file_count(fixture.log_filename, " reason=reconfigure lines=48 ") == 0
+			&& short_test_file_count(fixture.log_filename, " reason=disable lines=48 ") == 0,
+			"same-interval reload did not consume exactly one unchanged-cadence readiness");
+	} else {
+		CHECK(short_test_file_count(fixture.log_filename, " reason=periodic lines=48 ") == 0,
+			"configuration transition emitted an old-cadence periodic snapshot");
+	}
+	CHECK(short_test_file_count(fixture.log_filename, "missed_intervals=0 ") == 2,
+		"same-batch reload changed missed-interval accounting");
+	CHECK(kill(fixture.listener, SIGTERM) == 0 && short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
+		&& WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS, "same-batch metrics reload listener did not stop cleanly");
+	test_result = true;
+
+cleanup:
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
+static bool short_test_metrics_reload_batch(const char *binary, const char *directory) {
+	return short_test_metrics_reload_batch_case(binary, directory, "metrics-reload-disable", 0, " reason=disable lines=48 ")
+		&& short_test_metrics_reload_batch_case(binary, directory, "metrics-reload-interval", 2, " reason=reconfigure lines=48 ")
+		&& short_test_metrics_reload_batch_case(binary, directory, "metrics-reload-same", 1, " reason=periodic lines=48 ");
+}
+
+static bool short_test_metrics_timer_case(const char *binary, const char *directory, const char *suffix) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int status = 0;
+	CHECK(short_test_fixture_start_internal(&fixture, binary, directory, suffix, "127.0.0.1", 9, 1) == 0,
+		"could not start metrics timer listener");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=startup lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
+		"metrics timer startup snapshot was missing");
+	if (strcmp(suffix, "metrics-arm-fail-changed") == 0 || strcmp(suffix, "metrics-arm-fail-unchanged") == 0) {
+		CHECK(short_test_file_contains(fixture.log_filename, "scheduler_failures=1 logger_errors=0 format_drops=0"),
+			"initial metrics timer failure was absent from startup meta");
+		CHECK(short_test_file_contains(fixture.log_filename, "Metrics timer disabled after an observation-subsystem failure"),
+			"initial metrics timer failure warning was missing");
+		if (strcmp(suffix, "metrics-arm-fail-unchanged") == 0) {
+			CHECK(short_test_fixture_reload(&fixture) == 0, "unchanged metrics timer retry reload failed");
+			CHECK(short_test_file_contains(fixture.log_filename, "Configuration file unchanged."), "timer retry did not use the unchanged reload path");
+		} else {
+			CHECK(short_test_config_write_metrics(&fixture, "127.0.0.2", 9, 1) == 0 && short_test_fixture_reload(&fixture) == 0,
+				"changed metrics timer retry reload failed");
+		}
+		CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=periodic lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
+			"metrics timer was not retried after initial establishment failure");
+		CHECK(short_test_file_count(fixture.log_filename, " reason=reconfigure lines=48 ") == 0,
+			"same-interval timer retry emitted a reconfigure snapshot");
+	} else if (strcmp(suffix, "metrics-eio") == 0) {
+		CHECK(short_test_file_wait_contains(fixture.log_filename, "Metrics timer disabled after an observation-subsystem failure", LISTENER_SHORT_TEST_TIMEOUT_MS),
+			"established metrics timer read failure was not reported");
+		struct timespec delay = { .tv_sec = 1, .tv_nsec = 500000000L };
+		while (nanosleep(&delay, &delay) == -1) {
+			CHECK(errno == EINTR, "cannot wait after metrics timer read failure");
+		}
+		CHECK(short_test_file_count(fixture.log_filename, " reason=periodic lines=48 ") == 0,
+			"degraded metrics timer continued periodic output");
+	} else {
+		CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=periodic lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
+			"recoverable metrics timer read condition suppressed periodic output");
+		CHECK(!short_test_file_contains(fixture.log_filename, "Metrics timer disabled after an observation-subsystem failure"),
+			"recoverable metrics timer read condition degraded the timer");
+	}
+	CHECK(kill(fixture.listener, SIGTERM) == 0 && short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
+		&& WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS, "metrics timer listener did not stop cleanly");
+	CHECK(short_test_file_contains(fixture.log_filename, " reason=shutdown lines=48 "), "metrics timer shutdown snapshot was missing");
+	if (strcmp(suffix, "metrics-eio") == 0) {
+		CHECK(short_test_file_contains(fixture.log_filename, "scheduler_failures=1 logger_errors=0 format_drops=0"),
+			"runtime metrics timer failure was absent from a later meta line");
+	}
+	test_result = true;
+
+cleanup:
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
+static bool short_test_metrics_timer(const char *binary, const char *directory) {
+	return short_test_metrics_timer_case(binary, directory, "metrics-arm-fail-changed")
+		&& short_test_metrics_timer_case(binary, directory, "metrics-arm-fail-unchanged")
+		&& short_test_metrics_timer_case(binary, directory, "metrics-eagain")
+		&& short_test_metrics_timer_case(binary, directory, "metrics-eintr")
+		&& short_test_metrics_timer_case(binary, directory, "metrics-eio");
 }
 
 static bool short_test_refusal(const char *binary, const char *directory) {
@@ -1211,7 +1526,9 @@ int main(int argc, char **argv) {
 		return EXIT_FAILURE;
 	}
 	test_result = short_test_admission(argv[1], temp_directory) && short_test_deadline(argv[1], temp_directory)
-		&& short_test_lifetime(argv[1], temp_directory) && short_test_refusal(argv[1], temp_directory)
+		&& short_test_lifetime(argv[1], temp_directory) && short_test_log_forgery(argv[1], temp_directory)
+		&& short_test_metrics_lifecycle(argv[1], temp_directory) && short_test_metrics_reload_batch(argv[1], temp_directory)
+		&& short_test_metrics_timer(argv[1], temp_directory) && short_test_refusal(argv[1], temp_directory)
 		&& short_test_release_fault_short(argv[1], temp_directory) && short_test_release_fault_dispatch(argv[1], temp_directory)
 		&& short_test_release_fault_refusal(argv[1], temp_directory)
 		&& short_test_relay(argv[1], temp_directory) && short_test_relay_upstream_first(argv[1], temp_directory)
