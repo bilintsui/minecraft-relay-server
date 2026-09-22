@@ -10,6 +10,7 @@ Minecraft versions before 12w04a are **NOT SUPPORTED**!
 * Support reverse proxy for Minecraft servers by server address in the handshake packet which the client sends.
 * Support rewrite server address and server port to camouflage a connection which uses an official server address (e.g., pretend to be a normal connection to Hypixel, avoiding their server address check).
 * Support IP forwarding using HAProxy's Proxy Protocol (but it refuses any incoming connection using this protocol).
+* Provide optional bounded operational metrics and rate-limited resolver-helper state events through the existing log.
 
 ## Requirements
 * Linux
@@ -28,6 +29,7 @@ Minecraft versions before 12w04a are **NOT SUPPORTED**!
 * <code>doc</code> Folder of documents.
 * <code>doc/information</code> Informational documents.
 * <code>doc/information/loglevel.info</code> Definitions of log levels.
+* <code>doc/information/metrics.md</code> Operational metrics configuration, schema and consumer guidance.
 * <code>doc/information/versions.json</code> Version manifest.
 * <code>doc/configuration</code> Configuration examples.
 * <code>doc/configuration/logrotate</code> Configuration used by logrotate.
@@ -110,6 +112,20 @@ Multiple instances can run with separate configuration files as long as their li
 
 ## Config
 See [<code>doc/configuration/mcrelay/config.jsonc</code>](doc/configuration/mcrelay/config.jsonc) for instructions.
+
+## Operational metrics
+
+Aggregate operational metrics are disabled by default. Set <code>metrics.interval</code> to an integer from 300 to 86400 seconds and keep <code>log.level</code> at 2 or higher to emit them through the configured log. For example:
+
+```json
+{
+  "metrics": {
+    "interval": 300
+  }
+}
+```
+
+The output is a fixed 48-line schema-1 snapshot interleaved with ordinary access-log records. See the [operational metrics guide](doc/information/metrics.md) before writing a consumer or alert: it defines batch grouping, line validation, lifecycle records, histogram units and important limits on what the signals mean.
 
 ## Instructions for using DNS-based redirection (SRV)
 If you are using an SRV record to provide your service, you should follow the instructions below.

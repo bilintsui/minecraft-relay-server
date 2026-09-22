@@ -2,6 +2,8 @@
 
 This guide separates project switches, generic CMake settings, advanced compile-time overrides and packaging-script arguments. Build options are not runtime JSON configuration: changing them requires reconfiguration and rebuilding.
 
+Operational metrics require no special build option. They are enabled at runtime with `metrics.interval`; see the [operational metrics guide](information/metrics.md). The production minimum interval is fixed at 300 seconds.
+
 ## Requirements and defaults
 
 The project requires Linux, a C99 compiler, CMake (minimum declared version: 3.12), and the cJSON/systemd development files. For example, on Debian-like systems:
@@ -194,7 +196,7 @@ These do not bound a whole multi-query CNAME lookup; the supervisor attempt dead
 
 `RESOLVER_SUPERVISOR_INTEREST_COUNT_LIMIT` defaults to `SIZE_MAX`; supervisor tests override it to 2 to exercise overflow admission. It is an intentional test seam, not an ordinary production tuning option.
 
-`RESOLVER_SUPERVISOR_TEST_API`, `LISTENER_TIMER_REARM_TEST`, `LISTENER_ROUTE_TIMER_ARMED_TEST`, `LISTENER_EARLY_COLLECT_TEST` and `LISTENER_READY_FLIP_TEST` are private test-target definitions, not deployment switches. Do not put them in global production compiler flags: doing so would reintroduce test APIs/hooks into `mcrelay`. Test environment variables activate only the separately built test support; they are not production configuration.
+`RESOLVER_SUPERVISOR_TEST_API`, `LISTENER_TIMER_REARM_TEST`, `LISTENER_ROUTE_TIMER_ARMED_TEST`, `LISTENER_EARLY_COLLECT_TEST` and `LISTENER_READY_FLIP_TEST` are private test-target definitions, not deployment switches. `CONF_METRICS_MINIMUM_INTERVAL` is overridden to one second only for the short-runtime test daemon; lowering the 300-second production minimum is not a supported deployment option. Do not put private test definitions in global production compiler flags: doing so would reintroduce test APIs/hooks or test timing into `mcrelay`. Test environment variables activate only the separately built test support; they are not production configuration.
 
 Not every `#define` is overrideable or a supported setting. Unguarded wire-version/packet limits, parser record/depth limits, text sizes and private implementation constants are not part of this tuning interface; do not treat arbitrary compiler `-D` definitions as permission to change protocol or parser contracts.
 

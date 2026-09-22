@@ -72,6 +72,7 @@ install -D -m 0644 "$PKG_DIR/mcrelay.bash-completion" "$STAGING/usr/share/bash-c
 install -D -m 0644 "$ROOT/README.md" "$STAGING/usr/share/doc/mcrelay/README.md"
 install -D -m 0644 "$PKG_DIR/copyright" "$STAGING/usr/share/doc/mcrelay/copyright"
 install -D -m 0644 "$ROOT/doc/information/loglevel.info" "$STAGING/usr/share/doc/mcrelay/loglevel.info"
+install -D -m 0644 "$ROOT/doc/information/metrics.md" "$STAGING/usr/share/doc/mcrelay/metrics.md"
 install -D -m 0644 "$ROOT/doc/configuration/mcrelay/config.jsonc" "$STAGING/usr/share/doc/mcrelay/examples/config.jsonc"
 
 mandir="$STAGING/usr/share/man/man1"

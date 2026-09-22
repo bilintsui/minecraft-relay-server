@@ -20,6 +20,20 @@
      */
     "level": 2
   },
+  // Optional, aggregate operational metrics
+  "metrics": {
+    /*
+     * Optional, integer seconds (default: 0)
+     *
+     * 0 disables aggregate snapshots. Enabled values are 300-86400.
+     * Output also requires log.level 2 or higher and is written to the
+     * configured log alongside ordinary access records. Counters continue
+     * accumulating while aggregate output is disabled.
+     *
+     * See doc/information/metrics.md for the schema and consumer rules.
+     */
+    "interval": 0
+  },
   // Optional, bind settings
   "listen": {
     /*

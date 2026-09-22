@@ -3,6 +3,9 @@
     "filename": "/var/log/mcrelay/access.log",
     "level": 2
   },
+  "metrics": {
+    "interval": 0
+  },
   "listen": {
     "address": "::",
     "port": 25565
