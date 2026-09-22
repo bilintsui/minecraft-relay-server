@@ -26,7 +26,8 @@ add_custom_target(version_header ALL
 	BYPRODUCTS "${MCRELAY_VERSION_HEADER}"
 	VERBATIM)
 add_executable(mcrelay${EXEC_SUFFIX}
-	src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/log.c src/main.c src/metrics.c src/network.c src/timeutil.c
+	src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener_metrics.c src/log.c src/main.c src/metrics.c src/network.c
+	src/timeutil.c
 	src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
 	src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c src/route/table.c src/route/waiter.c
 	src/protocol/common.c src/protocol/handshake.c
@@ -88,6 +89,10 @@ if(BUILD_TESTING)
 	target_compile_definitions(hosts_test PRIVATE _GNU_SOURCE)
 	target_link_libraries(hosts_test -lresolv)
 	add_test(NAME hosts COMMAND hosts_test)
+	add_executable(listener_metrics_test tests/listener_metrics.c src/listener_metrics.c src/metrics.c src/timeutil.c)
+	target_include_directories(listener_metrics_test PRIVATE src)
+	target_compile_definitions(listener_metrics_test PRIVATE _GNU_SOURCE)
+	add_test(NAME listener_metrics COMMAND listener_metrics_test)
 	file(GLOB_RECURSE LOG_AUDIT_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c" "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h")
 	list(SORT LOG_AUDIT_SOURCES)
 	add_executable(log_audit_test tests/log_audit.c)
@@ -275,6 +280,13 @@ if(BUILD_TESTING)
 		target_link_libraries(hosts_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all -lresolv)
 		add_test(NAME hosts_ubsan COMMAND hosts_ubsan_test)
 		set_tests_properties(hosts_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+		add_executable(listener_metrics_ubsan_test tests/listener_metrics.c src/listener_metrics.c src/metrics.c src/timeutil.c)
+		target_include_directories(listener_metrics_ubsan_test PRIVATE src)
+		target_compile_definitions(listener_metrics_ubsan_test PRIVATE _GNU_SOURCE)
+		target_compile_options(listener_metrics_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
+		target_link_libraries(listener_metrics_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all)
+		add_test(NAME listener_metrics_ubsan COMMAND listener_metrics_ubsan_test)
+		set_tests_properties(listener_metrics_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(metrics_ubsan_test tests/metrics.c src/metrics.c src/timeutil.c)
 		target_include_directories(metrics_ubsan_test PRIVATE src)
 		target_compile_definitions(metrics_ubsan_test PRIVATE _GNU_SOURCE)
@@ -473,7 +485,8 @@ if(BUILD_TESTING)
 	target_compile_definitions(worker_protocol_test PRIVATE _GNU_SOURCE)
 	add_test(NAME worker_protocol COMMAND worker_protocol_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}> "${CMAKE_CURRENT_SOURCE_DIR}/tests/rawpackets")
 	add_executable(worker_cap_daemon
-		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/log.c src/main.c src/metrics.c src/network.c src/timeutil.c
+		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener_metrics.c src/log.c src/main.c src/metrics.c src/network.c
+		src/timeutil.c
 		src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
 		src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c
 		src/route/table.c src/route/waiter.c
@@ -489,7 +502,8 @@ if(BUILD_TESTING)
 	target_compile_definitions(worker_cap_test PRIVATE _GNU_SOURCE)
 	add_test(NAME worker_cap COMMAND worker_cap_test $<TARGET_FILE:worker_cap_daemon> $<TARGET_FILE:worker_cap_daemon>)
 	add_executable(listener_short_runtime_daemon
-		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/log.c src/main.c src/metrics.c src/network.c src/timeutil.c
+		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener_metrics.c src/log.c src/main.c src/metrics.c src/network.c
+		src/timeutil.c
 		src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
 		src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c
 		src/route/table.c src/route/waiter.c
