@@ -163,6 +163,10 @@ void packet_destroy(p_handshake object) {
 		free(object.address);
 		object.address = NULL;
 	}
+	if (object.address_extra != NULL) {
+		free(object.address_extra);
+		object.address_extra = NULL;
+	}
 	if (object.signature_data != NULL) {
 		free(object.signature_data);
 		object.signature_data = NULL;
@@ -176,6 +180,8 @@ void packet_destroy(p_handshake object) {
 p_handshake packet_read(void *src, void *end) {
 	p_handshake result;
 	const char *address_end;
+	const char *address_extra;
+	const char *address_query;
 	char *frame1_end;
 	char *part2_end;
 	varint_t address_length, size_part1, size_part2, username_length;
@@ -210,32 +216,27 @@ p_handshake packet_read(void *src, void *end) {
 		goto cleanup;
 	}
 	address_end = (const char *)src + address_length;
-	if (address_end[-1] == '\0') {
-		result.address = malloc(strlen(src) + 1);
-		if (result.address == NULL) {
-			goto cleanup;
-		}
-		strcpy(result.address, src);
-		src = (char *)src + strlen(src);
-		size_t suffix_size = (size_t)(address_end - (const char *)src);
-		if (suffix_size == 5U && memcmp(src, "\0FML\0", 5) == 0) {
-			result.version_fml = 1;
-			src = (char *)src + 5;
-		} else if (suffix_size == 6U && memcmp(src, "\0FML2\0", 6) == 0) {
-			result.version_fml = 2;
-			src = (char *)src + 6;
-		} else {
-			goto cleanup;
-		}
-	} else {
-		result.version_fml = 0;
-		result.address = calloc(1, address_length + 1);
-		if (result.address == NULL) {
-			goto cleanup;
-		}
-		memcpy(result.address, src, address_length);
-		src = (void *)address_end;
+	address_extra = memchr(src, '\0', address_length);
+	address_query = memchr(src, '?', address_length);
+	if (address_extra == NULL || (address_query != NULL && address_query < address_extra)) {
+		address_extra = address_query;
 	}
+	size_t address_size = address_extra == NULL ? address_length : (size_t)(address_extra - (const char *)src);
+	result.address = malloc(address_size + 1U);
+	if (result.address == NULL) {
+		goto cleanup;
+	}
+	memcpy(result.address, src, address_size);
+	((char *)result.address)[address_size] = '\0';
+	if (address_extra != NULL) {
+		result.address_extra_length = (size_t)(address_end - address_extra);
+		result.address_extra = malloc(result.address_extra_length);
+		if (result.address_extra == NULL) {
+			goto cleanup;
+		}
+		memcpy(result.address_extra, address_extra, result.address_extra_length);
+	}
+	src = (void *)address_end;
 	if (frame1_end - (const char *)src < (ptrdiff_t)sizeof(in_port_t)) {
 		goto cleanup;
 	}
@@ -302,19 +303,16 @@ cleanup:
 
 size_t packet_write(void *dst, size_t dst_capacity, const p_handshake src) {
 	uint8_t *part1, *part2, *ptr_dst, *ptr_part1, *ptr_part2;
-	size_t address_length, address_length_pure, size, size_part1, size_part2, username_length;
+	size_t address_length, address_size, size, size_part1, size_part2, username_length;
 	if (dst == NULL || src.address == NULL) {
 		return 0;
 	}
-	address_length = address_length_pure = strlen(src.address);
-	if (address_length_pure > PROTOHANDSHAKE_ADDRESSMAXLEN) {
+	address_size = strlen(src.address);
+	if (address_size > PROTOHANDSHAKE_ADDRESSMAXLEN || src.address_extra_length > PROTOHANDSHAKE_ADDRESSMAXLEN - address_size
+		|| (src.address_extra_length > 0 && (src.address_extra == NULL || (*(const uint8_t *)src.address_extra != 0 && *(const uint8_t *)src.address_extra != '?')))) {
 		return 0;
 	}
-	if (src.version_fml == 1) {
-		address_length += 5;
-	} else if (src.version_fml == 2) {
-		address_length += 6;
-	}
+	address_length = address_size + src.address_extra_length;
 	username_length = 0;
 	if ((src.nextstate == CLIENT_INTENT_LOGIN) || (src.nextstate == CLIENT_INTENT_TRANSFER)) {
 		if (src.username == NULL) {
@@ -337,11 +335,9 @@ size_t packet_write(void *dst, size_t dst_capacity, const p_handshake src) {
 	ptr_part1 = int2varint(src.id_part1, ptr_part1);
 	ptr_part1 = int2varint(src.version, ptr_part1);
 	ptr_part1 = int2varint(address_length, ptr_part1);
-	memcpy(ptr_part1, src.address, address_length_pure);
-	if (src.version_fml == 1) {
-		memcpy(ptr_part1 + address_length_pure, "\0FML\0", 5);
-	} else if (src.version_fml == 2) {
-		memcpy(ptr_part1 + address_length_pure, "\0FML2\0", 6);
+	memcpy(ptr_part1, src.address, address_size);
+	if (src.address_extra_length > 0) {
+		memcpy(ptr_part1 + address_size, src.address_extra, src.address_extra_length);
 	}
 	ptr_part1 += address_length;
 	protocol_uint16_write(ptr_part1, src.port);

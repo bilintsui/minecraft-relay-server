@@ -30,11 +30,11 @@
 #define PROTOHANDSHAKE_USERNAMEMAXLEN	128
 
 /* section: types */
+/* packet_read allocates address and, when present, address_extra. The latter holds raw bytes from the first NUL or '?' through the wire address's declared end. */
 typedef struct {
 	varint_t id_part1, id_part2, nextstate, version;
-	void *address, *signature_data, *username;
-	size_t signature_data_length;
-	uint8_t version_fml;
+	void *address, *address_extra, *signature_data, *username;
+	size_t address_extra_length, signature_data_length;
 	in_port_t port;
 } p_handshake;
 
