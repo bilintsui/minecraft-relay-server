@@ -386,10 +386,22 @@ static bool motd_bounds_test(void) {
 }
 
 static bool packet_read_bounds_test(void) {
+	static const struct {
+		const uint8_t *bytes;
+		size_t length;
+	} address_extras[] = {
+		{ (const uint8_t *)"\0FML\0", 5U },
+		{ (const uint8_t *)"\0FML2\0", 6U },
+		{ (const uint8_t *)"\0FML3\0", 6U },
+		{ (const uint8_t *)"\0FORGE", 6U },
+		{ (const uint8_t *)"\0x\0\xA5", 4U },
+		{ (const uint8_t *)"?key=value", sizeof("?key=value") - 1U },
+		{ (const uint8_t *)"?key=value\0FORGE", sizeof("?key=value\0FORGE") - 1U },
+		{ (const uint8_t *)"\0FORGE?key=value", sizeof("\0FORGE?key=value") - 1U }
+	};
 	/* Both flush cases end at an ASan-protected object boundary; the cross-field case keeps bytes available but outside the declared address. */
 	static const uint8_t fml_cross_field[] = { 0x0C, 0x00, 0x2F, 0x02, 'x', '\0', 'F', 'M', 'L', '\0', 0x63, 0xDD, 0x01 };
 	static const uint8_t fml_flush[] = { 0x0A, 0x00, 0x2F, 0x03, 't', 'e', '\0' };
-	static const uint8_t signature[] = { 0xA5, 0x5A };
 	static const uint8_t signature_flush[] = { 0x10, 0x00, 0x2F, 0x04, 't', 'e', 's', 't', 0x63, 0xDD, 0x02, 0x06, 0x00, 0x03, 'a', 'b', 'c' };
 	static const uint8_t frame1_overdeclared[] = { 0x20, 0x00, 0x2F, 0x02, 'h', 'i', 0x63, 0xDD, 0x01 };
 	static const uint8_t frame1_underdeclared[] = { 0x05, 0x00, 0x2F, 0x04, 'h', 'o', 's', 't', 0x63, 0xDD, 0x01 };
@@ -398,6 +410,8 @@ static bool packet_read_bounds_test(void) {
 	static const uint8_t modern1_varint_port[] = { 0x10, 0x00, 0x00, 0x09, 'l', 'o', 'c', 'a', 'l', 'h', 'o', 's', 't', 0xDD, 0xC7, 0x01, 0x02 };
 	static const uint8_t frame2_overdeclared[] = { 0x08, 0x00, 0x2F, 0x02, 'h', 'i', 0x63, 0xDD, 0x02, 0x30, 0x00, 0x03, 'a', 'b', 'c' };
 	static const uint8_t frame2_exact[] = { 0x08, 0x00, 0x2F, 0x02, 'h', 'i', 0x63, 0xDD, 0x02, 0x06, 0x00, 0x03, 'a', 'b', 'c', 0xA5, 0x99 };
+	static const uint8_t signature[] = { 0xA5, 0x5A };
+	uint8_t encoded[64];
 	uint8_t packet_buffer[64];
 	p_handshake packet;
 	size_t offset;
@@ -460,40 +474,39 @@ static bool packet_read_bounds_test(void) {
 		return false;
 	}
 	packet_destroy(packet);
-	offset = 0;
-	packet_buffer[offset++] = 15U;
-	packet_buffer[offset++] = 0x00;
-	packet_buffer[offset++] = 0x2F;
-	packet_buffer[offset++] = 0x09;
-	memcpy(packet_buffer + offset, "host\0FML\0", 9U);
-	offset += 9U;
-	packet_buffer[offset++] = 0x63;
-	packet_buffer[offset++] = 0xDD;
-	packet_buffer[offset++] = 0x01;
-	packet = packet_read((void *)packet_buffer, (void *)(packet_buffer + offset));
-	if (packet.address == NULL || packet.version_fml != 1 || strcmp(packet.address, "host") != 0 || packet.port != 25565 || packet.nextstate != CLIENT_INTENT_STATUS) {
+	for (size_t index = 0; index < sizeof(address_extras) / sizeof(address_extras[0]); index++) {
+		size_t address_length = 4U + address_extras[index].length;
+		offset = 0;
+		packet_buffer[offset++] = (uint8_t)(6U + address_length);
+		packet_buffer[offset++] = 0x00;
+		packet_buffer[offset++] = 0x2F;
+		packet_buffer[offset++] = (uint8_t)address_length;
+		memcpy(packet_buffer + offset, "host", 4U);
+		offset += 4U;
+		memcpy(packet_buffer + offset, address_extras[index].bytes, address_extras[index].length);
+		offset += address_extras[index].length;
+		packet_buffer[offset++] = 0x63;
+		packet_buffer[offset++] = 0xDD;
+		packet_buffer[offset++] = CLIENT_INTENT_STATUS;
+		packet_buffer[offset++] = 0x01;
+		packet_buffer[offset++] = 0x00;
+		packet = packet_read((void *)packet_buffer, (void *)(packet_buffer + offset));
+		if (packet.address == NULL || strcmp(packet.address, "host") != 0 || packet.port != 25565 || packet.nextstate != CLIENT_INTENT_STATUS
+			|| packet.address_extra_length != address_extras[index].length || packet.address_extra == NULL
+			|| memcmp(packet.address_extra, address_extras[index].bytes, address_extras[index].length) != 0) {
+			packet_destroy(packet);
+			return false;
+		}
+		size_t encoded_size = packet_write(encoded, sizeof(encoded), packet);
 		packet_destroy(packet);
-		return false;
+		if (encoded_size != offset || memcmp(encoded, packet_buffer, offset) != 0) {
+			return false;
+		}
 	}
-	packet_destroy(packet);
-	offset = 0;
-	packet_buffer[offset++] = 16U;
-	packet_buffer[offset++] = 0x00;
-	packet_buffer[offset++] = 0x2F;
-	packet_buffer[offset++] = 0x0A;
-	memcpy(packet_buffer + offset, "host\0FML2\0", 10U);
-	offset += 10U;
-	packet_buffer[offset++] = 0x63;
-	packet_buffer[offset++] = 0xDD;
-	packet_buffer[offset++] = 0x01;
-	packet = packet_read((void *)packet_buffer, (void *)(packet_buffer + offset));
-	if (packet.address == NULL || packet.version_fml != 2 || strcmp(packet.address, "host") != 0 || packet.port != 25565 || packet.nextstate != CLIENT_INTENT_STATUS) {
-		packet_destroy(packet);
-		return false;
-	}
-	packet_destroy(packet);
 	p_handshake source = { 0 };
 	source.address = (void *)"host";
+	source.address_extra = (void *)"?key=value\0FORGE";
+	source.address_extra_length = sizeof("?key=value\0FORGE") - 1U;
 	source.nextstate = CLIENT_INTENT_LOGIN;
 	source.port = 25565;
 	source.signature_data = (void *)signature;
@@ -503,6 +516,8 @@ static bool packet_read_bounds_test(void) {
 	size_t packet_size = packet_write(packet_buffer, sizeof(packet_buffer), source);
 	packet = packet_read(packet_buffer, packet_buffer + packet_size);
 	if (packet_size == 0 || packet.address == NULL || packet.username == NULL || strcmp(packet.address, "host") != 0 || strcmp(packet.username, "player") != 0
+		|| packet.address_extra_length != source.address_extra_length || packet.address_extra == NULL
+		|| memcmp(packet.address_extra, source.address_extra, source.address_extra_length) != 0
 		|| packet.signature_data_length != sizeof(signature) || packet.signature_data == NULL || memcmp(packet.signature_data, signature, sizeof(signature)) != 0) {
 		packet_destroy(packet);
 		return false;
@@ -534,6 +549,7 @@ static bool packet_roundtrip(client_fixture_kind kind, protocol_version protocol
 }
 
 static bool packet_write_bounds_test(void) {
+	static const uint8_t address_extra[] = { 0, 'x' };
 	uint8_t scratch[BUFSIZ * 2];
 	uint8_t *signature = malloc(BUFSIZ);
 	char *long_address = malloc(PROTOHANDSHAKE_ADDRESSMAXLEN + 2U);
@@ -571,6 +587,42 @@ static bool packet_write_bounds_test(void) {
 	if (packet_write(scratch, sizeof(scratch), packet) == 0) {
 		goto cleanup;
 	}
+	/* The limit applies to the hostname and its raw extension together. */
+	packet.address_extra = (void *)address_extra;
+	packet.address_extra_length = 1U;
+	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
+		goto cleanup;
+	}
+	long_address[PROTOHANDSHAKE_ADDRESSMAXLEN - 1U] = '\0';
+	if (packet_write(scratch, sizeof(scratch), packet) == 0) {
+		goto cleanup;
+	}
+	packet.address_extra_length = sizeof(address_extra);
+	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
+		goto cleanup;
+	}
+	packet.address_extra = (void *)"?";
+	packet.address_extra_length = 1U;
+	if (packet_write(scratch, sizeof(scratch), packet) == 0) {
+		goto cleanup;
+	}
+	packet.address_extra = (void *)"?x";
+	packet.address_extra_length = 2U;
+	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
+		goto cleanup;
+	}
+	packet.address_extra = NULL;
+	packet.address_extra_length = 1U;
+	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
+		goto cleanup;
+	}
+	packet.address_extra = (void *)"x";
+	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
+		goto cleanup;
+	}
+	packet.address_extra = NULL;
+	packet.address_extra_length = 0;
+	long_address[PROTOHANDSHAKE_ADDRESSMAXLEN - 1U] = 'a';
 	/* A username beyond PROTOHANDSHAKE_USERNAMEMAXLEN is rejected. */
 	packet.username = long_username;
 	if (packet_write(scratch, sizeof(scratch), packet) != 0) {

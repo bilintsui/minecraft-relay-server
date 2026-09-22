@@ -180,26 +180,46 @@ static bool connection_setup_short_test_legacy_connect(void) {
 }
 
 static bool connection_setup_short_test_modern_connect(void) {
-	uint8_t initial[BUFSIZ];
-	size_t initial_size = connection_setup_short_test_modern_packet(initial, sizeof(initial), CLIENT_INTENT_STATUS, PVERDB_R_1_20_1 + 1U);
-	connection_setup_snapshot snapshot = connection_setup_short_test_snapshot(CONNECTION_SETUP_ROUTE_READY, true, false);
-	net_addrbundle client = connection_setup_short_test_client();
-	connection_setup_short_plan plan;
-	size_t initial_packet_size;
-	size_t request_packet_size;
-	CHECK(protocol_packet_length(initial, initial_size, &initial_packet_size) == PROTOCOL_PACKET_COMPLETE && initial_packet_size < initial_size,
-		"modern STATUS fixture did not contain trailing request bytes");
-	CHECK(connection_setup_short_prepare(&plan, &snapshot, client, initial, initial_size) == CONNECTION_SETUP_SHORT_CONNECT, "modern STATUS did not produce CONNECT");
-	CHECK(plan.request != NULL && plan.request_size > 0 && plan.response != NULL && plan.response_size > 0, "modern STATUS plan buffers missing");
-	CHECK(protocol_packet_length(plan.request, plan.request_size, &request_packet_size) == PROTOCOL_PACKET_COMPLETE && request_packet_size < plan.request_size,
-		"modern STATUS trailing request bytes were lost");
-	CHECK(memcmp(plan.request + request_packet_size, initial + initial_packet_size, initial_size - initial_packet_size) == 0,
-		"modern STATUS trailing request bytes changed");
-	p_handshake request = packet_read(plan.request, plan.request + request_packet_size);
-	CHECK(request.address != NULL && strcmp(request.address, "backend.example") == 0 && request.port == 25570 && request.nextstate == CLIENT_INTENT_STATUS,
-		"modern STATUS request was not rewritten");
-	packet_destroy(request);
-	connection_setup_short_destroy(&plan);
+	static const struct {
+		const uint8_t *bytes;
+		size_t length;
+	} address_extras[] = {
+		{ (const uint8_t *)"\0FORGE", sizeof("\0FORGE") - 1U },
+		{ (const uint8_t *)"?key=value", sizeof("?key=value") - 1U },
+		{ (const uint8_t *)"?key=value\0FORGE", sizeof("?key=value\0FORGE") - 1U },
+		{ (const uint8_t *)"\0FORGE?key=value", sizeof("\0FORGE?key=value") - 1U }
+	};
+	for (size_t index = 0; index < sizeof(address_extras) / sizeof(address_extras[0]); index++) {
+		uint8_t initial[BUFSIZ];
+		p_handshake source = { 0 };
+		source.address = (void *)"status.example";
+		source.address_extra = (void *)address_extras[index].bytes;
+		source.address_extra_length = address_extras[index].length;
+		source.nextstate = CLIENT_INTENT_STATUS;
+		source.port = 25565;
+		source.version = PVERDB_R_1_20_1 + 1U;
+		size_t initial_size = packet_write(initial, sizeof(initial), source);
+		connection_setup_snapshot snapshot = connection_setup_short_test_snapshot(CONNECTION_SETUP_ROUTE_READY, true, false);
+		net_addrbundle client = connection_setup_short_test_client();
+		connection_setup_short_plan plan;
+		size_t initial_packet_size;
+		size_t request_packet_size;
+		CHECK(initial_size > 0 && protocol_packet_length(initial, initial_size, &initial_packet_size) == PROTOCOL_PACKET_COMPLETE && initial_packet_size < initial_size,
+			"modern STATUS fixture did not contain trailing request bytes");
+		CHECK(connection_setup_short_prepare(&plan, &snapshot, client, initial, initial_size) == CONNECTION_SETUP_SHORT_CONNECT, "modern STATUS did not produce CONNECT");
+		CHECK(plan.request != NULL && plan.request_size > 0 && plan.response != NULL && plan.response_size > 0, "modern STATUS plan buffers missing");
+		CHECK(protocol_packet_length(plan.request, plan.request_size, &request_packet_size) == PROTOCOL_PACKET_COMPLETE && request_packet_size < plan.request_size,
+			"modern STATUS trailing request bytes were lost");
+		CHECK(memcmp(plan.request + request_packet_size, initial + initial_packet_size, initial_size - initial_packet_size) == 0,
+			"modern STATUS trailing request bytes changed");
+		p_handshake request = packet_read(plan.request, plan.request + request_packet_size);
+		CHECK(request.address != NULL && strcmp(request.address, "backend.example") == 0 && request.port == 25570 && request.nextstate == CLIENT_INTENT_STATUS
+			&& request.address_extra_length == address_extras[index].length && request.address_extra != NULL
+			&& memcmp(request.address_extra, address_extras[index].bytes, address_extras[index].length) == 0,
+			"modern STATUS request was not rewritten");
+		packet_destroy(request);
+		connection_setup_short_destroy(&plan);
+	}
 	return true;
 }
 
