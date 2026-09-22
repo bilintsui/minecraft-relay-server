@@ -31,7 +31,6 @@ typedef struct {
 
 /* section: functions (exported) */
 /* Retained for planned inbound PROXY v1 support; currently exercised only by tests. */
-sa_family_t protocol_proxy_getfamily(const void *src, size_t n);
 p_proxy protocol_proxy_read(const void *src, size_t n);
 bool protocol_proxy_socket_read(int socket_fd, p_proxy *result);
 size_t protocol_proxy_write(void *dst, p_proxy src);

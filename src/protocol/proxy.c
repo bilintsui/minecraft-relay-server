@@ -87,8 +87,7 @@ static bool protocol_proxy_field_space(const char **cursor, const char *end) {
 	return true;
 }
 
-/* section: functions (exported) */
-sa_family_t protocol_proxy_getfamily(const void *src, size_t n) {
+static sa_family_t protocol_proxy_getfamily(const void *src, size_t n) {
 	if (src == NULL) {
 		return AF_UNSPEC;
 	}
@@ -121,6 +120,7 @@ sa_family_t protocol_proxy_getfamily(const void *src, size_t n) {
 	}
 }
 
+/* section: functions (exported) */
 p_proxy protocol_proxy_read(const void *src, size_t n) {
 	p_proxy result;
 	memset(&result, 0, sizeof(result));
