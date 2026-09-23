@@ -689,6 +689,84 @@ static bool packetshrink_bounds_test(void) {
 	return true;
 }
 
+static bool protocol_legacy_prefix_test(void) {
+	/* The snapshot protocol number occupies five bytes; query properties can make the frame length begin with FE. */
+	static const size_t address_lengths[] = { 242, 243, 244, 371, 499, 627, 755, 883, 1011 };
+	static const intent_t intents[] = { CLIENT_INTENT_STATUS, CLIENT_INTENT_LOGIN, CLIENT_INTENT_TRANSFER };
+	uint8_t data[1200];
+	for (size_t index = 0; index < sizeof(address_lengths) / sizeof(address_lengths[0]); index++) {
+		size_t address_length = address_lengths[index];
+		for (size_t intent_index = 0; intent_index < sizeof(intents) / sizeof(intents[0]); intent_index++) {
+			uint8_t *cursor = int2varint((varint_t)(address_length + 11U), data);
+			*cursor++ = 0;
+			cursor = int2varint(0x40000153, cursor);
+			cursor = int2varint((varint_t)address_length, cursor);
+			memcpy(cursor, "localhost?k=", 12);
+			memset(cursor + 12, 'a', address_length - 12U);
+			cursor += address_length;
+			*cursor++ = 0x63;
+			*cursor++ = 0xDD;
+			*cursor++ = (uint8_t)intents[intent_index];
+			size_t handshake_size = (size_t)(cursor - data);
+			if (intents[intent_index] == CLIENT_INTENT_STATUS) {
+				*cursor++ = 1;
+				*cursor++ = 0;
+			} else {
+				*cursor++ = 19;
+				*cursor++ = 0;
+				*cursor++ = 1;
+				*cursor++ = 'u';
+				memset(cursor, 0x5A, 16);
+				cursor += 16;
+			}
+			size_t total_size = (size_t)(cursor - data);
+			size_t required_size = intents[intent_index] == CLIENT_INTENT_STATUS ? handshake_size : total_size;
+			size_t packet_size;
+			for (size_t prefix_size = 1; prefix_size < required_size; prefix_size++) {
+				bool ambiguous = data[0] == 0xFE && (prefix_size == 1 || (prefix_size == 2 && data[1] == 0x01));
+				protocol_packet_status expected = ambiguous ? PROTOCOL_PACKET_AMBIGUOUS : PROTOCOL_PACKET_INCOMPLETE;
+				if (protocol_packet_length(data, prefix_size, &packet_size) != expected || packet_size <= prefix_size) {
+					fprintf(stderr, "modern frame assembly failed for address length %zu, intent %u, prefix %zu\n", address_length, (unsigned int)intents[intent_index], prefix_size);
+					return false;
+				}
+				if (!ambiguous && prefix_size < handshake_size && protocol_identify(data, prefix_size, NULL) != PVER_UNIDENT) {
+					return false;
+				}
+			}
+			intent_t intent;
+			if (protocol_identify(data, total_size, &intent) != PVER_MODERN2 || intent != intents[intent_index]
+				|| protocol_packet_length(data, total_size, &packet_size) != PROTOCOL_PACKET_COMPLETE || packet_size != required_size) {
+				return false;
+			}
+			p_handshake packet = packet_read(data, data + total_size);
+			bool valid = packet.address != NULL && strcmp(packet.address, "localhost") == 0 && packet.address_extra_length == address_length - 9U && packet.nextstate == intents[intent_index];
+			packet_destroy(packet);
+			if (!valid) {
+				return false;
+			}
+		}
+	}
+	/* A non-legacy prefix must still pass modern packet-ID and intent validation. */
+	memset(data, 0, sizeof(data));
+	data[0] = 0xFE;
+	data[1] = 0x01;
+	data[2] = 0x02;
+	data[3] = 0x01;
+	data[255] = CLIENT_INTENT_STATUS;
+	size_t packet_size;
+	if (protocol_packet_length(data, 256, &packet_size) != PROTOCOL_PACKET_INVALID || protocol_identify(data, 256, NULL) != PVER_UNIDENT) {
+		return false;
+	}
+	data[2] = 0;
+	data[255] = CLIENT_INTENT_UNSPECIFIED;
+	if (protocol_packet_length(data, 256, &packet_size) != PROTOCOL_PACKET_INVALID || protocol_identify(data, 256, NULL) != PVER_UNIDENT) {
+		return false;
+	}
+	/* FE 00 is an incomplete modern frame, not a padded single-byte legacy ping. */
+	data[1] = 0;
+	return protocol_packet_length(data, 2, &packet_size) == PROTOCOL_PACKET_INCOMPLETE && packet_size == 128 && protocol_identify(data, 2, NULL) == PVER_UNIDENT;
+}
+
 static bool varint_bounds_test(void) {
 	static const uint8_t complete[] = { 0xAC, 0x02, 0x7F };
 	static const uint8_t truncated[] = { 0x80, 0x80, 0x80, 0x80 };
@@ -771,6 +849,7 @@ int main(int argc, char **argv) {
 	CHECK(varint_bounds_test(), "bounded varint decoding failed");
 	CHECK(packet_write_bounds_test(), "bounded packet construction failed");
 	CHECK(packetshrink_bounds_test(), "bounded packet shrinking failed");
+	CHECK(protocol_legacy_prefix_test(), "modern frames sharing the legacy status prefix failed");
 
 	for (size_t index = 0; index < sizeof(client_fixtures) / sizeof(client_fixtures[0]); index++) {
 		memset(source, 0, BUFSIZ);
