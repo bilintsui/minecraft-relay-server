@@ -548,6 +548,82 @@ static bool packet_roundtrip(client_fixture_kind kind, protocol_version protocol
 	return target_size == source_size && memcmp(source, target, source_size) == 0;
 }
 
+static bool packet_utf8_bounds_test(void) {
+	static const struct {
+		size_t length;
+		bool accepted;
+	} cases[] = {
+		{ 1024, true },
+		{ 1025, true },
+		{ 2036, true },
+		{ 3048, true },
+		{ 3072, true },
+		{ 3073, false }
+	};
+	static const struct {
+		uint8_t bytes[4];
+		size_t length;
+	} characters[] = {
+		{ { 0xC3, 0xA9 }, 2 },
+		{ { 0xE4, 0xB8, 0xAD }, 3 },
+		{ { 0xF0, 0x9F, 0x99, 0x82 }, 4 }
+	};
+	static const intent_t intents[] = { CLIENT_INTENT_STATUS, CLIENT_INTENT_LOGIN, CLIENT_INTENT_TRANSFER };
+	uint8_t input[4096];
+	uint8_t output[4096];
+	uint8_t signature[16] = { 0 };
+	for (size_t character_index = 0; character_index < sizeof(characters) / sizeof(characters[0]); character_index++) {
+		for (size_t case_index = 0; case_index < sizeof(cases) / sizeof(cases[0]); case_index++) {
+			for (size_t intent_index = 0; intent_index < sizeof(intents) / sizeof(intents[0]); intent_index++) {
+				size_t address_length = cases[case_index].length;
+				uint8_t *cursor = int2varint((varint_t)(address_length + 11U), input);
+				*cursor++ = 0;
+				cursor = int2varint(0x40000153, cursor);
+				cursor = int2varint((varint_t)address_length, cursor);
+				uint8_t *address = cursor;
+				memcpy(cursor, "localhost?k=", 12);
+				cursor += 12;
+				while ((size_t)(address + address_length - cursor) >= characters[character_index].length) {
+					memcpy(cursor, characters[character_index].bytes, characters[character_index].length);
+					cursor += characters[character_index].length;
+				}
+				while (cursor < address + address_length) {
+					*cursor++ = 'a';
+				}
+				*cursor++ = 0x63;
+				*cursor++ = 0xDD;
+				*cursor++ = (uint8_t)intents[intent_index];
+				*cursor++ = intents[intent_index] == CLIENT_INTENT_STATUS ? 1 : 19;
+				*cursor++ = 0;
+				if (intents[intent_index] != CLIENT_INTENT_STATUS) {
+					*cursor++ = 1;
+					*cursor++ = 'u';
+					memcpy(cursor, signature, sizeof(signature));
+					cursor += sizeof(signature);
+				}
+				size_t input_size = (size_t)(cursor - input);
+				p_handshake decoded = packet_read(input, cursor);
+				bool valid = (decoded.address != NULL) == cases[case_index].accepted;
+				if (valid && cases[case_index].accepted) {
+					valid = strcmp(decoded.address, "localhost") == 0 && decoded.address_extra != NULL && decoded.address_extra_length == address_length - 9U
+						&& memcmp(decoded.address_extra, address + 9, decoded.address_extra_length) == 0 && decoded.nextstate == intents[intent_index];
+				}
+				packet_destroy(decoded);
+				p_handshake source = { .address = (void *)"localhost", .address_extra = address + 9, .address_extra_length = address_length - 9U,
+					.nextstate = intents[intent_index], .port = 25565, .signature_data = signature, .signature_data_length = sizeof(signature),
+					.username = (void *)"u", .version = 0x40000153 };
+				size_t written = packet_write(output, sizeof(output), source);
+				valid = valid && (cases[case_index].accepted ? written == input_size && memcmp(output, input, input_size) == 0 : written == 0);
+				if (!valid) {
+					fprintf(stderr, "UTF-8 bound failed: %zu bytes, width %zu, intent %u\n", address_length, characters[character_index].length, (unsigned int)intents[intent_index]);
+					return false;
+				}
+			}
+		}
+	}
+	return true;
+}
+
 static bool packet_write_bounds_test(void) {
 	static const uint8_t address_extra[] = { 0, 'x' };
 	uint8_t scratch[BUFSIZ * 2];
@@ -632,8 +708,8 @@ static bool packet_write_bounds_test(void) {
 	/* The signature bound keeps the second staging buffer within BUFSIZ: the bound itself is accepted, one byte more is rejected. */
 	packet.signature_data_length = BUFSIZ - 6U - 8U;
 	encoded_size = packet_write(scratch, sizeof(scratch), packet);
-	/* Maximum envelope: the largest address plus the largest signature encodes to 9222 bytes and fits the worker rewrite buffer. */
-	if (encoded_size != 9222 || packet_write(scratch, 9222, packet) != 9222 || packet_write(scratch, 9221, packet) != 0) {
+	/* The largest independent fields exceed the listener's inbound limit, but the writer must still honor its caller's output capacity. */
+	if (encoded_size != 11270 || packet_write(scratch, 11270, packet) != 11270 || packet_write(scratch, 11269, packet) != 0) {
 		goto cleanup;
 	}
 	packet.signature_data_length = BUFSIZ - 6U - 8U + 1U;
@@ -846,6 +922,7 @@ int main(int argc, char **argv) {
 	CHECK(legacy_motd_bounds_test(argv[1]), "bounded legacy M3 parsing failed");
 	CHECK(motd_bounds_test(), "bounded MOTD encoding failed");
 	CHECK(packet_read_bounds_test(), "bounded handshake packet reading failed");
+	CHECK(packet_utf8_bounds_test(), "UTF-8 handshake address bounds failed");
 	CHECK(varint_bounds_test(), "bounded varint decoding failed");
 	CHECK(packet_write_bounds_test(), "bounded packet construction failed");
 	CHECK(packetshrink_bounds_test(), "bounded packet shrinking failed");

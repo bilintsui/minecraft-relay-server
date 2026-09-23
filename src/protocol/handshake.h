@@ -26,7 +26,8 @@
 	"APUv7RTA/UszBYgoo5EC5CijjQK0VEd9BUroqY7KCuiQ9RgYjI0IlA+UK2BgNkYBBgzUVzAKaA0AxA9JzNErf4IAAAAASUVORK5CYII="
 
 /* limit */
-#define PROTOHANDSHAKE_ADDRESSMAXLEN	ADDRESS_MAXLEN
+/* Encoded byte bound for 1024 UTF-16 code units; leave character validation to the backend. */
+#define PROTOHANDSHAKE_ADDRESSMAXLEN	(ADDRESS_MAXLEN * 3U)
 #define PROTOHANDSHAKE_USERNAMEMAXLEN	128
 
 /* section: types */
