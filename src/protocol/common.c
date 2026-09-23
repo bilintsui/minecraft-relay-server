@@ -69,24 +69,16 @@ protocol_version protocol_identify(const void *src, size_t src_size, intent_t *i
 			if (src_size == 1) {
 				return PVER_LEGACYM1;
 			}
-			switch (source[1]) {
-				case 0x00:
-					return PVER_LEGACYM1;
-				case 0x01:
-					if (src_size == 2) {
-						return PVER_LEGACYM2;
-					}
-					switch (source[2]) {
-						case 0x00:
-							return PVER_LEGACYM2;
-						case 0xFA:
-							return PVER_LEGACYM3;
-						default:
-							return PVER_UNIDENT;
-					}
-				default:
-					return PVER_UNIDENT;
+			if (source[1] == 0x01) {
+				if (src_size == 2) {
+					return PVER_LEGACYM2;
+				}
+				if (source[2] == 0xFA) {
+					return PVER_LEGACYM3;
+				}
 			}
+			/* A non-legacy FE prefix can be a modern frame length. */
+			/* fall through */
 		default: {
 			const uint8_t *end = source + src_size;
 			varint_t frame_size, packet_id, version;
@@ -169,16 +161,16 @@ protocol_packet_status protocol_packet_length(const void *src, size_t src_size, 
 				*packet_size = 3;
 				return PROTOCOL_PACKET_AMBIGUOUS;
 			}
-			if (source[1] != 0x01 || source[2] != 0xFA) {
-				*packet_size = src_size;
-				return PROTOCOL_PACKET_COMPLETE;
+			if (source[1] == 0x01 && source[2] == 0xFA) {
+				if (src_size < 0x20) {
+					*packet_size = 0x20;
+					return PROTOCOL_PACKET_INCOMPLETE;
+				}
+				*packet_size = 0x20 + (size_t)protocol_uint16_read(source + 0x1E) * sizeof(uint16_t) + sizeof(uint32_t);
+				return (src_size < *packet_size) ? PROTOCOL_PACKET_INCOMPLETE : PROTOCOL_PACKET_COMPLETE;
 			}
-			if (src_size < 0x20) {
-				*packet_size = 0x20;
-				return PROTOCOL_PACKET_INCOMPLETE;
-			}
-			*packet_size = 0x20 + (size_t)protocol_uint16_read(source + 0x1E) * sizeof(uint16_t) + sizeof(uint32_t);
-			return (src_size < *packet_size) ? PROTOCOL_PACKET_INCOMPLETE : PROTOCOL_PACKET_COMPLETE;
+			/* Keep assembling non-legacy FE prefixes using modern framing. */
+			/* fall through */
 		default: {
 			const uint8_t *cursor = source;
 			const uint8_t *end = source + src_size;

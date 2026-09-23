@@ -215,6 +215,45 @@ static size_t varint_encode(uint8_t *destination, uint32_t value) {
 	return size;
 }
 
+static size_t query_handshake_build(uint8_t *destination, size_t destination_size, const char *address, size_t query_size, in_port_t port, uint8_t intent) {
+	static const uint8_t status_tail[] = { 1, 0, 9, 1, 0, 1, 2, 3, 4, 5, 6, 7 };
+	size_t address_length = strlen(address);
+	if (address_length > 1021 || query_size > 1021 - address_length || intent < 1 || intent > 3) {
+		return 0;
+	}
+	size_t wire_address_length = address_length + 3 + query_size;
+	size_t frame_size = 9 + (wire_address_length < 128 ? 1 : 2) + wire_address_length;
+	size_t tail_size = intent == 1 ? sizeof(status_tail) : 20;
+	if (destination_size < (frame_size < 128 ? 1 : 2) + frame_size + tail_size) {
+		return 0;
+	}
+	size_t offset = varint_encode(destination, (uint32_t)frame_size);
+	destination[offset++] = 0;
+	offset += varint_encode(destination + offset, 0x40000153);
+	offset += varint_encode(destination + offset, (uint32_t)wire_address_length);
+	memcpy(destination + offset, address, address_length);
+	offset += address_length;
+	memcpy(destination + offset, "?k=", 3);
+	offset += 3;
+	memset(destination + offset, 'a', query_size);
+	offset += query_size;
+	destination[offset++] = (uint8_t)(port >> 8);
+	destination[offset++] = (uint8_t)port;
+	destination[offset++] = intent;
+	if (intent == 1) {
+		memcpy(destination + offset, status_tail, sizeof(status_tail));
+		offset += sizeof(status_tail);
+	} else {
+		destination[offset++] = 19;
+		destination[offset++] = 0;
+		destination[offset++] = 1;
+		destination[offset++] = 'u';
+		memset(destination + offset, 0x5A, 16);
+		offset += 16;
+	}
+	return offset;
+}
+
 /* Builds a modern LOGIN handshake for the given virtual host; the signature tail makes a single-character host packet exactly BUFSIZ bytes. */
 static size_t rewrite_login_build(uint8_t *destination, size_t destination_size, const char *address, in_port_t port) {
 	static const size_t signature_size = 8178;
@@ -365,22 +404,27 @@ static int socket_send_all(int socket_fd, const void *data, size_t size) {
 	return 0;
 }
 
-static int worker_packet_forward_split(in_port_t listener_port, int upstream_server_fd, const uint8_t *packet, size_t packet_size, size_t split_size) {
+static int worker_packet_forward_split(in_port_t listener_port, int upstream_server_fd, const uint8_t *packet, size_t packet_size, size_t split_size, const uint8_t *expected, size_t expected_size) {
 	int client_fd = -1;
 	int result = -1;
 	int upstream_client_fd = -1;
-	if (packet == NULL || packet_size > BUFSIZ || split_size == 0 || split_size >= packet_size) {
+	if (packet == NULL || packet_size == 0 || packet_size > BUFSIZ || split_size >= packet_size || expected == NULL || expected_size == 0 || expected_size > BUFSIZ) {
 		errno = EINVAL;
 		return -1;
 	}
 	client_fd = client_connect(listener_port);
-	if (client_fd == -1 || socket_send_all(client_fd, packet, split_size) == -1) {
+	if (client_fd == -1) {
 		goto cleanup;
 	}
-	struct timespec delay = { .tv_nsec = SPLIT_DELAY_NS };
-	while (nanosleep(&delay, &delay) == -1) {
-		if (errno != EINTR) {
+	if (split_size != 0) {
+		if (socket_send_all(client_fd, packet, split_size) == -1) {
 			goto cleanup;
+		}
+		struct timespec delay = { .tv_nsec = SPLIT_DELAY_NS };
+		while (nanosleep(&delay, &delay) == -1) {
+			if (errno != EINTR) {
+				goto cleanup;
+			}
 		}
 	}
 	if (socket_send_all(client_fd, packet + split_size, packet_size - split_size) == -1 || shutdown(client_fd, SHUT_WR) == -1) {
@@ -392,14 +436,14 @@ static int worker_packet_forward_split(in_port_t listener_port, int upstream_ser
 	}
 	uint8_t received[BUFSIZ];
 	size_t received_size = 0;
-	while (received_size < packet_size) {
-		ssize_t receive_size = message_receive(upstream_client_fd, received + received_size, packet_size - received_size, TEST_TIMEOUT_MS);
+	while (received_size < expected_size) {
+		ssize_t receive_size = message_receive(upstream_client_fd, received + received_size, expected_size - received_size, TEST_TIMEOUT_MS);
 		if (receive_size <= 0) {
 			goto cleanup;
 		}
 		received_size += (size_t)receive_size;
 	}
-	if (memcmp(received, packet, packet_size) != 0) {
+	if (memcmp(received, expected, expected_size) != 0) {
 		errno = EPROTO;
 		goto cleanup;
 	}
@@ -415,6 +459,33 @@ cleanup: {
 		errno = saved_errno;
 		return result;
 	}
+}
+
+static int worker_packet_legacy_prefix_test(in_port_t listener_port, int upstream_server_fd, in_port_t upstream_port, bool rewrite) {
+	/* 235/363 become FE-prefixed frames after rewriting "a" to "127.0.0.1"; 242/244 border the first collision. */
+	static const size_t address_lengths[] = { 235, 242, 243, 244, 363, 371, 499, 627, 755, 883, 1011 };
+	const char *address = rewrite ? "a" : "localhost";
+	uint8_t input[1200];
+	uint8_t expected[1200];
+	for (size_t index = 0; index < sizeof(address_lengths) / sizeof(address_lengths[0]); index++) {
+		size_t query_size = address_lengths[index] - strlen(address) - 3;
+		/* STATUS, LOGIN and TRANSFER share the same modern handshake framing. */
+		for (uint8_t intent = 1; intent <= 3; intent++) {
+			size_t input_size = query_handshake_build(input, sizeof(input), address, query_size, 25565, intent);
+			size_t expected_size = query_handshake_build(expected, sizeof(expected), rewrite ? "127.0.0.1" : address, query_size, rewrite ? upstream_port : 25565, intent);
+			if (input_size == 0 || expected_size == 0) {
+				return -1;
+			}
+			/* Exercise one write and splits after FE, FE 01 and the packet ID. */
+			for (size_t split_size = 0; split_size <= 3; split_size++) {
+				if (worker_packet_forward_split(listener_port, upstream_server_fd, input, input_size, split_size, expected, expected_size) != 0) {
+					fprintf(stderr, "modern legacy-prefix forwarding failed: address length %zu, intent %u, split %zu, rewrite %d\n", address_lengths[index], intent, split_size, rewrite);
+					return -1;
+				}
+			}
+		}
+	}
+	return 0;
 }
 
 static int worker_packet_timeout(in_port_t listener_port, int upstream_server_fd) {
@@ -849,7 +920,7 @@ int main(int argc, char **argv) {
 			fixture[2] = 1;
 		}
 		for (size_t split_size = 1; split_size < (size_t)fixture_size; split_size++) {
-			int fragment_result = worker_packet_forward_split(listener_port, upstream_server_fd, fixture, (size_t)fixture_size, split_size);
+			int fragment_result = worker_packet_forward_split(listener_port, upstream_server_fd, fixture, (size_t)fixture_size, split_size, fixture, (size_t)fixture_size);
 			if (fragment_result == -1) {
 				fprintf(stderr, "fragmented fixture %s failed at split %zu\n", fragment_fixtures[fixture_index].filename, split_size);
 			}
@@ -868,6 +939,9 @@ int main(int argc, char **argv) {
 		}
 	}
 
+	CHECK(worker_packet_legacy_prefix_test(listener_port, upstream_server_fd, upstream_port, false) == 0, "FE-prefixed modern frames were not forwarded intact");
+	CHECK(child_count_wait(listener, helper_child_baseline, TEST_TIMEOUT_MS) == 0, "FE-prefixed modern frames did not release their workers");
+
 	/* Rewrite regression: a BUFSIZ-sized LOGIN handshake rewritten to a longer destination must stay within the worker rewrite buffer. */
 	CHECK(write_rewrite_config(config_filename, log_filename, listener_port, upstream_port) == 0, "cannot write rewrite configuration");
 	CHECK(kill(listener, SIGUSR1) == 0, "cannot request rewrite configuration reload");
@@ -879,6 +953,8 @@ int main(int argc, char **argv) {
 	CHECK(ready_length > 0, "rewrite READY notification is missing");
 	ready_message[ready_length] = '\0';
 	CHECK(strcmp(ready_message, "READY=1") == 0, "rewrite READY notification is invalid");
+	CHECK(worker_packet_legacy_prefix_test(listener_port, upstream_server_fd, upstream_port, true) == 0, "FE-prefixed modern frames were not rewritten correctly");
+	CHECK(child_count_wait(listener, helper_child_baseline, TEST_TIMEOUT_MS) == 0, "rewritten FE-prefixed modern frames did not release their workers");
 	uint8_t rewrite_input[BUFSIZ];
 	uint8_t rewrite_expected[BUFSIZ + 8U];
 	uint8_t rewrite_received[BUFSIZ + 8U];
