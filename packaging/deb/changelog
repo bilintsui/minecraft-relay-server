@@ -1,3 +1,10 @@
+mcrelay (1.2.1-1) stable; urgency=medium
+
+  * Preserve handshake host properties and Forge metadata when routing or
+    rewriting connections from newer Minecraft clients.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Wed, 23 Sep 2026 08:10:44 +0800
+
 mcrelay (1.2-1) stable; urgency=medium
 
   * Finalize the 1.2 stable release.
