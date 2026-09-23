@@ -1,3 +1,11 @@
+mcrelay (1.2.2-1) stable; urgency=medium
+
+  * Distinguish extended legacy status requests from modern handshake
+    frame lengths.
+  * Allow the full 3072-byte UTF-8 capacity of modern handshake host fields.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Thu, 24 Sep 2026 00:58:43 +0800
+
 mcrelay (1.2.1-1) stable; urgency=medium
 
   * Preserve handshake host properties and Forge metadata when routing or
