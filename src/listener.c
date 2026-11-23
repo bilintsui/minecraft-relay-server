@@ -61,6 +61,7 @@
 #include "route/table.h"
 #include "route/waiter.h"
 #include "timeutil.h"
+#include "version_info.h"
 
 /* section: headers (self) */
 #include "listener.h"
@@ -3467,6 +3468,7 @@ exit_code listener_run(conf *config, conf_cache *config_cache, const char *confi
 		.working_directory = working_directory
 	};
 	snprintf(context.log_filename, sizeof(context.log_filename), "%s", log_filename);
+	LISTENER_LOG(&context, MKSYS_LEVEL_INFORMATION, "Starting mcrelay %s on PID %jd...", version_info_get(), (intmax_t)getpid());
 	if (prctl(PR_SET_NAME, LISTENER_PROCESS_NAME) == -1) {
 		LISTENER_LOG(&context, MKSYS_LEVEL_WARNING, "Cannot set listener process name: %s", strerror(errno));
 	}

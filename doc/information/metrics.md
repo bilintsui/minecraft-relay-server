@@ -22,6 +22,8 @@ Resolver-helper `degraded` and `event_loss` WARNING records and `recovered` INFO
 
 ## Output lifecycle
 
+At process startup, an INFORMATION record `Starting mcrelay <full-version> on PID <pid>...` identifies the build, using the same version string as `mcrelay version`. It precedes `Binding on ...`, is written once independently of `metrics.interval`, and uses the configured log. Match its PID to later metrics instances in input order; retain the startup record with rotated logs. Historical logs without this record have an unknown version. Version information is not repeated in metrics snapshots.
+
 Every aggregate snapshot contains one sequence number and one reason:
 
 - `startup` is emitted after initial route-runtime readiness when metrics start effectively enabled.

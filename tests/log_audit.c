@@ -55,6 +55,7 @@ typedef struct {
 	size_t exception_count[7];
 	size_t macro_definition_count[6];
 	bool quiet;
+	size_t startup_count;
 } audit_state;
 
 /* section: global variables */
@@ -77,7 +78,7 @@ static const log_symbol log_symbols[] = {
 	{ "#defineLISTENER_LOG_TERMINAL(ctx,lvl,...)MKSYS_LOG(MKSYS_NOLOGFILE,(ctx)->config->log.level,lvl,__VA_ARGS__)", "src/listener.c", 2, "LISTENER_LOG_TERMINAL" }
 };
 
-static const char *const reserved_starts[] = { "metrics schema=", "resolver_helper" };
+static const char *const reserved_starts[] = { "metrics schema=", "resolver_helper", "Starting mcrelay " };
 
 /* section: functions (local) */
 static bool audit_error(const audit_state *state, const char *path, size_t offset, const char *message) {
@@ -630,7 +631,25 @@ static bool logging_call_audit(const char *text, size_t size, size_t open, int s
 	if (!string_expression_decode(text, format_argument.begin, format_argument.end, format, sizeof(format), &format_size, state, path)) {
 		return audit_error(state, path, format_argument.begin, "logging format is not a complete string-literal chain");
 	}
-	if (!format_message_safe(format, format_size)) {
+	const char startup_format[] = "Starting mcrelay %s on PID %jd...";
+	if (format_size == sizeof(startup_format) - 1U && strcmp(format, startup_format) == 0) {
+		const char *const expected[] = { "&context", "MKSYS_LEVEL_INFORMATION", NULL, "version_info_get()", "(intmax_t)getpid()" };
+		if (!path_has_suffix(path, "src/listener.c") || strcmp(log_symbols[symbol].name, "LISTENER_LOG") != 0 || argument_count != ARRAY_SIZE(expected)) {
+			return audit_error(state, path, open, "startup record appears outside its controlled emitter");
+		}
+		for (size_t index = 0; index < ARRAY_SIZE(expected); index++) {
+			if (expected[index] != NULL) {
+				char expression[AUDIT_TEXT_LIMIT];
+				if (!code_compact(text, arguments[index].begin, arguments[index].end, expression, sizeof(expression), state, path) || strcmp(expression, expected[index]) != 0) {
+					return audit_error(state, path, open, "startup record uses an uncontrolled argument");
+				}
+			}
+		}
+		state->startup_count++;
+		if (state->startup_count != 1) {
+			return audit_error(state, path, open, "duplicate startup record emitter");
+		}
+	} else if (!format_message_safe(format, format_size)) {
 		if (log_symbols[symbol].format_index + 1U >= argument_count) {
 			return audit_error(state, path, format_argument.begin, "reserved-prefix logging call has no first format argument");
 		}
@@ -933,6 +952,7 @@ static bool expect_bytes(const unsigned char *input, size_t input_size, bool exp
 static bool self_tests(void) {
 	static const unsigned char safe_call[] = "MKSYS_LOG(a, b, c, \"safe %s\", value);\n";
 	static const unsigned char safe_zero_call_wrapper[] = "#define LISTENER_LOG_TERMINAL(ctx, lvl, ...) MKSYS_LOG(MKSYS_NOLOGFILE, (ctx)->config->log.level, lvl, __VA_ARGS__)\n";
+	static const unsigned char startup_call[] = "LISTENER_LOG(&context, MKSYS_LEVEL_INFORMATION, \"Starting mcrelay %s on PID %jd...\", version_info_get(), (intmax_t)getpid());\n";
 	static const unsigned char unsafe_alias[] = "#define MYLOG MKSYS_LOG\n";
 	static const unsigned char unsafe_digraph[] = "int value = a %:%: b;\n";
 	static const unsigned char unsafe_nonliteral[] = "MKSYS_LOG(a, b, c, format);\n";
@@ -954,6 +974,8 @@ static bool self_tests(void) {
 	static const unsigned char nul_end[] = { 'x', 0 };
 	if (!expect_bytes(safe_call, sizeof(safe_call) - 1U, true)
 		|| !expect_bytes_path(safe_zero_call_wrapper, sizeof(safe_zero_call_wrapper) - 1U, "src/listener.c", true)
+		|| !expect_bytes_path(startup_call, sizeof(startup_call) - 1U, "src/listener.c", true)
+		|| !expect_bytes(startup_call, sizeof(startup_call) - 1U, false)
 		|| !expect_bytes(strict_splice, sizeof(strict_splice) - 1U, true) || !expect_bytes(strict_splice_crlf, sizeof(strict_splice_crlf) - 1U, true)
 		|| !expect_bytes(crlf, sizeof(crlf) - 1U, true) || !expect_bytes(unsafe_alias, sizeof(unsafe_alias) - 1U, false)
 		|| !expect_bytes(unsafe_digraph, sizeof(unsafe_digraph) - 1U, false) || !expect_bytes(unsafe_pointer, sizeof(unsafe_pointer) - 1U, false)
@@ -978,6 +1000,26 @@ static bool self_tests(void) {
 	audit_state state;
 	memset(&state, 0, sizeof(state));
 	state.quiet = true;
+	const char *const unsafe_startup_calls[] = {
+		"LISTENER_LOG(&context, MKSYS_LEVEL_INFORMATION, \"Starting mcrelay %s on PID %jd...\", user_version, (intmax_t)getpid());",
+		"LISTENER_LOG(&context, MKSYS_LEVEL_INFORMATION, \"Starting mcrelay %s on PID %jd...\", version_info_get(), user_pid);",
+		"LISTENER_LOG(&context, MKSYS_LEVEL_WARNING, \"Starting mcrelay %s on PID %jd...\", version_info_get(), (intmax_t)getpid());",
+		"LISTENER_LOG(other_context, MKSYS_LEVEL_INFORMATION, \"Starting mcrelay %s on PID %jd...\", version_info_get(), (intmax_t)getpid());",
+		"LISTENER_LOG(&context, MKSYS_LEVEL_INFORMATION, \"Starting mcrelay %s on PID %jd...\", version_info_get(), (intmax_t)getpid(), extra);",
+		"LOG(MKSYS_LEVEL_INFORMATION, \"Starting mcrelay %s on PID %jd...\", version_info_get(), (intmax_t)getpid());",
+		"LISTENER_LOG(&context, MKSYS_LEVEL_INFORMATION, \"Starting mcrelay %s\", user_text);"
+	};
+	for (size_t index = 0; index < ARRAY_SIZE(unsafe_startup_calls); index++) {
+		if (!expect_bytes_path((const unsigned char *)unsafe_startup_calls[index], strlen(unsafe_startup_calls[index]), "src/listener.c", false)) {
+			fprintf(stderr, "log audit startup emitter fixture failed at index %zu\n", index);
+			return false;
+		}
+	}
+	if (!source_bytes_audit(startup_call, sizeof(startup_call) - 1U, "src/listener.c", &state)
+		|| source_bytes_audit(startup_call, sizeof(startup_call) - 1U, "src/listener.c", &state)) {
+		fprintf(stderr, "log audit duplicate startup emitter fixture failed\n");
+		return false;
+	}
 	const char safe_formats[][64] = { "\"ordinary %s\"", "\"ordinary \" \"%s\"", "\"metrics \"", "\"progress %% %s\"", "\"safe\\nmetrics schema=1\"" };
 	for (size_t index = 0; index < ARRAY_SIZE(safe_formats); index++) {
 		char decoded[128];
@@ -988,7 +1030,7 @@ static bool self_tests(void) {
 			return false;
 		}
 	}
-	const char unsafe_formats[][64] = { "\"%s\"", "\"metrics schema=1\"", "\"metrics %s\"", "\"resolver_%s\"" };
+	const char unsafe_formats[][64] = { "\"%s\"", "\"metrics schema=1\"", "\"metrics %s\"", "\"resolver_%s\"", "\"Starting mcrelay \"", "\"Starting %s\"" };
 	for (size_t index = 0; index < ARRAY_SIZE(unsafe_formats); index++) {
 		char decoded[128];
 		size_t decoded_size;
@@ -998,7 +1040,7 @@ static bool self_tests(void) {
 			return false;
 		}
 	}
-	if (!config_message_safe("ordinary", 8U) || config_message_safe("metrics schema=1", 16U) || config_message_safe("resolver_", 9U)) {
+	if (!config_message_safe("ordinary", 8U) || config_message_safe("metrics schema=1", 16U) || config_message_safe("resolver_", 9U) || config_message_safe("Starting mcrelay ", 16U)) {
 		fprintf(stderr, "log audit config_errmsg provenance fixture failed\n");
 		return false;
 	}
@@ -1006,6 +1048,10 @@ static bool self_tests(void) {
 }
 
 static bool audit_finalize(const audit_state *state) {
+	if (state->startup_count != 1) {
+		fprintf(stderr, "log audit startup emitter mismatch: %zu\n", state->startup_count);
+		return false;
+	}
 	if (state->call_count == 0 || state->definition_count != 1 || state->declaration_count != 1 || state->direct_root_call_count != 6
 		|| state->config_binding_count != 1 || state->config_definition_count != 1 || state->config_message_count == 0) {
 		fprintf(stderr, "log audit inventory mismatch: calls=%zu root_calls=%zu definitions=%zu declarations=%zu binding=%zu config_definition=%zu config_messages=%zu\n",

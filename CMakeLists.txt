@@ -27,7 +27,7 @@ add_custom_target(version_header ALL
 	VERBATIM)
 add_executable(mcrelay${EXEC_SUFFIX}
 	src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener_metrics.c src/log.c src/main.c src/metrics.c src/network.c
-	src/timeutil.c
+	src/timeutil.c src/version_info.c
 	src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/hosts_watch.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
 	src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c src/route/table.c src/route/waiter.c
 	src/protocol/common.c src/protocol/handshake.c
@@ -45,6 +45,10 @@ target_link_libraries(mcrelay${EXEC_SUFFIX} -lresolv -lcjson -lsystemd)
 
 include(CTest)
 if(BUILD_TESTING)
+	find_package(Python3 3.8 COMPONENTS Interpreter QUIET)
+	if(Python3_Interpreter_FOUND)
+		add_test(NAME version_log COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/version_log.py" $<TARGET_FILE:mcrelay${EXEC_SUFFIX}>)
+	endif()
 	add_executable(config_cache_test tests/config_cache.c src/basic.c src/config.c src/log.c)
 	target_include_directories(config_cache_test PRIVATE src)
 	target_compile_definitions(config_cache_test PRIVATE _GNU_SOURCE DEBUG_MODE=false)
@@ -490,7 +494,7 @@ if(BUILD_TESTING)
 	add_test(NAME worker_protocol COMMAND worker_protocol_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}> "${CMAKE_CURRENT_SOURCE_DIR}/tests/rawpackets")
 	add_executable(worker_cap_daemon
 		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener_metrics.c src/log.c src/main.c src/metrics.c src/network.c
-		src/timeutil.c
+		src/timeutil.c src/version_info.c
 		src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/hosts_watch.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
 		src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c
 		src/route/table.c src/route/waiter.c
@@ -511,7 +515,7 @@ if(BUILD_TESTING)
 	set_tests_properties(listener_shutdown PROPERTIES TIMEOUT 30)
 	add_executable(listener_short_runtime_daemon
 		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener_metrics.c src/log.c src/main.c src/metrics.c src/network.c
-		src/timeutil.c
+		src/timeutil.c src/version_info.c
 		src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/hosts_watch.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
 		src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c
 		src/route/table.c src/route/waiter.c
