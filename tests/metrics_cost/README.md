@@ -56,3 +56,13 @@ python3 tests/metrics_cost/verify_resolver_timestamps.py \
 Exercises helper-response timestamp validation with immediate A/AAAA replies and output disabled/enabled. Work counts, helper identities, final logs, full C snapshots and error counters must pass. `--requests` and `--repetitions` control the run size; original samples, packets, timestamps and executable hashes are retained in the result directory.
 
 The deterministic C regression also runs as `resolver_supervisor_test --response-timestamps`. Its clock wrapper is linked only to supervisor test targets.
+
+## Paired DNS and capacity profiles
+
+`experiments.py` runs `dns`, `memory` and `snapshots` into fresh subdirectories of one result root, then `summarize --results ROOT` creates `summary.json`. DNS/memory accept `--normal`, `--control` and `--tools`; snapshots require only `--tools`. Use `--help` for repetition, request and timing controls.
+
+- DNS uses zero configured A-response delay and requires an even repetition count, for example `--repetitions 20`. Each two-pair block balances AB and BA order. The summary retains paired/pooled differences and exploratory whole-block bootstrap intervals; these do not remove host/VM bias.
+- Memory repeats A/B/C through 0, 64, 128 and 256 live workers, with steady PSS/private/cgroup samples and an after-close sample. Numeric-route instances use a small cache.
+- Snapshots cover empty and 512-entry baselines, full unpublished entries, positive-cache occupancy through the actual entry/owned-byte limit, full admitted jobs, and a mixed entry/positive/job profile. Requested/actual occupancies and compiled limits are retained; no production limit is overridden.
+
+The fixture syntax is `snapshot_cost LOG CSV ITERATIONS CACHE_ENTRIES [PUBLISHED_ENTRIES] [JOBS]`. Job profiles require the test-only loopback redirect; the driver keeps a bound local UDP blackhole to prevent external DNS. Owner state is frozen after scheduling: helpers are limited and remaining jobs queue, while responses are not consumed during timing. This measures getter/formatter/file-output cost at known occupancy, rather than sustained saturated DNS service. Warm-up frames are excluded from timing and all complete output batches are validated.
