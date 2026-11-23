@@ -1,16 +1,54 @@
 name: release-build
 
 on:
-  release:
-    types:
-      - published
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  verify_ci:
+    name: Verify tagged commit passed build CI
+    if: github.event.deleted == false
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.target.outputs.sha }}
+      tag: ${{ steps.target.outputs.tag }}
+    steps:
+      - name: Checkout tagged source
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - name: Resolve and pin release commit
+        id: target
+        env:
+          RELEASE_REF: ${{ github.ref }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          release_sha=$(git rev-parse --verify "$RELEASE_REF^{commit}")
+          event_sha=$(git rev-parse --verify "$EVENT_SHA^{commit}")
+          test "$release_sha" = "$event_sha"
+          printf 'sha=%s\ntag=%s\n' "$release_sha" "${RELEASE_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+      - name: Wait for existing build CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.target.outputs.sha }}
+        run: python3 .github/scripts/release.py verify-ci --sha "$RELEASE_SHA" --timeout 1800
+
   build_mcrelay:
     name: Build Minecraft Relay Server (${{ matrix.arch }})
+    needs: verify_ci
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
@@ -38,6 +76,9 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.verify_ci.outputs.sha }}
       - name: Install and update build dependencies
         env:
           COMPILER_PACKAGE: ${{ matrix.compiler_package }}
@@ -96,21 +137,26 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: mcrelay-${{ matrix.arch }}
+          name: release-${{ github.run_id }}-${{ matrix.arch }}
+          overwrite: true
           path: build/*
           if-no-files-found: error
 
   publish_release:
-    name: Upload release artifacts
-    needs: build_mcrelay
+    name: Prepare draft release
+    needs: [verify_ci, build_mcrelay]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
+      - name: Checkout pinned release tooling
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.verify_ci.outputs.sha }}
       - name: Download build artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: mcrelay-*
+          pattern: release-${{ github.run_id }}-*
           path: build
           merge-multiple: true
       - name: Check artifact completeness
@@ -121,8 +167,9 @@ jobs:
             test "$#" -eq 1
             test -f "$1"
           done
-      - name: Upload release assets
+      - name: Create or update unpublished draft assets
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" build/* --repo "$GITHUB_REPOSITORY" --clobber
+          RELEASE_TAG: ${{ needs.verify_ci.outputs.tag }}
+          RELEASE_SHA: ${{ needs.verify_ci.outputs.sha }}
+        run: python3 .github/scripts/release.py draft --sha "$RELEASE_SHA" --tag "$RELEASE_TAG" --assets build

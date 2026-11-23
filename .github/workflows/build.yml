@@ -1,0 +1,94 @@
+name: build
+
+on:
+  push:
+    branches:
+      - '**'
+
+permissions:
+  contents: read
+
+jobs:
+  build_mcrelay:
+    name: Build Minecraft Relay Server (amd64)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libcjson-dev libsystemd-dev python3
+      - name: Build release
+        run: |
+          cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=OFF -DBUILD_TESTING=OFF -DUBSAN_TEST=OFF
+          cmake --build build-release --parallel "$(nproc)"
+      - name: Build debug
+        run: |
+          cmake -S . -B build-debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=ON -DBUILD_TESTING=ON -DUBSAN_TEST=ON
+          cmake --build build-debug --parallel "$(nproc)"
+          python3 -c 'import json, subprocess; names = {t["name"] for t in json.loads(subprocess.check_output(["ctest", "--test-dir", "build-debug", "--show-only=json-v1"]))["tests"]}; assert {"version", "version_log", "version_log_report", "metrics_report", "packaging_preflight", "ci_release"} <= names, names'
+          ctest --test-dir build-debug --output-on-failure --parallel 4
+      - name: Save failed test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ctest-debug-${{ github.run_attempt }}
+          path: build-debug/Testing/Temporary/
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: mcrelay-amd64
+          overwrite: true
+          path: |
+            build-release/mcrelay
+            build-debug/mcrelay
+
+  release_ubsan:
+    name: Release + UBSan
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libcjson-dev libsystemd-dev python3
+      - name: Build and test optimized targets
+        run: |
+          cmake -S . -B build-rel-ubsan -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=OFF -DBUILD_TESTING=ON -DUBSAN_TEST=ON -DCMAKE_C_FLAGS="-Wall -Wextra -Wshadow -Wpedantic -Werror"
+          cmake --build build-rel-ubsan --parallel "$(nproc)"
+          python3 -c 'import json, subprocess; names = {t["name"] for t in json.loads(subprocess.check_output(["ctest", "--test-dir", "build-rel-ubsan", "--show-only=json-v1"]))["tests"]}; assert {"version", "version_log", "version_log_report", "metrics_report", "packaging_preflight", "ci_release"} <= names, names'
+          ctest --test-dir build-rel-ubsan --output-on-failure --parallel 4
+      - name: Save failed test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ctest-release-ubsan-${{ github.run_attempt }}
+          path: build-rel-ubsan/Testing/Temporary/
+
+  asan_ubsan:
+    name: ASan + UBSan + leaks
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libcjson-dev libsystemd-dev python3
+      - name: Build and test all instrumented targets
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          cmake -S . -B build-asan-ubsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=OFF -DBUILD_TESTING=ON -DUBSAN_TEST=OFF -DCMAKE_C_FLAGS="-Wall -Wextra -Wshadow -Wpedantic -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          cmake --build build-asan-ubsan --parallel "$(nproc)"
+          python3 -c 'import json, subprocess; names = {t["name"] for t in json.loads(subprocess.check_output(["ctest", "--test-dir", "build-asan-ubsan", "--show-only=json-v1"]))["tests"]}; assert {"version", "version_log", "version_log_report", "metrics_report", "packaging_preflight", "ci_release"} <= names, names'
+          ctest --test-dir build-asan-ubsan --output-on-failure --parallel 1
+      - name: Save failed test logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ctest-asan-ubsan-${{ github.run_attempt }}
+          path: build-asan-ubsan/Testing/Temporary/
