@@ -1,0 +1,3 @@
+commit=$Format:%H$
+short=$Format:%h$
+refs=$Format:%D$

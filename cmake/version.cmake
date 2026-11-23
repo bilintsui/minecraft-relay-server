@@ -6,15 +6,23 @@ if(NOT DEFINED SOURCE_DIRECTORY)
 endif()
 
 set(version_suffix "")
+set(source_is_repository FALSE)
+get_filename_component(source_directory "${SOURCE_DIRECTORY}" REALPATH)
 if(GIT_EXECUTABLE)
 	execute_process(
-		COMMAND "${GIT_EXECUTABLE}" rev-parse --is-inside-work-tree
-		WORKING_DIRECTORY "${SOURCE_DIRECTORY}"
+		COMMAND "${GIT_EXECUTABLE}" rev-parse --show-toplevel
+		WORKING_DIRECTORY "${source_directory}"
 		RESULT_VARIABLE repository_result
 		OUTPUT_VARIABLE repository_output
 		OUTPUT_STRIP_TRAILING_WHITESPACE
 		ERROR_QUIET)
-	if(repository_result EQUAL 0 AND repository_output STREQUAL "true")
+	if(repository_result EQUAL 0)
+		get_filename_component(repository_directory "${repository_output}" REALPATH)
+		if(repository_directory STREQUAL source_directory)
+			set(source_is_repository TRUE)
+		endif()
+	endif()
+	if(source_is_repository)
 		execute_process(
 			COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
 			WORKING_DIRECTORY "${SOURCE_DIRECTORY}"
@@ -40,6 +48,26 @@ if(GIT_EXECUTABLE)
 				set(version_suffix "+${commit_hash}-dirty")
 			elseif(NOT tag_result EQUAL 0)
 				set(version_suffix "+${commit_hash}")
+			endif()
+		endif()
+	endif()
+endif()
+
+if(NOT source_is_repository AND EXISTS "${source_directory}/cmake/archive-version.txt")
+	# Read exported data as text, never as executable CMake. Unexpanded checkout
+	# placeholders and invalid hashes supply no archive identity.
+	file(READ "${source_directory}/cmake/archive-version.txt" archive_metadata)
+	if(archive_metadata MATCHES "^commit=([0-9a-f]+)\nshort=([0-9a-f]+)\nrefs=([^\r\n]*)\n$")
+		set(archive_commit "${CMAKE_MATCH_1}")
+		set(archive_short "${CMAKE_MATCH_2}")
+		set(archive_refs "${CMAKE_MATCH_3}")
+		string(LENGTH "${archive_commit}" archive_commit_length)
+		string(LENGTH "${archive_short}" archive_short_length)
+		string(FIND "${archive_commit}" "${archive_short}" archive_short_position)
+		string(FIND "${archive_refs}" "$Format:" archive_placeholder_position)
+		if((archive_commit_length EQUAL 40 OR archive_commit_length EQUAL 64) AND archive_short_length GREATER_EQUAL 4 AND archive_short_position EQUAL 0 AND archive_placeholder_position EQUAL -1)
+			if(NOT archive_refs MATCHES "(^|, )tag: ")
+				set(version_suffix "+${archive_short}")
 			endif()
 		endif()
 	endif()
