@@ -73,6 +73,8 @@ install -D -m 0644 "$ROOT/README.md" "$STAGING/usr/share/doc/mcrelay/README.md"
 install -D -m 0644 "$PKG_DIR/copyright" "$STAGING/usr/share/doc/mcrelay/copyright"
 install -D -m 0644 "$ROOT/doc/information/loglevel.info" "$STAGING/usr/share/doc/mcrelay/loglevel.info"
 install -D -m 0644 "$ROOT/doc/information/metrics.md" "$STAGING/usr/share/doc/mcrelay/metrics.md"
+install -D -m 0644 "$ROOT/doc/information/metrics-report.md" "$STAGING/usr/share/doc/mcrelay/metrics-report.md"
+install -D -m 0644 "$ROOT/tools/metrics-report.py" "$STAGING/usr/share/doc/mcrelay/examples/metrics-report.py"
 install -D -m 0644 "$ROOT/doc/configuration/mcrelay/config.jsonc" "$STAGING/usr/share/doc/mcrelay/examples/config.jsonc"
 
 mandir="$STAGING/usr/share/man/man1"

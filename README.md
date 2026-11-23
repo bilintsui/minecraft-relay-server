@@ -127,6 +127,12 @@ Aggregate operational metrics are disabled by default. Set <code>metrics.interva
 
 The output is a fixed 48-line schema-1 snapshot interleaved with ordinary access-log records. See the [operational metrics guide](doc/information/metrics.md) before writing a consumer or alert: it defines batch grouping, line validation, lifecycle records, histogram units and important limits on what the signals mean.
 
+The standalone [offline report tool](doc/information/metrics-report.md) reads plain/gzip logs and numbered rotations using Python 3.8+ with no third-party dependencies:
+
+```sh
+python3 tools/metrics-report.py /var/log/mcrelay
+```
+
 ## Instructions for using DNS-based redirection (SRV)
 If you are using an SRV record to provide your service, you should follow the instructions below.
 
