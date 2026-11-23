@@ -37,7 +37,7 @@ static bool connect_force_success;
 int __real_connect(int socket_fd, const struct sockaddr *address, socklen_t address_size);
 
 /* section: functions (local) */
-static int connect_test_listener(in_port_t *port) {
+static int connect_test_bound_socket(in_port_t *port, bool listening) {
 	struct sockaddr_in address;
 	socklen_t address_size = sizeof(address);
 	int option = 1;
@@ -50,7 +50,7 @@ static int connect_test_listener(in_port_t *port) {
 	if (result == -1) {
 		return -1;
 	}
-	if (setsockopt(result, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) == -1) {
+	if (listening && setsockopt(result, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) == -1) {
 		close(result);
 		return -1;
 	}
@@ -59,7 +59,8 @@ static int connect_test_listener(in_port_t *port) {
 		.sin_addr = { .s_addr = htonl(INADDR_LOOPBACK) },
 		.sin_port = htons(0)
 	};
-	if (bind(result, (const struct sockaddr *)&address, sizeof(address)) == -1 || listen(result, 8) == -1 || getsockname(result, (struct sockaddr *)&address, &address_size) == -1) {
+	if (bind(result, (const struct sockaddr *)&address, sizeof(address)) == -1 || (listening && listen(result, 8) == -1)
+		|| getsockname(result, (struct sockaddr *)&address, &address_size) == -1) {
 		close(result);
 		return -1;
 	}
@@ -115,21 +116,22 @@ cleanup:
 
 static bool connect_test_failure(void) {
 	bool test_result = false;
+	int reservation_fd = -1;
 	int socket_fd = -1;
-	int listener_fd = -1;
 	in_port_t port = 0;
 	net_addr address = net_addr_parse("127.0.0.1");
 	CHECK(address.family == AF_INET, "could not parse loopback address");
-	listener_fd = connect_test_listener(&port);
-	CHECK(listener_fd >= 0, "could not create refusal listener");
-	close(listener_fd);
-	listener_fd = -1;
+	/* Reserve the refusal endpoint exclusively and never enter the listening
+	 * state; closing a former listener is not a stable refusal target. */
+	reservation_fd = connect_test_bound_socket(&port, false);
+	CHECK(reservation_fd >= 0, "could not reserve a non-listening refusal endpoint");
 	connect_force_success = false;
 	net_connect_status status = net_connect_nonblocking(&address, port, &socket_fd);
 	CHECK(status == NET_CONNECT_FAILURE || status == NET_CONNECT_PENDING, "refused connection had an unexpected status");
+	CHECK(status != NET_CONNECT_FAILURE || errno == ECONNREFUSED, "immediate connect failure was not refusal");
 	if (status == NET_CONNECT_PENDING) {
 		CHECK(connect_test_poll(socket_fd), "refused connection did not become ready");
-		CHECK(net_connect_nonblocking_complete(socket_fd) == NET_CONNECT_FAILURE, "SO_ERROR did not report refusal");
+		CHECK(net_connect_nonblocking_complete(socket_fd) == NET_CONNECT_FAILURE && errno == ECONNREFUSED, "SO_ERROR did not report refusal");
 		close(socket_fd);
 		socket_fd = -1;
 	}
@@ -137,8 +139,8 @@ static bool connect_test_failure(void) {
 	test_result = true;
 
 cleanup:
-	if (listener_fd >= 0) {
-		close(listener_fd);
+	if (reservation_fd >= 0) {
+		close(reservation_fd);
 	}
 	if (socket_fd >= 0) {
 		close(socket_fd);
@@ -153,7 +155,7 @@ static bool connect_test_immediate_success(void) {
 	in_port_t port = 0;
 	net_addr address = net_addr_parse("127.0.0.1");
 	CHECK(address.family == AF_INET, "could not parse loopback address");
-	listener_fd = connect_test_listener(&port);
+	listener_fd = connect_test_bound_socket(&port, true);
 	CHECK(listener_fd >= 0, "could not create immediate-connect listener");
 	connect_force_success = true;
 	CHECK(net_connect_nonblocking(&address, port, &socket_fd) == NET_CONNECT_OK, "immediate connect was not accepted");
@@ -182,7 +184,7 @@ static bool connect_test_success(void) {
 	net_addr address = net_addr_parse("127.0.0.1");
 	connect_force_success = false;
 	CHECK(address.family == AF_INET, "could not parse loopback address");
-	listener_fd = connect_test_listener(&port);
+	listener_fd = connect_test_bound_socket(&port, true);
 	CHECK(listener_fd >= 0, "could not create loopback listener");
 	net_connect_status status = net_connect_nonblocking(&address, port, &socket_fd);
 	CHECK(status == NET_CONNECT_OK || status == NET_CONNECT_PENDING, "loopback connection did not start");
