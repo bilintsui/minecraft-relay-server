@@ -9,7 +9,7 @@ set -eu
 PKG_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$PKG_DIR/../.." && pwd)
 
-ARCH=$(dpkg --print-architecture)
+ARCH=
 CC=gcc
 OUT_DIR="$PKG_DIR/out"
 
@@ -17,19 +17,35 @@ usage() {
 	cat <<EOF
 Usage: build-deb.sh [--arch ARCH] [--cc CC]
 
-  --arch ARCH         Architecture field (default: $(dpkg --print-architecture))
+  --arch ARCH         Architecture field (default: native dpkg architecture)
   --cc CC             C compiler (default: gcc)
 EOF
 }
 
+require_command() {
+	if ! command -v "$1" >/dev/null 2>&1; then
+		printf 'FATAL: required command not found: %s\n' "$1" >&2
+		exit 1
+	fi
+}
+
 while [ $# -gt 0 ]; do
 	case "$1" in
-		--arch) ARCH="$2"; shift 2 ;;
-		--cc) CC="$2"; shift 2 ;;
+		--arch|--cc)
+			if [ $# -lt 2 ] || [ -z "$2" ]; then
+				printf 'Missing value for %s\n' "$1" >&2; usage >&2; exit 2
+			fi
+			case "$2" in -*) printf 'Missing value for %s\n' "$1" >&2; usage >&2; exit 2 ;; esac
+			if [ "$1" = --arch ]; then ARCH=$2; else CC=$2; fi
+			shift 2 ;;
 		-h|--help) usage; exit 0 ;;
 		*) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
 	esac
 done
+
+for tool in dpkg grep sed head; do require_command "$tool"; done
+if [ -z "$ARCH" ]; then ARCH=$(dpkg --print-architecture); fi
+case "$ARCH" in ''|-*|*[!a-z0-9-]*) printf 'FATAL: invalid package architecture: %s\n' "$ARCH" >&2; exit 2 ;; esac
 
 # Version from src/define/global.h (MCRELAY_VERSION_DISPLAY, e.g. "1.2-beta7").
 # Convert the first hyphen to a tilde so Debian version ordering puts
@@ -37,6 +53,49 @@ done
 DISPLAY=$(grep -E '^#define MCRELAY_VERSION_DISPLAY' "$ROOT/src/define/global.h" | sed -E 's/.*"([^"]+)".*/\1/')
 UPSTREAM=$(printf '%s' "$DISPLAY" | sed 's/-/~/')
 PKG_VERSION=${UPSTREAM}-1
+
+if [ -z "$DISPLAY" ] || ! dpkg --validate-version "$PKG_VERSION"; then
+	printf 'FATAL: invalid source package version: %s\n' "$PKG_VERSION" >&2
+	exit 1
+fi
+CHANGELOG_TOP=$(head -1 "$PKG_DIR/changelog" | sed -n 's/^[^ ]*[[:space:]]*(\([^)]*\)).*/\1/p')
+if [ "$CHANGELOG_TOP" != "$PKG_VERSION" ]; then
+	printf "FATAL: top changelog entry is '%s' but built version is '%s'.\n" "$CHANGELOG_TOP" "$PKG_VERSION" >&2
+	printf '       Prepend a matching entry to packaging/deb/changelog before building.\n' >&2
+	exit 1
+fi
+
+for tool in cmake "$CC" pandoc dpkg-deb gzip install mktemp cat rm mkdir nproc du cut chmod find sort xargs md5sum; do require_command "$tool"; done
+STRIP=$("$CC" -print-prog-name=strip 2>/dev/null) || STRIP=strip
+if [ -z "$STRIP" ]; then STRIP=strip; fi
+require_command "$STRIP"
+
+# Compile/link only: a foreign-architecture probe must never be executed.
+preflight_dir=$(mktemp -d "${TMPDIR:-/tmp}/mcrelay-deb-preflight.XXXXXX")
+trap 'rm -rf "$preflight_dir"' 0
+cat >"$preflight_dir/dependencies.c" <<'EOF'
+#include <cjson/cJSON.h>
+#include <resolv.h>
+#include <stddef.h>
+#include <systemd/sd-daemon.h>
+int main(void) {
+	cJSON_Delete(NULL);
+	(void)sd_notify(0, "READY=1");
+	return res_init();
+}
+EOF
+if ! "$CC" -std=c99 -D_GNU_SOURCE "$preflight_dir/dependencies.c" -o "$preflight_dir/dependencies" -lcjson -lsystemd -lresolv >"$preflight_dir/compiler.log" 2>&1; then
+	printf 'FATAL: compiler/development-library preflight failed for %s.\n' "$CC" >&2
+	cat "$preflight_dir/compiler.log" >&2
+	exit 1
+fi
+if ! "$STRIP" --remove-section=.comment --strip-unneeded "$preflight_dir/dependencies" >"$preflight_dir/strip.log" 2>&1; then
+	printf 'FATAL: strip preflight failed for %s with compiler %s.\n' "$STRIP" "$CC" >&2
+	cat "$preflight_dir/strip.log" >&2
+	exit 1
+fi
+rm -rf "$preflight_dir"
+trap - 0
 
 BUILD_DIR="$ROOT/build-deb-$ARCH"
 STAGING="$BUILD_DIR/staging"
@@ -58,10 +117,6 @@ mkdir -p "$STAGING"
 
 install -D -m 0755 "$BUILD_DIR/mcrelay" "$STAGING/usr/bin/mcrelay"
 
-# Use the cross-toolchain's strip when building for a foreign architecture;
-# fall back to the native strip when --cc has no triple prefix (gcc).
-STRIP=${CC%-gcc}-strip
-command -v "$STRIP" >/dev/null 2>&1 || STRIP=strip
 "$STRIP" --remove-section=.comment --strip-unneeded "$STAGING/usr/bin/mcrelay"
 
 install -D -m 0644 "$ROOT/doc/configuration/mcrelay/config.json" "$STAGING/etc/mcrelay/config.json"
@@ -90,13 +145,6 @@ for src in mcrelay.1.md mcrelay-dumpconfig.1.md mcrelay-run.1.md mcrelay-version
 done
 
 chmod 0755 "$STAGING/usr/share/man" "$mandir"
-
-CHANGELOG_TOP=$(head -1 "$PKG_DIR/changelog" | sed -E 's/^\S+\s+\(([^)]+)\).*/\1/')
-if [ "$CHANGELOG_TOP" != "$PKG_VERSION" ]; then
-	echo "FATAL: top changelog entry is '$CHANGELOG_TOP' but built version is '$PKG_VERSION'." >&2
-	echo "       Edit packaging/deb/changelog and prepend a new entry for $PKG_VERSION." >&2
-	exit 1
-fi
 
 install -D -m 0644 "$PKG_DIR/changelog" "$STAGING/usr/share/doc/mcrelay/changelog.Debian"
 gzip -9n -f "$STAGING/usr/share/doc/mcrelay/changelog.Debian"
