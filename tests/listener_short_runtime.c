@@ -395,7 +395,8 @@ static int short_test_fixture_start_internal(short_fixture *fixture, const char 
 		int devnull_fd = open("/dev/null", O_WRONLY);
 		if (devnull_fd == -1 || dup2(devnull_fd, STDOUT_FILENO) == -1 || dup2(devnull_fd, STDERR_FILENO) == -1
 			|| setenv("NOTIFY_SOCKET", fixture->notify_filename, 1) == -1
-			|| ((strcmp(suffix, "hosts-reload") == 0 || strcmp(suffix, "route-cancel") == 0 || strcmp(suffix, "reload-late") == 0 || strcmp(suffix, "reload-late-armed") == 0)
+			|| ((strcmp(suffix, "hosts-reload") == 0 || strcmp(suffix, "route-cancel") == 0 || strcmp(suffix, "reload-late") == 0 || strcmp(suffix, "reload-late-armed") == 0
+				|| strcmp(suffix, "stop-route") == 0)
 				&& setenv("MCRELAY_TEST_DNS_PENDING", "1", 1) == -1)
 			|| ((strcmp(suffix, "reload-late-short") == 0 || strcmp(suffix, "reload-late-short-armed") == 0)
 				&& setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1)
@@ -1830,6 +1831,38 @@ cleanup:
 	return test_result;
 }
 
+static bool short_test_stop_route(const char *binary, const char *directory) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int client_fd = -1;
+	CHECK(short_test_fixture_start_internal(&fixture, binary, directory, "stop-route", "route-wait.example", 25565, 1) == 0,
+		"could not start pending-route shutdown listener");
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0, "could not connect pending-route shutdown client");
+	CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send pending-route shutdown request");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, " pending_current=1 ", LISTENER_SHORT_TEST_TIMEOUT_MS), "shutdown fixture never acquired a route interest");
+	CHECK(kill(fixture.listener, SIGTERM) == 0, "could not stop listener with a pending route");
+	int status;
+	CHECK(short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0 && WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS,
+		"shutdown did not release the pending route before stopping the supervisor");
+	uint8_t response;
+	size_t response_size = 0;
+	CHECK(short_test_receive_until_close(client_fd, &response, sizeof(response), &response_size, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0 && response_size == 0,
+		"shutdown did not close the pending-route client");
+	CHECK(short_test_file_contains(fixture.log_filename, " reason=shutdown lines=48 ") && short_test_file_contains(fixture.log_filename, " outcome_shutdown=1 "),
+		"pending-route shutdown was not settled in the final metrics");
+	test_result = true;
+
+cleanup:
+	if (client_fd >= 0) {
+		close(client_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
 /* section: functions (entry point) */
 int main(int argc, char **argv) {
 	bool test_result = false;
@@ -1863,7 +1896,7 @@ int main(int argc, char **argv) {
 		&& short_test_reload_late_release_timer_armed(argv[1], temp_directory)
 		&& short_test_reload_ready_flip(argv[1], temp_directory)
 		&& short_test_route_cancel(argv[1], temp_directory)
-		&& short_test_stop(argv[1], temp_directory);
+		&& short_test_stop(argv[1], temp_directory) && short_test_stop_route(argv[1], temp_directory);
 	unlink(argv[2]);
 	if (rmdir(temp_directory) == -1 && errno != ENOENT) {
 		test_result = false;

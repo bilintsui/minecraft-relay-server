@@ -505,6 +505,10 @@ if(BUILD_TESTING)
 	add_executable(worker_cap_test tests/worker_cap.c)
 	target_compile_definitions(worker_cap_test PRIVATE _GNU_SOURCE)
 	add_test(NAME worker_cap COMMAND worker_cap_test $<TARGET_FILE:worker_cap_daemon> $<TARGET_FILE:worker_cap_daemon>)
+	add_executable(listener_shutdown_test tests/listener_shutdown.c)
+	target_compile_definitions(listener_shutdown_test PRIVATE _GNU_SOURCE)
+	add_test(NAME listener_shutdown COMMAND listener_shutdown_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}>)
+	set_tests_properties(listener_shutdown PROPERTIES TIMEOUT 30)
 	add_executable(listener_short_runtime_daemon
 		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener_metrics.c src/log.c src/main.c src/metrics.c src/network.c
 		src/timeutil.c

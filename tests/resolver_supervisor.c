@@ -1502,6 +1502,106 @@ cleanup:
 	return test_result;
 }
 
+static bool supervisor_test_shutdown_release_case(bool stopping, bool sending, bool queued, bool background, int signal_number) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 650 };
+	resolver_cache *cache = NULL;
+	resolver_cache_entry *entries[3] = { 0 };
+	resolver_supervisor *supervisor = NULL;
+	supervisor_fake_reset();
+	cache = resolver_cache_create();
+	supervisor = resolver_supervisor_create(&signal_mask, &now);
+	CHECK(cache != NULL && supervisor != NULL, "shutdown-release state could not be created");
+	for (size_t index = 0; index < 3; index++) {
+		char name[64];
+		snprintf(name, sizeof(name), "shutdown-release-%zu.supervisor.test", index);
+		entries[index] = supervisor_cache_entry_create(cache, name, ns_t_a);
+		CHECK(entries[index] != NULL, "shutdown-release cache entry could not be created");
+	}
+	supervisor_send_blocked = sending;
+	for (size_t index = 0; index < 2; index++) {
+		resolver_supervisor_schedule_status status = background ? resolver_supervisor_entry_schedule(supervisor, entries[index], &now)
+			: resolver_supervisor_entry_schedule_interactive(supervisor, entries[index], &now);
+		CHECK(status == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "shutdown-release helper job could not be scheduled");
+	}
+	if (queued) {
+		CHECK(resolver_supervisor_entry_schedule(supervisor, entries[2], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "shutdown-release queued job could not be scheduled");
+	}
+	resolver_supervisor_job_view job;
+	CHECK(resolver_supervisor_entry_view(supervisor, entries[0], &job)
+		&& job.state == (sending ? RESOLVER_SUPERVISOR_JOB_SENDING : RESOLVER_SUPERVISOR_JOB_DISPATCHED), "shutdown-release initial job state was incorrect");
+	if (stopping) {
+		for (size_t index = 0; index < RESOLVER_SUPERVISOR_HELPER_COUNT; index++) {
+			resolver_supervisor_helper_view helper;
+			CHECK(resolver_supervisor_helper_view_get(supervisor, index, &helper) && kill(helper.process_id, signal_number) == 0,
+				"shutdown-release helper peer could not be closed");
+		}
+		resolver_supervisor_shutdown_prepare(NULL);
+		resolver_supervisor_shutdown_prepare(supervisor);
+		resolver_supervisor_shutdown_prepare(supervisor);
+		CHECK(!resolver_supervisor_shutdown_complete(supervisor), "shutdown preparation completed shutdown prematurely");
+		CHECK(resolver_supervisor_entry_schedule(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT
+			&& resolver_supervisor_entry_schedule_interactive(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT
+			&& resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_BAD_ARGUMENT,
+			"shutdown preparation allowed new scheduling or normal event processing");
+	}
+	supervisor_send_blocked = false;
+	resolver_supervisor_release_status released = background ? resolver_supervisor_entry_background_release(supervisor, entries[0], &now)
+		: resolver_supervisor_entry_interactive_release(supervisor, entries[0], &now);
+	CHECK(released == RESOLVER_SUPERVISOR_RELEASE_OK, "shutdown-release interest could not be released");
+	if (queued) {
+		CHECK(resolver_supervisor_entry_view(supervisor, entries[2], &job)
+			&& job.state == (stopping ? RESOLVER_SUPERVISOR_JOB_QUEUED : RESOLVER_SUPERVISOR_JOB_DISPATCHED), "interest release dispatched work during shutdown or stalled normal dispatch");
+		if (!stopping) {
+			resolver_ipc_request request;
+			CHECK(supervisor_request_receive(supervisor_fake_peer(supervisor, 0), &request), "normal interest release did not send the queued request");
+		}
+	}
+	CHECK(resolver_supervisor_shutdown(supervisor, &now) && resolver_supervisor_shutdown(supervisor, &now), "shutdown-release orderly shutdown could not start");
+	resolver_supervisor_shutdown_prepare(supervisor);
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_shutdown_complete(supervisor),
+		"shutdown-release helpers did not finish orderly shutdown");
+	resolver_supervisor_metrics_snapshot metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics) && supervisor_helper_count == RESOLVER_SUPERVISOR_HELPER_COUNT && metrics.jobs_current == 0,
+		"shutdown-release leaked jobs or restarted a helper");
+	for (size_t failure = 0; failure < RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT; failure++) {
+		CHECK(metrics.helper.failure[failure] == 0 && metrics.attempt[METRICS_QUERY_TYPE_A].failure[failure] == 0, "shutdown release recorded a helper or attempt failure");
+	}
+	resolver_supervisor_observation observation;
+	CHECK(!resolver_supervisor_observation_take(supervisor, &observation), "shutdown release generated a helper observation");
+	test_result = true;
+
+cleanup:
+	resolver_supervisor_destroy(supervisor);
+	for (size_t index = 0; index < 3; index++) {
+		resolver_cache_entry_release(entries[index]);
+	}
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
+static bool supervisor_test_shutdown_release(void) {
+	const int signals[] = { SIGINT, SIGTERM };
+	for (size_t index = 0; index < sizeof(signals) / sizeof(signals[0]); index++) {
+		for (unsigned int background = 0; background < 2; background++) {
+			for (unsigned int sending = 0; sending < 2; sending++) {
+				for (unsigned int queued = 0; queued < 2; queued++) {
+					if (!supervisor_test_shutdown_release_case(true, sending != 0, queued != 0, background != 0, signals[index])) {
+						return false;
+					}
+				}
+			}
+			if (!supervisor_test_shutdown_release_case(false, true, true, background != 0, signals[index])) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
 static bool supervisor_test_timeout_and_order(void) {
 	bool test_result = false;
 	sigset_t signal_mask;
@@ -1630,7 +1730,7 @@ int __wrap_kill(pid_t process_id, int signal_number) {
 		return __real_kill(process_id, signal_number);
 	}
 	helper->last_signal = signal_number;
-	if ((signal_number == SIGTERM && helper->close_on_sigterm) || signal_number == SIGKILL) {
+	if ((signal_number == SIGTERM && helper->close_on_sigterm) || signal_number == SIGINT || signal_number == SIGKILL) {
 		if (helper->peer_fd != -1) {
 			close(helper->peer_fd);
 			helper->peer_fd = -1;
@@ -1714,8 +1814,14 @@ pid_t __wrap_waitpid(pid_t process_id, int *status, int options) {
 }
 
 /* section: functions (entry point) */
-int main(void) {
+int main(int argc, char **argv) {
 	int test_result = EXIT_FAILURE;
+	if (argc > 1) {
+		CHECK(argc == 2 && strcmp(argv[1], "--shutdown-release") == 0, "unknown supervisor test selection");
+		CHECK(supervisor_test_shutdown_release(), "supervisor shutdown-release regression failed");
+		test_result = EXIT_SUCCESS;
+		goto cleanup;
+	}
 	CHECK(supervisor_test_arguments(), "supervisor argument tests failed");
 	CHECK(supervisor_test_attempt_failures(), "supervisor attempt-failure tests failed");
 	CHECK(supervisor_test_capacity(), "supervisor capacity tests failed");
@@ -1732,6 +1838,7 @@ int main(void) {
 	CHECK(supervisor_test_release_io(), "supervisor release-IO tests failed");
 	CHECK(supervisor_test_retry(), "supervisor retry tests failed");
 	CHECK(supervisor_test_shutdown(), "supervisor shutdown tests failed");
+	CHECK(supervisor_test_shutdown_release(), "supervisor shutdown-release tests failed");
 	CHECK(supervisor_test_timeout_and_order(), "supervisor deadline tests failed");
 	test_result = EXIT_SUCCESS;
 

@@ -294,5 +294,7 @@ uint64_t resolver_supervisor_observation_dropped(const resolver_supervisor *supe
 bool resolver_supervisor_observation_take(resolver_supervisor *supervisor, resolver_supervisor_observation *result);
 bool resolver_supervisor_shutdown(resolver_supervisor *supervisor, const struct timespec *now);
 bool resolver_supervisor_shutdown_complete(const resolver_supervisor *supervisor);
+/* Irreversibly stop scheduling and dispatch before releasing connection interests. Releases remain valid; finish them and call shutdown before processing events again. Idempotent; NULL is ignored. */
+void resolver_supervisor_shutdown_prepare(resolver_supervisor *supervisor);
 
 #endif

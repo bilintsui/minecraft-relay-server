@@ -150,6 +150,7 @@ struct resolver_supervisor {
 	size_t observation_head;
 	resolver_supervisor_observation observations[RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY];
 	bool shutting_down;
+	bool shutdown_prepared;
 	int timer_fd;
 };
 
@@ -854,7 +855,7 @@ static resolver_supervisor_assign_status resolver_supervisor_helper_job_assign(r
 }
 
 static void resolver_supervisor_dispatch(resolver_supervisor *supervisor, const struct timespec *now) {
-	if (supervisor->shutting_down) {
+	if (supervisor->shutting_down || supervisor->shutdown_prepared) {
 		return;
 	}
 	for (size_t helper_index = 0; helper_index < RESOLVER_SUPERVISOR_HELPER_COUNT && resolver_supervisor_job_queue_first(supervisor) != NULL; helper_index++) {
@@ -1217,7 +1218,8 @@ static resolver_supervisor_release_status resolver_supervisor_entry_release(reso
 
 static resolver_supervisor_schedule_status resolver_supervisor_entry_schedule_priority(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now,
 	resolver_supervisor_priority priority) {
-	if (supervisor == NULL || entry == NULL || now == NULL || supervisor->shutting_down || (priority != RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND && priority != RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE)) {
+	if (supervisor == NULL || entry == NULL || now == NULL || supervisor->shutting_down || supervisor->shutdown_prepared
+		|| (priority != RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND && priority != RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE)) {
 		return RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT;
 	}
 	if (!resolver_supervisor_time_update(supervisor, now)) {
@@ -1471,7 +1473,7 @@ int resolver_supervisor_event_fd(const resolver_supervisor *supervisor) {
 }
 
 resolver_supervisor_event_status resolver_supervisor_events_process(resolver_supervisor *supervisor, const struct timespec *now) {
-	if (supervisor == NULL || now == NULL) {
+	if (supervisor == NULL || now == NULL || (supervisor->shutdown_prepared && !supervisor->shutting_down)) {
 		return RESOLVER_SUPERVISOR_EVENT_BAD_ARGUMENT;
 	}
 	if (!resolver_supervisor_time_update(supervisor, now)) {
@@ -1685,4 +1687,10 @@ bool resolver_supervisor_shutdown_complete(const resolver_supervisor *supervisor
 		}
 	}
 	return true;
+}
+
+void resolver_supervisor_shutdown_prepare(resolver_supervisor *supervisor) {
+	if (supervisor != NULL) {
+		supervisor->shutdown_prepared = true;
+	}
 }

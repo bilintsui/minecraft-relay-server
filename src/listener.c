@@ -3036,7 +3036,8 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				ready->source->connection->closing = true;
 			}
 		}
-		if (requests.resolver_ready || requests.route_timer_ready) {
+		/* Release connection interests and enter supervisor shutdown before processing helper exits from the same stop batch. */
+		if ((!requests.stop || shutting_down) && (requests.resolver_ready || requests.route_timer_ready)) {
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
 					"Cannot sample the monotonic clock for route resolution: %s",
@@ -3081,6 +3082,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			break;
 		}
 		if (requests.stop && !shutting_down) {
+			resolver_supervisor_shutdown_prepare(context->resolver);
 			listener_metrics_timer_disarm(context, &events, context->log_filename, context->config->log.level);
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
