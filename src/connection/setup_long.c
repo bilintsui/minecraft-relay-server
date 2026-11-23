@@ -362,6 +362,7 @@ static connection_setup_status connection_setup_long_handle_modern_handshake(int
 				inbound_info.address = inbound_addr_new;
 				strcpy(inbound_info.address, proxyinfo.address);
 				inbound_info.port = proxyinfo.port;
+				packet_remove_origin(&inbound_info);
 				packlen_rewrited = packet_write(rewrited, sizeof(rewrited), inbound_info);
 				if (packlen_rewrited == 0) {
 					seed_done = false;
