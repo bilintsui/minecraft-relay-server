@@ -20,6 +20,7 @@
 #include "../src/protocol/common.h"
 #include "../src/protocol/handshake.h"
 #include "../src/protocol/handshake_legacy.h"
+#include "handshake_origin_fixtures.h"
 
 /* section: defines */
 /* assertion */
@@ -526,6 +527,57 @@ static bool packet_read_bounds_test(void) {
 	return true;
 }
 
+static bool packet_remove_origin_test(void) {
+	static const intent_t intents[] = { CLIENT_INTENT_STATUS, CLIENT_INTENT_LOGIN, CLIENT_INTENT_TRANSFER };
+	static const uint8_t signature[] = { 0xA5, 0x00, 0xFF, 0x5A };
+	packet_remove_origin(NULL);
+	for (size_t index = 0; index < sizeof(handshake_origin_fixtures) / sizeof(handshake_origin_fixtures[0]); index++) {
+		const handshake_origin_fixture *fixture = &handshake_origin_fixtures[index];
+		for (size_t intent_index = 0; intent_index < sizeof(intents) / sizeof(intents[0]); intent_index++) {
+			uint8_t encoded[1024];
+			p_handshake source = { 0 };
+			source.address = (void *)"host";
+			source.address_extra = (void *)fixture->input;
+			source.address_extra_length = fixture->input_size;
+			source.nextstate = intents[intent_index];
+			source.port = 25565;
+			source.signature_data = (void *)signature;
+			source.signature_data_length = sizeof(signature);
+			source.username = (void *)"player";
+			source.version = PVERDB_R_1_20_1 + 1U;
+			size_t size = packet_write(encoded, sizeof(encoded), source);
+			if (size == 0) {
+				return false;
+			}
+			p_handshake packet = packet_read(encoded, encoded + size);
+			packet_remove_origin(&packet);
+			/* Removing origins again must leave the same bytes and length. */
+			packet_remove_origin(&packet);
+			bool valid = packet.address != NULL && strcmp(packet.address, "host") == 0 && packet.port == 25565 && packet.nextstate == intents[intent_index]
+				&& packet.address_extra_length == fixture->output_size
+				&& (fixture->output_size == 0 || (packet.address_extra != NULL && memcmp(packet.address_extra, fixture->output, fixture->output_size) == 0));
+			if (valid) {
+				size = packet_write(encoded, sizeof(encoded), packet);
+				valid = size > 0;
+			}
+			packet_destroy(packet);
+			packet = valid ? packet_read(encoded, encoded + size) : (p_handshake){ 0 };
+			valid = valid && packet.address != NULL && packet.address_extra_length == fixture->output_size
+				&& (fixture->output_size == 0 || (packet.address_extra != NULL && memcmp(packet.address_extra, fixture->output, fixture->output_size) == 0));
+			if (intents[intent_index] != CLIENT_INTENT_STATUS) {
+				valid = valid && packet.username != NULL && strcmp(packet.username, "player") == 0 && packet.signature_data_length == sizeof(signature)
+					&& packet.signature_data != NULL && memcmp(packet.signature_data, signature, sizeof(signature)) == 0;
+			}
+			packet_destroy(packet);
+			if (!valid) {
+				fprintf(stderr, "origin fixture %zu failed for intent %u\n", index, (unsigned int)intents[intent_index]);
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
 static bool packet_roundtrip(client_fixture_kind kind, protocol_version protocol, const uint8_t *source, size_t source_size, uint8_t *target, size_t target_capacity) {
 	size_t target_size;
 	if (kind == CLIENT_FIXTURE_LEGACY_LOGIN) {
@@ -922,6 +974,7 @@ int main(int argc, char **argv) {
 	CHECK(legacy_motd_bounds_test(argv[1]), "bounded legacy M3 parsing failed");
 	CHECK(motd_bounds_test(), "bounded MOTD encoding failed");
 	CHECK(packet_read_bounds_test(), "bounded handshake packet reading failed");
+	CHECK(packet_remove_origin_test(), "handshake origin filtering failed");
 	CHECK(packet_utf8_bounds_test(), "UTF-8 handshake address bounds failed");
 	CHECK(varint_bounds_test(), "bounded varint decoding failed");
 	CHECK(packet_write_bounds_test(), "bounded packet construction failed");

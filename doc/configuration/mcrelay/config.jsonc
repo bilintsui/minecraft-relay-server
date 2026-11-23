@@ -66,7 +66,9 @@
       /*
        * Optional, boolean or integer (default: false)
        *
-       * When set to true, this means the server will rewrite the address and port fields in the outgoing handshake packet
+       * When set to true, the server rewrites the address and port fields in the outgoing handshake packet.
+       * For modern handshakes, it also removes every query parameter whose percent-decoded key is "_o" (the original address).
+       * Other query parameters and NUL-delimited extensions are preserved. When false, the original handshake is forwarded unchanged.
        */
       "rewrite": false,
 

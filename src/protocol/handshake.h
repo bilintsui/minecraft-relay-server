@@ -49,6 +49,8 @@ size_t make_kickreason(void *dst, size_t dst_capacity, const void *src);
 size_t make_motd(void *dst, size_t dst_capacity, const void *src, varint_t ver, const char *favicon_b64);
 void packet_destroy(p_handshake object);
 p_handshake packet_read(void *src, void *end);
+/* Removes all query properties whose once-decoded key is "_o" from packet_read-owned storage in place, preserving other bytes and the first NUL and its suffix. */
+void packet_remove_origin(p_handshake *packet);
 /* Returns the total bytes written and 0 when dst is NULL, src fields are missing or exceed the packet_read limits, memory allocation fails, or the encoded packet does not fit dst_capacity. */
 size_t packet_write(void *dst, size_t dst_capacity, const p_handshake src);
 

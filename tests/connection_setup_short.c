@@ -15,6 +15,7 @@
 
 /* section: headers (project) */
 #include "connection/setup_short.h"
+#include "handshake_origin_fixtures.h"
 #include "protocol/handshake.h"
 #include "protocol/handshake_legacy.h"
 
@@ -223,6 +224,51 @@ static bool connection_setup_short_test_modern_connect(void) {
 	return true;
 }
 
+static bool connection_setup_short_test_modern_origin(void) {
+	static const uint8_t ping[] = { 9, 1, 0, 1, 2, 3, 4, 5, 6, 7 };
+	for (size_t index = 0; index < sizeof(handshake_origin_fixtures) / sizeof(handshake_origin_fixtures[0]); index++) {
+		const handshake_origin_fixture *fixture = &handshake_origin_fixtures[index];
+		for (unsigned int rewrite = 0; rewrite <= 1; rewrite++) {
+			uint8_t initial[BUFSIZ];
+			p_handshake source = { 0 };
+			source.address = (void *)"status.example";
+			source.address_extra = (void *)fixture->input;
+			source.address_extra_length = fixture->input_size;
+			source.nextstate = CLIENT_INTENT_STATUS;
+			source.port = 25565;
+			source.version = PVERDB_R_1_20_1 + 1U;
+			size_t initial_size = packet_write(initial, sizeof(initial), source);
+			CHECK(initial_size > 0 && initial_size <= sizeof(initial) - sizeof(ping), "origin fixture did not encode");
+			memcpy(initial + initial_size, ping, sizeof(ping));
+			initial_size += sizeof(ping);
+			connection_setup_snapshot snapshot = connection_setup_short_test_snapshot(CONNECTION_SETUP_ROUTE_READY, rewrite != 0, false);
+			connection_setup_short_plan plan;
+			size_t initial_packet_size, request_packet_size;
+			CHECK(protocol_packet_length(initial, initial_size, &initial_packet_size) == PROTOCOL_PACKET_COMPLETE, "origin fixture framing is invalid");
+			CHECK(connection_setup_short_prepare(&plan, &snapshot, connection_setup_short_test_client(), initial, initial_size) == CONNECTION_SETUP_SHORT_CONNECT,
+				"origin STATUS did not produce CONNECT");
+			CHECK(protocol_packet_length(plan.request, plan.request_size, &request_packet_size) == PROTOCOL_PACKET_COMPLETE
+				&& plan.request_size - request_packet_size == initial_size - initial_packet_size
+				&& memcmp(plan.request + request_packet_size, initial + initial_packet_size, initial_size - initial_packet_size) == 0,
+				"origin filtering changed trailing STATUS/ping frames");
+			p_handshake request = packet_read(plan.request, plan.request + request_packet_size);
+			const char *expected = rewrite ? fixture->output : fixture->input;
+			size_t expected_size = rewrite ? fixture->output_size : fixture->input_size;
+			bool valid = request.address != NULL && strcmp(request.address, rewrite ? "backend.example" : "status.example") == 0
+				&& request.port == (rewrite ? 25570 : 25565) && request.nextstate == CLIENT_INTENT_STATUS && request.address_extra_length == expected_size
+				&& (expected_size == 0 || (request.address_extra != NULL && memcmp(request.address_extra, expected, expected_size) == 0))
+				&& (rewrite || (plan.request_size == initial_size && memcmp(plan.request, initial, initial_size) == 0));
+			packet_destroy(request);
+			connection_setup_short_destroy(&plan);
+			if (!valid) {
+				fprintf(stderr, "STATUS origin fixture %zu failed with rewrite %u\n", index, rewrite);
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
 static bool connection_setup_short_test_responses(void) {
 	uint8_t initial[BUFSIZ];
 	uint8_t expected[BUFSIZ];
@@ -245,7 +291,8 @@ static bool connection_setup_short_test_responses(void) {
 /* section: functions (entry point) */
 int main(void) {
 	if (!connection_setup_short_test_arguments() || !connection_setup_short_test_classification() || !connection_setup_short_test_icon_bounds()
-		|| !connection_setup_short_test_legacy_connect() || !connection_setup_short_test_modern_connect() || !connection_setup_short_test_responses()) {
+		|| !connection_setup_short_test_legacy_connect() || !connection_setup_short_test_modern_connect() || !connection_setup_short_test_modern_origin()
+		|| !connection_setup_short_test_responses()) {
 		return 1;
 	}
 	return 0;

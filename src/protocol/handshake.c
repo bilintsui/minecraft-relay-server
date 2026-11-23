@@ -22,6 +22,46 @@
 #include "handshake.h"
 
 /* section: functions (local) */
+static int handshake_query_hex_digit(uint8_t digit) {
+	if (digit >= '0' && digit <= '9') {
+		return digit - '0';
+	}
+	if (digit >= 'A' && digit <= 'F') {
+		return digit - 'A' + 10;
+	}
+	if (digit >= 'a' && digit <= 'f') {
+		return digit - 'a' + 10;
+	}
+	return -1;
+}
+
+static bool handshake_query_key_is_origin(const uint8_t *key, size_t size) {
+	static const char expected[] = "_o";
+	size_t offset = 0;
+	for (size_t index = 0; index < sizeof(expected) - 1U; index++) {
+		if (offset == size) {
+			return false;
+		}
+		uint8_t decoded = key[offset++];
+		if (decoded == '%') {
+			if (size - offset < 2U) {
+				return false;
+			}
+			int high = handshake_query_hex_digit(key[offset]);
+			int low = handshake_query_hex_digit(key[offset + 1U]);
+			if (high < 0 || low < 0) {
+				return false;
+			}
+			decoded = (uint8_t)((high << 4) | low);
+			offset += 2U;
+		}
+		if (decoded != (uint8_t)expected[index]) {
+			return false;
+		}
+	}
+	return offset == size;
+}
+
 static size_t varint_size(varint_t value) {
 	size_t result = 1;
 	while ((value >>= 7) != 0) {
@@ -299,6 +339,36 @@ cleanup:
 	packet_destroy(result);
 	memset(&result, 0, sizeof(result));
 	return result;
+}
+
+void packet_remove_origin(p_handshake *packet) {
+	if (packet == NULL || packet->address_extra == NULL || packet->address_extra_length == 0 || *(const uint8_t *)packet->address_extra != '?') {
+		return;
+	}
+	uint8_t *extra = packet->address_extra;
+	uint8_t *nul = memchr(extra, '\0', packet->address_extra_length);
+	size_t query_size = nul == NULL ? packet->address_extra_length : (size_t)(nul - extra);
+	size_t read = 1U;
+	size_t written = 0;
+	while (read <= query_size) {
+		uint8_t *separator = memchr(extra + read, '&', query_size - read);
+		size_t end = separator == NULL ? query_size : (size_t)(separator - extra);
+		uint8_t *equals = memchr(extra + read, '=', end - read);
+		size_t key_size = equals == NULL ? end - read : (size_t)(equals - (extra + read));
+		if (!handshake_query_key_is_origin(extra + read, key_size)) {
+			extra[written] = written == 0 ? '?' : '&';
+			written++;
+			memmove(extra + written, extra + read, end - read);
+			written += end - read;
+		}
+		if (separator == NULL) {
+			break;
+		}
+		read = end + 1U;
+	}
+	/* Everything from the first NUL onward is an opaque extension, including any '?' or '_o' bytes. */
+	memmove(extra + written, extra + query_size, packet->address_extra_length - query_size);
+	packet->address_extra_length = written + packet->address_extra_length - query_size;
 }
 
 size_t packet_write(void *dst, size_t dst_capacity, const p_handshake src) {

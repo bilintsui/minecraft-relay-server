@@ -25,6 +25,9 @@
 #include <time.h>
 #include <unistd.h>
 
+/* section: headers (project) */
+#include "handshake_origin_fixtures.h"
+
 /* section: defines */
 /* assertion */
 #define CHECK(condition, message) \
@@ -215,13 +218,13 @@ static size_t varint_encode(uint8_t *destination, uint32_t value) {
 	return size;
 }
 
-static size_t query_handshake_build(uint8_t *destination, size_t destination_size, const char *address, size_t query_size, in_port_t port, uint8_t intent) {
+static size_t extension_handshake_build(uint8_t *destination, size_t destination_size, const char *address, const char *extra, size_t extra_size, in_port_t port, uint8_t intent) {
 	static const uint8_t status_tail[] = { 1, 0, 9, 1, 0, 1, 2, 3, 4, 5, 6, 7 };
 	size_t address_length = strlen(address);
-	if (address_length > 1021 || query_size > 1021 - address_length || intent < 1 || intent > 3) {
+	if (address_length > 1024 || extra_size > 1024 - address_length || intent < 1 || intent > 3) {
 		return 0;
 	}
-	size_t wire_address_length = address_length + 3 + query_size;
+	size_t wire_address_length = address_length + extra_size;
 	size_t frame_size = 9 + (wire_address_length < 128 ? 1 : 2) + wire_address_length;
 	size_t tail_size = intent == 1 ? sizeof(status_tail) : 20;
 	if (destination_size < (frame_size < 128 ? 1 : 2) + frame_size + tail_size) {
@@ -233,10 +236,8 @@ static size_t query_handshake_build(uint8_t *destination, size_t destination_siz
 	offset += varint_encode(destination + offset, (uint32_t)wire_address_length);
 	memcpy(destination + offset, address, address_length);
 	offset += address_length;
-	memcpy(destination + offset, "?k=", 3);
-	offset += 3;
-	memset(destination + offset, 'a', query_size);
-	offset += query_size;
+	memcpy(destination + offset, extra, extra_size);
+	offset += extra_size;
 	destination[offset++] = (uint8_t)(port >> 8);
 	destination[offset++] = (uint8_t)port;
 	destination[offset++] = intent;
@@ -252,6 +253,16 @@ static size_t query_handshake_build(uint8_t *destination, size_t destination_siz
 		offset += 16;
 	}
 	return offset;
+}
+
+static size_t query_handshake_build(uint8_t *destination, size_t destination_size, const char *address, size_t query_size, in_port_t port, uint8_t intent) {
+	char extra[1024];
+	if (query_size > sizeof(extra) - 3U) {
+		return 0;
+	}
+	memcpy(extra, "?k=", 3U);
+	memset(extra + 3U, 'a', query_size);
+	return extension_handshake_build(destination, destination_size, address, extra, query_size + 3U, port, intent);
 }
 
 /* Builds a modern LOGIN handshake for the given virtual host; the signature tail makes a single-character host packet exactly BUFSIZ bytes. */
@@ -482,6 +493,26 @@ static int worker_packet_legacy_prefix_test(in_port_t listener_port, int upstrea
 					fprintf(stderr, "modern legacy-prefix forwarding failed: address length %zu, intent %u, split %zu, rewrite %d\n", address_lengths[index], intent, split_size, rewrite);
 					return -1;
 				}
+			}
+		}
+	}
+	return 0;
+}
+
+static int worker_packet_origin_test(in_port_t listener_port, int upstream_server_fd, in_port_t upstream_port, bool rewrite) {
+	const char *address = rewrite ? "a" : "localhost";
+	uint8_t input[1200];
+	uint8_t expected[1200];
+	for (size_t index = 0; index < sizeof(handshake_origin_fixtures) / sizeof(handshake_origin_fixtures[0]); index++) {
+		const handshake_origin_fixture *fixture = &handshake_origin_fixtures[index];
+		for (uint8_t intent = 1; intent <= 3; intent++) {
+			size_t input_size = extension_handshake_build(input, sizeof(input), address, fixture->input, fixture->input_size, 25565, intent);
+			size_t expected_size = extension_handshake_build(expected, sizeof(expected), rewrite ? "127.0.0.1" : address, rewrite ? fixture->output : fixture->input,
+				rewrite ? fixture->output_size : fixture->input_size, rewrite ? upstream_port : 25565, intent);
+			if (input_size == 0 || expected_size == 0
+				|| worker_packet_forward_split(listener_port, upstream_server_fd, input, input_size, 1U, expected, expected_size) != 0) {
+				fprintf(stderr, "origin forwarding failed: fixture %zu, intent %u, rewrite %d\n", index, intent, rewrite);
+				return -1;
 			}
 		}
 	}
@@ -940,6 +971,8 @@ int main(int argc, char **argv) {
 		}
 	}
 
+	CHECK(worker_packet_origin_test(listener_port, upstream_server_fd, upstream_port, false) == 0, "origin properties changed with rewrite disabled");
+	CHECK(child_count_wait(listener, helper_child_baseline, TEST_TIMEOUT_MS) == 0, "origin passthrough did not release its workers");
 	CHECK(worker_packet_legacy_prefix_test(listener_port, upstream_server_fd, upstream_port, false) == 0, "FE-prefixed modern frames were not forwarded intact");
 	CHECK(child_count_wait(listener, helper_child_baseline, TEST_TIMEOUT_MS) == 0, "FE-prefixed modern frames did not release their workers");
 
@@ -954,6 +987,8 @@ int main(int argc, char **argv) {
 	CHECK(ready_length > 0, "rewrite READY notification is missing");
 	ready_message[ready_length] = '\0';
 	CHECK(strcmp(ready_message, "READY=1") == 0, "rewrite READY notification is invalid");
+	CHECK(worker_packet_origin_test(listener_port, upstream_server_fd, upstream_port, true) == 0, "origin properties were not removed during rewrite");
+	CHECK(child_count_wait(listener, helper_child_baseline, TEST_TIMEOUT_MS) == 0, "origin rewrite did not release its workers");
 	CHECK(worker_packet_legacy_prefix_test(listener_port, upstream_server_fd, upstream_port, true) == 0, "FE-prefixed modern frames were not rewritten correctly");
 	CHECK(child_count_wait(listener, helper_child_baseline, TEST_TIMEOUT_MS) == 0, "rewritten FE-prefixed modern frames did not release their workers");
 	uint8_t rewrite_input[BUFSIZ];
