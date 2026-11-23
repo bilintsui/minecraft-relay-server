@@ -910,22 +910,33 @@ static resolver_cache_publish_status resolver_supervisor_result_publish(resolver
 	return resolver_cache_entry_publish_address(job->entry, lookup_status, &response->completed_at, &response->payload.address);
 }
 
-static void resolver_supervisor_helper_result_finish(resolver_supervisor *supervisor, size_t helper_index, const struct timespec *now) {
+static resolver_supervisor_event_status resolver_supervisor_helper_result_finish(resolver_supervisor *supervisor, size_t helper_index, const struct timespec *now) {
 	resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
 	resolver_supervisor_job *job = helper->job;
 	resolver_ipc_assembly_result response = { 0 };
 	if (job == NULL || !resolver_ipc_assembly_result_take(job->assembly, &response)) {
 		resolver_supervisor_helper_fail(supervisor, helper_index, RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL, now);
-		return;
+		return RESOLVER_SUPERVISOR_EVENT_OK;
 	}
 	job->query_id = 0;
 	resolver_ipc_assembly_destroy(job->assembly);
 	job->assembly = NULL;
-	if (!resolver_supervisor_job_timestamp_valid(job, &response.completed_at, now)) {
+	struct timespec received_at;
+	const struct timespec *timestamp_now = now;
+	/* A helper may finish after the event batch's clock sample. Keep the
+	 * caller's scheduling time, but validate that result against receipt time. */
+	if (timeutil_valid(&response.completed_at) && timeutil_compare(&response.completed_at, now) > 0 && timeutil_compare(&response.completed_at, &job->deadline) <= 0) {
+		if (clock_gettime(CLOCK_MONOTONIC, &received_at) == -1 || !timeutil_valid(&received_at) || timeutil_compare(&received_at, now) < 0) {
+			resolver_ipc_assembly_result_destroy(&response);
+			return RESOLVER_SUPERVISOR_EVENT_TIME;
+		}
+		timestamp_now = &received_at;
+	}
+	if (!resolver_supervisor_job_timestamp_valid(job, &response.completed_at, timestamp_now)) {
 		bool timed_out = timeutil_valid(&response.completed_at) && timeutil_compare(&response.completed_at, &job->deadline) > 0;
 		resolver_ipc_assembly_result_destroy(&response);
 		resolver_supervisor_helper_fail(supervisor, helper_index, timed_out ? RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT : RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL, now);
-		return;
+		return RESOLVER_SUPERVISOR_EVENT_OK;
 	}
 	helper->job = NULL;
 	helper->state = RESOLVER_SUPERVISOR_HELPER_IDLE;
@@ -935,14 +946,14 @@ static void resolver_supervisor_helper_result_finish(resolver_supervisor *superv
 		/* Explicit cancellation wins when a test-only cancel races with zero-interest orphaning. */
 		resolver_ipc_assembly_result_destroy(&response);
 		resolver_supervisor_job_destroy(supervisor, job);
-		return;
+		return RESOLVER_SUPERVISOR_EVENT_OK;
 	}
 #endif
 	resolver_supervisor_metrics_response_record(supervisor, job, &response);
 	if (resolver_supervisor_job_result_retryable(response.status)) {
 		resolver_ipc_assembly_result_destroy(&response);
 		resolver_supervisor_job_retry(supervisor, job, now);
-		return;
+		return RESOLVER_SUPERVISOR_EVENT_OK;
 	}
 	resolver_cache_publish_status publication = RESOLVER_CACHE_PUBLISH_INVALID;
 	if (response.status == RESOLVER_IPC_LOOKUP_OK || response.status == RESOLVER_IPC_LOOKUP_NODATA || response.status == RESOLVER_IPC_LOOKUP_NOT_FOUND) {
@@ -951,9 +962,10 @@ static void resolver_supervisor_helper_result_finish(resolver_supervisor *superv
 	if (job->orphaned) {
 		resolver_ipc_assembly_result_destroy(&response);
 		resolver_supervisor_job_destroy(supervisor, job);
-		return;
+		return RESOLVER_SUPERVISOR_EVENT_OK;
 	}
 	resolver_supervisor_job_complete(supervisor, job, publication, &response);
+	return RESOLVER_SUPERVISOR_EVENT_OK;
 }
 
 static bool resolver_supervisor_helper_receive_zero_is_end(int socket_fd) {
@@ -965,7 +977,7 @@ static bool resolver_supervisor_helper_receive_zero_is_end(int socket_fd) {
 	return received == 0;
 }
 
-static void resolver_supervisor_helper_drain(resolver_supervisor *supervisor, size_t helper_index, const struct timespec *now) {
+static resolver_supervisor_event_status resolver_supervisor_helper_drain(resolver_supervisor *supervisor, size_t helper_index, const struct timespec *now) {
 	resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
 	while (helper->fd != -1) {
 		uint8_t packet[RESOLVER_SUPERVISOR_RECEIVE_BYTE_CAPACITY];
@@ -976,36 +988,40 @@ static void resolver_supervisor_helper_drain(resolver_supervisor *supervisor, si
 			}
 			if ((uintmax_t)received > RESOLVER_IPC_PACKET_BYTE_LIMIT || helper->state != RESOLVER_SUPERVISOR_HELPER_BUSY || helper->job == NULL) {
 				resolver_supervisor_helper_fail(supervisor, helper_index, RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL, now);
-				return;
+				return RESOLVER_SUPERVISOR_EVENT_OK;
 			}
 			resolver_ipc_assembly_status status = resolver_ipc_assembly_packet_consume(helper->job->assembly, packet, (size_t)received);
 			if (status == RESOLVER_IPC_ASSEMBLY_COMPLETE) {
-				resolver_supervisor_helper_result_finish(supervisor, helper_index, now);
+				resolver_supervisor_event_status finish_status = resolver_supervisor_helper_result_finish(supervisor, helper_index, now);
+				if (finish_status != RESOLVER_SUPERVISOR_EVENT_OK) {
+					return finish_status;
+				}
 			} else if (status != RESOLVER_IPC_ASSEMBLY_OK) {
 				resolver_supervisor_helper_fail(supervisor, helper_index, RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL, now);
-				return;
+				return RESOLVER_SUPERVISOR_EVENT_OK;
 			}
 			continue;
 		}
 		if (received == 0) {
 			if (helper->state == RESOLVER_SUPERVISOR_HELPER_SHUTTING_DOWN && resolver_supervisor_helper_receive_zero_is_end(helper->fd)) {
 				resolver_supervisor_helper_stop(supervisor, helper, false);
-				return;
+				return RESOLVER_SUPERVISOR_EVENT_OK;
 			}
 			resolver_supervisor_helper_failure failure = resolver_supervisor_helper_receive_zero_is_end(helper->fd) ? RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT
 				: RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL;
 			resolver_supervisor_helper_fail(supervisor, helper_index, failure, now);
-			return;
+			return RESOLVER_SUPERVISOR_EVENT_OK;
 		}
 		if (errno == EINTR) {
 			continue;
 		}
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			return;
+			return RESOLVER_SUPERVISOR_EVENT_OK;
 		}
 		resolver_supervisor_helper_fail(supervisor, helper_index, RESOLVER_SUPERVISOR_HELPER_FAILURE_IO, now);
-		return;
+		return RESOLVER_SUPERVISOR_EVENT_OK;
 	}
+	return RESOLVER_SUPERVISOR_EVENT_OK;
 }
 
 static void resolver_supervisor_timer_candidate(struct timespec *target, bool *available, const struct timespec *candidate) {
@@ -1523,10 +1539,16 @@ resolver_supervisor_event_status resolver_supervisor_events_process(resolver_sup
 			}
 		}
 		if ((helper_events[helper_index] & EPOLLIN) && helper->fd != -1) {
-			resolver_supervisor_helper_drain(supervisor, helper_index, now);
+			resolver_supervisor_event_status status = resolver_supervisor_helper_drain(supervisor, helper_index, now);
+			if (status != RESOLVER_SUPERVISOR_EVENT_OK) {
+				return status;
+			}
 		}
 		if ((helper_events[helper_index] & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) && supervisor->helpers[helper_index].fd != -1) {
-			resolver_supervisor_helper_drain(supervisor, helper_index, now);
+			resolver_supervisor_event_status status = resolver_supervisor_helper_drain(supervisor, helper_index, now);
+			if (status != RESOLVER_SUPERVISOR_EVENT_OK) {
+				return status;
+			}
 			if (supervisor->helpers[helper_index].fd != -1) {
 				if (supervisor->helpers[helper_index].state == RESOLVER_SUPERVISOR_HELPER_SHUTTING_DOWN) {
 					resolver_supervisor_helper_stop(supervisor, &supervisor->helpers[helper_index], false);

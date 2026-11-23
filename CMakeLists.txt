@@ -185,7 +185,7 @@ if(BUILD_TESTING)
 	target_link_libraries(resolver_ipc_assembly_test -lresolv)
 	set_target_properties(resolver_ipc_assembly_test PROPERTIES LINK_FLAGS "-Wl,--wrap=calloc")
 	add_test(NAME resolver_ipc_assembly COMMAND resolver_ipc_assembly_test)
-	set(RESOLVER_SUPERVISOR_TEST_LINK_FLAGS "-Wl,--wrap=calloc -Wl,--wrap=dns_address_lookup -Wl,--wrap=epoll_ctl -Wl,--wrap=kill")
+	set(RESOLVER_SUPERVISOR_TEST_LINK_FLAGS "-Wl,--wrap=calloc -Wl,--wrap=clock_gettime -Wl,--wrap=dns_address_lookup -Wl,--wrap=epoll_ctl -Wl,--wrap=kill")
 	string(APPEND RESOLVER_SUPERVISOR_TEST_LINK_FLAGS " -Wl,--wrap=resolver_cache_entry_retain -Wl,--wrap=resolver_helper_process_start -Wl,--wrap=send")
 	string(APPEND RESOLVER_SUPERVISOR_TEST_LINK_FLAGS " -Wl,--wrap=timerfd_settime -Wl,--wrap=waitpid")
 	add_executable(resolver_supervisor_test

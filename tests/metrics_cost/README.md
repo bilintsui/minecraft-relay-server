@@ -45,3 +45,14 @@ Raw results include CPU endpoints, process/cgroup samples, latencies, query/resp
 - Match repetition pairs before taking difference medians, retain negative differences, and distinguish observed ranges from confidence intervals. Variation larger than the paired difference leaves that cost unresolved.
 - Short C trials measure initialized/armed state rather than a 900-second periodic output. Cadence endpoints require the complete 48-line frame. Direct snapshot timing includes all owner getters and the production formatter/logger after warm-up, with individual CPU and wall samples retained.
 - Measured cache/job occupancies, sampled memory maxima and wall-time tails apply to those scenarios. They do not establish hard latency, storage, maximum-cache/maximum-worker or long-duration leak bounds.
+
+## Immediate-response DNS regression
+
+```sh
+python3 tests/metrics_cost/verify_resolver_timestamps.py \
+    --binary PATH_TO_MCRELAY --tools SUPPORT_BUILD --results NEW_DIRECTORY
+```
+
+Exercises helper-response timestamp validation with immediate A/AAAA replies and output disabled/enabled. Work counts, helper identities, final logs, full C snapshots and error counters must pass. `--requests` and `--repetitions` control the run size; original samples, packets, timestamps and executable hashes are retained in the result directory.
+
+The deterministic C regression also runs as `resolver_supervisor_test --response-timestamps`. Its clock wrapper is linked only to supervisor test targets.
