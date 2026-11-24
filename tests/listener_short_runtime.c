@@ -26,6 +26,9 @@
 #include <time.h>
 #include <unistd.h>
 
+/* section: headers (project) */
+#include "listener_notify.h"
+
 /* section: defines */
 /* assertion */
 #define CHECK(condition, message) \
@@ -49,6 +52,7 @@
 /* section: types */
 typedef struct {
 	char config_filename[PATH_MAX];
+	char console_filename[PATH_MAX];
 	char log_filename[PATH_MAX];
 	char notify_filename[PATH_MAX];
 	char release_trigger_filename[PATH_MAX];
@@ -187,6 +191,25 @@ static size_t short_test_file_count(const char *filename, const char *needle) {
 
 static bool short_test_file_contains(const char *filename, const char *needle) {
 	return short_test_file_count(filename, needle) > 0;
+}
+
+static void short_test_file_dump(const char *filename) {
+	FILE *file = fopen(filename, "r");
+	if (file == NULL) {
+		fprintf(stderr, "startup evidence unavailable: %s (errno=%d)\n", filename, errno);
+		return;
+	}
+	fprintf(stderr, "startup evidence: %s\n", filename);
+	if (fseek(file, 0, SEEK_END) == 0 && ftell(file) > 8192) {
+		fseek(file, -8192, SEEK_END);
+	} else {
+		rewind(file);
+	}
+	char buffer[1024];
+	while (fgets(buffer, sizeof(buffer), file) != NULL) {
+		fputs(buffer, stderr);
+	}
+	fclose(file);
 }
 
 static size_t short_test_file_reserved_record_count(const char *filename) {
@@ -336,6 +359,11 @@ static int short_test_fixture_start_internal(short_fixture *fixture, const char 
 		errno = EOVERFLOW;
 		return -1;
 	}
+	filename_length = snprintf(fixture->console_filename, sizeof(fixture->console_filename), "%s/%s-console.log", directory, suffix);
+	if (filename_length < 0 || (size_t)filename_length >= sizeof(fixture->console_filename)) {
+		errno = EOVERFLOW;
+		return -1;
+	}
 	filename_length = snprintf(fixture->log_filename, sizeof(fixture->log_filename), "%s/%s.log", directory, suffix);
 	if (filename_length < 0 || (size_t)filename_length >= sizeof(fixture->log_filename)) {
 		errno = EOVERFLOW;
@@ -392,8 +420,8 @@ static int short_test_fixture_start_internal(short_fixture *fixture, const char 
 		return -1;
 	}
 	if (fixture->listener == 0) {
-		int devnull_fd = open("/dev/null", O_WRONLY);
-		if (devnull_fd == -1 || dup2(devnull_fd, STDOUT_FILENO) == -1 || dup2(devnull_fd, STDERR_FILENO) == -1
+		int console_fd = open(fixture->console_filename, O_WRONLY | O_CREAT | O_EXCL, 0600);
+		if (console_fd == -1 || dup2(console_fd, STDOUT_FILENO) == -1 || dup2(console_fd, STDERR_FILENO) == -1
 			|| setenv("NOTIFY_SOCKET", fixture->notify_filename, 1) == -1
 			|| ((strcmp(suffix, "hosts-reload") == 0 || strcmp(suffix, "route-cancel") == 0 || strcmp(suffix, "reload-late") == 0 || strcmp(suffix, "reload-late-armed") == 0
 				|| strcmp(suffix, "stop-route") == 0)
@@ -421,29 +449,32 @@ static int short_test_fixture_start_internal(short_fixture *fixture, const char 
 			|| (strcmp(suffix, "metrics-reload-same") == 0 && (setenv("MCRELAY_TEST_METRICS_TIMER_READ", "reload-same", 1) == -1
 				|| setenv("MCRELAY_TEST_METRICS_RELOAD_TRIGGER", fixture->release_trigger_filename, 1) == -1))
 			|| short_test_fixture_release_environment(fixture, suffix) == -1) {
+			dprintf(STDERR_FILENO, "listener fixture setup failed (errno=%d)\n", errno);
 			_exit(EXIT_FAILURE);
 		}
-		close(devnull_fd);
+		close(console_fd);
 		execl(binary, binary, "run", "-c", fixture->config_filename, (char *)NULL);
+		dprintf(STDERR_FILENO, "listener fixture exec failed (errno=%d)\n", errno);
 		_exit(EXIT_FAILURE);
 	}
-	struct pollfd event = { .fd = fixture->notify_fd, .events = POLLIN };
-	int poll_result;
-	do {
-		poll_result = poll(&event, 1, LISTENER_SHORT_TEST_TIMEOUT_MS);
-	} while (poll_result == -1 && errno == EINTR);
-	if (poll_result != 1 || !(event.revents & POLLIN)) {
-		errno = poll_result == 0 ? ETIMEDOUT : EIO;
-		return -1;
-	}
 	char message[128];
-	ssize_t message_size = recv(fixture->notify_fd, message, sizeof(message) - 1, 0);
+	int child_status;
+	pid_t listener_pid = fixture->listener;
+	ssize_t message_size = listener_test_notify_wait(fixture->notify_fd, &fixture->listener, message, sizeof(message), LISTENER_SHORT_TEST_TIMEOUT_MS, &child_status);
 	if (message_size <= 0) {
+		int saved_errno = errno;
+		fprintf(stderr, "listener startup failed: case=%s pid=%ld port=%u error=%s reaped=%d status=%d\n",
+			suffix, (long)listener_pid, (unsigned int)fixture->listener_port, strerror(saved_errno), fixture->listener == -1, child_status);
+		short_test_file_dump(fixture->console_filename);
+		short_test_file_dump(fixture->log_filename);
+		errno = saved_errno;
 		return -1;
 	}
-	message[message_size] = '\0';
 	const char *expected_message = strcmp(suffix, "reload-ready-flip") == 0 ? "MCRELAY_TEST_ROUTE_READY_HELD=1" : "READY=1";
 	if (strcmp(message, expected_message) != 0) {
+		fprintf(stderr, "unexpected startup notification: case=%s pid=%ld message=%s expected=%s\n", suffix, (long)listener_pid, message, expected_message);
+		short_test_file_dump(fixture->console_filename);
+		short_test_file_dump(fixture->log_filename);
 		errno = EPROTO;
 		return -1;
 	}
@@ -490,6 +521,7 @@ static int short_test_fixture_stop(short_fixture *fixture) {
 		fixture->notify_fd = -1;
 	}
 	unlink(fixture->config_filename);
+	unlink(fixture->console_filename);
 	unlink(fixture->log_filename);
 	unlink(fixture->notify_filename);
 	unlink(fixture->release_trigger_filename);
