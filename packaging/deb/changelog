@@ -1,3 +1,11 @@
+mcrelay (1.2.3-1) stable; urgency=medium
+
+  * Strip query properties whose once-decoded key is _o when rewriting
+    modern STATUS, LOGIN and TRANSFER handshakes, preserving other query
+    bytes and opaque host extensions.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Tue, 24 Nov 2026 18:47:48 +0800
+
 mcrelay (1.2.2-1) stable; urgency=medium
 
   * Distinguish extended legacy status requests from modern handshake

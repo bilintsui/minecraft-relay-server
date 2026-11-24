@@ -23,8 +23,8 @@
 #endif
 
 /* program metadata */
-#define MCRELAY_VERSION_DISPLAY	"1.2.2"
-#define MCRELAY_VERSION_INTERNAL	"79"
+#define MCRELAY_VERSION_DISPLAY	"1.2.3"
+#define MCRELAY_VERSION_INTERNAL	"80"
 #define MCRELAY_COPYYEAR	"2020-2026"
 
 /* protocol version constant */
