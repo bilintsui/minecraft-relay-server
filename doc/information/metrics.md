@@ -163,3 +163,15 @@ route.requests_started = sum(route.outcome_*) + route.pending_current
 ```
 
 The last route identity is evaluated separately for `request_mode=short` and `request_mode=worker`. There is deliberately no corresponding identity between `requests_started` and `resolution_*`: failures before waiter creation have an outcome but no resolution classification.
+
+## Resource measurements and production baselines
+
+Assess CPU and memory for the entire service, including resolver helpers and long workers. A listener's own CPU time or a service-status sample taken just after startup does not describe steady-state usage. For CPU, divide the service's CPU-time delta by the elapsed observation time; 100% represents one fully occupied CPU. Compare equal completed work, cache occupancy and live-worker counts, using repeated measurements and matching build options.
+
+Setting `metrics.interval` to zero stops aggregate output while accumulation continues. Comparing intervals `0` and `900` therefore measures the additional output cost; it does not isolate all Metrics storage and counter-update costs. The opt-in [resource measurement tools](../../tests/metrics_cost/README.md) describe the separate control needed for that comparison. Keep experimental controls and their original results with the exact source and executable identities.
+
+Use cgroup memory accounting together with PSS or private-page measurements to assess memory. Summed process RSS counts shared pages repeatedly. Cache and assembly byte gauges count requested module storage, excluding page rounding, allocator retention, kernel memory and other allocations. Their limits are not a service memory ceiling. Cache occupancy and worker count must be tested together; separate low-cache worker and no-worker cache trials cannot establish the combined peak.
+
+Before interpreting a production window, retain its startup version record and the complete first snapshot as the counter baseline. Validate snapshot completeness, instance identity, sequence continuity and error deltas with the offline report tool. A process restart begins a new observation window; reload preserves the existing one. Historical windows remain evidence for their original build and workload, and do not measure the resource cost of a newly deployed build.
+
+Record log volume and retention alongside CPU, memory and observed latency. A short run without a periodic snapshot measures initialized state, while a full-cadence run also exercises delivery. Acceptable costs depend on the deployment's resources and workload; clean Metrics records alone do not establish that acceptance or end-to-end connection success.
