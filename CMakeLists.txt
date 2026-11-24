@@ -497,6 +497,21 @@ if(BUILD_TESTING)
 	add_executable(worker_protocol_test tests/worker_protocol.c)
 	target_compile_definitions(worker_protocol_test PRIVATE _GNU_SOURCE)
 	add_test(NAME worker_protocol COMMAND worker_protocol_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}> "${CMAKE_CURRENT_SOURCE_DIR}/tests/rawpackets")
+	# Observe real listener deadlines without changing production timeout defaults or adding production test hooks.
+	get_target_property(ASSEMBLY_TIMER_DAEMON_SOURCES mcrelay${EXEC_SUFFIX} SOURCES)
+	add_executable(listener_assembly_daemon ${ASSEMBLY_TIMER_DAEMON_SOURCES} tests/assembly_timer.c)
+	add_dependencies(listener_assembly_daemon version_header)
+	target_compile_definitions(listener_assembly_daemon PRIVATE _GNU_SOURCE DEBUG_MODE=false)
+	target_include_directories(listener_assembly_daemon PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+	target_link_libraries(listener_assembly_daemon -lresolv -lcjson -lsystemd)
+	set_target_properties(listener_assembly_daemon PROPERTIES LINK_FLAGS
+		"-Wl,--wrap=accept4 -Wl,--wrap=clock_gettime -Wl,--wrap=close -Wl,--wrap=fclose -Wl,--wrap=read -Wl,--wrap=recv -Wl,--wrap=timerfd_create -Wl,--wrap=timerfd_settime")
+	add_executable(listener_assembly_test tests/listener_assembly.c)
+	target_compile_definitions(listener_assembly_test PRIVATE _GNU_SOURCE)
+	add_test(NAME listener_assembly_accept COMMAND listener_assembly_test $<TARGET_FILE:listener_assembly_daemon> accept-delay)
+	add_test(NAME listener_assembly_log_io COMMAND listener_assembly_test $<TARGET_FILE:listener_assembly_daemon> log-delay)
+	add_test(NAME listener_assembly_controls COMMAND listener_assembly_test $<TARGET_FILE:listener_assembly_daemon> controls)
+	set_tests_properties(listener_assembly_accept listener_assembly_log_io listener_assembly_controls PROPERTIES TIMEOUT 120)
 	add_executable(worker_cap_daemon
 		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener_metrics.c src/log.c src/main.c src/metrics.c src/network.c
 		src/timeutil.c src/version_info.c

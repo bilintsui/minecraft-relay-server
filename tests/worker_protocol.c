@@ -40,8 +40,6 @@
 
 /* timeout */
 #define INITIAL_PACKET_CLOSE_TIMEOUT_MS	12000
-#define INITIAL_PACKET_REFRESH_DELAY_SEC	5
-#define INITIAL_PACKET_TIMEOUT_WAIT_MS	7000
 #define QUIET_TIMEOUT_MS	100
 #define SPLIT_DELAY_NS	10000000
 #define TEST_TIMEOUT_MS	5000
@@ -519,57 +517,6 @@ static int worker_packet_origin_test(in_port_t listener_port, int upstream_serve
 	return 0;
 }
 
-static int worker_packet_timeout(in_port_t listener_port, int upstream_server_fd) {
-	static const uint8_t incomplete_packet[] = { 0x7F, 0x00 };
-	int client_fd = -1;
-	int result = -1;
-	int upstream_client_fd = -1;
-	client_fd = client_connect(listener_port);
-	if (client_fd == -1 || socket_send_all(client_fd, incomplete_packet, 1) == -1) {
-		goto cleanup;
-	}
-	uint8_t response;
-	ssize_t receive_result = message_receive(client_fd, &response, sizeof(response), QUIET_TIMEOUT_MS);
-	if (receive_result != -1 || errno != ETIMEDOUT) {
-		errno = EPROTO;
-		goto cleanup;
-	}
-	/* Refresh an incomplete packet midway through the assembly window; the absolute deadline must not move. */
-	struct timespec refresh_delay = { .tv_sec = INITIAL_PACKET_REFRESH_DELAY_SEC };
-	while (nanosleep(&refresh_delay, &refresh_delay) == -1) {
-		if (errno != EINTR) {
-			goto cleanup;
-		}
-	}
-	if (socket_send_all(client_fd, incomplete_packet + 1, 1) == -1) {
-		goto cleanup;
-	}
-	receive_result = message_receive(client_fd, &response, sizeof(response), INITIAL_PACKET_TIMEOUT_WAIT_MS);
-	if (receive_result != 0) {
-		if (receive_result > 0) {
-			errno = EPROTO;
-		}
-		goto cleanup;
-	}
-	upstream_client_fd = server_accept(upstream_server_fd, 0);
-	if (upstream_client_fd != -1 || errno != ETIMEDOUT) {
-		errno = EPROTO;
-		goto cleanup;
-	}
-	result = 0;
-cleanup: {
-		int saved_errno = errno;
-		if (upstream_client_fd != -1) {
-			close(upstream_client_fd);
-		}
-		if (client_fd != -1) {
-			close(client_fd);
-		}
-		errno = saved_errno;
-		return result;
-	}
-}
-
 static int worker_packet_truncate(in_port_t listener_port, int upstream_server_fd, const uint8_t *packet, size_t prefix_size) {
 	int client_fd = -1;
 	int result = -1;
@@ -888,9 +835,6 @@ int main(int argc, char **argv) {
 	upstream_server_fd = replacement_server_fd;
 	replacement_server_fd = -1;
 	upstream_port = replacement_port;
-
-	CHECK(worker_packet_timeout(listener_port, upstream_server_fd) == 0, "incomplete packet did not observe the absolute assembly timeout");
-	CHECK(kill(listener, 0) == 0, "incomplete packet timeout terminated listener");
 
 	for (size_t fixture_index = 0; fixture_index < sizeof(packet_fixtures) / sizeof(packet_fixtures[0]); fixture_index++) {
 		filename_length = snprintf(fixture_filename, sizeof(fixture_filename), "%s/%s", argv[2], packet_fixtures[fixture_index].filename);
