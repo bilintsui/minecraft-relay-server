@@ -295,6 +295,8 @@ Argument values, source/changelog version consistency, required commands and a c
 
 It builds under `build-deb-<arch>`, outputs packages under `packaging/deb/out`, and selects system paths such as `/usr/bin/mcrelay` and `/etc/mcrelay`. These are script-defined paths, not controlled by `CMAKE_INSTALL_PREFIX` or `EXEC_SUFFIX`. The script **deletes and recreates its architecture-specific build directory** and replaces an existing output package with the same filename; keep unrelated files out of those generated paths. Building a `.deb` does not install it on the host.
 
+The script sets its own umask to `022`, so newly created package directories and files have predictable permissions regardless of the invoking shell's umask. Explicit install modes keep ordinary files at `0644` and executables at `0755`; the invoking shell's umask is unchanged.
+
 ## Automated build and release
 
 The [build workflow](../.github/workflows/build.yml) runs on branch pushes. It keeps the production/Debug build and Debug+UBSan checks, adds optimized Release+UBSan tests and a separate global ASan+UBSan+LeakSanitizer job, and requires the Python integration tests to be registered. Failed test logs are stored as workflow artifacts. Tag pushes do not repeat these tests.

@@ -6,6 +6,9 @@
 
 set -eu
 
+# Package contents must have predictable permissions regardless of the invoking shell.
+umask 022
+
 PKG_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$PKG_DIR/../.." && pwd)
 

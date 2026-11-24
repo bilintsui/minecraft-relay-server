@@ -1,15 +1,76 @@
 #!/usr/bin/env python3
-"""Package preflight must preserve existing build state on input/dependency errors."""
+"""Package preflight preserves builds; archive permissions ignore the caller's umask."""
 
+import io
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class PackagingPermissions(unittest.TestCase):
+    def fixture(self, root):
+        package = root / "packaging/deb"
+        shutil.copytree(ROOT / "packaging/deb", package, ignore=shutil.ignore_patterns("out"))
+        for name in ("README.md", "doc/configuration/mcrelay/config.json", "doc/configuration/mcrelay/config.jsonc",
+                     "doc/information/loglevel.info", "doc/information/metrics.md", "doc/information/metrics-report.md", "tools/metrics-report.py"):
+            destination = root / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / name, destination)
+        (root / "src/define").mkdir(parents=True)
+        (root / "src/define/global.h").write_text('#define MCRELAY_VERSION_DISPLAY "1.0-test"\n')
+        (package / "changelog").write_text("mcrelay (1.0~test-1) unstable; urgency=low\n")
+        tools = root / "bin"
+        tools.mkdir()
+        commands = {
+            "cmake": 'if [ "$1" = --build ]; then printf "#!/bin/sh\\nexit 0\\n" >"$2/mcrelay"; chmod 0755 "$2/mcrelay"; fi\n',
+            "gcc": 'if [ "$1" = -print-prog-name=strip ]; then printf "strip\\n"; exit 0; fi\n'
+                   'while [ "$#" -gt 0 ]; do if [ "$1" = -o ]; then shift; printf "probe\\n" >"$1"; break; fi; shift; done\n',
+            "pandoc": 'while [ "$#" -gt 0 ]; do if [ "$1" = -o ]; then shift; printf ".TH MCRELAY 1\\n" >"$1"; break; fi; shift; done\n',
+            "strip": 'exit 0\n',
+        }
+        for name, body in commands.items():
+            path = tools / name
+            path.write_text("#!/bin/sh\nset -eu\n" + body)
+            path.chmod(0o755)
+        environment = os.environ.copy()
+        environment["PATH"] = str(tools) + os.pathsep + os.defpath
+        return package / "build-deb.sh", environment
+
+    def test_archive_permissions_ignore_caller_umask(self):
+        architecture = subprocess.check_output(["dpkg", "--print-architecture"], text=True).strip()
+        for mask in ("0000", "0002", "0022", "0027", "0077"):
+            with self.subTest(umask=mask), tempfile.TemporaryDirectory(prefix="mcrelay-permissions-test-") as directory:
+                root = Path(directory)
+                script, environment = self.fixture(root)
+                result = subprocess.run(["/bin/sh", "-c", 'umask "$1"; shift; exec /bin/sh "$@"', "package-permissions", mask, str(script)],
+                                        env=environment, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                package = root / ("packaging/deb/out/mcrelay_1.0~test-1_" + architecture + ".deb")
+                self.assertEqual(stat.S_IMODE(package.stat().st_mode), 0o644)
+                for option, executable, required in (
+                    ("--ctrl-tarfile", {"postinst", "postrm", "prerm"}, {"control", "conffiles", "md5sums", "postinst", "postrm", "prerm"}),
+                    ("--fsys-tarfile", {"usr/bin/mcrelay"}, {"usr/bin/mcrelay", "etc/mcrelay/config.json", "usr/share/doc/mcrelay/changelog.Debian.gz"}),
+                ):
+                    data = subprocess.check_output(["dpkg-deb", option, str(package)])
+                    with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
+                        members = archive.getmembers()
+                    names = set()
+                    for member in members:
+                        name = member.name[2:] if member.name.startswith("./") else member.name
+                        names.add(name)
+                        with self.subTest(umask=mask, archive=option, path=member.name):
+                            self.assertTrue(member.isdir() or member.isfile())
+                            self.assertEqual((member.uid, member.gid), (0, 0))
+                            self.assertEqual(member.mode, 0o755 if member.isdir() or name in executable else 0o644)
+                    self.assertTrue(required <= names, required - names)
 
 
 class PackagingPreflight(unittest.TestCase):
