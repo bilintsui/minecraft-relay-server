@@ -1,20 +1,48 @@
 #!/bin/sh
 set -e
 
+# Jammy's deb-systemd-helper and account tools operate on their process root.
+if [ -n "${DPKG_ROOT:-}" ]; then
+	[ "$1" = purge ] || exit 0
+	DPKG_ROOT= SYSTEMD_OFFLINE=1 exec chroot "$DPKG_ROOT" /bin/sh -s -- "$@" < "$0"
+fi
+
 STATE_DIRECTORY=/var/lib/mcrelay
 GROUP_MARKER="$STATE_DIRECTORY/group-created"
 USER_MARKER="$STATE_DIRECTORY/user-created"
 
+reload_systemd() {
+	if [ "${SYSTEMD_OFFLINE:-}" != 1 ] && [ -d /run/systemd/system ]; then
+		systemctl --system daemon-reload >/dev/null || true
+	fi
+}
+
+purge_systemd_units() {
+	# systemctl can enable individual instances without recording them in deb-systemd-helper's state.
+	instances_removed=false
+	for dir in "$1"/*.wants "$1"/*.requires "$1"/*.upholds; do
+		[ -d "$dir" ] && [ ! -L "$dir" ] || continue
+		deleted=$(find "$dir" -maxdepth 1 -type l -name 'mcrelay@?*.service' \
+			\( -lname '/lib/systemd/system/mcrelay@.service' -o -lname '/usr/lib/systemd/system/mcrelay@.service' \
+			-o -lname '../../../../lib/systemd/system/mcrelay@.service' -o -lname '../../../../usr/lib/systemd/system/mcrelay@.service' \) -delete -printf .)
+		[ -n "$deleted" ] || continue
+		instances_removed=true
+		rmdir "$dir" 2>/dev/null || true
+	done
+	if command -v deb-systemd-helper >/dev/null 2>&1; then
+		deb-systemd-helper purge 'mcrelay.service' 'mcrelay@.service' >/dev/null || true
+	fi
+	if "$instances_removed"; then
+		reload_systemd
+	fi
+}
+
 case "$1" in
 	remove)
-		if [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
-			systemctl --system daemon-reload >/dev/null || true
-		fi
+		reload_systemd
 		;;
 	purge)
-		if command -v deb-systemd-helper >/dev/null 2>&1; then
-			deb-systemd-helper purge 'mcrelay.service' 'mcrelay@.service' >/dev/null || true
-		fi
+		purge_systemd_units /etc/systemd/system
 
 		if [ -f "$USER_MARKER" ] && [ "$(getent passwd mcrelay | cut -d: -f3)" = "$(cat "$USER_MARKER")" ]; then
 			deluser --quiet --system mcrelay
@@ -30,5 +58,3 @@ case "$1" in
 		rmdir /etc/mcrelay 2>/dev/null || true
 		;;
 esac
-
-exit 0

@@ -49,6 +49,7 @@ if(BUILD_TESTING)
 	if(Python3_Interpreter_FOUND)
 		add_test(NAME ci_release COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/ci_release.py")
 		add_test(NAME packaging_preflight COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/packaging_preflight.py")
+		add_test(NAME packaging_purge COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/packaging_purge.py")
 		add_test(NAME version_log COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/version_log.py" $<TARGET_FILE:mcrelay${EXEC_SUFFIX}>)
 		add_test(NAME metrics_report COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/metrics_report.py")
 		add_test(NAME version_log_report COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/version_log.py"

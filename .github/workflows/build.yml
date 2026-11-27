@@ -27,7 +27,7 @@ jobs:
         run: |
           cmake -S . -B build-debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=ON -DBUILD_TESTING=ON -DUBSAN_TEST=ON
           cmake --build build-debug --parallel "$(nproc)"
-          python3 -c 'import json, subprocess; names = {t["name"] for t in json.loads(subprocess.check_output(["ctest", "--test-dir", "build-debug", "--show-only=json-v1"]))["tests"]}; assert {"version", "version_log", "version_log_report", "metrics_report", "packaging_preflight", "ci_release"} <= names, names'
+          python3 -c 'import json, subprocess; names = {t["name"] for t in json.loads(subprocess.check_output(["ctest", "--test-dir", "build-debug", "--show-only=json-v1"]))["tests"]}; assert {"version", "version_log", "version_log_report", "metrics_report", "packaging_preflight", "packaging_purge", "ci_release"} <= names, names'
           ctest --test-dir build-debug --output-on-failure --parallel 4
       - name: Save failed test logs
         if: failure()
@@ -58,7 +58,7 @@ jobs:
         run: |
           cmake -S . -B build-rel-ubsan -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=OFF -DBUILD_TESTING=ON -DUBSAN_TEST=ON -DCMAKE_C_FLAGS="-Wall -Wextra -Wshadow -Wpedantic -Werror"
           cmake --build build-rel-ubsan --parallel "$(nproc)"
-          python3 -c 'import json, subprocess; names = {t["name"] for t in json.loads(subprocess.check_output(["ctest", "--test-dir", "build-rel-ubsan", "--show-only=json-v1"]))["tests"]}; assert {"version", "version_log", "version_log_report", "metrics_report", "packaging_preflight", "ci_release"} <= names, names'
+          python3 -c 'import json, subprocess; names = {t["name"] for t in json.loads(subprocess.check_output(["ctest", "--test-dir", "build-rel-ubsan", "--show-only=json-v1"]))["tests"]}; assert {"version", "version_log", "version_log_report", "metrics_report", "packaging_preflight", "packaging_purge", "ci_release"} <= names, names'
           ctest --test-dir build-rel-ubsan --output-on-failure --parallel 4
       - name: Save failed test logs
         if: failure()
@@ -84,7 +84,7 @@ jobs:
         run: |
           cmake -S . -B build-asan-ubsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=OFF -DBUILD_TESTING=ON -DUBSAN_TEST=OFF -DCMAKE_C_FLAGS="-Wall -Wextra -Wshadow -Wpedantic -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           cmake --build build-asan-ubsan --parallel "$(nproc)"
-          python3 -c 'import json, subprocess; names = {t["name"] for t in json.loads(subprocess.check_output(["ctest", "--test-dir", "build-asan-ubsan", "--show-only=json-v1"]))["tests"]}; assert {"version", "version_log", "version_log_report", "metrics_report", "packaging_preflight", "ci_release"} <= names, names'
+          python3 -c 'import json, subprocess; names = {t["name"] for t in json.loads(subprocess.check_output(["ctest", "--test-dir", "build-asan-ubsan", "--show-only=json-v1"]))["tests"]}; assert {"version", "version_log", "version_log_report", "metrics_report", "packaging_preflight", "packaging_purge", "ci_release"} <= names, names'
           ctest --test-dir build-asan-ubsan --output-on-failure --parallel 1
       - name: Save failed test logs
         if: failure()

@@ -1,6 +1,12 @@
 #!/bin/sh
 set -e
 
+# Configure accounts, ownership and helper state inside the target installation.
+if [ -n "${DPKG_ROOT:-}" ]; then
+	[ "$1" = configure ] || exit 0
+	DPKG_ROOT= SYSTEMD_OFFLINE=1 exec chroot "$DPKG_ROOT" /bin/sh -s -- "$@" < "$0"
+fi
+
 STATE_DIRECTORY=/var/lib/mcrelay
 GROUP_MARKER="$STATE_DIRECTORY/group-created"
 USER_MARKER="$STATE_DIRECTORY/user-created"
@@ -21,7 +27,7 @@ case "$1" in
 		install -d -o mcrelay -g mcrelay -m 0755 /var/log/mcrelay
 
 		deb-systemd-helper update-state 'mcrelay.service' 'mcrelay@.service' >/dev/null || true
-		if [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
+		if [ "${SYSTEMD_OFFLINE:-}" != 1 ] && [ -d /run/systemd/system ]; then
 			systemctl --system daemon-reload >/dev/null || true
 			if [ -n "$2" ]; then
 				deb-systemd-invoke try-restart 'mcrelay.service' 'mcrelay@*.service' >/dev/null || true
