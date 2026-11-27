@@ -52,6 +52,28 @@ class PackagingPurge(unittest.TestCase):
         subprocess.run(["/bin/sh", str(POSTRM), "remove"], env=env, check=True)
         self.assertEqual(self.calls.read_text(), "")
 
+    def test_remove_reloads_only_an_online_systemd_manager(self):
+        systemctl = self.tools / "systemctl"
+        systemctl.write_text('#!/bin/sh\nprintf "%s\\n" systemctl "$@" >> "$CALLS"\nexit "$SYSTEMCTL_STATUS"\n')
+        systemctl.chmod(0o755)
+        # The maintainer script probes the real runtime directory, including in containers without systemd.
+        reload_call = ["systemctl", "--system", "daemon-reload"] if Path("/run/systemd/system").is_dir() else []
+        env = self.env.copy()
+        env.pop("SYSTEMD_OFFLINE", None)
+        for offline, status, expected in (
+            (None, 0, reload_call),
+            (None, 1, reload_call),
+            ("0", 0, reload_call),
+            ("1", 0, []),
+        ):
+            with self.subTest(offline=offline, systemctl_status=status):
+                self.calls.write_text("")
+                case_env = dict(env, SYSTEMCTL_STATUS=str(status))
+                if offline is not None:
+                    case_env["SYSTEMD_OFFLINE"] = offline
+                subprocess.run(["/bin/sh", str(POSTRM), "remove"], env=case_env, check=True)
+                self.assertEqual(self.calls.read_text().splitlines(), expected)
+
     @unittest.skipUnless(shutil.which("systemctl"), "requires systemctl for offline enablement")
     def test_reinstall_leaves_instance_disabled(self):
         old_mask = os.umask(0)
