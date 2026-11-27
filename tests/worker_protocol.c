@@ -263,12 +263,12 @@ static size_t query_handshake_build(uint8_t *destination, size_t destination_siz
 	return extension_handshake_build(destination, destination_size, address, extra, query_size + 3U, port, intent);
 }
 
-/* Builds a modern LOGIN handshake for the given virtual host; the signature tail makes a single-character host packet exactly BUFSIZ bytes. */
+/* Builds a modern LOGIN handshake for the given virtual host; the login tail makes a single-character host packet exactly BUFSIZ bytes. */
 static size_t rewrite_login_build(uint8_t *destination, size_t destination_size, const char *address, in_port_t port) {
-	static const size_t signature_size = 8178;
+	static const size_t login_tail_size = 8178;
 	size_t address_length = strlen(address);
 	size_t part1_size = 7 + address_length;
-	size_t part2_size = 3 + signature_size;
+	size_t part2_size = 3 + login_tail_size;
 	size_t offset = 0;
 	if (address_length > 127 || destination_size < (part1_size < 128 ? 1 : 2) + part1_size + (part2_size < 128 ? 1 : 2) + part2_size) {
 		return 0;
@@ -286,7 +286,7 @@ static size_t rewrite_login_build(uint8_t *destination, size_t destination_size,
 	destination[offset++] = 0x00;
 	destination[offset++] = 0x01;
 	destination[offset++] = 'u';
-	for (size_t index = 0; index < signature_size; index++) {
+	for (size_t index = 0; index < login_tail_size; index++) {
 		destination[offset++] = (uint8_t)((index * 7 + 3) % 251 + 2);
 	}
 	return offset;
@@ -413,7 +413,8 @@ static int socket_send_all(int socket_fd, const void *data, size_t size) {
 	return 0;
 }
 
-static int worker_packet_forward_split(in_port_t listener_port, int upstream_server_fd, const uint8_t *packet, size_t packet_size, size_t split_size, const uint8_t *expected, size_t expected_size) {
+static int worker_packet_forward_split(in_port_t listener_port, int upstream_server_fd, const uint8_t *packet, size_t packet_size, size_t split_size,
+	const uint8_t *expected, size_t expected_size, bool expect_eof) {
 	int client_fd = -1;
 	int result = -1;
 	int upstream_client_fd = -1;
@@ -452,7 +453,7 @@ static int worker_packet_forward_split(in_port_t listener_port, int upstream_ser
 		}
 		received_size += (size_t)receive_size;
 	}
-	if (memcmp(received, expected, expected_size) != 0) {
+	if (memcmp(received, expected, expected_size) != 0 || (expect_eof && message_receive(upstream_client_fd, received, 1, TEST_TIMEOUT_MS) != 0)) {
 		errno = EPROTO;
 		goto cleanup;
 	}
@@ -487,7 +488,7 @@ static int worker_packet_legacy_prefix_test(in_port_t listener_port, int upstrea
 			}
 			/* Exercise one write and splits after FE, FE 01 and the packet ID. */
 			for (size_t split_size = 0; split_size <= 3; split_size++) {
-				if (worker_packet_forward_split(listener_port, upstream_server_fd, input, input_size, split_size, expected, expected_size) != 0) {
+				if (worker_packet_forward_split(listener_port, upstream_server_fd, input, input_size, split_size, expected, expected_size, false) != 0) {
 					fprintf(stderr, "modern legacy-prefix forwarding failed: address length %zu, intent %u, split %zu, rewrite %d\n", address_lengths[index], intent, split_size, rewrite);
 					return -1;
 				}
@@ -508,7 +509,7 @@ static int worker_packet_origin_test(in_port_t listener_port, int upstream_serve
 			size_t expected_size = extension_handshake_build(expected, sizeof(expected), rewrite ? "127.0.0.1" : address, rewrite ? fixture->output : fixture->input,
 				rewrite ? fixture->output_size : fixture->input_size, rewrite ? upstream_port : 25565, intent);
 			if (input_size == 0 || expected_size == 0
-				|| worker_packet_forward_split(listener_port, upstream_server_fd, input, input_size, 1U, expected, expected_size) != 0) {
+				|| worker_packet_forward_split(listener_port, upstream_server_fd, input, input_size, 1U, expected, expected_size, false) != 0) {
 				fprintf(stderr, "origin forwarding failed: fixture %zu, intent %u, rewrite %d\n", index, intent, rewrite);
 				return -1;
 			}
@@ -895,7 +896,7 @@ int main(int argc, char **argv) {
 			fixture[2] = 1;
 		}
 		for (size_t split_size = 1; split_size < (size_t)fixture_size; split_size++) {
-			int fragment_result = worker_packet_forward_split(listener_port, upstream_server_fd, fixture, (size_t)fixture_size, split_size, fixture, (size_t)fixture_size);
+			int fragment_result = worker_packet_forward_split(listener_port, upstream_server_fd, fixture, (size_t)fixture_size, split_size, fixture, (size_t)fixture_size, false);
 			if (fragment_result == -1) {
 				fprintf(stderr, "fragmented fixture %s failed at split %zu\n", fragment_fixtures[fixture_index].filename, split_size);
 			}
@@ -930,6 +931,16 @@ int main(int argc, char **argv) {
 	CHECK(ready_length > 0, "rewrite READY notification is missing");
 	ready_message[ready_length] = '\0';
 	CHECK(strcmp(ready_message, "READY=1") == 0, "rewrite READY notification is invalid");
+	/* A 1.20.1 Login Start without a UUID, followed by a two-byte frame on the same stream. */
+	static const uint8_t login_stream[] = { 8, 0, 0xFB, 5, 1, 'a', 0x63, 0xDD, 2, 4, 0, 1, 'u', 0, 1, 0 };
+	uint8_t rewritten_stream[] = { 16, 0, 0xFB, 5, 9, '1', '2', '7', '.', '0', '.', '0', '.', '1', (uint8_t)(upstream_port >> 8), (uint8_t)upstream_port, 2, 4, 0, 1, 'u', 0, 1, 0 };
+	size_t before_uuid_flag = sizeof(login_stream) - 3U;
+	CHECK(worker_packet_truncate(listener_port, upstream_server_fd, login_stream, before_uuid_flag) == 0, "incomplete Login Start reached the backend");
+	const size_t splits[] = { 0, before_uuid_flag, before_uuid_flag + 1U, before_uuid_flag + 2U };
+	for (size_t index = 0; index < sizeof(splits) / sizeof(splits[0]); index++) {
+		int forward_result = worker_packet_forward_split(listener_port, upstream_server_fd, login_stream, sizeof(login_stream), splits[index], rewritten_stream, sizeof(rewritten_stream), true);
+		CHECK(forward_result == 0, "rewriting Login Start changed the frame or the following stream");
+	}
 	CHECK(worker_packet_origin_test(listener_port, upstream_server_fd, upstream_port, true) == 0, "origin properties were not removed during rewrite");
 	CHECK(child_count_wait(listener, helper_child_baseline, TEST_TIMEOUT_MS) == 0, "origin rewrite did not release its workers");
 	CHECK(worker_packet_legacy_prefix_test(listener_port, upstream_server_fd, upstream_port, true) == 0, "FE-prefixed modern frames were not rewritten correctly");

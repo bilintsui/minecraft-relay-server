@@ -378,6 +378,74 @@ static bool motd_bounds_test(void) {
 	return true;
 }
 
+static bool packet_login_tail_test(void) {
+	static const uint8_t host_fields[] = { 1, 'h', 0x63, 0xDD, CLIENT_INTENT_LOGIN };
+	static const uint8_t next_frame[] = { 1, 0 };
+	static const struct {
+		varint_t version;
+		uint8_t tail[18];
+		size_t size;
+	} cases[] = {
+		{ 340, { 0 }, 0 },                     /* Username only. */
+		{ 760, { 0, 0 }, 2 },                  /* No public key or UUID. */
+		{ 760, { 0, 1, 0xA5 }, 18 },           /* No public key, UUID present. */
+		{ 763, { 0 }, 1 },                     /* Optional UUID absent. */
+		{ 763, { 1, 0xA5 }, 17 },              /* Optional UUID present. */
+		{ 764, { 0, 0xA5 }, 16 },              /* Mandatory UUID starting with zero. */
+		{ 764, { 1, 0xA5 }, 16 },              /* Mandatory UUID starting with one. */
+		{ 0x4000008E, { 1, 0xA5 }, 17 },       /* Optional UUID in a snapshot. */
+		{ 0x40000090, { 1, 0xA5 }, 16 }        /* Mandatory UUID in a snapshot. */
+	};
+	for (size_t index = 0; index < sizeof(cases) / sizeof(cases[0]); index++) {
+		uint8_t input[64] = { 0 };
+		uint8_t output[96];
+		uint8_t *host = int2varint(cases[index].version, input + 2);
+		memcpy(host, host_fields, sizeof(host_fields));
+		uint8_t *second = host + sizeof(host_fields);
+		input[0] = (uint8_t)(second - input - 1);
+		size_t tail_size = cases[index].size;
+		second[0] = (uint8_t)(3U + tail_size);
+		second[1] = 0;
+		second[2] = 1;
+		second[3] = 'U';
+		memcpy(second + 4, cases[index].tail, tail_size);
+		size_t second_size = 4U + tail_size;
+		size_t input_size = (size_t)(second - input) + second_size;
+		size_t needed;
+		memcpy(second + second_size, next_frame, sizeof(next_frame));
+		if (protocol_packet_length(input, input_size - 1U, &needed) != PROTOCOL_PACKET_INCOMPLETE || needed != input_size
+			|| protocol_packet_length(input, input_size + sizeof(next_frame), &needed) != PROTOCOL_PACKET_COMPLETE || needed != input_size) {
+			return false;
+		}
+		p_handshake packet = packet_read(input, input + input_size - 1U);
+		if (packet.address != NULL || packet.login_tail != NULL || packet.login_tail_length != 0 || packet.post_login_length != 0) {
+			packet_destroy(packet);
+			return false;
+		}
+		for (size_t following = 0; following <= sizeof(next_frame); following++) {
+			packet = packet_read(input, input + input_size + following);
+			size_t buffered = tail_size + following;
+			bool tail_matches = buffered == 0 ? packet.login_tail == NULL : packet.login_tail != NULL && memcmp(packet.login_tail, second + 4, buffered) == 0;
+			if (packet.address == NULL || packet.login_tail_length != tail_size || packet.post_login_length != following || !tail_matches) {
+				packet_destroy(packet);
+				return false;
+			}
+			p_handshake rewritten = packet;
+			rewritten.address = (void *)"backend.example";
+			rewritten.port = 25566;
+			size_t first_frame_size = (size_t)(second - input) - 1U + strlen("backend.example");
+			size_t expected_size = first_frame_size + second_size + following;
+			bool valid = packet_write(output, expected_size - 1U, rewritten) == 0 && packet_write(output, expected_size, rewritten) == expected_size
+				&& output[0] == first_frame_size - 1U && memcmp(output + first_frame_size, second, second_size + following) == 0;
+			packet_destroy(packet);
+			if (!valid) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
 static bool packet_read_bounds_test(void) {
 	static const struct {
 		const uint8_t *bytes;
@@ -395,7 +463,7 @@ static bool packet_read_bounds_test(void) {
 	/* Both flush cases end at an ASan-protected object boundary; the cross-field case keeps bytes available but outside the declared address. */
 	static const uint8_t fml_cross_field[] = { 0x0C, 0x00, 0x2F, 0x02, 'x', '\0', 'F', 'M', 'L', '\0', 0x63, 0xDD, 0x01 };
 	static const uint8_t fml_flush[] = { 0x0A, 0x00, 0x2F, 0x03, 't', 'e', '\0' };
-	static const uint8_t signature_flush[] = { 0x10, 0x00, 0x2F, 0x04, 't', 'e', 's', 't', 0x63, 0xDD, 0x02, 0x06, 0x00, 0x03, 'a', 'b', 'c' };
+	static const uint8_t login_tail_flush[] = { 0x10, 0x00, 0x2F, 0x04, 't', 'e', 's', 't', 0x63, 0xDD, 0x02, 0x06, 0x00, 0x03, 'a', 'b', 'c' };
 	static const uint8_t frame1_overdeclared[] = { 0x20, 0x00, 0x2F, 0x02, 'h', 'i', 0x63, 0xDD, 0x01 };
 	static const uint8_t frame1_underdeclared[] = { 0x05, 0x00, 0x2F, 0x04, 'h', 'o', 's', 't', 0x63, 0xDD, 0x01 };
 	static const uint8_t frame1_padding[] = { 0x0A, 0x00, 0x2F, 0x02, 'h', 'i', 0x63, 0xDD, 0x01, 0x00, 0x00 };
@@ -403,7 +471,7 @@ static bool packet_read_bounds_test(void) {
 	static const uint8_t modern1_varint_port[] = { 0x10, 0x00, 0x00, 0x09, 'l', 'o', 'c', 'a', 'l', 'h', 'o', 's', 't', 0xDD, 0xC7, 0x01, 0x02 };
 	static const uint8_t frame2_overdeclared[] = { 0x08, 0x00, 0x2F, 0x02, 'h', 'i', 0x63, 0xDD, 0x02, 0x30, 0x00, 0x03, 'a', 'b', 'c' };
 	static const uint8_t frame2_exact[] = { 0x08, 0x00, 0x2F, 0x02, 'h', 'i', 0x63, 0xDD, 0x02, 0x06, 0x00, 0x03, 'a', 'b', 'c', 0xA5, 0x99 };
-	static const uint8_t signature[] = { 0xA5, 0x5A };
+	static const uint8_t login_tail[17] = { 1, 0xA5, 0x5A }; /* Presence flag and UUID in protocol 763. */
 	uint8_t encoded[64];
 	uint8_t packet_buffer[64];
 	p_handshake packet;
@@ -418,7 +486,7 @@ static bool packet_read_bounds_test(void) {
 		packet_destroy(packet);
 		return false;
 	}
-	packet = packet_read((void *)signature_flush, (void *)(signature_flush + sizeof(signature_flush)));
+	packet = packet_read((void *)login_tail_flush, (void *)(login_tail_flush + sizeof(login_tail_flush)));
 	if (packet.address != NULL) {
 		packet_destroy(packet);
 		return false;
@@ -459,10 +527,10 @@ static bool packet_read_bounds_test(void) {
 		packet_destroy(packet);
 		return false;
 	}
-	/* A second frame declared to cover exactly its signature byte parses normally; bytes beyond the declared frame belong to the next frame. */
+	/* Both bytes are buffered, but only the first belongs to this Login Start. */
 	packet = packet_read((void *)frame2_exact, (void *)(frame2_exact + sizeof(frame2_exact)));
 	if (packet.address == NULL || packet.username == NULL || strcmp(packet.address, "hi") != 0 || strcmp(packet.username, "abc") != 0
-		|| packet.signature_data_length != 1 || packet.signature_data == NULL || memcmp(packet.signature_data, "\xA5", 1) != 0) {
+		|| packet.login_tail_length != 1 || packet.post_login_length != 1 || packet.login_tail == NULL || memcmp(packet.login_tail, "\xA5\x99", 2) != 0) {
 		packet_destroy(packet);
 		return false;
 	}
@@ -502,16 +570,19 @@ static bool packet_read_bounds_test(void) {
 	source.address_extra_length = sizeof("?key=value\0FORGE") - 1U;
 	source.nextstate = CLIENT_INTENT_LOGIN;
 	source.port = 25565;
-	source.signature_data = (void *)signature;
-	source.signature_data_length = sizeof(signature);
+	source.login_tail = (void *)login_tail;
+	source.login_tail_length = sizeof(login_tail);
 	source.username = (void *)"player";
-	source.version = PVERDB_R_1_20_1;
+	source.version = 763;
 	size_t packet_size = packet_write(packet_buffer, sizeof(packet_buffer), source);
+	if (packet_size < sizeof(login_tail) || memcmp(packet_buffer + packet_size - sizeof(login_tail), login_tail, sizeof(login_tail)) != 0) {
+		return false;
+	}
 	packet = packet_read(packet_buffer, packet_buffer + packet_size);
-	if (packet_size == 0 || packet.address == NULL || packet.username == NULL || strcmp(packet.address, "host") != 0 || strcmp(packet.username, "player") != 0
+	if (packet.address == NULL || packet.username == NULL || strcmp(packet.address, "host") != 0 || strcmp(packet.username, "player") != 0
 		|| packet.address_extra_length != source.address_extra_length || packet.address_extra == NULL
 		|| memcmp(packet.address_extra, source.address_extra, source.address_extra_length) != 0
-		|| packet.signature_data_length != sizeof(signature) || packet.signature_data == NULL || memcmp(packet.signature_data, signature, sizeof(signature)) != 0) {
+		|| packet.login_tail_length != sizeof(login_tail) || packet.login_tail == NULL || memcmp(packet.login_tail, login_tail, sizeof(login_tail)) != 0) {
 		packet_destroy(packet);
 		return false;
 	}
@@ -521,7 +592,7 @@ static bool packet_read_bounds_test(void) {
 
 static bool packet_remove_origin_test(void) {
 	static const intent_t intents[] = { CLIENT_INTENT_STATUS, CLIENT_INTENT_LOGIN, CLIENT_INTENT_TRANSFER };
-	static const uint8_t signature[] = { 0xA5, 0x00, 0xFF, 0x5A };
+	static const uint8_t login_tail[] = { 0xA5, 0x00, 0xFF, 0x5A };
 	packet_remove_origin(NULL);
 	for (size_t index = 0; index < sizeof(handshake_origin_fixtures) / sizeof(handshake_origin_fixtures[0]); index++) {
 		const handshake_origin_fixture *fixture = &handshake_origin_fixtures[index];
@@ -533,10 +604,10 @@ static bool packet_remove_origin_test(void) {
 			source.address_extra_length = fixture->input_size;
 			source.nextstate = intents[intent_index];
 			source.port = 25565;
-			source.signature_data = (void *)signature;
-			source.signature_data_length = sizeof(signature);
+			source.login_tail = (void *)login_tail;
+			source.login_tail_length = sizeof(login_tail);
 			source.username = (void *)"player";
-			source.version = PVERDB_R_1_20_1 + 1U;
+			source.version = 764;
 			size_t size = packet_write(encoded, sizeof(encoded), source);
 			if (size == 0) {
 				return false;
@@ -557,8 +628,8 @@ static bool packet_remove_origin_test(void) {
 			valid = valid && packet.address != NULL && packet.address_extra_length == fixture->output_size
 				&& (fixture->output_size == 0 || (packet.address_extra != NULL && memcmp(packet.address_extra, fixture->output, fixture->output_size) == 0));
 			if (intents[intent_index] != CLIENT_INTENT_STATUS) {
-				valid = valid && packet.username != NULL && strcmp(packet.username, "player") == 0 && packet.signature_data_length == sizeof(signature)
-					&& packet.signature_data != NULL && memcmp(packet.signature_data, signature, sizeof(signature)) == 0;
+				valid = valid && packet.username != NULL && strcmp(packet.username, "player") == 0 && packet.login_tail_length == sizeof(login_tail)
+					&& packet.login_tail != NULL && memcmp(packet.login_tail, login_tail, sizeof(login_tail)) == 0;
 			}
 			packet_destroy(packet);
 			if (!valid) {
@@ -592,6 +663,58 @@ static bool packet_roundtrip(client_fixture_kind kind, protocol_version protocol
 	return target_size == source_size && memcmp(source, target, source_size) == 0;
 }
 
+static bool packet_username_bounds_test(void) {
+	/* Protocol 766, host "h", port 25565. The intent is the last byte of the first frame. */
+	static const uint8_t handshake_prefix[] = { 8, 0, 0xFE, 0x05, 1, 'h', 0x63, 0xDD };
+	static const intent_t intents[] = { CLIENT_INTENT_LOGIN, CLIENT_INTENT_TRANSFER };
+	static const uint8_t uuid[16] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16 };
+	static const struct {
+		size_t length;
+		bool accepted;
+	} usernames[] = {
+		{ 127, true },
+		{ 128, true },
+		{ 129, false }
+	};
+	uint8_t input[256], output[sizeof(input)], second_frame[sizeof(input)] = { 0 };
+	memcpy(input, handshake_prefix, sizeof(handshake_prefix));
+	size_t first_size = sizeof(handshake_prefix) + 1;
+	for (size_t index = 0; index < sizeof(usernames) / sizeof(usernames[0]); index++) {
+		size_t length = usernames[index].length;
+		uint8_t *name = int2varint((varint_t)length, second_frame + 1);
+		memset(name, 'u', length);
+		memcpy(name + length, uuid, sizeof(uuid));
+		size_t second_size = (size_t)(name - second_frame) + length + sizeof(uuid);
+		uint8_t *payload = int2varint((varint_t)second_size, input + first_size);
+		memcpy(payload, second_frame, second_size);
+		size_t size = (size_t)(payload - input) + second_size;
+		for (size_t intent_index = 0; intent_index < sizeof(intents) / sizeof(intents[0]); intent_index++) {
+			intent_t intent = intents[intent_index];
+			input[first_size - 1] = (uint8_t)intent;
+			size_t needed;
+			if (protocol_packet_length(input, first_size + 1, &needed) != PROTOCOL_PACKET_INCOMPLETE || needed <= first_size + 1
+				|| protocol_packet_length(input, size - 1, &needed) != PROTOCOL_PACKET_INCOMPLETE || needed != size
+				|| protocol_packet_length(input, size, &needed) != PROTOCOL_PACKET_COMPLETE || needed != size) {
+				fprintf(stderr, "second frame length mismatch for %zu username bytes, intent %u\n", length, (unsigned int)intent);
+				return false;
+			}
+			p_handshake packet = packet_read(input, input + size);
+			bool valid = packet.address == NULL;
+			if (usernames[index].accepted) {
+				valid = packet.address != NULL && packet.nextstate == intent && packet.username != NULL && strlen(packet.username) == length && memcmp(packet.username, name, length) == 0
+					&& packet.login_tail_length == sizeof(uuid) && packet.login_tail != NULL && memcmp(packet.login_tail, uuid, sizeof(uuid)) == 0
+					&& packet_write(output, size, packet) == size && memcmp(output, input, size) == 0;
+			}
+			packet_destroy(packet);
+			if (!valid) {
+				fprintf(stderr, "username boundary mismatch for %zu bytes, intent %u\n", length, (unsigned int)intent);
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
 static bool packet_utf8_bounds_test(void) {
 	static const struct {
 		size_t length;
@@ -615,7 +738,7 @@ static bool packet_utf8_bounds_test(void) {
 	static const intent_t intents[] = { CLIENT_INTENT_STATUS, CLIENT_INTENT_LOGIN, CLIENT_INTENT_TRANSFER };
 	uint8_t input[4096];
 	uint8_t output[4096];
-	uint8_t signature[16] = { 0 };
+	uint8_t login_tail[16] = { 0 };
 	for (size_t character_index = 0; character_index < sizeof(characters) / sizeof(characters[0]); character_index++) {
 		for (size_t case_index = 0; case_index < sizeof(cases) / sizeof(cases[0]); case_index++) {
 			for (size_t intent_index = 0; intent_index < sizeof(intents) / sizeof(intents[0]); intent_index++) {
@@ -642,8 +765,8 @@ static bool packet_utf8_bounds_test(void) {
 				if (intents[intent_index] != CLIENT_INTENT_STATUS) {
 					*cursor++ = 1;
 					*cursor++ = 'u';
-					memcpy(cursor, signature, sizeof(signature));
-					cursor += sizeof(signature);
+					memcpy(cursor, login_tail, sizeof(login_tail));
+					cursor += sizeof(login_tail);
 				}
 				size_t input_size = (size_t)(cursor - input);
 				p_handshake decoded = packet_read(input, cursor);
@@ -654,7 +777,7 @@ static bool packet_utf8_bounds_test(void) {
 				}
 				packet_destroy(decoded);
 				p_handshake source = { .address = (void *)"localhost", .address_extra = address + 9, .address_extra_length = address_length - 9U,
-					.nextstate = intents[intent_index], .port = 25565, .signature_data = signature, .signature_data_length = sizeof(signature),
+					.nextstate = intents[intent_index], .port = 25565, .login_tail = login_tail, .login_tail_length = sizeof(login_tail),
 					.username = (void *)"u", .version = 0x40000153 };
 				size_t written = packet_write(output, sizeof(output), source);
 				valid = valid && (cases[case_index].accepted ? written == input_size && memcmp(output, input, input_size) == 0 : written == 0);
@@ -670,17 +793,18 @@ static bool packet_utf8_bounds_test(void) {
 
 static bool packet_write_bounds_test(void) {
 	static const uint8_t address_extra[] = { 0, 'x' };
+	static const uint8_t following[] = { 1, 0 };
 	uint8_t scratch[BUFSIZ * 2];
-	uint8_t *signature = malloc(BUFSIZ);
+	uint8_t *login_tail = malloc(BUFSIZ);
 	char *long_address = malloc(PROTOHANDSHAKE_ADDRESSMAXLEN + 2U);
 	char *long_username = malloc(PROTOHANDSHAKE_USERNAMEMAXLEN + 2U);
 	p_handshake packet;
 	bool result = false;
 	size_t encoded_size;
-	if (signature == NULL || long_address == NULL || long_username == NULL) {
+	if (login_tail == NULL || long_address == NULL || long_username == NULL) {
 		goto cleanup;
 	}
-	memset(signature, 's', BUFSIZ);
+	memset(login_tail, 's', BUFSIZ);
 	memset(long_address, 'a', PROTOHANDSHAKE_ADDRESSMAXLEN + 1U);
 	long_address[PROTOHANDSHAKE_ADDRESSMAXLEN + 1U] = '\0';
 	memset(long_username, 'u', PROTOHANDSHAKE_USERNAMEMAXLEN + 1U);
@@ -689,10 +813,10 @@ static bool packet_write_bounds_test(void) {
 	packet.address = (void *)"status.example";
 	packet.nextstate = CLIENT_INTENT_LOGIN;
 	packet.port = 25565;
-	packet.version = PVERDB_R_1_20_1 + 1U;
+	packet.version = 764;
 	packet.username = (void *)"player";
-	packet.signature_data = signature;
-	packet.signature_data_length = 1024;
+	packet.login_tail = login_tail;
+	packet.login_tail_length = 1024;
 	/* An exact destination capacity succeeds while one byte less is rejected. */
 	encoded_size = packet_write(scratch, sizeof(scratch), packet);
 	if (encoded_size == 0 || packet_write(scratch, encoded_size, packet) != encoded_size || packet_write(scratch, encoded_size - 1U, packet) != 0) {
@@ -749,19 +873,56 @@ static bool packet_write_bounds_test(void) {
 		goto cleanup;
 	}
 	packet.username = (void *)"player";
-	/* The signature bound keeps the second staging buffer within BUFSIZ: the bound itself is accepted, one byte more is rejected. */
-	packet.signature_data_length = BUFSIZ - 6U - 8U;
+	/* The one-byte packet ID, one-byte name length and six-byte name precede the tail. */
+	packet.login_tail_length = BUFSIZ - 1U - 1U - strlen(packet.username);
 	encoded_size = packet_write(scratch, sizeof(scratch), packet);
-	/* The largest independent fields exceed the listener's inbound limit, but the writer must still honor its caller's output capacity. */
-	if (encoded_size != 11270 || packet_write(scratch, 11270, packet) != 11270 || packet_write(scratch, 11269, packet) != 0) {
+	/* The first frame adds ten bytes to the hostname. The full second frame has a two-byte length prefix. */
+	size_t expected_size = 10U + PROTOHANDSHAKE_ADDRESSMAXLEN + 2U + BUFSIZ;
+	if (encoded_size != expected_size || packet_write(scratch, expected_size, packet) != expected_size || packet_write(scratch, expected_size - 1U, packet) != 0) {
 		goto cleanup;
 	}
-	packet.signature_data_length = BUFSIZ - 6U - 8U + 1U;
+	/* Bytes after a full Login Start still fit when the destination has room beyond that frame. */
+	memcpy(login_tail + packet.login_tail_length, following, sizeof(following));
+	packet.post_login_length = sizeof(following);
+	if (packet_write(scratch, expected_size, packet) != 0 || packet_write(scratch, expected_size + sizeof(following), packet) != expected_size + sizeof(following)
+		|| memcmp(scratch + expected_size, following, sizeof(following)) != 0) {
+		goto cleanup;
+	}
+	packet.post_login_length = 0;
+	packet.login_tail_length++;
 	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
 		goto cleanup;
 	}
-	packet.signature_data_length = 1024;
-	/* Missing address or username fields are rejected instead of dereferenced. */
+	/* A five-byte ID and a two-byte name length leave fewer bytes for the same full frame. */
+	packet.id_part2 = UINT32_MAX;
+	long_username[PROTOHANDSHAKE_USERNAMEMAXLEN] = '\0';
+	packet.username = long_username;
+	packet.login_tail_length = BUFSIZ - 5U - 2U - PROTOHANDSHAKE_USERNAMEMAXLEN;
+	if (packet_write(scratch, sizeof(scratch), packet) != expected_size) {
+		goto cleanup;
+	}
+	packet.login_tail_length++;
+	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
+		goto cleanup;
+	}
+	packet.login_tail_length = 1024;
+	packet.login_tail = NULL;
+	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
+		goto cleanup;
+	}
+	packet.login_tail_length = 0;
+	packet.post_login_length = 1;
+	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
+		goto cleanup;
+	}
+	packet.login_tail = login_tail;
+	packet.login_tail_length = 1024;
+	packet.post_login_length = SIZE_MAX;
+	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
+		goto cleanup;
+	}
+	packet.post_login_length = 0;
+	/* The address and username are required as well. */
 	packet.address = NULL;
 	if (packet_write(scratch, sizeof(scratch), packet) != 0) {
 		goto cleanup;
@@ -773,7 +934,7 @@ static bool packet_write_bounds_test(void) {
 	}
 	result = true;
 cleanup:
-	free(signature);
+	free(login_tail);
 	free(long_address);
 	free(long_username);
 	return result;
@@ -965,8 +1126,10 @@ int main(int argc, char **argv) {
 	CHECK(kickreason_bounds_test(), "bounded kick response construction failed");
 	CHECK(legacy_motd_bounds_test(argv[1]), "bounded legacy M3 parsing failed");
 	CHECK(motd_bounds_test(), "bounded MOTD encoding failed");
+	CHECK(packet_login_tail_test(), "handshake rewrite changed Login Start fields");
 	CHECK(packet_read_bounds_test(), "bounded handshake packet reading failed");
 	CHECK(packet_remove_origin_test(), "handshake origin filtering failed");
+	CHECK(packet_username_bounds_test(), "handshake username byte limits failed");
 	CHECK(packet_utf8_bounds_test(), "UTF-8 handshake address bounds failed");
 	CHECK(varint_bounds_test(), "bounded varint decoding failed");
 	CHECK(packet_write_bounds_test(), "bounded packet construction failed");

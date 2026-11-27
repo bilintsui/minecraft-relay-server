@@ -207,9 +207,9 @@ void packet_destroy(p_handshake object) {
 		free(object.address_extra);
 		object.address_extra = NULL;
 	}
-	if (object.signature_data != NULL) {
-		free(object.signature_data);
-		object.signature_data = NULL;
+	if (object.login_tail != NULL) {
+		free(object.login_tail);
+		object.login_tail = NULL;
 	}
 	if (object.username != NULL) {
 		free(object.username);
@@ -319,19 +319,15 @@ p_handshake packet_read(void *src, void *end) {
 		}
 		memcpy(result.username, src, username_length);
 		src = (char *)src + username_length;
-		/* The signature data is the declared remainder of the second frame, never bytes beyond it. */
-		result.signature_data_length = (size_t)(part2_end - (char *)src);
-		if (result.signature_data_length) {
-			if (((result.version <= PVERDB_R_1_20_1) || ((result.version & PVERDB_SNAPMASK) <= PVERDB_S_1_20_1_RC1)) && (char *)src < part2_end && (*((char *)src) == 1)) {
-				result.signature_data_length--;
-				src = (char *)src + 1;
-			}
-			result.signature_data = malloc(result.signature_data_length);
-			if (result.signature_data == NULL) {
+		result.login_tail_length = (size_t)(part2_end - (char *)src);
+		result.post_login_length = (size_t)((char *)end - part2_end);
+		size_t buffered_length = (size_t)((char *)end - (char *)src);
+		if (buffered_length != 0) {
+			result.login_tail = malloc(buffered_length);
+			if (result.login_tail == NULL) {
 				goto cleanup;
 			}
-			memcpy(result.signature_data, src, result.signature_data_length);
-			src = (char *)src + result.signature_data_length;
+			memcpy(result.login_tail, src, buffered_length);
 		}
 	}
 	return result;
@@ -373,7 +369,8 @@ void packet_remove_origin(p_handshake *packet) {
 
 size_t packet_write(void *dst, size_t dst_capacity, const p_handshake src) {
 	uint8_t *part1, *part2, *ptr_dst, *ptr_part1, *ptr_part2;
-	size_t address_length, address_size, size, size_part1, size_part2, username_length;
+	size_t address_length, address_size, frames_size, size_part1, size_part2, username_length;
+	size_t post_login_length = 0;
 	if (dst == NULL || src.address == NULL) {
 		return 0;
 	}
@@ -389,8 +386,9 @@ size_t packet_write(void *dst, size_t dst_capacity, const p_handshake src) {
 			return 0;
 		}
 		username_length = strlen(src.username);
-		/* The 8-byte reserve covers the id, username-length, and legacy placeholder varints, keeping both staging buffers within BUFSIZ. */
-		if (username_length > PROTOHANDSHAKE_USERNAMEMAXLEN || (src.signature_data_length > 0 && src.signature_data == NULL) || src.signature_data_length > BUFSIZ - username_length - 8U) {
+		post_login_length = src.post_login_length;
+		if (username_length > PROTOHANDSHAKE_USERNAMEMAXLEN || ((src.login_tail_length != 0 || post_login_length != 0) && src.login_tail == NULL)
+			|| src.login_tail_length > BUFSIZ - varint_size(src.id_part2) - varint_size((varint_t)username_length) - username_length) {
 			return 0;
 		}
 	}
@@ -419,28 +417,28 @@ size_t packet_write(void *dst, size_t dst_capacity, const p_handshake src) {
 		ptr_part2 = int2varint(username_length, ptr_part2);
 		memcpy(ptr_part2, src.username, username_length);
 		ptr_part2 += username_length;
-		if (src.signature_data_length) {
-			if ((src.version <= PVERDB_R_1_20_1) || ((src.version & PVERDB_SNAPMASK) <= PVERDB_S_1_20_1_RC1)) {
-				ptr_part2 = int2varint(1, ptr_part2);
-			}
-			memcpy(ptr_part2, src.signature_data, src.signature_data_length);
-			ptr_part2 += src.signature_data_length;
+		if (src.login_tail_length != 0) {
+			memcpy(ptr_part2, src.login_tail, src.login_tail_length);
+			ptr_part2 += src.login_tail_length;
 		}
 	}
 	size_part2 = ptr_part2 - part2;
-	if (dst_capacity < varint_size(size_part1) + size_part1 + varint_size(size_part2) + size_part2) {
+	frames_size = varint_size(size_part1) + size_part1 + varint_size(size_part2) + size_part2;
+	if (frames_size > dst_capacity || post_login_length > dst_capacity - frames_size) {
 		free(part1);
 		free(part2);
 		return 0;
+	}
+	if (post_login_length != 0) {
+		/* Copy these bytes before the staged frames in case the output overlaps the source. */
+		memmove(ptr_dst + frames_size, (const uint8_t *)src.login_tail + src.login_tail_length, post_login_length);
 	}
 	ptr_dst = int2varint(size_part1, ptr_dst);
 	memcpy(ptr_dst, part1, size_part1);
 	ptr_dst += size_part1;
 	ptr_dst = int2varint(size_part2, ptr_dst);
 	memcpy(ptr_dst, part2, size_part2);
-	ptr_dst += size_part2;
-	size = ptr_dst - (uint8_t *)dst;
 	free(part1);
 	free(part2);
-	return size;
+	return frames_size + post_login_length;
 }
