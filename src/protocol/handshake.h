@@ -31,11 +31,12 @@
 #define PROTOHANDSHAKE_USERNAMEMAXLEN	128
 
 /* section: types */
-/* packet_read allocates address and, when present, address_extra. The latter holds raw bytes from the first NUL or '?' through the wire address's declared end. */
+/* packet_destroy frees fields from packet_read. address_extra starts at the first NUL or '?'.
+ * login_tail holds login_tail_length bytes inside Login Start, followed by post_login_length bytes already received after that frame. */
 typedef struct {
 	varint_t id_part1, id_part2, nextstate, version;
-	void *address, *address_extra, *signature_data, *username;
-	size_t address_extra_length, signature_data_length;
+	void *address, *address_extra, *login_tail, *username;
+	size_t address_extra_length, login_tail_length, post_login_length;
 	in_port_t port;
 } p_handshake;
 
@@ -51,7 +52,7 @@ void packet_destroy(p_handshake object);
 p_handshake packet_read(void *src, void *end);
 /* Removes all query properties whose once-decoded key is "_o" from packet_read-owned storage in place, preserving other bytes and the first NUL and its suffix. */
 void packet_remove_origin(p_handshake *packet);
-/* Returns the total bytes written and 0 when dst is NULL, src fields are missing or exceed the packet_read limits, memory allocation fails, or the encoded packet does not fit dst_capacity. */
+/* Returns the total bytes written, including buffered bytes following Login Start. Returns 0 for invalid arguments, allocation failure or insufficient capacity. */
 size_t packet_write(void *dst, size_t dst_capacity, const p_handshake src);
 
 #endif

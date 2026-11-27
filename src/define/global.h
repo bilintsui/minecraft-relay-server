@@ -27,11 +27,6 @@
 #define MCRELAY_VERSION_INTERNAL	"80"
 #define MCRELAY_COPYYEAR	"2020-2026"
 
-/* protocol version constant */
-#define PVERDB_SNAPMASK	0xBFFFFFFF
-#define PVERDB_R_1_20_1	763
-#define PVERDB_S_1_20_1_RC1	0x8E
-
 /* varint */
 #define VARINT_T_MAXIDX	(sizeof(varint_t) * 8 / 7)
 #define VARINT_T_LAST_MASK	((varint_t)((1u << ((sizeof(varint_t) * 8) % 7)) - 1))

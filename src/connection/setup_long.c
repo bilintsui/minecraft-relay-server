@@ -369,8 +369,7 @@ static connection_setup_status connection_setup_long_handle_modern_handshake(int
 					seed_done = false;
 					rewrite_failed = true;
 				} else {
-					seed_done = connection_setup_long_seed_append(seed, seed_size, rewrited, packlen_rewrited)
-						&& connection_setup_long_seed_tail(seed, seed_size, inbound, inbound_size);
+					seed_done = connection_setup_long_seed_append(seed, seed_size, rewrited, packlen_rewrited);
 				}
 			}
 		} else if (seed_done) {
