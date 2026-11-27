@@ -95,6 +95,8 @@ static exit_code load_config(const char *filename, const char *filename_full, co
 	}
 	conf_error config_error = (conf_error)errno;
 	switch (config_error) {
+		case CONF_ECINBOUND:
+			return EXITCODE_BADARG;
 		case CONF_EROPENFAIL:
 		case CONF_EROPENEMPTY:
 			LOG(MKSYS_LEVEL_CRITICAL, "%s%s", config_errmsg(config_error), filename);

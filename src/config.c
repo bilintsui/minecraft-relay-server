@@ -27,12 +27,92 @@
 
 /* section: global variables */
 static char config_duperr[CONF_ADDRESSMAXLEN] = { 0 };
+static const char *const config_untrusted_policies[] = { [CONF_UNTRUSTED_REJECT] = "reject", [CONF_UNTRUSTED_IGNORE] = "ignore", [CONF_UNTRUSTED_ACCEPT] = "accept" };
 
 /* section: functions (local) */
 static void config_icon_clear(conf *cfg) {
 	free(cfg->icon_b64);
 	cfg->icon_b64 = NULL;
 	config_cache_destroy(&cfg->icon_cache);
+}
+
+static conf_error config_inbound_invalid(const char *field, int index, const char *expected) {
+	if (index < 0) {
+		MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "Invalid configuration entry \"listen.%s\". Expected %s.", field, expected);
+	} else {
+		MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "Invalid configuration entry \"listen.%s[%d]\". Expected %s.", field, index, expected);
+	}
+	return CONF_ECINBOUND;
+}
+
+static conf_error config_inbound_parse(conf *result, const cJSON *listen) {
+	const cJSON *allow = cJSON_GetObjectItemCaseSensitive(listen, "allow_proxy");
+	const cJSON *settings = cJSON_GetObjectItemCaseSensitive(listen, "proxy_settings");
+	if (allow != NULL && !cJSON_IsBool(allow)) {
+		return config_inbound_invalid("allow_proxy", -1, "a boolean");
+	}
+	result->listen.allow_proxy = cJSON_IsTrue(allow);
+	if (settings != NULL && !cJSON_IsObject(settings)) {
+		return config_inbound_invalid("proxy_settings", -1, "an object");
+	}
+	const cJSON *member;
+	cJSON_ArrayForEach(member, settings) {
+		if (strcmp(member->string, "version") != 0 && strcmp(member->string, "trusted_sources") != 0 && strcmp(member->string, "untrusted_policy") != 0) {
+			MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
+				"Invalid configuration entry \"listen.proxy_settings.%s\". Expected version, trusted_sources or untrusted_policy.",
+				member->string
+			);
+			return CONF_ECINBOUND;
+		}
+	}
+	const cJSON *version = cJSON_GetObjectItemCaseSensitive(settings, "version");
+	if (version != NULL && (!cJSON_IsNumber(version) || version->valuedouble != 1.0)) {
+		return config_inbound_invalid("proxy_settings.version", -1, "the number 1");
+	}
+	result->listen.proxy_version = version == NULL ? 1 : (uint8_t)version->valueint;
+	const cJSON *policy = cJSON_GetObjectItemCaseSensitive(settings, "untrusted_policy");
+	if (policy != NULL) {
+		size_t i = 0;
+		while (i < sizeof(config_untrusted_policies) / sizeof(config_untrusted_policies[0]) && (!cJSON_IsString(policy) || strcmp(policy->valuestring, config_untrusted_policies[i]) != 0)) {
+			i++;
+		}
+		if (i == sizeof(config_untrusted_policies) / sizeof(config_untrusted_policies[0])) {
+			return config_inbound_invalid("proxy_settings.untrusted_policy", -1, "\"reject\", \"ignore\" or \"accept\"");
+		}
+		result->listen.untrusted_policy = (conf_untrusted_policy)i;
+	}
+	const cJSON *sources = cJSON_GetObjectItemCaseSensitive(settings, "trusted_sources");
+	if (sources != NULL && !cJSON_IsArray(sources)) {
+		return config_inbound_invalid("proxy_settings.trusted_sources", -1, "an array of IP addresses");
+	}
+	static const char *const defaults[] = { "127.0.0.1", "::1" };
+	int count = sources == NULL ? (int)(sizeof(defaults) / sizeof(defaults[0])) : cJSON_GetArraySize(sources);
+	if (count == 0) {
+		return CONF_ERROR_NONE;
+	}
+	result->listen.trusted_sources = calloc((size_t)count, sizeof(*result->listen.trusted_sources));
+	if (result->listen.trusted_sources == NULL) {
+		return CONF_ECMEMORY;
+	}
+	const cJSON *item = sources == NULL ? NULL : sources->child;
+	for (int i = 0; i < count; i++) {
+		const char *text = sources == NULL ? defaults[i] : cJSON_GetStringValue(item);
+		net_addr address = net_addr_parse(text);
+		if (address.err != NET_OK) {
+			return config_inbound_invalid("proxy_settings.trusted_sources", i, "an IPv4 or IPv6 address");
+		}
+		net_addr_unmap(&address);
+		if (config_peer_trusted(result, address)) {
+			return config_inbound_invalid("proxy_settings.trusted_sources", i, "a unique address");
+		}
+		conf_trusted_source *source = &result->listen.trusted_sources[result->listen.trusted_count++];
+		source->address = address;
+		snprintf(source->text, sizeof(source->text), "%s", text);
+		if (item != NULL) {
+			item = item->next;
+		}
+	}
+	return CONF_ERROR_NONE;
 }
 
 static bool config_jsonbool(cJSON *src, bool defaultvalue) {
@@ -253,6 +333,10 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 	strcpy(result->listen.address, config_default_listen_address);
 	result->listen.port = 25565;
 	cJSON *config_json_listen = cJSON_GetObjectItemCaseSensitive(config_json, "listen");
+	conf_error inbound = config_inbound_parse(result, config_json_listen);
+	if (inbound != CONF_ERROR_NONE) {
+		return config_parse_failure(config_json, result, inbound);
+	}
 	if (config_json_listen != NULL) {
 		cJSON *config_json_listen_address = cJSON_GetObjectItemCaseSensitive(config_json_listen, "address");
 		if (config_json_listen_address != NULL) {
@@ -387,6 +471,19 @@ bool config_clone(const conf *source, conf **result) {
 		return false;
 	}
 	candidate->listen.port = source->listen.port;
+	candidate->listen.allow_proxy = source->listen.allow_proxy;
+	candidate->listen.proxy_version = source->listen.proxy_version;
+	candidate->listen.untrusted_policy = source->listen.untrusted_policy;
+	if (source->listen.trusted_count != 0) {
+		candidate->listen.trusted_sources = calloc(source->listen.trusted_count, sizeof(*candidate->listen.trusted_sources));
+		if (candidate->listen.trusted_sources == NULL) {
+			config_destroy(candidate);
+			errno = ENOMEM;
+			return false;
+		}
+		memcpy(candidate->listen.trusted_sources, source->listen.trusted_sources, source->listen.trusted_count * sizeof(*candidate->listen.trusted_sources));
+		candidate->listen.trusted_count = source->listen.trusted_count;
+	}
 	candidate->log.level = source->log.level;
 	candidate->metrics.interval = source->metrics.interval;
 	if (!config_string_duplicate(source->log.filename, &candidate->log.filename) || !config_string_duplicate(source->listen.address, &candidate->listen.address)
@@ -419,6 +516,7 @@ void config_destroy(conf *target) {
 	if (target != NULL) {
 		free(target->log.filename);
 		free(target->listen.address);
+		free(target->listen.trusted_sources);
 		free(target->icon_path);
 		config_icon_clear(target);
 		if (target->proxy != NULL) {
@@ -436,6 +534,13 @@ void config_dumper(conf *src) {
 	printf("\n[LISTEN]\n");
 	printf("Address\t\t%s\n", src->listen.address);
 	printf("Port\t\t%d\n", src->listen.port);
+	printf("AllowProxy\t%s\n", src->listen.allow_proxy ? "true" : "false");
+	printf("ProxyVersion\t%u\n", (unsigned)src->listen.proxy_version);
+	printf("TrustedSources\t[");
+	for (size_t i = 0; i < src->listen.trusted_count; i++) {
+		printf("%s%s", i == 0 ? "" : ", ", src->listen.trusted_sources[i].text);
+	}
+	printf("]\nUntrustedPolicy\t%s\n", config_untrusted_policies[src->listen.untrusted_policy]);
 	printf("\n[METRICS]\n");
 	printf("Interval\t%u\n", src->metrics.interval);
 	printf("\n[ICON]\t\t");
@@ -583,6 +688,20 @@ void config_log_duplicate_error(const char *logfile, uint8_t maxlevel, mksys_lev
 	} else {
 		MKSYS_LOG(logfile, maxlevel, msglevel, "%s%s", base, suffix);
 	}
+}
+
+bool config_peer_trusted(const conf *config, net_addr address) {
+	if (config == NULL || address.err != NET_OK || (address.family != AF_INET && address.family != AF_INET6)) {
+		return false;
+	}
+	net_addr_unmap(&address);
+	for (size_t i = 0; i < config->listen.trusted_count; i++) {
+		const net_addr *source = &config->listen.trusted_sources[i].address;
+		if (source->family == address.family && (address.family == AF_INET ? source->addr.v4 == address.addr.v4 : memcmp(source->addr.v6, address.addr.v6, sizeof(address.addr.v6)) == 0)) {
+			return true;
+		}
+	}
+	return false;
 }
 
 /*

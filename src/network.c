@@ -170,6 +170,17 @@ net_addr net_addr_parse(const char *address) {
 	return result;
 }
 
+bool net_addr_unmap(net_addr *address) {
+	static const uint8_t prefix[12] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff };
+	if (address->family != AF_INET6 || memcmp(address->addr.v6, prefix, sizeof(prefix)) != 0) {
+		return false;
+	}
+	uint32_t v4;
+	memcpy(&v4, address->addr.v6 + sizeof(prefix), sizeof(v4));
+	*address = (net_addr){ .family = AF_INET, .addr.v4 = v4 };
+	return true;
+}
+
 net_connect_status net_connect_nonblocking(const net_addr *address, in_port_t port, int *socket_fd) {
 	struct sockaddr_in address_v4;
 	struct sockaddr_in6 address_v6;

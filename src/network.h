@@ -82,6 +82,7 @@ typedef enum {
 
 /* section: functions (exported) */
 net_addr net_addr_parse(const char *address);
+bool net_addr_unmap(net_addr *address);
 net_connect_status net_connect_nonblocking(const net_addr *address, in_port_t port, int *socket_fd);
 net_connect_status net_connect_nonblocking_complete(int socket_fd);
 net_addrp net_ntop(sa_family_t family, const void *src, bool v6addition);

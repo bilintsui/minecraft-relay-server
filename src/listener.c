@@ -2309,12 +2309,11 @@ static int listener_route_runtime_ready(listener_context *context, listener_rout
 	listener_notify_ready();
 	if (!isatty(STDOUT_FILENO)) {
 		fflush(stdout);
-		fflush(stderr);
-		int null_fd = open("/dev/null", O_RDWR | O_CLOEXEC);
+		/* Configuration validation during reload still reports to stderr. */
+		int null_fd = open("/dev/null", O_WRONLY | O_CLOEXEC);
 		if (null_fd != -1) {
 			dup2(null_fd, STDOUT_FILENO);
-			dup2(null_fd, STDERR_FILENO);
-			if (null_fd > STDERR_FILENO) {
+			if (null_fd != STDOUT_FILENO) {
 				close(null_fd);
 			}
 		}
@@ -2599,6 +2598,9 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 			break;
 		case CONF_READ_ERROR:
 			switch (errno) {
+				case CONF_ECINBOUND:
+					/* The shared validator already reported the field on stderr. */
+					break;
 				case CONF_EROPENFAIL:
 				case CONF_EROPENEMPTY:
 				case CONF_EROPENLARGE:

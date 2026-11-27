@@ -19,6 +19,7 @@
 /* section: headers (project) */
 #include "define/global.h"
 #include "log.h"
+#include "network.h"
 
 /* section: defines */
 /* limit */
@@ -40,6 +41,15 @@ typedef struct {
 	void *data;
 	size_t size;
 } conf_cache;
+typedef enum {
+	CONF_UNTRUSTED_REJECT,
+	CONF_UNTRUSTED_IGNORE,
+	CONF_UNTRUSTED_ACCEPT
+} conf_untrusted_policy;
+typedef struct {
+	net_addr address;
+	char text[INET6_ADDRSTRLEN];
+} conf_trusted_source;
 typedef struct {
 	struct {
 		char *filename;
@@ -48,6 +58,11 @@ typedef struct {
 	struct {
 		char *address;
 		in_port_t port;
+		bool allow_proxy;
+		uint8_t proxy_version;
+		conf_untrusted_policy untrusted_policy;
+		conf_trusted_source *trusted_sources;
+		size_t trusted_count;
 	} listen;
 	struct {
 		uint32_t interval;
@@ -66,6 +81,7 @@ typedef enum {
 	CONF_ERPARSE,
 	CONF_ECMEMORY,
 	CONF_ECLISTENPORT,
+	CONF_ECINBOUND,
 	CONF_ECMETRICS,
 	CONF_ECPROXY,
 	CONF_ECPROXYDUP
@@ -85,6 +101,7 @@ void config_dumper(conf *src);
 const char *config_errmsg(conf_error err);
 bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const char *failure_action);
 void config_log_duplicate_error(const char *logfile, uint8_t maxlevel, mksys_level msglevel, const char *suffix);
+bool config_peer_trusted(const conf *config, net_addr address);
 conf_read_status config_read(const char *filename, const conf_cache *active_cache, conf_cache *candidate_cache, conf **result);
 
 #endif

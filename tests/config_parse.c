@@ -156,6 +156,7 @@ int main(void) {
 	CHECK(status == CONF_READ_CHANGED, "mixed configuration was rejected");
 	CHECK(errno == 0, "mixed configuration returned an error");
 	CHECK(parsed != NULL, "mixed configuration returned no object");
+	CHECK(parsed->listen.proxy_version == 1, "missing PROXY version did not default to 1");
 	CHECK(parsed->metrics.interval == 0, "missing metrics configuration did not default to disabled");
 	CHECK(cJSON_IsArray(parsed->proxy) && (cJSON_GetArraySize(parsed->proxy) == 4), "mixed configuration kept wrong number of entries");
 	CHECK(proxy_entry_check(parsed, 0, "kept1", "up1.example", true, 25565), "surviving entry 0 was corrupted");

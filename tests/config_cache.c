@@ -41,6 +41,14 @@ static bool config_clone_test(void) {
 	source->log.level = 4;
 	source->listen.address = strdup("2001:db8::10");
 	source->listen.port = 25570;
+	source->listen.allow_proxy = true;
+	source->listen.proxy_version = 1;
+	source->listen.untrusted_policy = CONF_UNTRUSTED_IGNORE;
+	source->listen.trusted_sources = calloc(1, sizeof(*source->listen.trusted_sources));
+	CHECK(source->listen.trusted_sources != NULL, "cannot allocate trusted source");
+	source->listen.trusted_count = 1;
+	source->listen.trusted_sources[0].address = net_addr_parse("192.0.2.8");
+	strcpy(source->listen.trusted_sources[0].text, "192.0.2.8");
 	source->metrics.interval = 3600;
 	source->icon_path = strdup("/tmp/icon.png");
 	source->icon_b64 = strdup("YWJj");
@@ -63,6 +71,11 @@ static bool config_clone_test(void) {
 	CHECK(clone->listen.address != source->listen.address && strcmp(clone->listen.address, source->listen.address) == 0 && clone->listen.port == source->listen.port,
 		"cloned listener configuration was shallow or incorrect");
 	CHECK(clone->metrics.interval == source->metrics.interval, "cloned metrics configuration was incorrect");
+	CHECK(clone->listen.proxy_version == source->listen.proxy_version, "cloned inbound PROXY version was incorrect");
+	CHECK(!config_peer_trusted(NULL, net_addr_parse("127.0.0.1")) && !config_peer_trusted(clone, net_addr_parse(NULL)), "unavailable inputs matched a trusted source");
+	CHECK(clone->listen.allow_proxy && clone->listen.untrusted_policy == CONF_UNTRUSTED_IGNORE && clone->listen.trusted_sources != source->listen.trusted_sources
+		&& clone->listen.trusted_count == 1 && strcmp(clone->listen.trusted_sources[0].text, "192.0.2.8") == 0 && config_peer_trusted(clone, net_addr_parse("::ffff:192.0.2.8"))
+		&& !config_peer_trusted(clone, net_addr_parse("::1")), "cloned inbound policy or numeric trust matching was incorrect");
 	CHECK(clone->icon_path != source->icon_path && strcmp(clone->icon_path, source->icon_path) == 0 && clone->icon_b64 != source->icon_b64
 		&& strcmp(clone->icon_b64, source->icon_b64) == 0 && clone->icon_cache.data != source->icon_cache.data && clone->icon_cache.size == source->icon_cache.size
 		&& memcmp(clone->icon_cache.data, source->icon_cache.data, source->icon_cache.size) == 0, "cloned icon state was shallow or incorrect");
