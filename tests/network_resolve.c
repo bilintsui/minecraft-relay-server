@@ -68,9 +68,27 @@ cleanup:
 	return test_result;
 }
 
+static bool resolver_test_socket_address(void) {
+	bool test_result = false;
+	struct sockaddr_storage source = { .ss_family = AF_UNIX };
+	net_addr address = net_addr_parse("192.0.2.40");
+	in_port_t port = 25565;
+	CHECK(!net_addr_from_socket(&source, &address, &port) && address.err == NET_EARGFAMILY && net_address_zero(&address) && port == 0, "unsupported socket family retained an endpoint");
+	port = 25565;
+	CHECK(!net_addr_from_socket(NULL, &address, &port) && address.err == NET_EARGADDR && net_address_zero(&address) && port == 0, "missing socket address retained an endpoint");
+	port = 25565;
+	CHECK(!net_addr_from_socket(&source, NULL, &port) && port == 0, "missing address output retained the port");
+	address = net_addr_parse("::1");
+	CHECK(!net_addr_from_socket(&source, &address, NULL) && address.err == NET_EARGADDR && net_address_zero(&address), "missing port output retained the address");
+	CHECK(!net_addr_unmap(NULL), "missing address was unmapped");
+	test_result = true;
+cleanup:
+	return test_result;
+}
+
 /* section: functions (entry point) */
 int main(void) {
-	if (!resolver_test_address_parse()) {
+	if (!resolver_test_address_parse() || !resolver_test_socket_address()) {
 		return EXIT_FAILURE;
 	}
 	return EXIT_SUCCESS;

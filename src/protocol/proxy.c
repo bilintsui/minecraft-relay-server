@@ -22,28 +22,6 @@
 #include "proxy.h"
 
 /* section: functions (local) */
-static bool protocol_proxy_endpoint_read(const struct sockaddr_storage *source, net_addr *address, in_port_t *port) {
-	memset(address, 0, sizeof(*address));
-	switch (source->ss_family) {
-		case AF_INET: {
-			const struct sockaddr_in *source_v4 = (const struct sockaddr_in *)source;
-			address->family = AF_INET;
-			address->addr.v4 = source_v4->sin_addr.s_addr;
-			*port = ntohs(source_v4->sin_port);
-			return true;
-		}
-		case AF_INET6: {
-			const struct sockaddr_in6 *source_v6 = (const struct sockaddr_in6 *)source;
-			address->family = AF_INET6;
-			memcpy(address->addr.v6, &source_v6->sin6_addr, sizeof(address->addr.v6));
-			*port = ntohs(source_v6->sin6_port);
-			return true;
-		}
-		default:
-			return false;
-	}
-}
-
 static bool protocol_proxy_field_address(const char **cursor, const char *end, sa_family_t family, net_addr *address) {
 	char text[INET6_ADDRSTRLEN];
 	const char *space = memchr(*cursor, ' ', (size_t)(end - *cursor));
@@ -189,8 +167,8 @@ bool protocol_proxy_socket_read(int socket_fd, p_proxy *result) {
 		|| getsockname(socket_fd, (struct sockaddr *)&destination_socket, &destination_socket_size) == -1) {
 		return false;
 	}
-	if (!protocol_proxy_endpoint_read(&source_socket, &result->srcaddr, &result->srcport)
-		|| !protocol_proxy_endpoint_read(&destination_socket, &result->dstaddr, &result->dstport)
+	if (!net_addr_from_socket(&source_socket, &result->srcaddr, &result->srcport)
+		|| !net_addr_from_socket(&destination_socket, &result->dstaddr, &result->dstport)
 		|| result->srcaddr.family != result->dstaddr.family) {
 		memset(result, 0, sizeof(*result));
 		errno = EAFNOSUPPORT;

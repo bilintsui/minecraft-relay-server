@@ -157,6 +157,39 @@ static bool net_relay_shutdown_propagate(net_relay_queue *queue, int socket_fd) 
 }
 
 /* section: functions (exported) */
+bool net_addr_from_socket(const struct sockaddr_storage *source, net_addr *address, in_port_t *port) {
+	if (port != NULL) {
+		*port = 0;
+	}
+	if (address == NULL) {
+		return false;
+	}
+	*address = (net_addr){ 0 };
+	if (source == NULL || port == NULL) {
+		address->err = NET_EARGADDR;
+		return false;
+	}
+	switch (source->ss_family) {
+		case AF_INET: {
+			const struct sockaddr_in *source_v4 = (const struct sockaddr_in *)source;
+			address->family = AF_INET;
+			address->addr.v4 = source_v4->sin_addr.s_addr;
+			*port = ntohs(source_v4->sin_port);
+			return true;
+		}
+		case AF_INET6: {
+			const struct sockaddr_in6 *source_v6 = (const struct sockaddr_in6 *)source;
+			address->family = AF_INET6;
+			memcpy(address->addr.v6, &source_v6->sin6_addr, sizeof(address->addr.v6));
+			*port = ntohs(source_v6->sin6_port);
+			return true;
+		}
+		default:
+			address->err = NET_EARGFAMILY;
+			return false;
+	}
+}
+
 bool net_addr_is_v4mapped(const net_addr *address) {
 	return address != NULL && address->family == AF_INET6 && memcmp(address->addr.v6, net_v4mapped_prefix, sizeof(net_v4mapped_prefix)) == 0;
 }

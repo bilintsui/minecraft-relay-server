@@ -213,10 +213,6 @@ typedef enum {
 	LISTENER_METRICS_TIMER_EXPIRED,
 	LISTENER_METRICS_TIMER_FAILED
 } listener_metrics_timer_read_status;
-typedef union {
-	struct sockaddr_in v4;
-	struct sockaddr_in6 v6;
-} listener_client_address;
 typedef struct listener_connection listener_connection;
 typedef struct {
 	size_t capacity;
@@ -230,7 +226,8 @@ typedef struct {
 	listener_event_kind kind;
 } listener_event_source;
 struct listener_connection {
-	listener_client_address address;
+	net_addr peer_address;
+	in_port_t peer_port;
 	struct timespec assembly_deadline;
 	listener_connection_buffer client_buffer;
 	uint32_t client_events;
@@ -377,32 +374,13 @@ static void listener_bind_success_msg(const listener_context *context) {
 	mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, context->config->log.level, MKSYS_LEVEL_INFORMATION, MKSYS_PARAGRAPH_END, "For more information, see log file: %s", context->config->log.filename);
 }
 
-static net_addrbundle listener_client_address_parse(const listener_client_address *addr) {
-	net_addrbundle result;
-	memset(&result, 0, sizeof(result));
-	result.family = addr->v4.sin_family;
-	const void *addroffset = NULL;
-	switch (result.family) {
-		case AF_INET:
-			result.address = net_ntop(AF_INET, &(addr->v4.sin_addr), true);
-			result.address_clean = net_ntop(AF_INET, &(addr->v4.sin_addr), false);
-			result.port = ntohs(addr->v4.sin_port);
-			break;
-		case AF_INET6:
-			addroffset = &(addr->v6.sin6_addr);
-			if (memcmp(addroffset, "\x0\x0\x0\x0\x0\x0\x0\x0\x0\x0\xFF\xFF", 12) == 0) {
-				result.family = AF_INET;
-				addroffset = (const uint8_t *)addroffset + 12;
-			}
-			result.address = net_ntop(result.family, addroffset, true);
-			result.address_clean = net_ntop(result.family, addroffset, false);
-			result.port = ntohs(addr->v6.sin6_port);
-			break;
-		default:
-			result.family = 0;
-			break;
-	}
-	return result;
+static net_addrbundle listener_client_address_format(const net_addr *address, in_port_t port) {
+	return (net_addrbundle){
+		.family = address->family,
+		.address = net_ntop(address->family, &address->addr, true),
+		.address_clean = net_ntop(address->family, &address->addr, false),
+		.port = port
+	};
 }
 
 static int listener_events_add(const listener_events *events, int fd, uint32_t flags, const listener_event_source *source) {
@@ -618,15 +596,15 @@ static int listener_connection_interests_update(listener_connection *connection,
 	return listener_connection_interest_update(events, connection->upstream_fd, upstream_flags, &connection->upstream_source, &connection->upstream_events, &connection->upstream_registered);
 }
 
-static listener_connection *listener_connection_create(int client_fd, const listener_client_address *client_address, const listener_events *events,
-	route_generation *generation) {
+static listener_connection *listener_connection_create(int client_fd, const net_addr *peer_address, in_port_t peer_port, const listener_events *events, route_generation *generation) {
 	listener_connection *connection = calloc(1, sizeof(*connection));
 	if (connection == NULL) {
 		close(client_fd);
 		route_generation_release(generation);
 		return NULL;
 	}
-	connection->address = *client_address;
+	connection->peer_address = *peer_address;
+	connection->peer_port = peer_port;
 	connection->client_source.connection = connection;
 	connection->client_source.kind = LISTENER_EVENT_CLIENT;
 	connection->generation = generation;
@@ -1330,7 +1308,7 @@ static listener_connection_progress listener_connection_short_start(listener_con
 	if (!listener_connection_snapshot_prepare(connection, context, &snapshot)) {
 		return LISTENER_CONNECTION_ABORT;
 	}
-	net_addrbundle client = listener_client_address_parse(&connection->address);
+	net_addrbundle client = listener_client_address_format(&connection->peer_address, connection->peer_port);
 	connection_setup_short_action action = connection_setup_short_prepare(&connection->short_plan, &snapshot, client, connection->inbound, connection->inbound_size);
 	if (!listener_connection_route_release(connection, &context->metrics, context->resolver, now)) {
 		return LISTENER_CONNECTION_FATAL;
@@ -2788,7 +2766,7 @@ static int listener_worker_signals_restore(const sigset_t *signal_mask) {
 	return sigprocmask(SIG_SETMASK, signal_mask, NULL);
 }
 
-static exit_code listener_worker_run(int client_fd, const listener_client_address *client_address, const uint8_t *inbound, size_t inbound_size,
+static exit_code listener_worker_run(int client_fd, net_addrbundle client, const uint8_t *inbound, size_t inbound_size,
 	const connection_setup_snapshot *snapshot, listener_socket *listener, const listener_events *events, pid_t listener_pid, listener_context *context) {
 	if (prctl(PR_SET_NAME, LISTENER_WORKER_PROCESS_NAME) == -1) {
 		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING, "Cannot set worker process name: %s", strerror(errno));
@@ -2819,11 +2797,10 @@ static exit_code listener_worker_run(int client_fd, const listener_client_addres
 		return EXITCODE_INTERNAL;
 	}
 	listener_worker_route_state_dispose(context);
-	net_addrbundle addrbundle_inbound_client = listener_client_address_parse(client_address);
 	uint8_t seed[CONNECTION_SETUP_LONG_PENDING_MAX];
 	size_t seed_size;
 	int socket_outbound;
-	connection_setup_status setup_status = connection_setup_long_prepared(client_fd, &socket_outbound, snapshot, addrbundle_inbound_client, inbound, inbound_size, seed, &seed_size);
+	connection_setup_status setup_status = connection_setup_long_prepared(client_fd, &socket_outbound, snapshot, client, inbound, inbound_size, seed, &seed_size);
 	if (setup_status == CONNECTION_SETUP_OK) {
 		net_relay(client_fd, socket_outbound, seed, seed_size);
 	}
@@ -2884,7 +2861,8 @@ static listener_connection_progress listener_connection_dispatch(listener_connec
 		return LISTENER_CONNECTION_PENDING;
 	}
 	listener_connections_close_except(connections, connection);
-	_exit(listener_worker_run(connection->socket_fd, &connection->address, connection->inbound, connection->inbound_size, &snapshot, listener, events, listener_pid, context));
+	net_addrbundle client = listener_client_address_format(&connection->peer_address, connection->peer_port);
+	_exit(listener_worker_run(connection->socket_fd, client, connection->inbound, connection->inbound_size, &snapshot, listener, events, listener_pid, context));
 }
 
 static listener_connection_progress listener_connection_ready(listener_connection *connections, listener_connection *connection, listener_socket *listener,
@@ -3301,7 +3279,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 					exitcode = EXITCODE_INTERNAL;
 					goto cleanup;
 				} else if (progress == LISTENER_CONNECTION_ABORT) {
-					net_addrbundle client = listener_client_address_parse(&connection->address);
+					net_addrbundle client = listener_client_address_format(&connection->peer_address, connection->peer_port);
 					LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
 						"src: %s:%d, status: %s",
 						(char *)&client.address, client.port, connection->state == LISTENER_CONNECTION_INITIAL ? "abort_init" : "abort_short"
@@ -3382,7 +3360,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			continue;
 		}
 		for (size_t accept_attempt = 0; accept_attempt < LISTENER_ACCEPT_BATCH; accept_attempt++) {
-			listener_client_address client_address;
+			struct sockaddr_storage client_address;
 			socklen_t address_length = sizeof(client_address);
 			int client_fd = accept4(listener->fd, (struct sockaddr *)&client_address, &address_length, SOCK_CLOEXEC | SOCK_NONBLOCK);
 			if (client_fd == -1) {
@@ -3417,6 +3395,13 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				close(client_fd);
 				continue;
 			}
+			net_addr peer_address;
+			in_port_t peer_port;
+			if (!net_addr_from_socket(&client_address, &peer_address, &peer_port)) {
+				close(client_fd);
+				continue;
+			}
+			net_addr_unmap(&peer_address);
 			route_generation *generation = route_generation_registry_active_retain(context->generations);
 			if (generation == NULL) {
 				close(client_fd);
@@ -3426,7 +3411,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				exitcode = EXITCODE_INTERNAL;
 				goto cleanup;
 			}
-			listener_connection *connection = listener_connection_create(client_fd, &client_address, &events, generation);
+			listener_connection *connection = listener_connection_create(client_fd, &peer_address, peer_port, &events, generation);
 			if (connection == NULL) {
 				int saved_errno = errno;
 				listener_metrics_connection_track_failure_record(&context->metrics);
