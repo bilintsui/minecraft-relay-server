@@ -44,6 +44,15 @@ target_link_libraries(mcrelay${EXEC_SUFFIX} -lresolv -lcjson -lsystemd)
 
 include(CTest)
 if(BUILD_TESTING)
+	# Look up the interpreter directly for compatibility with CMake 3.10.
+	find_program(MCRELAY_TEST_PYTHON3 NAMES python3)
+	if(MCRELAY_TEST_PYTHON3)
+		execute_process(COMMAND "${MCRELAY_TEST_PYTHON3}" -c "import sys; sys.exit(sys.version_info < (3, 8))" RESULT_VARIABLE python3_status)
+		if(python3_status STREQUAL "0")
+			add_test(NAME packaging_purge COMMAND "${MCRELAY_TEST_PYTHON3}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/packaging_purge.py")
+		endif()
+	endif()
+
 	add_executable(config_cache_test tests/config_cache.c src/basic.c src/config.c src/log.c)
 	target_include_directories(config_cache_test PRIVATE src)
 	target_compile_definitions(config_cache_test PRIVATE _GNU_SOURCE DEBUG_MODE=false)
