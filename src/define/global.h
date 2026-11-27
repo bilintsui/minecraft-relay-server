@@ -23,8 +23,8 @@
 #endif
 
 /* program metadata */
-#define MCRELAY_VERSION_DISPLAY	"1.2.3"
-#define MCRELAY_VERSION_INTERNAL	"80"
+#define MCRELAY_VERSION_DISPLAY	"1.2.4"
+#define MCRELAY_VERSION_INTERNAL	"81"
 #define MCRELAY_COPYYEAR	"2020-2026"
 
 /* varint */

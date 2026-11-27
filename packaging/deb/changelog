@@ -1,3 +1,12 @@
+mcrelay (1.2.4-1) stable; urgency=medium
+
+  * Preserve Login Start fields and following bytes when rewriting
+    modern login and transfer handshakes.
+  * Remove stale systemd template instance links on purge and reload
+    systemd after cleaning them up.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Fri, 27 Nov 2026 23:05:17 +0800
+
 mcrelay (1.2.3-1) stable; urgency=medium
 
   * Strip query properties whose once-decoded key is _o when rewriting
