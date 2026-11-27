@@ -36,6 +36,7 @@
 #define ASSEMBLY_EVENT_LIMIT 16
 #define ASSEMBLY_INIT_DELAY_SEC 3
 #define ASSEMBLY_REFRESH_DELAY_SEC 1
+#define ASSEMBLY_PROXY_HEADER "PROXY TCP4 192.0.2.1 192.0.2.2 12345 25565\r\n"
 #define ASSEMBLY_SETUP_TIMEOUT_SEC 60
 #define ASSEMBLY_STOP_TIMEOUT_SEC 5
 
@@ -56,7 +57,8 @@ typedef enum {
 
 typedef struct {
 	bool initialized, expired, closed, eof, log_started, log_finished, close_suppressed;
-	unsigned int arm_mask, event_count;
+	uint64_t armed_bytes;
+	unsigned int event_count;
 	int socket_fd, timer_fd;
 	struct timespec initial_clock, deadline, log_begin;
 	assembly_timer_event last;
@@ -66,6 +68,7 @@ typedef struct {
 	char directory[64], config[128], log[128], notify[128];
 	int backend_fd, client_fd, notify_fd, channel_read, channel_write;
 	pid_t child;
+	size_t header_size;
 	in_port_t listen_port;
 	assembly_case_state state;
 } assembly_case_fixture;
@@ -120,9 +123,9 @@ static bool assembly_fixture_prepare(assembly_case_fixture *fixture) {
 		return false;
 	}
 	int written = fprintf(config,
-		"{\"log\":{\"filename\":\"%s\",\"level\":4},\"listen\":{\"address\":\"127.0.0.1\",\"port\":%u},\"icon\":\"\","
+		"{\"log\":{\"filename\":\"%s\",\"level\":4},\"listen\":{\"address\":\"127.0.0.1\",\"port\":%u,\"allow_proxy\":%s},\"icon\":\"\","
 		"\"proxy\":[{\"vhost\":[\"assembly.example\"],\"address\":\"127.0.0.1\",\"port\":%u}]}\n",
-		fixture->log, (unsigned int)fixture->listen_port, (unsigned int)backend_port
+		fixture->log, (unsigned int)fixture->listen_port, fixture->header_size ? "true" : "false", (unsigned int)backend_port
 	);
 	int closed = fclose(config);
 	return written > 0 && closed == 0;
@@ -160,10 +163,10 @@ static assembly_case_result assembly_event_apply(assembly_case_fixture *fixture,
 		} else if (event->fd != state->timer_fd || event->socket_fd != state->socket_fd || assembly_time_compare(&event->setting.it_value, &state->deadline) != 0) {
 			return ASSEMBLY_CASE_MOVED_DEADLINE;
 		}
-		if (event->input_bytes > 2) {
+		if (event->input_bytes < state->armed_bytes || event->input_bytes > fixture->header_size + 2) {
 			return ASSEMBLY_CASE_PROTOCOL;
 		}
-		state->arm_mask |= 1U << event->input_bytes;
+		state->armed_bytes = event->input_bytes;
 	} else {
 		if (!state->initialized || event->socket_fd != state->socket_fd) {
 			return ASSEMBLY_CASE_CHANNEL;
@@ -373,13 +376,13 @@ static assembly_case_result assembly_wait_arm(assembly_case_fixture *fixture, ui
 	if (!assembly_time_deadline(&deadline, ASSEMBLY_SETUP_TIMEOUT_SEC)) {
 		return ASSEMBLY_CASE_SETUP;
 	}
-	while (!(fixture->state.arm_mask & (1U << input_bytes))) {
+	while (!fixture->state.initialized || fixture->state.armed_bytes != input_bytes) {
+		if (fixture->state.armed_bytes > input_bytes || fixture->state.eof || fixture->state.closed || fixture->state.expired) {
+			return ASSEMBLY_CASE_PHASE;
+		}
 		assembly_case_result result = assembly_events_poll(fixture, &deadline, ASSEMBLY_CASE_PHASE);
 		if (result != ASSEMBLY_CASE_OK) {
 			return result;
-		}
-		if (!(fixture->state.arm_mask & (1U << input_bytes)) && (fixture->state.eof || fixture->state.closed || fixture->state.expired)) {
-			return ASSEMBLY_CASE_PHASE;
 		}
 	}
 	return ASSEMBLY_CASE_OK;
@@ -446,6 +449,7 @@ static bool assembly_case_run(const char *binary, const char *name, assembly_tim
 	memset(&fixture, 0, sizeof(fixture));
 	fixture.backend_fd = fixture.client_fd = fixture.notify_fd = fixture.channel_read = fixture.channel_write = -1;
 	fixture.child = -1;
+	fixture.header_size = strcmp(name, "proxy") == 0 ? sizeof(ASSEMBLY_PROXY_HEADER) - 1U : 0;
 	assembly_case_result result = ASSEMBLY_CASE_SETUP;
 	const char *phase = "prepare";
 	if (!assembly_fixture_prepare(&fixture) || !assembly_fixture_start(&fixture, binary, fault)) goto cleanup;
@@ -461,24 +465,26 @@ static bool assembly_case_run(const char *binary, const char *name, assembly_tim
 	result = assembly_wait_arm(&fixture, 0);
 	if (result != ASSEMBLY_CASE_OK) goto cleanup;
 	phase = "first-fragment";
-	uint8_t byte = 0x7F;
-	if (send(fixture.client_fd, &byte, 1, MSG_NOSIGNAL) != 1) {
+	static const char proxy_fragment[] = ASSEMBLY_PROXY_HEADER "\x7f";
+	const char *fragment = fixture.header_size ? proxy_fragment : "\x7f";
+	size_t length = fixture.header_size + 1;
+	if (send(fixture.client_fd, fragment, length, MSG_NOSIGNAL) != (ssize_t)length) {
 		result = ASSEMBLY_CASE_PROTOCOL;
 		goto cleanup;
 	}
-	result = assembly_wait_arm(&fixture, 1);
+	result = assembly_wait_arm(&fixture, length);
 	if (result != ASSEMBLY_CASE_OK) goto cleanup;
 	phase = "second-fragment";
 	if (!assembly_sleep(ASSEMBLY_REFRESH_DELAY_SEC)) {
 		result = ASSEMBLY_CASE_SETUP;
 		goto cleanup;
 	}
-	byte = 0;
+	uint8_t byte = 0;
 	if (send(fixture.client_fd, &byte, 1, MSG_NOSIGNAL) != 1) {
 		result = ASSEMBLY_CASE_PROTOCOL;
 		goto cleanup;
 	}
-	result = assembly_wait_arm(&fixture, 2);
+	result = assembly_wait_arm(&fixture, length + 1);
 	if (result != ASSEMBLY_CASE_OK) goto cleanup;
 	phase = "expiry-and-eof";
 	struct timespec deadline = fixture.state.deadline;
@@ -507,8 +513,8 @@ static bool assembly_case_run(const char *binary, const char *name, assembly_tim
 cleanup:
 	if (!assembly_fixture_destroy(&fixture)) result = ASSEMBLY_CASE_CHILD;
 	fprintf(stderr,
-		"assembly case=%s phase=%s result=%u expected=%u arms=%u expired=%u closed=%u eof=%u io=%u/%u deadline=%lld.%09ld last=%u bytes=%llu errno=%d root=%s\n",
-		name, phase, (unsigned int)result, (unsigned int)expected, fixture.state.arm_mask, fixture.state.expired, fixture.state.closed, fixture.state.eof,
+		"assembly case=%s phase=%s result=%u expected=%u armed_bytes=%llu expired=%u closed=%u eof=%u io=%u/%u deadline=%lld.%09ld last=%u bytes=%llu errno=%d root=%s\n",
+		name, phase, (unsigned int)result, (unsigned int)expected, (unsigned long long)fixture.state.armed_bytes, fixture.state.expired, fixture.state.closed, fixture.state.eof,
 		fixture.state.log_started, fixture.state.log_finished, (long long)fixture.state.deadline.tv_sec, fixture.state.deadline.tv_nsec,
 		(unsigned int)fixture.state.last.kind, (unsigned long long)fixture.state.last.input_bytes, fixture.state.last.error, fixture.directory
 	);
@@ -524,6 +530,8 @@ int main(int argc, char **argv) {
 	bool result;
 	if (strcmp(argv[2], "accept-delay") == 0) {
 		result = assembly_case_run(argv[1], argv[2], ASSEMBLY_TIMER_NORMAL, true, ASSEMBLY_CASE_OK);
+	} else if (strcmp(argv[2], "proxy") == 0) {
+		result = assembly_case_run(argv[1], argv[2], ASSEMBLY_TIMER_NORMAL, false, ASSEMBLY_CASE_OK);
 	} else if (strcmp(argv[2], "log-delay") == 0) {
 		result = assembly_case_run(argv[1], argv[2], ASSEMBLY_TIMER_LOG_DELAY, false, ASSEMBLY_CASE_OK);
 	} else if (strcmp(argv[2], "controls") == 0) {

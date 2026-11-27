@@ -242,6 +242,9 @@ struct listener_connection {
 	route_generation *generation;
 	uint8_t inbound[BUFSIZ];
 	size_t inbound_size;
+	p_proxy inbound_proxy;
+	bool prefix_checked;
+	connection_proxy_origin proxy_origin;
 	struct timespec lifetime_deadline;
 	struct listener_connection *next;
 	size_t request_offset;
@@ -807,17 +810,94 @@ static size_t listener_connection_limit(void) {
 	return resource_limit < LISTENER_CONNECTION_LIMIT ? (size_t)resource_limit : LISTENER_CONNECTION_LIMIT;
 }
 
-static listener_connection_progress listener_connection_receive(listener_connection *connection, uint32_t event_flags) {
+static const char *listener_protocol_label(proxy_prefix prefix) {
+	switch (prefix) {
+		case PROXY_PREFIX_OTHER:
+			return "minecraft";
+		case PROXY_PREFIX_V1:
+			return "proxy_v1";
+		case PROXY_PREFIX_V2:
+			return "proxy_v2";
+		default:
+			return "unknown";
+	}
+}
+
+static listener_connection_progress listener_protocol_mismatch(const listener_context *context, const listener_connection *connection, const char *received, proxy_prefix expected) {
+	net_addrp peer = net_ntop(connection->peer_address.family, &connection->peer_address.addr, true);
+	LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "src: %s:%u, status: reject_invalid_protocol, received: %s, expected: %s", peer.v6, connection->peer_port, received, listener_protocol_label(expected));
+	return LISTENER_CONNECTION_CLOSED;
+}
+
+static listener_connection_progress listener_proxy_exception(const listener_context *context, const net_addr *address, in_port_t port, const char *exception, int error) {
+	net_addrp peer = net_ntop(address->family, &address->addr, true);
+	LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "peer: %s:%u, status: reject_proxy_exception, exception: %s%s%s", peer.v6, port, exception, error ? ", error: " : "", error ? strerror(error) : "");
+	return LISTENER_CONNECTION_CLOSED;
+}
+
+static listener_connection_progress listener_connection_prefix(listener_connection *connection, const listener_context *context) {
+	const conf *config = route_generation_config(connection->generation);
+	proxy_prefix expected = config->listen.allow_proxy ? config->listen.proxy_version : PROXY_PREFIX_OTHER;
+	proxy_prefix prefix = protocol_proxy_detect(connection->inbound, connection->inbound_size);
+	if (prefix == PROXY_PREFIX_PARTIAL) {
+		return LISTENER_CONNECTION_PENDING;
+	}
+	if (prefix != expected) {
+		bool unknown = prefix == PROXY_PREFIX_OTHER && protocol_identify(connection->inbound, connection->inbound_size, NULL) == PVER_UNIDENT;
+		return listener_protocol_mismatch(context, connection, unknown ? "unknown" : listener_protocol_label(prefix), expected);
+	}
+	if (prefix != PROXY_PREFIX_OTHER) {
+		size_t consumed;
+		p_proxy pair;
+		proxy_read_status status = protocol_proxy_read(connection->inbound, connection->inbound_size, &pair, &consumed);
+		if (status == PROXY_READ_INCOMPLETE) {
+			return LISTENER_CONNECTION_PENDING;
+		}
+		if (status != PROXY_READ_COMPLETE) {
+			return listener_proxy_exception(context, &connection->peer_address, connection->peer_port, status == PROXY_READ_TOO_LONG ? "header_too_long" : "malformed_header", 0);
+		}
+		if (pair.family == AF_UNSPEC || connection->proxy_origin == CONNECTION_PROXY_UNTRUSTED_IGNORE) {
+			if (pair.family == AF_UNSPEC && connection->proxy_origin == CONNECTION_PROXY_TRUSTED) {
+				connection->proxy_origin = CONNECTION_PROXY_UNKNOWN;
+			}
+			if (!protocol_proxy_socket_read(connection->socket_fd, &pair)) {
+				return listener_proxy_exception(context, &connection->peer_address, connection->peer_port, "socket_endpoints_unavailable", errno);
+			}
+		}
+		connection->inbound_proxy = pair;
+		connection->inbound_size -= consumed;
+		memmove(connection->inbound, connection->inbound + consumed, connection->inbound_size);
+	}
+	connection->prefix_checked = true;
+	return LISTENER_CONNECTION_READY;
+}
+
+static listener_connection_progress listener_connection_receive(listener_connection *connection, uint32_t event_flags, const listener_context *context) {
 	while (connection->inbound_size < sizeof(connection->inbound)) {
 		ssize_t receive_size = recv(connection->socket_fd, connection->inbound + connection->inbound_size, sizeof(connection->inbound) - connection->inbound_size, 0);
 		if (receive_size > 0) {
 			connection->inbound_size += (size_t)receive_size;
+			if (!connection->prefix_checked) {
+				listener_connection_progress prefix = listener_connection_prefix(connection, context);
+				if (prefix == LISTENER_CONNECTION_PENDING || (prefix == LISTENER_CONNECTION_READY && connection->inbound_size == 0)) {
+					continue;
+				}
+				if (prefix != LISTENER_CONNECTION_READY) {
+					return prefix;
+				}
+			}
 			size_t packet_size;
 			protocol_packet_status packet_status = protocol_packet_length(connection->inbound, connection->inbound_size, &packet_size);
 			if (packet_status == PROTOCOL_PACKET_COMPLETE) {
-				return protocol_identify(connection->inbound, connection->inbound_size, NULL) == PVER_UNIDENT ? LISTENER_CONNECTION_ABORT : LISTENER_CONNECTION_READY;
+				if (protocol_identify(connection->inbound, connection->inbound_size, NULL) != PVER_UNIDENT) {
+					return LISTENER_CONNECTION_READY;
+				}
+				packet_status = PROTOCOL_PACKET_INVALID;
 			}
 			if (packet_status == PROTOCOL_PACKET_INVALID || packet_size > sizeof(connection->inbound)) {
+				if (connection->proxy_origin == CONNECTION_PROXY_DIRECT && protocol_identify(connection->inbound, connection->inbound_size, NULL) == PVER_UNIDENT) {
+					return listener_protocol_mismatch(context, connection, "unknown", PROXY_PREFIX_OTHER);
+				}
 				return LISTENER_CONNECTION_ABORT;
 			}
 			listener_connection_timer timer = packet_status == PROTOCOL_PACKET_AMBIGUOUS ? LISTENER_CONNECTION_TIMER_GRACE : LISTENER_CONNECTION_TIMER_ASSEMBLY;
@@ -826,7 +906,11 @@ static listener_connection_progress listener_connection_receive(listener_connect
 			}
 			continue;
 		}
+		bool header_pending = !connection->prefix_checked && connection->proxy_origin != CONNECTION_PROXY_DIRECT;
 		if (receive_size == 0) {
+			if (header_pending) {
+				return listener_proxy_exception(context, &connection->peer_address, connection->peer_port, "header_eof", 0);
+			}
 			size_t packet_size;
 			return protocol_packet_length(connection->inbound, connection->inbound_size, &packet_size) == PROTOCOL_PACKET_AMBIGUOUS
 				&& protocol_identify(connection->inbound, connection->inbound_size, NULL) != PVER_UNIDENT ? LISTENER_CONNECTION_READY : LISTENER_CONNECTION_ABORT;
@@ -835,9 +919,12 @@ static listener_connection_progress listener_connection_receive(listener_connect
 			continue;
 		}
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			return event_flags & (EPOLLERR | EPOLLHUP | EPOLLRDHUP) ? LISTENER_CONNECTION_ABORT : LISTENER_CONNECTION_PENDING;
+			if (!(event_flags & (EPOLLERR | EPOLLHUP | EPOLLRDHUP))) {
+				return LISTENER_CONNECTION_PENDING;
+			}
+			return header_pending ? listener_proxy_exception(context, &connection->peer_address, connection->peer_port, "header_eof", 0) : LISTENER_CONNECTION_ABORT;
 		}
-		return LISTENER_CONNECTION_ABORT;
+		return header_pending ? listener_proxy_exception(context, &connection->peer_address, connection->peer_port, "read_error", errno) : LISTENER_CONNECTION_ABORT;
 	}
 	return LISTENER_CONNECTION_ABORT;
 }
@@ -1346,7 +1433,7 @@ static listener_connection_progress listener_connection_short_start(listener_con
 }
 
 static listener_connection_progress listener_connection_timeout(listener_connection *connection, uint32_t event_flags, uint64_t timer_generation,
-	const listener_events *events, listener_metrics_state *metrics, resolver_supervisor *supervisor, const struct timespec *now) {
+	const listener_events *events, listener_context *context, const struct timespec *now) {
 	if (!(event_flags & EPOLLIN) || (event_flags & (EPOLLERR | EPOLLHUP))) {
 		return LISTENER_CONNECTION_ABORT;
 	}
@@ -1370,13 +1457,16 @@ static listener_connection_progress listener_connection_timeout(listener_connect
 		return LISTENER_CONNECTION_PENDING;
 	}
 	if (connection->timer == LISTENER_CONNECTION_TIMER_ROUTE) {
-		return listener_connection_route_progress(connection, metrics, supervisor, &current_now);
+		return listener_connection_route_progress(connection, &context->metrics, context->resolver, &current_now);
 	}
 	if (connection->timer == LISTENER_CONNECTION_TIMER_SHORT_CONNECT) {
 		return listener_connection_short_failure(connection, events, &current_now);
 	}
 	if (connection->timer == LISTENER_CONNECTION_TIMER_SHORT_IDLE || connection->timer == LISTENER_CONNECTION_TIMER_SHORT_LIFETIME || connection->timer == LISTENER_CONNECTION_TIMER_WORKER_REFUSAL) {
 		return LISTENER_CONNECTION_CLOSED;
+	}
+	if (!connection->prefix_checked && connection->proxy_origin != CONNECTION_PROXY_DIRECT) {
+		return listener_proxy_exception(context, &connection->peer_address, connection->peer_port, "header_timeout", 0);
 	}
 	return connection->timer == LISTENER_CONNECTION_TIMER_GRACE && protocol_identify(connection->inbound, connection->inbound_size, NULL) != PVER_UNIDENT
 		? LISTENER_CONNECTION_READY : LISTENER_CONNECTION_ABORT;
@@ -3253,10 +3343,9 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				}
 				listener_connection_progress progress;
 				if (kind == LISTENER_EVENT_TIMEOUT) {
-					progress = listener_connection_timeout(connection, requests.ready[ready_index].flags, requests.ready[ready_index].timer_generation, &events,
-						&context->metrics, context->resolver, &route_now);
+					progress = listener_connection_timeout(connection, requests.ready[ready_index].flags, requests.ready[ready_index].timer_generation, &events, context, &route_now);
 				} else if (connection->state == LISTENER_CONNECTION_INITIAL) {
-					progress = kind == LISTENER_EVENT_CLIENT ? listener_connection_receive(connection, requests.ready[ready_index].flags) : LISTENER_CONNECTION_PENDING;
+					progress = kind == LISTENER_EVENT_CLIENT ? listener_connection_receive(connection, requests.ready[ready_index].flags, context) : LISTENER_CONNECTION_PENDING;
 				} else if (connection->state == LISTENER_CONNECTION_ROUTE_WAITING) {
 					progress = listener_connection_route_cancelled(connection, kind, requests.ready[ready_index].flags) ? LISTENER_CONNECTION_CLOSED : LISTENER_CONNECTION_PENDING;
 				} else {
@@ -3390,11 +3479,6 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				goto cleanup;
 			}
 			listener_metrics_accept_record(&context->metrics);
-			if (connection_count >= connection_limit || context->workers.count >= connection_limit - connection_count) {
-				listener_metrics_accept_capacity_rejected_record(&context->metrics);
-				close(client_fd);
-				continue;
-			}
 			net_addr peer_address;
 			in_port_t peer_port;
 			if (!net_addr_from_socket(&client_address, &peer_address, &peer_port)) {
@@ -3402,6 +3486,23 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				continue;
 			}
 			net_addr_unmap(&peer_address);
+			connection_proxy_origin origin = CONNECTION_PROXY_DIRECT;
+			if (context->config->listen.allow_proxy) {
+				if (config_peer_trusted(context->config, peer_address)) {
+					origin = CONNECTION_PROXY_TRUSTED;
+				} else if (context->config->listen.untrusted_policy == CONF_UNTRUSTED_REJECT) {
+					listener_proxy_exception(context, &peer_address, peer_port, "untrusted_source", 0);
+					close(client_fd);
+					continue;
+				} else {
+					origin = context->config->listen.untrusted_policy == CONF_UNTRUSTED_IGNORE ? CONNECTION_PROXY_UNTRUSTED_IGNORE : CONNECTION_PROXY_UNTRUSTED_ACCEPT;
+				}
+			}
+			if (connection_count >= connection_limit || context->workers.count >= connection_limit - connection_count) {
+				listener_metrics_accept_capacity_rejected_record(&context->metrics);
+				close(client_fd);
+				continue;
+			}
 			route_generation *generation = route_generation_registry_active_retain(context->generations);
 			if (generation == NULL) {
 				close(client_fd);
@@ -3422,6 +3523,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				listener_backoff();
 				break;
 			}
+			connection->proxy_origin = origin;
 			connection->next = connections;
 			connections = connection;
 			connection_count++;
