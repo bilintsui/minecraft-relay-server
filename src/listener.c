@@ -769,6 +769,11 @@ static bool listener_connection_snapshot_prepare(listener_connection *connection
 		return false;
 	}
 	result->log_level = config->log.level;
+	result->proxy_origin = connection->proxy_origin;
+	if (connection->proxy_origin != CONNECTION_PROXY_DIRECT) {
+		result->proxy_peer = net_ntop(connection->peer_address.family, &connection->peer_address.addr, true);
+		result->proxy_peer_port = connection->peer_port;
+	}
 	if (connection->state == LISTENER_CONNECTION_INITIAL) {
 		result->route_status = CONNECTION_SETUP_ROUTE_BYPASS;
 	} else {
@@ -1184,26 +1189,25 @@ static void listener_connection_short_log(const listener_connection *connection,
 	const connection_setup_short_plan *plan = &connection->short_plan;
 	const route_endpoint_snapshot *endpoint = &plan->snapshot.endpoint;
 	const char *destination = endpoint->target_name[0] == '\0' ? endpoint->configured_address : endpoint->target_name;
-	const char *source = (const char *)&plan->inbound_address.address;
 	if (plan->result == CONNECTION_SETUP_EOLDCLIENT) {
-		CONNECTION_SETUP_LOG(&plan->snapshot, MKSYS_LEVEL_WARNING,
-			"src: %s:%d, type: motd, status: %s",
-			source, plan->inbound_address.port, plan->protocol == PVER_MODERN1 ? "reject_motdrelay_13w41*" : "reject_motdrelay_oldclient"
+		connection_setup_log_access(&plan->snapshot, MKSYS_LEVEL_WARNING, &plan->inbound_address,
+			"type: motd, status: %s",
+			plan->protocol == PVER_MODERN1 ? "reject_motdrelay_13w41*" : "reject_motdrelay_oldclient"
 		);
 	} else if (plan->result == CONNECTION_SETUP_ENOVHOST) {
-		CONNECTION_SETUP_LOG(&plan->snapshot, MKSYS_LEVEL_WARNING,
-			"src: %s:%d, type: motd, vhost: %s, status: reject_vhostinvalid",
-			source, plan->inbound_address.port, endpoint->vhost
+		connection_setup_log_access(&plan->snapshot, MKSYS_LEVEL_WARNING, &plan->inbound_address,
+			"type: motd, vhost: %s, status: reject_vhostinvalid",
+			endpoint->vhost
 		);
 	} else if (plan->result == CONNECTION_SETUP_ENORECORD) {
-		CONNECTION_SETUP_LOG(&plan->snapshot, MKSYS_LEVEL_WARNING,
-			"src: %s:%d, type: motd, vhost: %s, status: reject_dstnoresolve",
-			source, plan->inbound_address.port, endpoint->vhost
+		connection_setup_log_access(&plan->snapshot, MKSYS_LEVEL_WARNING, &plan->inbound_address,
+			"type: motd, vhost: %s, status: reject_dstnoresolve",
+			endpoint->vhost
 		);
 	} else if (plan->result == CONNECTION_SETUP_OK) {
-		CONNECTION_SETUP_LOG(&plan->snapshot, connected ? MKSYS_LEVEL_INFORMATION + 1 : MKSYS_LEVEL_WARNING,
-			"src: %s:%d, type: motd, vhost: %s, dst: %s:%d, status: %s",
-			source, plan->inbound_address.port, endpoint->vhost, destination, endpoint->port, connected ? "accept" : "reject_dstnoconnect"
+		connection_setup_log_access(&plan->snapshot, connected ? MKSYS_LEVEL_INFORMATION + 1 : MKSYS_LEVEL_WARNING, &plan->inbound_address,
+			"type: motd, vhost: %s, dst: %s:%d, status: %s",
+			endpoint->vhost, destination, endpoint->port, connected ? "accept" : "reject_dstnoconnect"
 		);
 	}
 }

@@ -177,10 +177,10 @@ def forwarding(binary):
     mapped = b"PROXY TCP6 ::ffff:c633:6417 ::ffff:cb00:7108 0 25565\r\n"
     mixed = b"PROXY TCP6 ::ffff:c633:6417 2001:db8::8 0 25565\r\n"
     with backend_socket() as backend:
-        for settings, cases in [
-            ({}, [(declared, declared), (unknown, None), (mapped, declared), (mixed, mixed)]),
-            ({"trusted_sources": ["192.0.2.1"], "untrusted_policy": "ignore"}, [(declared, None), (unknown, None)]),
-            ({"trusted_sources": [], "untrusted_policy": "accept"}, [(declared, declared), (unknown, None)]),
+        for settings, outcome, cases in [
+            ({}, "accepted_trusted", [(declared, declared), (unknown, None), (mapped, declared), (mixed, mixed)]),
+            ({"trusted_sources": ["192.0.2.1"], "untrusted_policy": "ignore"}, "ignored_untrusted", [(declared, None), (unknown, None)]),
+            ({"trusted_sources": [], "untrusted_policy": "accept"}, "accepted_untrusted", [(declared, declared), (unknown, None)]),
         ]:
             with relay(binary, {"allow_proxy": True, "proxy_settings": settings}, backend.getsockname()[1]) as server:
                 for received, expected in cases:
@@ -188,6 +188,30 @@ def forwarding(binary):
                         with server.connect() as client:
                             actual = f"PROXY TCP4 127.0.0.1 127.0.0.1 {client.getsockname()[1]} {server.port}\r\n".encode()
                             exchange(client, backend, received, expected or actual, intent, b"extra stream bytes")
+                            peer = f"127.0.0.1:{client.getsockname()[1]}"
+                            source = peer if expected is None else "[::ffff:198.51.100.23]:0" if received == mixed else "198.51.100.23:0"
+                            result = "unknown" if not settings and received == unknown else outcome
+                            kind = {1: "motd", 2: "game", 3: "transfer"}[intent]
+                            entries = [s for s in server.lines() if f"peer: {peer}," in s]
+                            prefix = f"[INFO] peer: {peer}, proxy: {result}, src: {source}, type: {kind},"
+                            assert len(entries) == 1 and prefix in entries[0] and "status: accept" in entries[0], entries
+
+
+def access_levels(binary):
+    header = b"PROXY TCP4 192.0.2.7 192.0.2.8 123 456\r\n"
+    with backend_socket() as backend, relay(binary, {"allow_proxy": True}, backend.getsockname()[1], level=2) as incoming:
+        with incoming.connect() as client:
+            port = client.getsockname()[1]
+            exchange(client, backend, header, header, 1)
+            assert all(f"peer: 127.0.0.1:{port}," not in s for s in incoming.lines())
+        for intent in (1, 2):
+            with incoming.connect() as client:
+                port = client.getsockname()[1]
+                client.sendall(header + game_request(intent).replace(b"game.example", b"none.example"))
+                assert client.recv(1)
+                records = [s for s in incoming.lines() if f"peer: 127.0.0.1:{port}," in s]
+                prefix = f"[WARN] peer: 127.0.0.1:{port}, proxy: accepted_trusted, src: 192.0.2.7:123, "
+                assert len(records) == 1 and prefix in records[0] and "reject_vhostinvalid" in records[0], records
 
 
 def forwarding_without_header(binary):
@@ -258,6 +282,7 @@ if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[2] == "socket-errors":
         socket_errors(sys.argv[1])
     else:
+        access_levels(sys.argv[1])
         admission(sys.argv[1])
         forwarding(sys.argv[1])
         forwarding_without_header(sys.argv[1])

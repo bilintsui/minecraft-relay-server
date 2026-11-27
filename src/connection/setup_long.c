@@ -229,9 +229,8 @@ static connection_setup_status connection_setup_long_handle_legacy_login(int soc
 	memset(rewrited, 0, sizeof(rewrited));
 	protocol_version login_version = protocol_identify(inbound, inbound_size, NULL);
 	if (login_version == PVER_LEGACYL1) {
-		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING,
-			"src: %s:%d, type: game, status: reject_gamerelay_oldclient",
-			(char *)&(addrinfo_in.address), addrinfo_in.port
+		connection_setup_log_access(snapshot, MKSYS_LEVEL_WARNING, &addrinfo_in,
+			"type: game, status: reject_gamerelay_oldclient"
 		);
 		packlen_rewrited = make_kickreason_legacy(rewrited, sizeof(rewrited), "Proxy: Unsupported client, use 12w04a or later!");
 		connection_setup_long_send_client(socket_in, rewrited, packlen_rewrited);
@@ -239,9 +238,8 @@ static connection_setup_status connection_setup_long_handle_legacy_login(int soc
 		return CONNECTION_SETUP_EOLDCLIENT;
 	}
 	if (login_version == PVER_LEGACYL3) {
-		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING,
-			"src: %s:%d, type: game, status: reject_gamerelay_12w17a",
-			(char *)&(addrinfo_in.address), addrinfo_in.port
+		connection_setup_log_access(snapshot, MKSYS_LEVEL_WARNING, &addrinfo_in,
+			"type: game, status: reject_gamerelay_12w17a"
 		);
 		packlen_rewrited = make_kickreason_legacy(rewrited, sizeof(rewrited), "Proxy: Unsupported client, use 12w18a or later!");
 		connection_setup_long_send_client(socket_in, rewrited, packlen_rewrited);
@@ -255,9 +253,9 @@ static connection_setup_status connection_setup_long_handle_legacy_login(int soc
 	p_login_legacy inbound_info = packet_read_legacy_login(inbound, inbound_size, login_version);
 	connection_setup_long_proxy proxyinfo = connection_setup_long_proxyinfo_prepare(snapshot);
 	if (!proxyinfo.valid) {
-		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING,
-			"src: %s:%d, type: game, vhost: %s, status: reject_vhostinvalid, username: %s",
-			(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, inbound_info.username
+		connection_setup_log_access(snapshot, MKSYS_LEVEL_WARNING, &addrinfo_in,
+			"type: game, vhost: %s, status: reject_vhostinvalid, username: %s",
+			inbound_info.address, inbound_info.username
 		);
 		packlen_rewrited = make_kickreason_legacy(rewrited, sizeof(rewrited), "Proxy: Please use a legit name to connect!");
 		connection_setup_long_send_client(socket_in, rewrited, packlen_rewrited);
@@ -267,9 +265,9 @@ static connection_setup_status connection_setup_long_handle_legacy_login(int soc
 	net_error connect_status = connection_setup_long_connect_outbound(socket_out, snapshot);
 	mksys_level outmsg_level = connect_status == NET_OK ? MKSYS_LEVEL_INFORMATION : MKSYS_LEVEL_WARNING;
 	if (connect_status == NET_OK) {
-		CONNECTION_SETUP_LOG(snapshot, outmsg_level,
-			"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: accept, username: %s",
-			(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
+		connection_setup_log_access(snapshot, outmsg_level, &addrinfo_in,
+			"type: game, vhost: %s, dst: %s:%d, status: accept, username: %s",
+			inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 		);
 		bool seed_done = !proxyinfo.pheader || connection_setup_long_seed_proxy_header(seed, seed_size, snapshot);
 		if (seed_done && proxyinfo.rewrite) {
@@ -286,9 +284,9 @@ static connection_setup_status connection_setup_long_handle_legacy_login(int soc
 			seed_done = connection_setup_long_seed_append(seed, seed_size, inbound, inbound_size);
 		}
 		if (!seed_done) {
-			CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING,
-				"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_seedoverflow, username: %s",
-				(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
+			connection_setup_log_access(snapshot, MKSYS_LEVEL_WARNING, &addrinfo_in,
+				"type: game, vhost: %s, dst: %s:%d, status: reject_seedoverflow, username: %s",
+				inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 			);
 			close(*socket_out);
 			*socket_out = -1;
@@ -298,15 +296,15 @@ static connection_setup_status connection_setup_long_handle_legacy_login(int soc
 		return CONNECTION_SETUP_OK;
 	}
 	if (connect_status == NET_ENORECORD) {
-		CONNECTION_SETUP_LOG(snapshot, outmsg_level,
-			"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s",
-			(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
+		connection_setup_log_access(snapshot, outmsg_level, &addrinfo_in,
+			"type: game, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s",
+			inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 		);
 		packlen_rewrited = make_kickreason_legacy(rewrited, sizeof(rewrited), "Proxy(Internal): Temporarily failed to resolve the address for the target server, please try again later.");
 	} else {
-		CONNECTION_SETUP_LOG(snapshot, outmsg_level,
-			"src: %s:%d, type: game, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s",
-			(char *)&(addrinfo_in.address), addrinfo_in.port, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
+		connection_setup_log_access(snapshot, outmsg_level, &addrinfo_in,
+			"type: game, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s",
+			inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 		);
 		packlen_rewrited = make_kickreason_legacy(rewrited, sizeof(rewrited), "Proxy(Internal): Failed to connect to the target server, please try again later.");
 	}
@@ -334,9 +332,9 @@ static connection_setup_status connection_setup_long_handle_modern_handshake(int
 	const char *typestr = inbound_info.nextstate == CLIENT_INTENT_TRANSFER ? "transfer" : "game";
 	connection_setup_long_proxy proxyinfo = connection_setup_long_proxyinfo_prepare(snapshot);
 	if (!proxyinfo.valid) {
-		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING,
-			"src: %s:%d, type: %s, vhost: %s, status: reject_vhostinvalid, username: %s",
-			(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, inbound_info.address, inbound_info.username
+		connection_setup_log_access(snapshot, MKSYS_LEVEL_WARNING, &addrinfo_in,
+			"type: %s, vhost: %s, status: reject_vhostinvalid, username: %s",
+			typestr, (const char *)inbound_info.address, (const char *)inbound_info.username
 		);
 		packlen_rewrited = make_kickreason(rewrited, sizeof(rewrited), "Proxy: Please use a legit name to connect!");
 		connection_setup_long_send_client(socket_in, rewrited, packlen_rewrited);
@@ -347,9 +345,9 @@ static connection_setup_status connection_setup_long_handle_modern_handshake(int
 	net_error connect_status = connection_setup_long_connect_outbound(socket_out, snapshot);
 	mksys_level outmsg_level = connect_status == NET_OK ? MKSYS_LEVEL_INFORMATION : MKSYS_LEVEL_WARNING;
 	if (connect_status == NET_OK) {
-		CONNECTION_SETUP_LOG(snapshot, outmsg_level,
-			"src: %s:%d, type: %s, vhost: %s, dst: %s:%d, status: accept, username: %s",
-			(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
+		connection_setup_log_access(snapshot, outmsg_level, &addrinfo_in,
+			"type: %s, vhost: %s, dst: %s:%d, status: accept, username: %s",
+			typestr, (const char *)inbound_info.address, proxyinfo.address, proxyinfo.port, (const char *)inbound_info.username
 		);
 		bool seed_done = !proxyinfo.pheader || connection_setup_long_seed_proxy_header(seed, seed_size, snapshot);
 		bool rewrite_failed = false;
@@ -376,14 +374,14 @@ static connection_setup_status connection_setup_long_handle_modern_handshake(int
 		}
 		if (!seed_done) {
 			if (rewrite_failed) {
-				CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING,
-					"src: %s:%d, type: %s, dst: %s:%d, status: reject_rewritefailed, username: %s",
-					(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, proxyinfo.address, proxyinfo.port, inbound_info.username
+				connection_setup_log_access(snapshot, MKSYS_LEVEL_WARNING, &addrinfo_in,
+					"type: %s, dst: %s:%d, status: reject_rewritefailed, username: %s",
+					typestr, proxyinfo.address, proxyinfo.port, (const char *)inbound_info.username
 				);
 			} else {
-				CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING,
-					"src: %s:%d, type: %s, vhost: %s, dst: %s:%d, status: reject_seedoverflow, username: %s",
-					(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
+				connection_setup_log_access(snapshot, MKSYS_LEVEL_WARNING, &addrinfo_in,
+					"type: %s, vhost: %s, dst: %s:%d, status: reject_seedoverflow, username: %s",
+					typestr, (const char *)inbound_info.address, proxyinfo.address, proxyinfo.port, (const char *)inbound_info.username
 				);
 			}
 			close(*socket_out);
@@ -396,15 +394,15 @@ static connection_setup_status connection_setup_long_handle_modern_handshake(int
 		return CONNECTION_SETUP_OK;
 	}
 	if (connect_status == NET_ENORECORD) {
-		CONNECTION_SETUP_LOG(snapshot, outmsg_level,
-			"src: %s:%d, type: %s, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s",
-			(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
+		connection_setup_log_access(snapshot, outmsg_level, &addrinfo_in,
+			"type: %s, vhost: %s, dst: %s:%d, status: reject_dstnoresolve, username: %s",
+			typestr, (const char *)inbound_info.address, proxyinfo.address, proxyinfo.port, (const char *)inbound_info.username
 		);
 		packlen_rewrited = make_kickreason(rewrited, sizeof(rewrited), "Proxy(Internal): Temporarily failed to resolve the address for the target server, please try again later.");
 	} else {
-		CONNECTION_SETUP_LOG(snapshot, outmsg_level,
-			"src: %s:%d, type: %s, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s",
-			(char *)&(addrinfo_in.address), addrinfo_in.port, typestr, inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
+		connection_setup_log_access(snapshot, outmsg_level, &addrinfo_in,
+			"type: %s, vhost: %s, dst: %s:%d, status: reject_dstnoconnect, username: %s",
+			typestr, (const char *)inbound_info.address, proxyinfo.address, proxyinfo.port, (const char *)inbound_info.username
 		);
 		packlen_rewrited = make_kickreason(rewrited, sizeof(rewrited), "Proxy(Internal): Failed to connect to the target server, please try again later.");
 	}
@@ -418,7 +416,7 @@ static connection_setup_status connection_setup_long_reject_modern1(int socket_i
 	uint8_t rewrited[BUFSIZ];
 	size_t packlen_rewrited = 0;
 	memset(rewrited, 0, sizeof(rewrited));
-	CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING, "src: %s:%d, type: game, status: reject_gamerelay_13w41*", (char *)&(addrinfo_in.address), addrinfo_in.port);
+	connection_setup_log_access(snapshot, MKSYS_LEVEL_WARNING, &addrinfo_in, "type: game, status: reject_gamerelay_13w41*");
 	packlen_rewrited = make_kickreason(rewrited, sizeof(rewrited), "Proxy: Unsupported client, use 13w42a or later!");
 	connection_setup_long_send_client(socket_in, rewrited, packlen_rewrited);
 	close(socket_in);
@@ -448,7 +446,7 @@ static connection_setup_status connection_setup_long_prepared_run(int socket_in,
 	intent_t intent;
 	protocol_version protocol = protocol_identify(inbound, inbound_size, &intent);
 	if (protocol == PVER_UNIDENT) {
-		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING, "src: %s:%d, status: reject_unidentproto", (char *)&(addrinfo_in.address), addrinfo_in.port);
+		connection_setup_log_access(snapshot, MKSYS_LEVEL_WARNING, &addrinfo_in, "status: reject_unidentproto");
 		close(socket_in);
 		return CONNECTION_SETUP_EUNIDENT;
 	}

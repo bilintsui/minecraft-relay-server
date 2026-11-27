@@ -44,6 +44,9 @@ typedef struct {
 	char icon_b64[CONF_ICON_B64MAX + 1U];
 	char log_filename[PATH_MAX];
 	uint8_t log_level;
+	connection_proxy_origin proxy_origin;
+	net_addrp proxy_peer;
+	in_port_t proxy_peer_port;
 	connection_setup_route_status route_status;
 } connection_setup_snapshot;
 typedef enum {
@@ -61,6 +64,7 @@ typedef enum {
 bool connection_setup_address_valid(const net_addr *address);
 bool connection_setup_bundle_valid(const net_addrbundle *address);
 const char *connection_setup_destination(const route_endpoint_snapshot *endpoint);
+void connection_setup_log_access(const connection_setup_snapshot *snapshot, mksys_level level, const net_addrbundle *source, const char *format, ...) __attribute__((format(printf, 4, 5)));
 bool connection_setup_snapshot_valid(const connection_setup_snapshot *snapshot);
 
 #endif

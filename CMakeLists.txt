@@ -161,7 +161,7 @@ if(BUILD_TESTING)
 	target_compile_definitions(protocol_proxy_test PRIVATE _GNU_SOURCE)
 	add_test(NAME protocol_proxy COMMAND protocol_proxy_test)
 	add_executable(connection_setup_short_test
-		tests/connection_setup_short.c src/basic.c src/connection/setup.c src/connection/setup_short.c
+		tests/connection_setup_short.c src/basic.c src/connection/setup.c src/connection/setup_short.c src/log.c
 		src/network.c src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c)
 	target_include_directories(connection_setup_short_test PRIVATE src)
 	target_compile_definitions(connection_setup_short_test PRIVATE _GNU_SOURCE)
@@ -355,7 +355,7 @@ if(BUILD_TESTING)
 		add_test(NAME protocol_proxy_ubsan COMMAND protocol_proxy_ubsan_test)
 		set_tests_properties(protocol_proxy_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(connection_setup_short_ubsan_test
-			tests/connection_setup_short.c src/basic.c src/connection/setup.c src/connection/setup_short.c
+			tests/connection_setup_short.c src/basic.c src/connection/setup.c src/connection/setup_short.c src/log.c
 			src/network.c src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c)
 		target_include_directories(connection_setup_short_ubsan_test PRIVATE src)
 		target_compile_definitions(connection_setup_short_ubsan_test PRIVATE _GNU_SOURCE)
