@@ -269,10 +269,6 @@ static bool dns_result_address_equal(const dns_address_record *record, const cha
 	return inet_pton(record->address.family, expected, address) == 1 && memcmp(&record->address.addr, address, address_size) == 0;
 }
 
-static bool dns_status_complete(dns_address_parse_status status) {
-	return status == DNS_ADDRESS_PARSE_OK || status == DNS_ADDRESS_PARSE_ALIAS_ONLY || status == DNS_ADDRESS_PARSE_NODATA || status == DNS_ADDRESS_PARSE_NXDOMAIN || status == DNS_ADDRESS_PARSE_RCODE_ERROR;
-}
-
 static bool dns_test_aliases(void) {
 	dns_message_builder builder;
 	dns_address_result result = { 0 };
@@ -320,6 +316,43 @@ static bool dns_test_aliases(void) {
 cleanup:
 	dns_address_result_destroy(&result);
 	return test_result;
+}
+
+static bool dns_test_answer_bounds(sa_family_t family, uint16_t type, const char *first_address, size_t address_size) {
+	dns_message_builder builder;
+	dns_address_result result = { 0 };
+	uint8_t address[sizeof(struct in6_addr)];
+	bool success = false;
+	CHECK(inet_pton(family, first_address, address) == 1, "cannot encode address fixture");
+	CHECK(dns_builder_response_start(&builder, "bounds.example", type), "cannot start address response");
+	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, type, ns_c_in, 30, address, address_size, NULL), "cannot add first address");
+	for (size_t size = 0; size < builder.size; size++) {
+		dns_address_parse_status status = dns_address_response_parse(builder.data, size, builder.question_name, DNS_TEST_QUERY_ID, family, &result);
+		CHECK(status == DNS_ADDRESS_PARSE_MALFORMED, "short address message returned the wrong status");
+		dns_address_result_destroy(&result);
+	}
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, family, &result) == DNS_ADDRESS_PARSE_OK, "complete address response failed");
+	CHECK(result.address_count == 1 && result.addresses != NULL && dns_result_address_equal(&result.addresses[0], first_address), "complete response lost the first address");
+	dns_address_result_destroy(&result);
+
+	for (size_t index = 1; index < DNS_ADDRESS_RECORD_LIMIT; index++) {
+		address[address_size - 1] = (uint8_t)(index + 1);
+		CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, type, ns_c_in, 30, address, address_size, NULL), "cannot fill address answer section");
+	}
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, family, &result) == DNS_ADDRESS_PARSE_OK, "address response at the record limit failed");
+	CHECK(result.address_count == DNS_ADDRESS_RECORD_LIMIT && result.addresses != NULL, "address response at the limit returned the wrong record count");
+	for (size_t index = 0; index < result.address_count; index++) {
+		address[address_size - 1] = (uint8_t)(index + 1);
+		CHECK(result.addresses[index].address.family == family && memcmp(&result.addresses[index].address.addr, address, address_size) == 0, "address response at the limit lost wire order or data");
+	}
+	dns_address_result_destroy(&result);
+	address[address_size - 1] = DNS_ADDRESS_RECORD_LIMIT + 1;
+	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, type, ns_c_in, 30, address, address_size, NULL), "cannot append address past the limit");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, family, &result) == DNS_ADDRESS_PARSE_LIMIT, "address response above the limit was accepted");
+	success = true;
+cleanup:
+	dns_address_result_destroy(&result);
+	return success;
 }
 
 static bool dns_test_arguments(void) {
@@ -596,6 +629,11 @@ static bool dns_test_malformed(void) {
 		CHECK(snprintf(target, sizeof(target), "n%zu.example", index + 1) > 0, "cannot format excessive alias target");
 		CHECK(dns_builder_wire_name_create(target, wire_name, sizeof(wire_name), &wire_name_size), "cannot encode excessive alias target");
 		CHECK(dns_builder_record_add(&builder, owner, DNS_TEST_NO_POINTER, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add excessive alias");
+		if (index + 1 == DNS_CNAME_DEPTH_LIMIT) {
+			CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_ALIAS_ONLY, "CNAME depth limit rejected");
+			CHECK(result.cname_count == DNS_CNAME_DEPTH_LIMIT && strcmp(result.canonical_name, target) == 0, "CNAME chain at the limit lost its final target");
+			dns_address_result_destroy(&result);
+		}
 	}
 	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_LIMIT, "excessive CNAME chain was accepted");
 
@@ -616,17 +654,22 @@ static bool dns_test_malformed(void) {
 	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "invalid SOA compression pointer was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "negative.example", ns_t_a), "cannot start trailing-data SOA response");
-	uint8_t trailing_soa[NS_MAXCDNAME * 2 + 21];
-	size_t trailing_soa_size;
-	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 30, trailing_soa, sizeof(trailing_soa), &trailing_soa_size), "cannot encode trailing-data SOA record");
-	trailing_soa[trailing_soa_size++] = 0;
-	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, trailing_soa, trailing_soa_size), "cannot add trailing-data SOA record");
+	uint8_t wire_soa[NS_MAXCDNAME * 2 + 21];
+	size_t soa_size;
+	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 30, wire_soa, sizeof(wire_soa) - 1, &soa_size), "cannot encode SOA record");
+	wire_soa[soa_size] = 0;
+	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, wire_soa, soa_size + 1), "cannot add trailing-data SOA record");
 	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "SOA record with trailing data was accepted");
 
-	CHECK(dns_builder_response_start(&builder, "negative.example", ns_t_a), "cannot start excessive-authority response");
-	for (size_t index = 0; index <= DNS_AUTHORITY_RECORD_LIMIT; index++) {
-		CHECK(dns_builder_authority_add(&builder, NULL, builder.question_name_offset, ns_t_txt, ns_c_in, 1, NULL, 0), "cannot add excessive authority record");
+	CHECK(dns_builder_response_start(&builder, "negative.example", ns_t_a), "cannot start authority count response");
+	for (size_t index = 0; index < DNS_AUTHORITY_RECORD_LIMIT - 1; index++) {
+		CHECK(dns_builder_authority_add(&builder, NULL, builder.question_name_offset, ns_t_txt, ns_c_in, 1, "", 1), "cannot fill authority section");
 	}
+	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 60, wire_soa, soa_size), "cannot add final authority SOA");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "NODATA at the authority limit failed");
+	CHECK(result.negative.valid && result.negative.effective_ttl == 30 && strcmp(result.negative.owner, "example") == 0, "last authority SOA was lost");
+	dns_address_result_destroy(&result);
+	CHECK(dns_builder_authority_add(&builder, NULL, builder.question_name_offset, ns_t_txt, ns_c_in, 1, "", 1), "cannot append authority record past the limit");
 	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_LIMIT, "excessive authority count was accepted");
 
 	CHECK(dns_builder_response_start(&builder, "contradictory.example", ns_t_a), "cannot start contradictory NXDOMAIN response");
@@ -676,7 +719,7 @@ static bool dns_test_negative(void) {
 	dns_address_result_destroy(&result);
 	for (size_t prefix_size = 0; prefix_size < builder.size; prefix_size++) {
 		dns_address_parse_status status = dns_address_response_parse(builder.data, prefix_size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result);
-		CHECK(!dns_status_complete(status), "truncated authoritative NODATA response was accepted");
+		CHECK(status == DNS_ADDRESS_PARSE_MALFORMED, "short authoritative NODATA message returned the wrong status");
 		dns_address_result_destroy(&result);
 	}
 
@@ -718,6 +761,21 @@ static bool dns_test_negative(void) {
 	CHECK(result.negative.valid && strcmp(result.negative.owner, "sub.example") == 0 && result.negative.record_ttl == 30 && result.negative.minimum == 80 && result.negative.effective_ttl == 30,
 		"closest or duplicate SOA selection was incorrect");
 	dns_address_result_destroy(&result);
+
+	CHECK(dns_builder_wire_soa_create("ns.x", "hostmaster.x", 80, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode one-letter zone SOA");
+	for (size_t family = 0; family < 2; family++) {
+		for (size_t root_index = 0; root_index < 2; root_index++) {
+			CHECK(dns_builder_response_start(&builder, "missing.x", family == 0 ? ns_t_a : ns_t_aaaa), "cannot start one-letter zone NODATA response");
+			for (size_t index = 0; index < 2; index++) {
+				CHECK(dns_builder_authority_add(&builder, index == root_index ? "." : "x", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, index == root_index ? 5 : 100, wire_soa, wire_soa_size),
+					"cannot add root or one-letter zone SOA");
+			}
+			CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, family == 0 ? AF_INET : AF_INET6, &result) == DNS_ADDRESS_PARSE_NODATA,
+				"cannot parse one-letter zone NODATA response");
+			CHECK(result.negative.valid && strcmp(result.negative.owner, "x") == 0 && result.negative.effective_ttl == 80, "root displaced one-letter zone SOA");
+			dns_address_result_destroy(&result);
+		}
+	}
 
 	CHECK(dns_builder_response_start(&builder, "zero.example", ns_t_a), "cannot start zero-TTL NODATA response");
 	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 0, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode zero-TTL SOA record");
@@ -898,26 +956,6 @@ cleanup:
 	return test_result;
 }
 
-static bool dns_test_truncation(void) {
-	dns_message_builder builder;
-	dns_address_result result = { 0 };
-	int test_result = false;
-	CHECK(dns_builder_response_start(&builder, "truncate.example", ns_t_a), "cannot start truncation response");
-	uint8_t address[4] = { 203, 0, 113, 1 };
-	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_a, ns_c_in, 30, address, sizeof(address), NULL), "cannot add truncation address");
-	for (size_t prefix_size = 0; prefix_size < builder.size; prefix_size++) {
-		dns_address_parse_status status = dns_address_response_parse(builder.data, prefix_size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result);
-		CHECK(!dns_status_complete(status), "truncated prefix was accepted as a complete response");
-		dns_address_result_destroy(&result);
-	}
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "complete response failed after truncation checks");
-	test_result = true;
-
-cleanup:
-	dns_address_result_destroy(&result);
-	return test_result;
-}
-
 /* section: functions (exported) */
 void __wrap___res_nclose(res_state resolver) {
 	if (resolver == NULL) {
@@ -996,8 +1034,9 @@ int __wrap_res_nsend(res_state resolver, const unsigned char *query, int query_s
 
 /* section: functions (entry point) */
 int main(void) {
-	if (!dns_test_aliases() || !dns_test_arguments() || !dns_test_lookup() || !dns_test_lookup_depth() || !dns_test_malformed() || !dns_test_negative() || !dns_test_records()
-		|| !dns_test_resolver_limits() || !dns_test_statuses() || !dns_test_truncation()) {
+	if (!dns_test_aliases() || !dns_test_answer_bounds(AF_INET, ns_t_a, "203.0.113.1", sizeof(struct in_addr)) || !dns_test_answer_bounds(AF_INET6, ns_t_aaaa, "2001:db8::1", sizeof(struct in6_addr))
+		|| !dns_test_arguments() || !dns_test_lookup() || !dns_test_lookup_depth() || !dns_test_malformed() || !dns_test_negative() || !dns_test_records() || !dns_test_resolver_limits()
+		|| !dns_test_statuses()) {
 		return EXIT_FAILURE;
 	}
 	return EXIT_SUCCESS;

@@ -257,9 +257,7 @@ static dns_negative_parse_status dns_negative_response_parse(ns_msg *response, c
 		if (!resolver_name_encloses(candidate.owner, canonical_name)) {
 			continue;
 		}
-		if (!result->valid || strlen(candidate.owner) > strlen(result->owner)) {
-			*result = candidate;
-		} else if (strcmp(candidate.owner, result->owner) == 0) {
+		if (result->valid && strcmp(candidate.owner, result->owner) == 0) {
 			if (candidate.minimum < result->minimum) {
 				result->minimum = candidate.minimum;
 			}
@@ -267,6 +265,8 @@ static dns_negative_parse_status dns_negative_response_parse(ns_msg *response, c
 				result->record_ttl = candidate.record_ttl;
 			}
 			result->effective_ttl = result->minimum < result->record_ttl ? result->minimum : result->record_ttl;
+		} else if (!result->valid || resolver_name_encloses(result->owner, candidate.owner)) {
+			*result = candidate;
 		}
 	}
 	if (result->valid) {
