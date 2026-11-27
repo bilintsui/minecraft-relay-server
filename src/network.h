@@ -81,6 +81,7 @@ typedef enum {
 } net_socket_action;
 
 /* section: functions (exported) */
+bool net_addr_is_v4mapped(const net_addr *address);
 net_addr net_addr_parse(const char *address);
 bool net_addr_unmap(net_addr *address);
 net_connect_status net_connect_nonblocking(const net_addr *address, in_port_t port, int *socket_fd);

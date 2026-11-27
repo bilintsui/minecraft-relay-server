@@ -6,6 +6,7 @@
  */
 
 /* section: headers (library) */
+#include <errno.h>
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -33,13 +34,8 @@ static bool protocol_proxy_endpoint_read(const struct sockaddr_storage *source, 
 		}
 		case AF_INET6: {
 			const struct sockaddr_in6 *source_v6 = (const struct sockaddr_in6 *)source;
-			if (IN6_IS_ADDR_V4MAPPED(&source_v6->sin6_addr)) {
-				address->family = AF_INET;
-				memcpy(&address->addr.v4, &source_v6->sin6_addr.s6_addr[12], sizeof(address->addr.v4));
-			} else {
-				address->family = AF_INET6;
-				memcpy(address->addr.v6, &source_v6->sin6_addr, sizeof(address->addr.v6));
-			}
+			address->family = AF_INET6;
+			memcpy(address->addr.v6, &source_v6->sin6_addr, sizeof(address->addr.v6));
 			*port = ntohs(source_v6->sin6_port);
 			return true;
 		}
@@ -48,16 +44,19 @@ static bool protocol_proxy_endpoint_read(const struct sockaddr_storage *source, 
 	}
 }
 
-static bool protocol_proxy_field_address(const char **cursor, const char *end, char *dst, size_t dst_size) {
+static bool protocol_proxy_field_address(const char **cursor, const char *end, sa_family_t family, net_addr *address) {
+	char text[INET6_ADDRSTRLEN];
 	const char *space = memchr(*cursor, ' ', (size_t)(end - *cursor));
 	size_t length = (space != NULL) ? (size_t)(space - *cursor) : (size_t)(end - *cursor);
-	if ((space == NULL) || (length == 0) || (length >= dst_size) || (memchr(*cursor, '\0', length) != NULL)) {
+	if ((space == NULL) || (length == 0) || (length >= sizeof(text)) || (memchr(*cursor, '\0', length) != NULL)) {
 		return false;
 	}
-	memcpy(dst, *cursor, length);
-	dst[length] = '\0';
+	memcpy(text, *cursor, length);
+	text[length] = '\0';
 	*cursor += length;
-	return true;
+	*address = net_addr_parse(text);
+	/* Dual-stack senders can use a dotted IPv4 tail for mapped TCP6 endpoints. */
+	return address->family == family && (family != AF_INET6 || strchr(text, '.') == NULL || net_addr_is_v4mapped(address));
 }
 
 static bool protocol_proxy_field_port(const char **cursor, const char *end, in_port_t *dst) {
@@ -71,7 +70,7 @@ static bool protocol_proxy_field_port(const char **cursor, const char *end, in_p
 		}
 		length++;
 	}
-	if (length == 0) {
+	if (length == 0 || (length > 1 && **cursor == '0')) {
 		return false;
 	}
 	*dst = (in_port_t)value;
@@ -87,75 +86,89 @@ static bool protocol_proxy_field_space(const char **cursor, const char *end) {
 	return true;
 }
 
-static sa_family_t protocol_proxy_getfamily(const void *src, size_t n) {
-	if (src == NULL) {
-		return AF_UNSPEC;
+/* inet_ntop can use a dotted tail for IPv6. The v1 wire representation uses hexadecimal groups. */
+static net_addrp protocol_proxy_format_address(const net_addr *address) {
+	net_addrp text = net_ntop(address->family, &address->addr, false);
+	if (address->family == AF_INET6 && strchr(text.v6, '.') != NULL) {
+		const uint8_t *bytes = address->addr.v6;
+		const char *prefix = net_addr_is_v4mapped(address) ? "::ffff:" : "::";
+		snprintf(text.v6, sizeof(text.v6), "%s%x:%x", prefix, (bytes[12] << 8) | bytes[13], (bytes[14] << 8) | bytes[15]);
 	}
-	if ((n < 11) || (n > PROTOPROXY_PACKETMAXLEN)) {
-		return AF_UNSPEC;
-	}
-	if (memcmp(src, "PROXY TCP", 9)) {
-		return AF_UNSPEC;
-	}
-	const void *src_endptr = memchr(src, '\r', n);
-	if (src_endptr == NULL) {
-		return AF_UNSPEC;
-	}
-	if (n != (size_t)((const uint8_t *)src_endptr - (const uint8_t *)src) + 2) {
-		return AF_UNSPEC;
-	}
-	if (memcmp(src_endptr, "\r\n", 2)) {
-		return AF_UNSPEC;
-	}
-	if ((*((const char *)src + 10) != ' ')) {
-		return AF_UNSPEC;
-	}
-	switch (*((const char *)src + 9)) {
-		case '4':
-			return AF_INET;
-		case '6':
-			return AF_INET6;
-		default:
-			return AF_UNSPEC;
+	return text;
+}
+
+static void protocol_proxy_normalize(p_proxy *pair) {
+	net_addr source = pair->srcaddr, destination = pair->dstaddr;
+	if (net_addr_unmap(&source) && net_addr_unmap(&destination)) {
+		pair->family = AF_INET;
+		pair->srcaddr = source;
+		pair->dstaddr = destination;
 	}
 }
 
+static bool protocol_proxy_tcp_read(const char *cursor, const char *end, sa_family_t family, p_proxy *result) {
+	p_proxy pair = { .family = family };
+	if (!protocol_proxy_field_address(&cursor, end, family, &pair.srcaddr) || !protocol_proxy_field_space(&cursor, end)
+		|| !protocol_proxy_field_address(&cursor, end, family, &pair.dstaddr) || !protocol_proxy_field_space(&cursor, end)
+		|| !protocol_proxy_field_port(&cursor, end, &pair.srcport) || !protocol_proxy_field_space(&cursor, end) || !protocol_proxy_field_port(&cursor, end, &pair.dstport) || cursor != end) {
+		return false;
+	}
+	protocol_proxy_normalize(&pair);
+	*result = pair;
+	return true;
+}
+
 /* section: functions (exported) */
-p_proxy protocol_proxy_read(const void *src, size_t n) {
-	p_proxy result;
-	memset(&result, 0, sizeof(result));
-	result.family = AF_UNSPEC;
-	if (src == NULL) {
-		return result;
+proxy_prefix protocol_proxy_detect(const void *src, size_t n) {
+	static const char v1[] = "PROXY ";
+	static const char v2[] = "\r\n\r\n\0\r\nQUIT\n";
+	if (n == 0) {
+		return PROXY_PREFIX_PARTIAL;
 	}
-	result.family = protocol_proxy_getfamily(src, n);
-	if (result.family == AF_UNSPEC) {
-		return result;
+	if (src != NULL && memcmp(src, v1, n < sizeof(v1) - 1U ? n : sizeof(v1) - 1U) == 0) {
+		return n < sizeof(v1) - 1U ? PROXY_PREFIX_PARTIAL : PROXY_PREFIX_V1;
 	}
-	const char *cursor = (const char *)src + 11;
-	const char *end = (const char *)src + n - 2;
-	char source_text[INET6_ADDRSTRLEN + 2] = { 0 };
-	char dest_text[INET6_ADDRSTRLEN + 2] = { 0 };
-	in_port_t source_port = 0;
-	in_port_t dest_port = 0;
-	if ((cursor >= end) || !protocol_proxy_field_address(&cursor, end, source_text, sizeof(source_text))
-		|| !protocol_proxy_field_space(&cursor, end)
-		|| !protocol_proxy_field_address(&cursor, end, dest_text, sizeof(dest_text))
-		|| !protocol_proxy_field_space(&cursor, end)
-		|| !protocol_proxy_field_port(&cursor, end, &source_port)
-		|| !protocol_proxy_field_space(&cursor, end)
-		|| !protocol_proxy_field_port(&cursor, end, &dest_port) || (cursor != end)) {
-		result.family = AF_UNSPEC;
-		return result;
+	if (src != NULL && memcmp(src, v2, n < sizeof(v2) - 1U ? n : sizeof(v2) - 1U) == 0) {
+		return n < sizeof(v2) - 1U ? PROXY_PREFIX_PARTIAL : PROXY_PREFIX_V2;
 	}
-	result.srcaddr = net_addr_parse(source_text);
-	result.dstaddr = net_addr_parse(dest_text);
-	result.srcport = source_port;
-	result.dstport = dest_port;
-	if (result.srcaddr.err || result.dstaddr.err || result.srcaddr.family != result.family || result.dstaddr.family != result.family) {
-		result.family = AF_UNSPEC;
+	return PROXY_PREFIX_OTHER;
+}
+
+proxy_read_status protocol_proxy_read(const void *src, size_t n, p_proxy *result, size_t *consumed) {
+	const char *line = src;
+	if (result == NULL || consumed == NULL) {
+		return PROXY_READ_MALFORMED;
 	}
-	return result;
+	*result = (p_proxy){ 0 };
+	*consumed = 0;
+	proxy_prefix prefix = protocol_proxy_detect(src, n);
+	if (prefix != PROXY_PREFIX_V1) {
+		return prefix == PROXY_PREFIX_PARTIAL ? PROXY_READ_INCOMPLETE : PROXY_READ_MALFORMED;
+	}
+	size_t limit = n < PROTOPROXY_PACKETMAXLEN ? n : PROTOPROXY_PACKETMAXLEN;
+	size_t i = 6;
+	while (i < limit && line[i] != '\r' && line[i] != '\n') {
+		i++;
+	}
+	if (i < limit && (line[i] == '\n' || (i + 1 < limit && line[i + 1] != '\n'))) {
+		return PROXY_READ_MALFORMED;
+	}
+	if (i + 1 >= limit) {
+		return limit == PROTOPROXY_PACKETMAXLEN ? PROXY_READ_TOO_LONG : PROXY_READ_INCOMPLETE;
+	}
+	const char *fields = line + 6;
+	size_t length = i - 6;
+	if (length >= 7 && memcmp(fields, "UNKNOWN", 7) == 0 && (length == 7 || fields[7] == ' ')) {
+		/* Optional UNKNOWN fields are opaque. */
+	} else if (length >= 5 && (memcmp(fields, "TCP4 ", 5) == 0 || memcmp(fields, "TCP6 ", 5) == 0)) {
+		if (!protocol_proxy_tcp_read(fields + 5, line + i, fields[3] == '4' ? AF_INET : AF_INET6, result)) {
+			return PROXY_READ_MALFORMED;
+		}
+	} else {
+		return PROXY_READ_MALFORMED;
+	}
+	*consumed = i + 2;
+	return PROXY_READ_COMPLETE;
 }
 
 bool protocol_proxy_socket_read(int socket_fd, p_proxy *result) {
@@ -163,6 +176,7 @@ bool protocol_proxy_socket_read(int socket_fd, p_proxy *result) {
 		memset(result, 0, sizeof(*result));
 	}
 	if (socket_fd < 0 || result == NULL) {
+		errno = EINVAL;
 		return false;
 	}
 	struct sockaddr_storage destination_socket;
@@ -172,20 +186,24 @@ bool protocol_proxy_socket_read(int socket_fd, p_proxy *result) {
 	memset(&destination_socket, 0, sizeof(destination_socket));
 	memset(&source_socket, 0, sizeof(source_socket));
 	if (getpeername(socket_fd, (struct sockaddr *)&source_socket, &source_socket_size) == -1
-		|| getsockname(socket_fd, (struct sockaddr *)&destination_socket, &destination_socket_size) == -1
-		|| !protocol_proxy_endpoint_read(&source_socket, &result->srcaddr, &result->srcport)
+		|| getsockname(socket_fd, (struct sockaddr *)&destination_socket, &destination_socket_size) == -1) {
+		return false;
+	}
+	if (!protocol_proxy_endpoint_read(&source_socket, &result->srcaddr, &result->srcport)
 		|| !protocol_proxy_endpoint_read(&destination_socket, &result->dstaddr, &result->dstport)
 		|| result->srcaddr.family != result->dstaddr.family) {
 		memset(result, 0, sizeof(*result));
+		errno = EAFNOSUPPORT;
 		return false;
 	}
 	result->family = result->srcaddr.family;
+	protocol_proxy_normalize(result);
 	return true;
 }
 
 size_t protocol_proxy_write(void *dst, p_proxy src) {
-	net_addrp srcaddrp = net_ntop(src.family, &(src.srcaddr.addr), false);
-	net_addrp dstaddrp = net_ntop(src.family, &(src.dstaddr.addr), false);
+	net_addrp srcaddrp = protocol_proxy_format_address(&src.srcaddr);
+	net_addrp dstaddrp = protocol_proxy_format_address(&src.dstaddr);
 	int result;
 	switch (src.family) {
 		case AF_INET:

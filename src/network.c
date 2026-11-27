@@ -40,6 +40,9 @@ typedef struct {
 	uint8_t data[NET_RELAY_BUFFER_BYTES];
 } net_relay_queue;
 
+/* section: global variables */
+static const uint8_t net_v4mapped_prefix[12] = { [10] = 0xff, [11] = 0xff };
+
 /* section: functions (local) */
 static bool net_relay_finished(const net_relay_queue *queue_c2o, const net_relay_queue *queue_o2c) {
 	return queue_c2o->peer_eof && queue_o2c->peer_eof && queue_c2o->offset == queue_c2o->length && queue_o2c->offset == queue_o2c->length && queue_c2o->shutdown_sent && queue_o2c->shutdown_sent;
@@ -154,6 +157,10 @@ static bool net_relay_shutdown_propagate(net_relay_queue *queue, int socket_fd) 
 }
 
 /* section: functions (exported) */
+bool net_addr_is_v4mapped(const net_addr *address) {
+	return address != NULL && address->family == AF_INET6 && memcmp(address->addr.v6, net_v4mapped_prefix, sizeof(net_v4mapped_prefix)) == 0;
+}
+
 net_addr net_addr_parse(const char *address) {
 	net_addr result;
 	memset(&result, 0, sizeof(result));
@@ -171,12 +178,11 @@ net_addr net_addr_parse(const char *address) {
 }
 
 bool net_addr_unmap(net_addr *address) {
-	static const uint8_t prefix[12] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff };
-	if (address->family != AF_INET6 || memcmp(address->addr.v6, prefix, sizeof(prefix)) != 0) {
+	if (!net_addr_is_v4mapped(address)) {
 		return false;
 	}
 	uint32_t v4;
-	memcpy(&v4, address->addr.v6 + sizeof(prefix), sizeof(v4));
+	memcpy(&v4, address->addr.v6 + sizeof(net_v4mapped_prefix), sizeof(v4));
 	*address = (net_addr){ .family = AF_INET, .addr.v4 = v4 };
 	return true;
 }

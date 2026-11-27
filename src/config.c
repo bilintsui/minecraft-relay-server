@@ -21,6 +21,7 @@
 /* section: headers (project) */
 #include "basic.h"
 #include "log.h"
+#include "protocol/proxy.h"
 
 /* section: headers (self) */
 #include "config.h"
@@ -66,10 +67,10 @@ static conf_error config_inbound_parse(conf *result, const cJSON *listen) {
 		}
 	}
 	const cJSON *version = cJSON_GetObjectItemCaseSensitive(settings, "version");
-	if (version != NULL && (!cJSON_IsNumber(version) || version->valuedouble != 1.0)) {
+	if (version != NULL && (!cJSON_IsNumber(version) || version->valuedouble != PROXY_PREFIX_V1)) {
 		return config_inbound_invalid("proxy_settings.version", -1, "the number 1");
 	}
-	result->listen.proxy_version = version == NULL ? 1 : (uint8_t)version->valueint;
+	result->listen.proxy_version = version == NULL ? PROXY_PREFIX_V1 : (uint8_t)version->valueint;
 	const cJSON *policy = cJSON_GetObjectItemCaseSensitive(settings, "untrusted_policy");
 	if (policy != NULL) {
 		size_t i = 0;
