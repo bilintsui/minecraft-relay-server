@@ -8,7 +8,16 @@
   },
   "listen": {
     "address": "::",
-    "port": 25565
+    "port": 25565,
+    "allow_proxy": false,
+    "proxy_settings": {
+      "version": 1,
+      "trusted_sources": [
+        "127.0.0.1",
+        "::1"
+      ],
+      "untrusted_policy": "reject"
+    }
   },
   "icon": "",
   "proxy": [

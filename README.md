@@ -1,5 +1,4 @@
 # Minecraft Relay Server (mcrelay)
-
 A Minecraft reverse proxy server with server address rewrite.
 
 Supports Minecraft servers and clients with version 12w04a and later (basically means release 1.2.1 and later).
@@ -9,7 +8,7 @@ Minecraft versions before 12w04a are **NOT SUPPORTED**!
 ## Features
 * Support reverse proxy for Minecraft servers by server address in the handshake packet which the client sends.
 * Support rewrite server address and server port to camouflage a connection which uses an official server address (e.g., pretend to be a normal connection to Hypixel, avoiding their server address check).
-* Support IP forwarding using HAProxy's Proxy Protocol (but it refuses any incoming connection using this protocol).
+* Preserve the original client address and port across services that send or receive PROXY protocol v1 headers.
 * Provide optional bounded operational metrics and rate-limited resolver-helper state events through the existing log.
 
 ## Requirements
@@ -49,7 +48,6 @@ Then you can use CMake to compile it by <code>cmake -B build && cmake --build bu
 See the [build and test guide](doc/building.md) for all project switches, build types, compiler/linker flags, cross-compiling, advanced capacity/deadline overrides and Debian packaging options. For example, <code>-DCMAKE_C_COMPILER=clang</code> selects another compiler, and <code>-DEXEC_SUFFIX=_custom</code> names the executable <code>mcrelay_custom</code> without changing its version.
 
 ### Debug builds
-
 Run the following commands from the repository root:
 
 ```sh
@@ -69,7 +67,6 @@ cmake --build build-release --parallel "$(nproc)"
 ```
 
 ### Resolver helper capacity
-
 By default, mcrelay starts two resolver helper processes, and each helper performs at most one blocking DNS lookup at a time. Configured destinations are normally prewarmed before mcrelay reports readiness, but a large startup or reload configuration, or a burst of distinct uncached names, can contend for the two helpers and each connection's independent default 10-second route-wait deadline.
 
 The helper count is a compile-time limit rather than a runtime configuration option. Deployments that need more parallel DNS lookups must rebuild with a larger <code>RESOLVER_SUPERVISOR_HELPER_COUNT</code>, for example:
@@ -83,7 +80,6 @@ cmake --build build-capacity --parallel "$(nproc)"
 See [advanced compile-time overrides](doc/building.md#advanced-compile-time-overrides) for related limits, validation requirements and test-target interactions.
 
 ## Testing
-
 <code>BUILD_TESTING</code> defaults to ON and builds separate test runners/daemons; it does not add their hooks or reduced limits to <code>mcrelay</code>. To build and run the regular suite:
 
 ```sh
@@ -111,10 +107,9 @@ The program runs in the foreground. Use a service manager such as systemd when i
 Multiple instances can run with separate configuration files as long as their listening addresses do not conflict.
 
 ## Config
-See [<code>doc/configuration/mcrelay/config.jsonc</code>](doc/configuration/mcrelay/config.jsonc) for instructions.
+See the [JSON configuration example](doc/configuration/mcrelay/config.json) or the [annotated JSONC example](doc/configuration/mcrelay/config.jsonc).
 
 ## Operational metrics
-
 Aggregate operational metrics are disabled by default. Set <code>metrics.interval</code> to an integer from 300 to 86400 seconds and keep <code>log.level</code> at 2 or higher to emit them through the configured log. For example:
 
 ```json
@@ -149,9 +144,24 @@ If you provide <code>srvrecord.example.com</code> to your user, you should set y
 For compatibility, it's recommended to add both of them to your configuration.
 
 ## IP Forwarding
-You can provide the real client address and port through HAProxy's Proxy Protocol by this feature.
+By default the listener accepts direct Minecraft connections. To receive the original client address and port from a service that supports PROXY v1, add the following fields to the existing `listen` object. Configure the sending service to start every connection with a v1 header (for example, `send-proxy` on an HAProxy `server` line).
 
-It's compatible with any server which supports this protocol (e.g. Bungeecord).
+```json
+{
+  "allow_proxy": true,
+  "proxy_settings": {
+    "trusted_sources": [
+      "192.0.2.10"
+    ]
+  }
+}
+```
 
-### Bungeecord
-To use this feature correctly, turn on the <code>proxy_protocol</code> in the <code>config.yml</code> (<code>false</code> to <code>true</code>).
+Replace `192.0.2.10` with the TCP source address of the service sending the header. An explicit list replaces the default entries `127.0.0.1` and `::1`. The default policy closes connections from other peers immediately. Access records for admitted connections put the actual TCP peer in `peer`, the header handling result in `proxy`, and the effective client endpoint in `src`. [All listener settings](doc/configuration/mcrelay/config.jsonc)
+
+In an incoming `TCP6` header, mcrelay accepts both `::ffff:c000:201` and `::ffff:192.0.2.1` for the same IPv4-mapped address. The dotted form is accepted only for IPv4-mapped addresses, for compatibility with dual-stack senders such as HAProxy. When forwarding a `TCP6` pair, mcrelay emits `TCP4` if both addresses are IPv4-mapped. Otherwise it emits `TCP6` with both addresses in hexadecimal IPv6 notation. [PROXY protocol v1, section 2.1](https://www.haproxy.org/download/2.9/doc/proxy-protocol.txt)
+
+Outgoing headers are configured per route. Set `pheader` to `true` on any route whose backend accepts PROXY v1. To chain two mcrelay instances, enable `pheader` on the route from the first to the second, then enable `allow_proxy` on the second and trust the first instance's TCP source address. Keep `rewrite` disabled on the intermediate route when both instances route by the original Minecraft hostname.
+
+### BungeeCord
+For a BungeeCord backend, set `proxy_protocol` to `true` in its `config.yml` and enable `pheader` on the corresponding mcrelay route.

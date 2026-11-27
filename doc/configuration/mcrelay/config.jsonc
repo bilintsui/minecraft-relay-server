@@ -48,7 +48,29 @@
      *
      * The port that the server will listen on
      */
-    "port": 25565
+    "port": 25565,
+
+    // Optional boolean. When enabled, every connection must begin with a PROXY v1 header.
+    "allow_proxy": false,
+
+    // Optional object. Only the three fields below are accepted.
+    // Each field is optional and validated even when allow_proxy is false.
+    "proxy_settings": {
+      // Optional number. The default and only supported version is 1.
+      "version": 1,
+
+      // Numeric IPv4 or IPv6 addresses of TCP peers. An explicit array replaces both defaults.
+      // [] trusts no peers. Duplicate numeric addresses are invalid, including IPv4-mapped equivalents.
+      "trusted_sources": [
+        "127.0.0.1",
+        "::1"
+      ],
+
+      // Case-sensitive. "reject" closes an untrusted connection immediately.
+      // "ignore" consumes a valid header and uses socket endpoints.
+      // "accept" lets any peer supply endpoints. An admitted UNKNOWN header always uses socket endpoints.
+      "untrusted_policy": "reject"
+    }
   },
   // Optional, custom icon displayed on server list, when connection cannot be established
   "icon": "",	// Use barrier by default
@@ -89,8 +111,8 @@
       /*
        * Optional, boolean or integer (default: false)
        *
-       * When set to true, this means the server will use HAProxy's Proxy Protocol
-       * Note: To enable this, you need to make sure your target server supports this protocol; otherwise, your connection will be closed
+       * Send a PROXY v1 header with the effective client and destination endpoints.
+       * Enable only for a backend configured to receive PROXY v1.
        */
       "pheader": false
     },
