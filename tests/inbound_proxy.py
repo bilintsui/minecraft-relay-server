@@ -2,6 +2,7 @@
 """Exercise inbound PROXY v1 through the production listener."""
 
 from contextlib import contextmanager
+import errno
 import json
 import os
 from pathlib import Path
@@ -31,7 +32,7 @@ def unused_port():
 
 
 class Relay:
-    def __init__(self, directory, binary, listen, backend, level):
+    def __init__(self, directory, binary, listen, backend, level, pheader):
         self.port = unused_port()
         self.log = directory / "access.log"
         self.config = directory / "config.json"
@@ -39,11 +40,11 @@ class Relay:
         self.settings = {
             "log": {"filename": str(self.log), "level": level},
             "listen": {"address": "127.0.0.1", "port": self.port, **listen},
-            "proxy": [{"vhost": "game.example", "address": "127.0.0.1", "port": backend, "pheader": True}],
+            "proxy": [{"vhost": "game.example", "address": "127.0.0.1", "port": backend, "pheader": pheader}],
         }
         self.config.write_text(json.dumps(self.settings))
         with self.console.open("w") as output:
-            self.process = subprocess.Popen([binary, "run", "-c", str(self.config)], stdin=subprocess.DEVNULL, stdout=output, stderr=output,
+            self.process = subprocess.Popen([binary, "run", "-c", str(self.config)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=output,
                                             start_new_session=True, env={k: v for k, v in os.environ.items() if k != "NOTIFY_SOCKET"})
 
     def connect(self):
@@ -51,6 +52,17 @@ class Relay:
 
     def lines(self):
         return self.log.read_text().splitlines() if self.log.exists() else []
+
+    def reload(self, changes, valid=True):
+        self.settings["listen"].update(changes)
+        self.config.write_text(json.dumps(self.settings))
+        if valid:
+            observe = lambda: sum("Configuration reloaded." in s for s in self.lines())
+        else:
+            observe = lambda: self.console.read_text().count('Invalid configuration entry "listen.')
+        before = observe()
+        self.process.send_signal(signal.SIGUSR1)
+        wait_for(lambda: observe() > before, "reload result")
 
     def stop(self):
         try:
@@ -63,9 +75,9 @@ class Relay:
 
 
 @contextmanager
-def relay(binary, listen, backend=9, level=3):
+def relay(binary, listen, backend=9, level=3, *, pheader=True):
     with tempfile.TemporaryDirectory(prefix="mcrelay-inbound-") as temp:
-        server = Relay(Path(temp), binary, listen, backend, level)
+        server = Relay(Path(temp), binary, listen, backend, level, pheader)
         try:
             wait_for(lambda: any("accepting connections." in s for s in server.lines()), "listener readiness")
             yield server
@@ -123,8 +135,98 @@ def admission(binary):
         reject(untrusted, [], reason + "untrusted_source")
 
 
-def header_errors(binary):
-    with relay(binary, {"allow_proxy": True}) as server:
+def game_request(intent):
+    host = b"game.example"
+    handshake = b"\x00\x2f" + bytes([len(host)]) + host + b"\x63\xdd" + bytes([intent])
+    second = b"\x01\x00" if intent == 1 else b"\x03\x00\x01U"
+    return bytes([len(handshake)]) + handshake + second
+
+
+def read_exact(sock, size):
+    data = bytearray()
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        assert chunk, f"EOF after {len(data)} of {size} bytes"
+        data.extend(chunk)
+    return bytes(data)
+
+
+@contextmanager
+def backend_socket():
+    with socket.socket() as backend:
+        backend.bind(("127.0.0.1", 0))
+        backend.listen()
+        backend.settimeout(4)
+        yield backend
+
+
+def exchange(client, backend, header, expected_header, intent, suffix=b""):
+    request = game_request(intent) + suffix
+    client.sendall(header + request)
+    with backend.accept()[0] as upstream:
+        upstream.settimeout(4)
+        expected = expected_header + request
+        assert read_exact(upstream, len(expected)) == expected
+        upstream.sendall(b"response")
+        assert read_exact(client, 8) == b"response"
+
+
+def forwarding(binary):
+    declared = b"PROXY TCP4 198.51.100.23 203.0.113.8 0 25565\r\n"
+    unknown = b"PROXY UNKNOWN ignored fields\r\n"
+    mapped = b"PROXY TCP6 ::ffff:c633:6417 ::ffff:cb00:7108 0 25565\r\n"
+    mixed = b"PROXY TCP6 ::ffff:c633:6417 2001:db8::8 0 25565\r\n"
+    with backend_socket() as backend:
+        for settings, cases in [
+            ({}, [(declared, declared), (unknown, None), (mapped, declared), (mixed, mixed)]),
+            ({"trusted_sources": ["192.0.2.1"], "untrusted_policy": "ignore"}, [(declared, None), (unknown, None)]),
+            ({"trusted_sources": [], "untrusted_policy": "accept"}, [(declared, declared), (unknown, None)]),
+        ]:
+            with relay(binary, {"allow_proxy": True, "proxy_settings": settings}, backend.getsockname()[1]) as server:
+                for received, expected in cases:
+                    for intent in (1, 2, 3):
+                        with server.connect() as client:
+                            actual = f"PROXY TCP4 127.0.0.1 127.0.0.1 {client.getsockname()[1]} {server.port}\r\n".encode()
+                            exchange(client, backend, received, expected or actual, intent, b"extra stream bytes")
+
+
+def forwarding_without_header(binary):
+    header = b"PROXY TCP4 192.0.2.7 192.0.2.8 123 456\r\n"
+    with backend_socket() as backend:
+        for policy in ("ignore", "accept"):
+            listen = {"allow_proxy": True, "proxy_settings": {"trusted_sources": [], "untrusted_policy": policy}}
+            with relay(binary, listen, backend.getsockname()[1], pheader=False) as server:
+                for intent in (1, 2, 3):
+                    with server.connect() as client:
+                        exchange(client, backend, header, b"", intent, bytes(range(256)))
+
+
+def reload_and_errors(binary):
+    with backend_socket() as backend, relay(binary, {"allow_proxy": True}, backend.getsockname()[1]) as server:
+        header = b"PROXY TCP4 192.0.2.10 192.0.2.11 123 456\r\n"
+        # The extra accepted socket and assembly timer prove the old policy was captured before SIGUSR1.
+        fd_dir = Path(f"/proc/{server.process.pid}/fd")
+        baseline = len(list(fd_dir.iterdir()))
+        with server.connect() as held:
+            held.sendall(b"PRO")
+            wait_for(lambda: len(list(fd_dir.iterdir())) >= baseline + 2, "old connection acceptance")
+            server.reload({"allow_proxy": False, "proxy_settings": {"trusted_sources": []}})
+            reject(server, [b"PROXY "], "[WARN] src: 127.0.0.1:{port}, status: reject_invalid_protocol, received: proxy_v1, expected: minecraft")
+            exchange(held, backend, header[3:], header, 2)
+        server.reload({"allow_proxy": True})
+        reject(server, [], "[WARN] peer: 127.0.0.1:{port}, status: reject_proxy_exception, exception: untrusted_source")
+        server.reload({"proxy_settings": {"untrusted_policy": "Accept"}}, valid=False)
+        assert all("Invalid configuration entry" not in s for s in server.lines())
+        reject(server, [], "[WARN] peer: 127.0.0.1:{port}, status: reject_proxy_exception, exception: untrusted_source")
+        server.reload({"allow_proxy": False, "proxy_settings": {}})
+        with server.connect() as direct:
+            actual = f"PROXY TCP4 127.0.0.1 127.0.0.1 {direct.getsockname()[1]} {server.port}\r\n".encode()
+            exchange(direct, backend, b"", actual, 1)
+        server.reload({"allow_proxy": True, "proxy_settings": {"version": 1}})
+        server.reload({"proxy_settings": {"version": 2}}, valid=False)
+        assert 'Invalid configuration entry "listen.proxy_settings.version"' in server.console.read_text()
+        with server.connect() as retained:
+            exchange(retained, backend, header, header, 1)
         with server.connect() as reset:
             port = reset.getsockname()[1]
             reset.sendall(b"PROXY ")
@@ -140,6 +242,23 @@ def header_errors(binary):
         assert sum(line.endswith(match) for line in server.lines()) == 1
 
 
+def socket_errors(binary):
+    declared = b"PROXY TCP4 192.0.2.10 192.0.2.11 123 456\r\n"
+    reason = "[WARN] peer: 127.0.0.1:{port}, status: reject_proxy_exception, exception: socket_endpoints_unavailable, error: " + os.strerror(errno.ENOTCONN)
+    with backend_socket() as backend, relay(binary, {"allow_proxy": True}, backend.getsockname()[1]) as server:
+        reject(server, [b"PROXY UNKNOWN\r\n"], reason)
+        # A declared pair requires no socket lookup.
+        with server.connect() as client:
+            exchange(client, backend, declared, declared, 1)
+        server.reload({"proxy_settings": {"trusted_sources": [], "untrusted_policy": "ignore"}})
+        reject(server, [declared], reason)
+
+
 if __name__ == "__main__":
-    admission(sys.argv[1])
-    header_errors(sys.argv[1])
+    if len(sys.argv) == 3 and sys.argv[2] == "socket-errors":
+        socket_errors(sys.argv[1])
+    else:
+        admission(sys.argv[1])
+        forwarding(sys.argv[1])
+        forwarding_without_header(sys.argv[1])
+        reload_and_errors(sys.argv[1])

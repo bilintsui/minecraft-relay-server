@@ -322,6 +322,22 @@ static bool endpoint_test_dns(const hosts_table *hosts) {
 	CHECK(endpoint_address_publish(binding.ipv6_entry, ipv6_addresses, 1, 5, &built_at)
 		&& endpoint_select((route_generation *)&fixture, "dns", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET6, "2001:db8::40"), "fresh preferred family did not win");
+	static const struct {
+		const char *header;
+		sa_family_t family;
+	} cases[] = {
+		{ "PROXY TCP6 ::ffff:c000:201 ::ffff:c000:202 1 2\r\n", AF_INET },
+		{ "PROXY TCP6 ::ffff:c000:201 2001:db8::2 1 2\r\n", AF_INET6 },
+		{ "PROXY TCP6 2001:db8::1 ::ffff:c000:202 1 2\r\n", AF_INET6 },
+		{ "PROXY TCP6 2001:db8::1 2001:db8::2 1 2\r\n", AF_INET6 }
+	};
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		p_proxy pair;
+		size_t consumed, length = strlen(cases[i].header);
+		CHECK(protocol_proxy_read(cases[i].header, length, &pair, &consumed) == PROXY_READ_COMPLETE && consumed == length, "could not decode the route's inbound endpoints");
+		CHECK(endpoint_select((route_generation *)&fixture, "dns", &built_at, &pair, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
+			&& endpoint_address_equal(&snapshot.address, cases[i].family, cases[i].family == AF_INET ? ipv4_addresses[0] : ipv6_addresses[0]), "wrong DNS family for the declared endpoints");
+	}
 	const struct timespec ipv6_expired = { .tv_sec = 105 };
 	CHECK(endpoint_select((route_generation *)&fixture, "dns", &ipv6_expired, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET, "192.0.2.40"), "expired preferred payload did not fall back to the fresh alternate");

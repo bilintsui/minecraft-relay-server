@@ -13,6 +13,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <sys/socket.h>
 #include <systemd/sd-daemon.h>
 
 /* section: headers (self) */
@@ -61,6 +62,16 @@ static int listener_test_notify(const char *environment, const char *message) {
 #endif
 
 /* section: functions (exported) */
+int __real_getpeername(int fd, struct sockaddr *address, socklen_t *size);
+
+int __wrap_getpeername(int fd, struct sockaddr *address, socklen_t *size) {
+	if (getenv("MCRELAY_TEST_PROXY_PEER_ERROR") != NULL) {
+		errno = ENOTCONN;
+		return -1;
+	}
+	return __real_getpeername(fd, address, size);
+}
+
 int listener_test_early_collect_observe(bool resolver_ready, bool retired_before_collect) {
 #ifdef LISTENER_EARLY_COLLECT_TEST
 	if (!resolver_ready || !retired_before_collect) {

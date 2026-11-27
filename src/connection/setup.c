@@ -19,7 +19,7 @@ bool connection_setup_address_valid(const net_addr *address) {
 }
 
 bool connection_setup_bundle_valid(const net_addrbundle *address) {
-	if (address == NULL || (address->family != AF_INET && address->family != AF_INET6) || address->port == 0
+	if (address == NULL || (address->family != AF_INET && address->family != AF_INET6)
 		|| memchr(&address->address, '\0', sizeof(address->address)) == NULL || memchr(&address->address_clean, '\0', sizeof(address->address_clean)) == NULL) {
 		return false;
 	}

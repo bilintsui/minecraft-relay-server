@@ -599,6 +599,13 @@ static int listener_connection_interests_update(listener_connection *connection,
 	return listener_connection_interest_update(events, connection->upstream_fd, upstream_flags, &connection->upstream_source, &connection->upstream_events, &connection->upstream_registered);
 }
 
+static net_addrbundle listener_connection_client(const listener_connection *connection) {
+	if (connection->inbound_proxy.family != AF_UNSPEC) {
+		return listener_client_address_format(&connection->inbound_proxy.srcaddr, connection->inbound_proxy.srcport);
+	}
+	return listener_client_address_format(&connection->peer_address, connection->peer_port);
+}
+
 static listener_connection *listener_connection_create(int client_fd, const net_addr *peer_address, in_port_t peer_port, const listener_events *events, route_generation *generation) {
 	listener_connection *connection = calloc(1, sizeof(*connection));
 	if (connection == NULL) {
@@ -1115,14 +1122,13 @@ static listener_connection_progress listener_connection_route_start(listener_con
 			LISTENER_METRICS_OUTCOME_READY, LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
 		return LISTENER_CONNECTION_READY;
 	}
-	p_proxy inbound_proxy;
-	if (!protocol_proxy_socket_read(connection->socket_fd, &inbound_proxy)) {
+	if (connection->inbound_proxy.family == AF_UNSPEC && !protocol_proxy_socket_read(connection->socket_fd, &connection->inbound_proxy)) {
 		(void)listener_metrics_route_settle(metrics, &connection->route_metrics,
 			LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
 		return LISTENER_CONNECTION_ABORT;
 	}
 	connection->state = LISTENER_CONNECTION_ROUTE_WAITING;
-	route_waiter_create_status create_status = route_waiter_create(connection->generation, connection->vhost, &inbound_proxy, now, &connection->waiter);
+	route_waiter_create_status create_status = route_waiter_create(connection->generation, connection->vhost, &connection->inbound_proxy, now, &connection->waiter);
 	if (create_status != ROUTE_WAITER_CREATE_OK) {
 		if (create_status == ROUTE_WAITER_CREATE_BAD_ARGUMENT || create_status == ROUTE_WAITER_CREATE_TIME) {
 			(void)listener_metrics_route_settle(metrics, &connection->route_metrics,
@@ -1395,7 +1401,7 @@ static listener_connection_progress listener_connection_short_start(listener_con
 	if (!listener_connection_snapshot_prepare(connection, context, &snapshot)) {
 		return LISTENER_CONNECTION_ABORT;
 	}
-	net_addrbundle client = listener_client_address_format(&connection->peer_address, connection->peer_port);
+	net_addrbundle client = listener_connection_client(connection);
 	connection_setup_short_action action = connection_setup_short_prepare(&connection->short_plan, &snapshot, client, connection->inbound, connection->inbound_size);
 	if (!listener_connection_route_release(connection, &context->metrics, context->resolver, now)) {
 		return LISTENER_CONNECTION_FATAL;
@@ -2951,7 +2957,7 @@ static listener_connection_progress listener_connection_dispatch(listener_connec
 		return LISTENER_CONNECTION_PENDING;
 	}
 	listener_connections_close_except(connections, connection);
-	net_addrbundle client = listener_client_address_format(&connection->peer_address, connection->peer_port);
+	net_addrbundle client = listener_connection_client(connection);
 	_exit(listener_worker_run(connection->socket_fd, client, connection->inbound, connection->inbound_size, &snapshot, listener, events, listener_pid, context));
 }
 
