@@ -1,3 +1,67 @@
+mcrelay (1.3~beta1-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Tue, 22 Sep 2026 12:16:48 +0800
+
+mcrelay (1.2.4-1) stable; urgency=medium
+
+  * Preserve Login Start fields and following bytes when rewriting
+    modern login and transfer handshakes.
+  * Remove stale systemd template instance links on purge and reload
+    systemd after cleaning them up.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Fri, 27 Nov 2026 23:05:17 +0800
+
+mcrelay (1.2.3-1) stable; urgency=medium
+
+  * Strip query properties whose once-decoded key is _o when rewriting
+    modern STATUS, LOGIN and TRANSFER handshakes, preserving other query
+    bytes and opaque host extensions.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Tue, 24 Nov 2026 18:47:48 +0800
+
+mcrelay (1.2.2-1) stable; urgency=medium
+
+  * Distinguish extended legacy status requests from modern handshake
+    frame lengths.
+  * Allow the full 3072-byte UTF-8 capacity of modern handshake host fields.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Thu, 24 Sep 2026 00:58:43 +0800
+
+mcrelay (1.2.1-1) stable; urgency=medium
+
+  * Preserve handshake host properties and Forge metadata when routing or
+    rewriting connections from newer Minecraft clients.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Wed, 23 Sep 2026 08:10:44 +0800
+
+mcrelay (1.2-1) stable; urgency=medium
+
+  * Finalize the 1.2 stable release.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Thu, 17 Sep 2026 03:21:53 +0800
+
+mcrelay (1.2~rc3-1) unstable; urgency=medium
+
+  * Resume deferred configuration reloads after late route-generation
+    releases.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Tue, 08 Sep 2026 13:59:00 +0800
+
+mcrelay (1.2~rc2-1) unstable; urgency=medium
+
+  * Open file inputs descriptor-first to close path replacement races.
+  * Enforce declared modern handshake frame boundaries.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Sat, 29 Aug 2026 22:32:21 +0800
+
+mcrelay (1.2~rc1-1) unstable; urgency=medium
+
+  * Prepare the first release candidate for 1.2.
+
+ -- Bilin Tsui <bilintsui@users.noreply.github.com>  Sat, 29 Aug 2026 17:17:26 +0800
+
 mcrelay (1.2~beta11-1) unstable; urgency=high
 
   * New upstream release: bounded long-lived worker resource usage and
