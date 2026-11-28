@@ -45,6 +45,59 @@ static void config_icon_clear(conf *cfg) {
 	config_cache_destroy(&cfg->icon_cache);
 }
 
+static bool config_inbound_address_matches(const conf_trusted_source *source, const net_addr *peer) {
+	unsigned int width = peer->family == AF_INET ? 32U : 128U;
+	if (source->address.family != peer->family || source->host_bits > width) {
+		return false;
+	}
+	const unsigned char *network = (const unsigned char *)&source->address.addr;
+	const unsigned char *address = (const unsigned char *)&peer->addr;
+	unsigned int prefix = width - source->host_bits;
+	size_t bytes = prefix / 8U;
+	unsigned int bits = prefix % 8U;
+	return memcmp(network, address, bytes) == 0 && (bits == 0 || ((network[bytes] ^ address[bytes]) >> (8U - bits)) == 0);
+}
+
+static const char *config_inbound_address_parse(const char *text, conf_trusted_source *source) {
+	char literal[sizeof(source->text)];
+	if (text == NULL || strlen(text) >= sizeof(literal)) {
+		return "an IPv4 or IPv6 address or CIDR network";
+	}
+	strcpy(literal, text);
+	char *slash = strchr(literal, '/');
+	if (slash != NULL) {
+		*slash = '\0';
+	}
+	source->address = net_addr_parse(literal);
+	if (source->address.err != NET_OK) {
+		return "an IPv4 or IPv6 address or CIDR network";
+	}
+	unsigned int width = source->address.family == AF_INET ? 32U : 128U;
+	unsigned int prefix = width;
+	if (slash != NULL) {
+		const char *suffix = slash + 1;
+		size_t digits = strspn(suffix, "0123456789");
+		if (digits == 0 || digits > 3 || suffix[digits] != '\0') {
+			return "a decimal CIDR prefix length";
+		}
+		prefix = (unsigned int)strtoul(suffix, NULL, 10);
+		if (prefix > width) {
+			return width == 32U ? "an IPv4 prefix length from 0 to 32" : "an IPv6 prefix length from 0 to 128";
+		}
+		const unsigned char *address = (const unsigned char *)&source->address.addr;
+		for (unsigned int bit = prefix; bit < width; bit++) {
+			if ((address[bit / 8U] & (0x80U >> (bit % 8U))) != 0) {
+				return "a CIDR network address with all host bits zero";
+			}
+		}
+	}
+	/* Removing the mapped prefix preserves the host-bit count of an aligned network. */
+	source->host_bits = (uint8_t)(width - prefix);
+	net_addr_unmap(&source->address);
+	strcpy(source->text, text);
+	return NULL;
+}
+
 static conf_error config_inbound_invalid(const conf_validation_log *log, const char *prefix, const char *field, int index, const char *expected) {
 	char subscript[16] = "";
 	if (index >= 0) {
@@ -88,9 +141,9 @@ static conf_error config_inbound_parse(conf *result, const cJSON *listen, const 
 	}
 	const cJSON *sources = cJSON_GetObjectItemCaseSensitive(settings, "trusted_sources");
 	if (sources != NULL && !cJSON_IsArray(sources)) {
-		return config_inbound_invalid(log, "proxy_settings.", "trusted_sources", -1, "an array of IP addresses");
+		return config_inbound_invalid(log, "proxy_settings.", "trusted_sources", -1, "an array of IP addresses or CIDR networks");
 	}
-	static const char *const defaults[] = { "127.0.0.1", "::1" };
+	static const char *const defaults[] = { "127.0.0.0/8", "::1" };
 	int count = sources == NULL ? (int)(sizeof(defaults) / sizeof(defaults[0])) : cJSON_GetArraySize(sources);
 	if (count == 0) {
 		return CONF_ERROR_NONE;
@@ -102,17 +155,18 @@ static conf_error config_inbound_parse(conf *result, const cJSON *listen, const 
 	const cJSON *item = sources == NULL ? NULL : sources->child;
 	for (int i = 0; i < count; i++) {
 		const char *text = sources == NULL ? defaults[i] : cJSON_GetStringValue(item);
-		net_addr address = net_addr_parse(text);
-		if (address.err != NET_OK) {
-			return config_inbound_invalid(log, "proxy_settings.", "trusted_sources", i, "an IPv4 or IPv6 address");
+		conf_trusted_source *source = &result->listen.trusted_sources[i];
+		const char *error = config_inbound_address_parse(text, source);
+		if (error != NULL) {
+			return config_inbound_invalid(log, "proxy_settings.", "trusted_sources", i, error);
 		}
-		net_addr_unmap(&address);
-		if (config_peer_trusted(result, address)) {
-			return config_inbound_invalid(log, "proxy_settings.", "trusted_sources", i, "a unique address");
+		for (size_t j = 0; j < result->listen.trusted_count; j++) {
+			const conf_trusted_source *previous = &result->listen.trusted_sources[j];
+			if (previous->host_bits == source->host_bits && config_inbound_address_matches(previous, &source->address)) {
+				return config_inbound_invalid(log, "proxy_settings.", "trusted_sources", i, "a unique address or CIDR network");
+			}
 		}
-		conf_trusted_source *source = &result->listen.trusted_sources[result->listen.trusted_count++];
-		source->address = address;
-		snprintf(source->text, sizeof(source->text), "%s", text);
+		result->listen.trusted_count++;
 		if (item != NULL) {
 			item = item->next;
 		}
@@ -701,8 +755,7 @@ bool config_peer_trusted(const conf *config, net_addr address) {
 	}
 	net_addr_unmap(&address);
 	for (size_t i = 0; i < config->listen.trusted_count; i++) {
-		const net_addr *source = &config->listen.trusted_sources[i].address;
-		if (source->family == address.family && (address.family == AF_INET ? source->addr.v4 == address.addr.v4 : memcmp(source->addr.v6, address.addr.v6, sizeof(address.addr.v6)) == 0)) {
+		if (config_inbound_address_matches(&config->listen.trusted_sources[i], &address)) {
 			return true;
 		}
 	}

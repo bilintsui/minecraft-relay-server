@@ -94,6 +94,43 @@ static int write_config(int fd, const char *content) {
 	return 0;
 }
 
+static bool trusted_networks_check(int fd, const char *filename) {
+	static const struct {
+		const char *source, *inside, *outside;
+	} cases[] = {
+		{ "192.0.2.128/25", "192.0.2.128", "192.0.2.127" },
+		{ "192.0.2.128/25", "::ffff:192.0.2.255", "192.0.3.0" },
+		{ "2001:db8:1:2:8000::/65", "2001:db8:1:2:8000::", "2001:db8:1:2:7fff:ffff:ffff:ffff" },
+		{ "2001:db8:1:2:8000::/65", "2001:db8:1:2:ffff:ffff:ffff:ffff", "2001:db8:1:3::" },
+		{ "::ffff:198.51.100.128/121", "198.51.100.200", "::ffff:198.51.100.127" },
+		{ "192.0.2.8/32", "::ffff:192.0.2.8", "192.0.2.9" },
+		{ "2001:db8::1/128", "2001:db8::1", "2001:db8::" },
+		{ "0.0.0.0/0", "255.255.255.255", "::1" },
+		{ "::ffff:0.0.0.0/96", "0.0.0.0", "2001:db8::1" },
+		{ "::/0", "2001:db8::1", "::ffff:192.0.2.8" }
+	};
+	bool passed = false;
+	conf_cache active = { 0 }, candidate = { 0 };
+	conf *parsed = NULL;
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		char json[256];
+		snprintf(json, sizeof(json), "{\"listen\":{\"proxy_settings\":{\"trusted_sources\":[\"%s\"]}},\"proxy\":[{\"vhost\":\"test.example\",\"address\":\"127.0.0.1\"}]}", cases[i].source);
+		CHECK(write_config(fd, json) == 0, "cannot write trusted network");
+		CHECK(config_read(filename, &active, &candidate, &parsed) == CONF_READ_CHANGED, cases[i].source);
+		CHECK(config_peer_trusted(parsed, net_addr_parse(cases[i].inside)), cases[i].inside);
+		CHECK(!config_peer_trusted(parsed, net_addr_parse(cases[i].outside)), cases[i].outside);
+		config_destroy(parsed);
+		parsed = NULL;
+		config_cache_destroy(&candidate);
+	}
+	passed = true;
+
+cleanup:
+	config_destroy(parsed);
+	config_cache_destroy(&candidate);
+	return passed;
+}
+
 /* section: functions (entry point) */
 int main(void) {
 	static const char config_mixed[] = "{\"proxy\":["
@@ -150,6 +187,7 @@ int main(void) {
 
 	fd = mkstemp(filename);
 	CHECK(fd != -1, "cannot create temporary configuration file");
+	CHECK(trusted_networks_check(fd, filename), "trusted network boundaries did not match");
 
 	CHECK(write_config(fd, config_mixed) == 0, "cannot write mixed configuration");
 	status = config_read(filename, &active_cache, &candidate_cache, &parsed);
@@ -157,6 +195,10 @@ int main(void) {
 	CHECK(errno == 0, "mixed configuration returned an error");
 	CHECK(parsed != NULL, "mixed configuration returned no object");
 	CHECK(parsed->listen.proxy_version == 1, "missing PROXY version did not default to 1");
+	CHECK(config_peer_trusted(parsed, net_addr_parse("127.0.0.0")) && config_peer_trusted(parsed, net_addr_parse("::ffff:127.255.255.255"))
+		&& config_peer_trusted(parsed, net_addr_parse("::1")), "loopback addresses were missing from the defaults");
+	CHECK(!config_peer_trusted(parsed, net_addr_parse("126.255.255.255")) && !config_peer_trusted(parsed, net_addr_parse("128.0.0.0"))
+		&& !config_peer_trusted(parsed, net_addr_parse("::2")), "default trust extended past the loopback boundaries");
 	CHECK(parsed->metrics.interval == 0, "missing metrics configuration did not default to disabled");
 	CHECK(cJSON_IsArray(parsed->proxy) && (cJSON_GetArraySize(parsed->proxy) == 4), "mixed configuration kept wrong number of entries");
 	CHECK(proxy_entry_check(parsed, 0, "kept1", "up1.example", true, 25565), "surviving entry 0 was corrupted");

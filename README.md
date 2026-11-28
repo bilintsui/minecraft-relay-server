@@ -157,7 +157,7 @@ By default the listener accepts direct Minecraft connections. To receive the ori
 }
 ```
 
-Replace `192.0.2.10` with the TCP source address of the service sending the header. An explicit list replaces the default entries `127.0.0.1` and `::1`. The default policy closes connections from other peers immediately. Access records for admitted connections put the actual TCP peer in `peer`, the header handling result in `proxy`, and the effective client endpoint in `src`. [All listener settings](doc/configuration/mcrelay/config.jsonc)
+Replace `192.0.2.10` with the TCP source address of the service sending the header. You can also specify a CIDR network such as `192.0.2.0/24` or `2001:db8::/64` when every address in that network is trusted to supply client endpoints. An explicit list replaces both loopback defaults, `127.0.0.0/8` and `::1`. The default policy closes connections from other peers immediately. Access records for admitted connections put the actual TCP peer in `peer`, the header handling result in `proxy`, and the effective client endpoint in `src`. [All listener settings](doc/configuration/mcrelay/config.jsonc)
 
 In an incoming `TCP6` header, mcrelay accepts both `::ffff:c000:201` and `::ffff:192.0.2.1` for the same IPv4-mapped address. The dotted form is accepted only for IPv4-mapped addresses, for compatibility with dual-stack senders such as HAProxy. When forwarding a `TCP6` pair, mcrelay emits `TCP4` if both addresses are IPv4-mapped. Otherwise it emits `TCP6` with both addresses in hexadecimal IPv6 notation. [PROXY protocol v1, section 2.1](https://www.haproxy.org/download/2.9/doc/proxy-protocol.txt)
 

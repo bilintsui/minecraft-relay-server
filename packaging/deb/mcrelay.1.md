@@ -26,7 +26,9 @@ To receive the original client address and port from a service that sends
 PROXY protocol v1, set **listen.allow_proxy** to true. Every connection
 to that listener must then start with a v1 header. The default policy accepts
 connections only from TCP peers in **listen.proxy_settings.trusted_sources**.
-The list defaults to 127.0.0.1 and ::1. To send a v1 header to a backend
+The list accepts numeric IPv4 and IPv6 addresses and CIDR networks.
+It defaults to 127.0.0.0/8 and ::1. An explicit list replaces both defaults.
+To send a v1 header to a backend
 that accepts it, set **pheader** to true on its route.
 
 The program runs in the foreground. Use a service manager such as systemd

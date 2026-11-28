@@ -48,7 +48,8 @@ typedef enum {
 } conf_untrusted_policy;
 typedef struct {
 	net_addr address;
-	char text[INET6_ADDRSTRLEN];
+	uint8_t host_bits; /* Zero for an individual address, including after IPv4-mapped normalization. */
+	char text[INET6_ADDRSTRLEN + sizeof("/128") - 1];
 } conf_trusted_source;
 typedef struct {
 	struct {

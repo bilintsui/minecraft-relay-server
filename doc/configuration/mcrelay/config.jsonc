@@ -59,10 +59,12 @@
       // Optional number. The default and only supported version is 1.
       "version": 1,
 
-      // Numeric IPv4 or IPv6 addresses of TCP peers. An explicit array replaces both defaults.
-      // [] trusts no peers. Duplicate numeric addresses are invalid, including IPv4-mapped equivalents.
+      // Numeric addresses or CIDR networks of actual TCP peers. An explicit array replaces both defaults.
+      // [] trusts no peers. CIDR entries require zero host bits (e.g. 192.0.2.0/24 or 2001:db8::/64).
+      // IPv4-mapped peers match IPv4 rules. For example, ::ffff:192.0.2.0/120 is equivalent to 192.0.2.0/24.
+      // Equivalent entries are duplicates. Distinct overlapping networks are allowed.
       "trusted_sources": [
-        "127.0.0.1",
+        "127.0.0.0/8",
         "::1"
       ],
 

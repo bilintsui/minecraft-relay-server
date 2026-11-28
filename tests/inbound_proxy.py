@@ -260,7 +260,8 @@ def reload_and_errors(binary):
         server.settings["log"] = {"filename": str(candidate_log), "level": 0}
         for settings, field, reason in [
             ({"untrusted_policy": "Accept"}, "untrusted_policy", '"reject", "ignore" or "accept"'),
-            ({"trusted_sources": ["::1", "localhost"]}, "trusted_sources[1]", "an IPv4 or IPv6 address"),
+            ({"trusted_sources": ["::1", "localhost"]}, "trusted_sources[1]", "an IPv4 or IPv6 address or CIDR network"),
+            ({"trusted_sources": ["::1", "127.0.0.1/8"]}, "trusted_sources[1]", "a CIDR network address with all host bits zero"),
             ({"trusted_source": []}, "trusted_source", "version, trusted_sources or untrusted_policy"),
         ]:
             server.reload({"proxy_settings": settings}, error=(f"proxy_settings.{field}", reason))
@@ -277,7 +278,7 @@ def reload_and_errors(binary):
             exchange(retained, backend, header, header, 1)
         assert "Invalid configuration entry" not in server.console.read_text()
         warnings = [line for line in server.lines() if "Invalid configuration entry" in line or "Configuration reload rejected" in line]
-        assert len(warnings) == 4, warnings
+        assert len(warnings) == 5, warnings
         with server.connect() as reset:
             port = reset.getsockname()[1]
             reset.sendall(b"PROXY ")
@@ -316,6 +317,30 @@ def short_abort(binary):
         reject(server, [header + game_request(1)], expected)
 
 
+def trusted_networks(binary):
+    with relay(binary, {"address": "::", "allow_proxy": True}) as server:
+        for rules, peers in [
+            (None, [("127.1.2.3", True), ("::1", True)]),
+            (["127.0.0.2/31"], [("127.0.0.3", True), ("127.0.0.1", False), ("::1", False)]),
+            (["127.0.0.1"], [("127.0.0.1", True), ("127.0.0.2", False)]),
+            (["::/127"], [("::1", True), ("127.0.0.1", False)]),
+        ]:
+            if rules is not None:
+                server.reload({"proxy_settings": {"trusted_sources": rules}})
+            for peer, trusted in peers:
+                host = "::1" if ":" in peer else "127.0.0.1"
+                with socket.create_connection((host, server.port), timeout=4, source_address=(peer, 0)) as client:
+                    if trusted:
+                        client.sendall(b"PROXY UNKNOWN\r\n\xfe")
+                        assert client.recv(1) == b"\xff", f"trusted peer {peer} did not receive a status reply"
+                        continue
+                    port = client.getsockname()[1]
+                    require_close(client)
+                address = f"[{peer}]" if ":" in peer else peer
+                expected = f"[WARN] peer: {address}:{port}, status: reject_proxy_exception, exception: untrusted_source"
+                assert any(line.endswith(expected) for line in server.lines()), expected
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[2] == "socket-errors":
         socket_errors(sys.argv[1])
@@ -328,3 +353,4 @@ if __name__ == "__main__":
         forwarding(sys.argv[1])
         forwarding_without_header(sys.argv[1])
         reload_and_errors(sys.argv[1])
+        trusted_networks(sys.argv[1])
