@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise inbound PROXY v1 through the production listener."""
+"""Exercise inbound PROXY headers through the production listener."""
 
 from contextlib import contextmanager
 import errno
@@ -273,7 +273,7 @@ def reload_and_errors(binary):
             actual = f"PROXY TCP4 127.0.0.1 127.0.0.1 {direct.getsockname()[1]} {server.port}\r\n".encode()
             exchange(direct, backend, b"", actual, 1)
         server.reload({"allow_proxy": True, "proxy_settings": {"version": 1}})
-        server.reload({"proxy_settings": {"version": 2}}, error=("proxy_settings.version", "the number 1"))
+        server.reload({"proxy_settings": {"version": 3}}, error=("proxy_settings.version", "the number 1 or 2"))
         with server.connect() as retained:
             exchange(retained, backend, header, header, 1)
         assert "Invalid configuration entry" not in server.console.read_text()

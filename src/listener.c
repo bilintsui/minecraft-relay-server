@@ -244,6 +244,7 @@ struct listener_connection {
 	size_t inbound_size;
 	p_proxy inbound_proxy;
 	bool prefix_checked;
+	uint16_t proxy_remaining;
 	connection_proxy_origin proxy_origin;
 	struct timespec lifetime_deadline;
 	struct listener_connection *next;
@@ -600,7 +601,7 @@ static int listener_connection_interests_update(listener_connection *connection,
 }
 
 static net_addrbundle listener_connection_client(const listener_connection *connection) {
-	if (connection->inbound_proxy.family != AF_UNSPEC) {
+	if (connection->prefix_checked && connection->inbound_proxy.family != AF_UNSPEC) {
 		return listener_client_address_format(&connection->inbound_proxy.srcaddr, connection->inbound_proxy.srcport);
 	}
 	return listener_client_address_format(&connection->peer_address, connection->peer_port);
@@ -866,37 +867,51 @@ static listener_connection_progress listener_proxy_exception(const listener_cont
 }
 
 static listener_connection_progress listener_connection_prefix(listener_connection *connection, const listener_context *context) {
-	const conf *config = route_generation_config(connection->generation);
-	proxy_prefix expected = config->listen.allow_proxy ? config->listen.proxy_version : PROXY_PREFIX_OTHER;
-	proxy_prefix prefix = protocol_proxy_detect(connection->inbound, connection->inbound_size);
-	if (prefix == PROXY_PREFIX_PARTIAL) {
-		return LISTENER_CONNECTION_PENDING;
-	}
-	if (prefix != expected) {
-		bool unknown = prefix == PROXY_PREFIX_OTHER && protocol_identify(connection->inbound, connection->inbound_size, NULL) == PVER_UNIDENT;
-		return listener_protocol_mismatch(context, connection, unknown ? "unknown" : listener_protocol_label(prefix), expected);
-	}
-	if (prefix != PROXY_PREFIX_OTHER) {
-		size_t consumed;
-		p_proxy pair;
-		proxy_read_status status = protocol_proxy_read(connection->inbound, connection->inbound_size, &pair, &consumed);
+	size_t consumed = 0;
+	p_proxy *pair = &connection->inbound_proxy;
+	if (connection->proxy_remaining == 0) {
+		const conf *config = route_generation_config(connection->generation);
+		proxy_prefix expected = config->listen.allow_proxy ? config->listen.proxy_version : PROXY_PREFIX_OTHER;
+		proxy_prefix prefix = protocol_proxy_detect(connection->inbound, connection->inbound_size);
+		if (prefix == PROXY_PREFIX_PARTIAL) {
+			return LISTENER_CONNECTION_PENDING;
+		}
+		if (prefix != expected) {
+			bool unknown = prefix == PROXY_PREFIX_OTHER && protocol_identify(connection->inbound, connection->inbound_size, NULL) == PVER_UNIDENT;
+			return listener_protocol_mismatch(context, connection, unknown ? "unknown" : listener_protocol_label(prefix), expected);
+		}
+		if (prefix == PROXY_PREFIX_OTHER) {
+			connection->prefix_checked = true;
+			return LISTENER_CONNECTION_READY;
+		}
+		proxy_read_status status = prefix == PROXY_PREFIX_V2
+			? protocol_proxy_v2_prefix_read(connection->inbound, connection->inbound_size, pair, &consumed, &connection->proxy_remaining)
+			: protocol_proxy_read(connection->inbound, connection->inbound_size, pair, &consumed);
 		if (status == PROXY_READ_INCOMPLETE) {
 			return LISTENER_CONNECTION_PENDING;
 		}
 		if (status != PROXY_READ_COMPLETE) {
 			return listener_proxy_exception(context, &connection->peer_address, connection->peer_port, status == PROXY_READ_TOO_LONG ? "header_too_long" : "malformed_header", 0);
 		}
-		if (pair.family == AF_UNSPEC || connection->proxy_origin == CONNECTION_PROXY_UNTRUSTED_IGNORE) {
-			if (pair.family == AF_UNSPEC && connection->proxy_origin == CONNECTION_PROXY_TRUSTED) {
-				connection->proxy_origin = CONNECTION_PROXY_UNKNOWN;
-			}
-			if (!protocol_proxy_socket_read(connection->socket_fd, &pair)) {
-				return listener_proxy_exception(context, &connection->peer_address, connection->peer_port, "socket_endpoints_unavailable", errno);
-			}
+	}
+	/* Reuse the assembly buffer for the opaque tail. Only bytes beyond its declared end belong to Minecraft. */
+	size_t available = connection->inbound_size - consumed;
+	if (available < connection->proxy_remaining) {
+		connection->proxy_remaining -= (uint16_t)available;
+		connection->inbound_size = 0;
+		return LISTENER_CONNECTION_PENDING;
+	}
+	consumed += connection->proxy_remaining;
+	connection->proxy_remaining = 0;
+	connection->inbound_size -= consumed;
+	memmove(connection->inbound, connection->inbound + consumed, connection->inbound_size);
+	if (pair->family == AF_UNSPEC || connection->proxy_origin == CONNECTION_PROXY_UNTRUSTED_IGNORE) {
+		if (pair->family == AF_UNSPEC && connection->proxy_origin == CONNECTION_PROXY_TRUSTED) {
+			connection->proxy_origin = CONNECTION_PROXY_UNKNOWN;
 		}
-		connection->inbound_proxy = pair;
-		connection->inbound_size -= consumed;
-		memmove(connection->inbound, connection->inbound + consumed, connection->inbound_size);
+		if (!protocol_proxy_socket_read(connection->socket_fd, pair)) {
+			return listener_proxy_exception(context, &connection->peer_address, connection->peer_port, "socket_endpoints_unavailable", errno);
+		}
 	}
 	connection->prefix_checked = true;
 	return LISTENER_CONNECTION_READY;

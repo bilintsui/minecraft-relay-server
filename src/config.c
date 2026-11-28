@@ -124,8 +124,8 @@ static conf_error config_inbound_parse(conf *result, const cJSON *listen, const 
 		}
 	}
 	const cJSON *version = cJSON_GetObjectItemCaseSensitive(settings, "version");
-	if (version != NULL && (!cJSON_IsNumber(version) || version->valuedouble != PROXY_PREFIX_V1)) {
-		return config_inbound_invalid(log, "proxy_settings.", "version", -1, "the number 1");
+	if (version != NULL && (!cJSON_IsNumber(version) || (version->valuedouble != PROXY_PREFIX_V1 && version->valuedouble != PROXY_PREFIX_V2))) {
+		return config_inbound_invalid(log, "proxy_settings.", "version", -1, "the number 1 or 2");
 	}
 	result->listen.proxy_version = version == NULL ? PROXY_PREFIX_V1 : (uint8_t)version->valueint;
 	const cJSON *policy = cJSON_GetObjectItemCaseSensitive(settings, "untrusted_policy");
