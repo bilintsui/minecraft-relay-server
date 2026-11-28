@@ -584,7 +584,8 @@ def compact_rows(report):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__, epilog="Logrotate families are sorted oldest first; other inputs retain their supplied order. Exit: 0 valid report, 1 data errors, 2 usage/input error.")
+    parser = argparse.ArgumentParser(
+        description=__doc__, epilog="Logrotate families are sorted oldest first; other inputs retain their supplied order. Exit: 0 valid report, 1 data errors, 2 usage/input error.")
     parser.add_argument("logs", nargs="+", help="log/gzip files, log directories, or '-' for stdin (plain or gzip)")
     parser.add_argument("--log-name", default="access.log", help="base filename for directory scanning and explicit rotation ordering (default: access.log)")
     parser.add_argument("--format", choices=("text", "json", "csv"), default="text")

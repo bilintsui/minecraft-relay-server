@@ -728,8 +728,7 @@ static int run_cap_test(const char *binary) {
 	listener_pid = daemon_start(binary, config_filename, notify_filename, false, refusal_marker_filename);
 	CHECK(listener_pid > 0, "cannot start worker-cap daemon");
 	char message[256];
-	CHECK(notification_receive(notify_fd, message, sizeof(message), WORKER_CAP_TEST_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0,
-		"listener READY notification is missing");
+	CHECK(notification_receive(notify_fd, message, sizeof(message), WORKER_CAP_TEST_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "listener READY notification is missing");
 	CHECK(child_snapshot_read(listener_pid, &baseline) == 0, "cannot read resolver child baseline");
 	CHECK(baseline.direct >= baseline.workers, "invalid child baseline");
 	uint8_t login_base[BUFSIZ];
@@ -770,8 +769,7 @@ static int run_cap_test(const char *binary) {
 	CHECK(access(refusal_marker_filename, F_OK) == 0, "partial-send/EAGAIN refusal injection was not consumed");
 	CHECK(refusal_probe(listener_port, transfer_packet, transfer_size, false) == 0, "TRANSFER did not receive a complete refusal");
 	CHECK(refusal_probe(listener_port, legacy_login_packet, sizeof(legacy_login_packet), true) == 0, "legacy LOGIN did not receive a complete refusal");
-	CHECK(log_count_wait(log_filename, worker_limit_message, initial_refusals + 1, WORKER_CAP_LOG_TIMEOUT_MS) >= initial_refusals + 1,
-		"worker-cap refusal was not logged");
+	CHECK(log_count_wait(log_filename, worker_limit_message, initial_refusals + 1, WORKER_CAP_LOG_TIMEOUT_MS) >= initial_refusals + 1, "worker-cap refusal was not logged");
 	for (int refusal_index = 0; refusal_index < 4; refusal_index++) {
 		CHECK(refusal_probe(listener_port, refusal_index % 2 == 0 ? login_packet : transfer_packet,
 			refusal_index % 2 == 0 ? login_size : transfer_size, false) == 0, "repeated worker-cap refusal was incomplete");

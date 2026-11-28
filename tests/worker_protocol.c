@@ -152,6 +152,78 @@ static ssize_t message_receive(int socket_fd, void *message, size_t message_size
 	return recv(socket_fd, message, message_size, 0);
 }
 
+static int server_accept(int server_fd, int timeout_ms) {
+	struct pollfd poll_fd = {
+		.fd = server_fd,
+		.events = POLLIN
+	};
+	int poll_result;
+	do {
+		poll_result = poll(&poll_fd, 1, timeout_ms);
+	} while (poll_result == -1 && errno == EINTR);
+	if (poll_result == 0) {
+		errno = ETIMEDOUT;
+		return -1;
+	}
+	if (poll_result == -1) {
+		return -1;
+	}
+	if (!(poll_fd.revents & POLLIN)) {
+		errno = EIO;
+		return -1;
+	}
+	return accept(server_fd, NULL, NULL);
+}
+
+static int server_open_ipv6(in_port_t *port) {
+	int fd = socket(AF_INET6, SOCK_STREAM, 0);
+	if (fd == -1) {
+		return -1;
+	}
+	int reuse_address = 1;
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(reuse_address)) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	struct sockaddr_in6 address = {
+		.sin6_family = AF_INET6,
+		.sin6_addr = IN6ADDR_LOOPBACK_INIT
+	};
+	if (bind(fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	socklen_t address_length = sizeof(address);
+	if (getsockname(fd, (struct sockaddr *)&address, &address_length) == -1 || listen(fd, 1) == -1) {
+		int saved_errno = errno;
+		close(fd);
+		errno = saved_errno;
+		return -1;
+	}
+	*port = ntohs(address.sin6_port);
+	return fd;
+}
+
+static ssize_t socket_receive_all(int socket_fd, void *data, size_t capacity, int timeout_ms) {
+	size_t size = 0;
+	while (size < capacity) {
+		ssize_t receive_result = message_receive(socket_fd, (uint8_t *)data + size, capacity - size, timeout_ms);
+		if (receive_result == 0) {
+			return (ssize_t)size;
+		}
+		if (receive_result == -1) {
+			return -1;
+		}
+		size += (size_t)receive_result;
+	}
+	errno = EMSGSIZE;
+	return -1;
+}
+
 static size_t varint_encode(uint8_t *destination, uint32_t value) {
 	uint8_t digits[5];
 	size_t count = 0;
@@ -241,78 +313,6 @@ static size_t rewrite_login_build(uint8_t *destination, size_t destination_size,
 		destination[offset++] = (uint8_t)((index * 7 + 3) % 251 + 2);
 	}
 	return offset;
-}
-
-static int server_accept(int server_fd, int timeout_ms) {
-	struct pollfd poll_fd = {
-		.fd = server_fd,
-		.events = POLLIN
-	};
-	int poll_result;
-	do {
-		poll_result = poll(&poll_fd, 1, timeout_ms);
-	} while (poll_result == -1 && errno == EINTR);
-	if (poll_result == 0) {
-		errno = ETIMEDOUT;
-		return -1;
-	}
-	if (poll_result == -1) {
-		return -1;
-	}
-	if (!(poll_fd.revents & POLLIN)) {
-		errno = EIO;
-		return -1;
-	}
-	return accept(server_fd, NULL, NULL);
-}
-
-static int server_open_ipv6(in_port_t *port) {
-	int fd = socket(AF_INET6, SOCK_STREAM, 0);
-	if (fd == -1) {
-		return -1;
-	}
-	int reuse_address = 1;
-	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(reuse_address)) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
-		return -1;
-	}
-	struct sockaddr_in6 address = {
-		.sin6_family = AF_INET6,
-		.sin6_addr = IN6ADDR_LOOPBACK_INIT
-	};
-	if (bind(fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
-		return -1;
-	}
-	socklen_t address_length = sizeof(address);
-	if (getsockname(fd, (struct sockaddr *)&address, &address_length) == -1 || listen(fd, 1) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
-		return -1;
-	}
-	*port = ntohs(address.sin6_port);
-	return fd;
-}
-
-static ssize_t socket_receive_all(int socket_fd, void *data, size_t capacity, int timeout_ms) {
-	size_t size = 0;
-	while (size < capacity) {
-		ssize_t receive_result = message_receive(socket_fd, (uint8_t *)data + size, capacity - size, timeout_ms);
-		if (receive_result == 0) {
-			return (ssize_t)size;
-		}
-		if (receive_result == -1) {
-			return -1;
-		}
-		size += (size_t)receive_result;
-	}
-	errno = EMSGSIZE;
-	return -1;
 }
 
 static int worker_packet_forward_split(in_port_t listener_port, int upstream_server_fd, const uint8_t *packet, size_t packet_size, size_t split_size,
@@ -410,8 +410,7 @@ static int worker_packet_origin_test(in_port_t listener_port, int upstream_serve
 			size_t input_size = extension_handshake_build(input, sizeof(input), address, fixture->input, fixture->input_size, 25565, intent);
 			size_t expected_size = extension_handshake_build(expected, sizeof(expected), rewrite ? "127.0.0.1" : address, rewrite ? fixture->output : fixture->input,
 				rewrite ? fixture->output_size : fixture->input_size, rewrite ? upstream_port : 25565, intent);
-			if (input_size == 0 || expected_size == 0
-				|| worker_packet_forward_split(listener_port, upstream_server_fd, input, input_size, 1U, expected, expected_size, false) != 0) {
+			if (input_size == 0 || expected_size == 0 || worker_packet_forward_split(listener_port, upstream_server_fd, input, input_size, 1U, expected, expected_size, false) != 0) {
 				fprintf(stderr, "origin forwarding failed: fixture %zu, intent %u, rewrite %d\n", index, intent, rewrite);
 				return -1;
 			}

@@ -119,6 +119,39 @@ typedef enum {
 	RESOLVER_SUPERVISOR_HELPER_STOPPED,
 	RESOLVER_SUPERVISOR_HELPER_STATE_COUNT
 } resolver_supervisor_helper_state;
+#ifdef RESOLVER_SUPERVISOR_TEST_API
+typedef struct {
+	size_t consecutive_successes;
+	uint64_t failure_count;
+	int fd;
+	pid_t last_failed_process_id;
+	resolver_supervisor_helper_failure last_failure;
+	struct timespec next_event_at;
+	pid_t process_id;
+	resolver_supervisor_helper_state state;
+} resolver_supervisor_helper_view;
+#endif
+typedef struct {
+	uint64_t attempt_abandoned_shutdown;
+	uint64_t completion_abandoned_shutdown;
+	uint64_t completion_enqueued;
+	uint64_t completion_taken;
+	uint64_t dispatched;
+	uint64_t failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT];
+	uint64_t jobs_complete_current;
+	uint64_t jobs_dispatched_current;
+	uint64_t orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_COUNT];
+	uint64_t response[RESOLVER_SUPERVISOR_DNS_OUTCOME_COUNT];
+	uint64_t retry_scheduled;
+} resolver_supervisor_metrics_attempt;
+typedef struct {
+	uint64_t failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT];
+	uint64_t observation_dropped;
+	uint64_t recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_COUNT];
+	uint64_t spawn_attempt;
+	uint64_t spawn_success;
+	uint64_t state_current[RESOLVER_SUPERVISOR_HELPER_STATE_COUNT];
+} resolver_supervisor_metrics_helper;
 typedef struct {
 	uint64_t backoff_milliseconds;
 	uint64_t cycle_id;
@@ -138,30 +171,14 @@ typedef struct {
 	resolver_supervisor_helper_recovery recovery;
 	size_t slot;
 } resolver_supervisor_observation_recovered;
-typedef enum {
-	RESOLVER_SUPERVISOR_OBSERVATION_DEGRADED,
-	RESOLVER_SUPERVISOR_OBSERVATION_RECOVERED
-} resolver_supervisor_observation_type;
 typedef union {
 	resolver_supervisor_observation_degraded degraded;
 	resolver_supervisor_observation_recovered recovered;
 } resolver_supervisor_observation_data;
-typedef struct {
-	resolver_supervisor_observation_data data;
-	resolver_supervisor_observation_type type;
-} resolver_supervisor_observation;
-#ifdef RESOLVER_SUPERVISOR_TEST_API
-typedef struct {
-	size_t consecutive_successes;
-	uint64_t failure_count;
-	int fd;
-	pid_t last_failed_process_id;
-	resolver_supervisor_helper_failure last_failure;
-	struct timespec next_event_at;
-	pid_t process_id;
-	resolver_supervisor_helper_state state;
-} resolver_supervisor_helper_view;
-#endif
+typedef enum {
+	RESOLVER_SUPERVISOR_OBSERVATION_DEGRADED,
+	RESOLVER_SUPERVISOR_OBSERVATION_RECOVERED
+} resolver_supervisor_observation_type;
 typedef enum {
 	RESOLVER_SUPERVISOR_JOB_QUEUED,
 	RESOLVER_SUPERVISOR_JOB_SENDING,
@@ -170,6 +187,10 @@ typedef enum {
 	RESOLVER_SUPERVISOR_JOB_COMPLETE,
 	RESOLVER_SUPERVISOR_JOB_STATE_COUNT
 } resolver_supervisor_job_state;
+typedef struct {
+	resolver_supervisor_observation_data data;
+	resolver_supervisor_observation_type type;
+} resolver_supervisor_observation;
 typedef enum {
 	RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND,
 	RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE,
@@ -209,33 +230,12 @@ typedef enum {
 	RESOLVER_SUPERVISOR_SCHEDULE_STATUS_COUNT
 } resolver_supervisor_schedule_status;
 typedef struct {
-	uint64_t attempt_abandoned_shutdown;
-	uint64_t completion_abandoned_shutdown;
-	uint64_t completion_enqueued;
-	uint64_t completion_taken;
-	uint64_t dispatched;
-	uint64_t failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT];
-	uint64_t jobs_complete_current;
-	uint64_t jobs_dispatched_current;
-	uint64_t orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_COUNT];
-	uint64_t response[RESOLVER_SUPERVISOR_DNS_OUTCOME_COUNT];
-	uint64_t retry_scheduled;
-} resolver_supervisor_metrics_attempt;
-typedef struct {
 	uint64_t limit_background_admission;
 	uint64_t limit_entry_reference;
 	uint64_t limit_interest_count;
 	uint64_t limit_total_admission;
 	uint64_t status[RESOLVER_SUPERVISOR_SCHEDULE_STATUS_COUNT];
 } resolver_supervisor_metrics_schedule;
-typedef struct {
-	uint64_t failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT];
-	uint64_t observation_dropped;
-	uint64_t recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_COUNT];
-	uint64_t spawn_attempt;
-	uint64_t spawn_success;
-	uint64_t state_current[RESOLVER_SUPERVISOR_HELPER_STATE_COUNT];
-} resolver_supervisor_metrics_helper;
 typedef struct {
 	resolver_supervisor_metrics_attempt attempt[METRICS_RESOLVER_QUERY_TYPE_COUNT];
 	metrics_histogram_snapshot attempt_duration[METRICS_RESOLVER_QUERY_TYPE_COUNT];

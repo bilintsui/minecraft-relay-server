@@ -164,82 +164,6 @@ static bool listener_metrics_keys_tokenize(const char *record, listener_metrics_
 	return true;
 }
 
-static bool listener_metrics_word_get(const char *words, size_t index, listener_metrics_test_key *result) {
-	if (words == NULL || result == NULL) {
-		return false;
-	}
-	const char *cursor = words;
-	for (size_t current = 0; *cursor != '\0'; current++) {
-		const char *end = strchr(cursor, ' ');
-		if (end == NULL) {
-			end = cursor + strlen(cursor);
-		}
-		if (current == index) {
-			result->data = cursor;
-			result->length = (size_t)(end - cursor);
-			return result->length > 0;
-		}
-		cursor = *end == '\0' ? end : end + 1;
-	}
-	return false;
-}
-
-static bool listener_metrics_keys_valid(const char *record, const char *baseline, const char *optional, bool allow_extensions) {
-	listener_metrics_test_key keys[LISTENER_METRICS_TEST_KEY_LIMIT];
-	size_t key_count;
-	if (!listener_metrics_keys_tokenize(record, keys, &key_count)) {
-		return false;
-	}
-	size_t baseline_count = 0;
-	listener_metrics_test_key expected;
-	while (listener_metrics_word_get(baseline, baseline_count, &expected)) {
-		if (baseline_count >= key_count || !listener_metrics_key_equal(&keys[baseline_count], &expected)) {
-			return false;
-		}
-		baseline_count++;
-	}
-	if (!allow_extensions) {
-		return key_count == baseline_count;
-	}
-	size_t optional_position = 0;
-	for (size_t actual = baseline_count; actual < key_count; actual++) {
-		for (size_t optional_index = 0; listener_metrics_word_get(optional, optional_index, &expected); optional_index++) {
-			if (listener_metrics_key_equal(&keys[actual], &expected)) {
-				if (optional_index < optional_position) {
-					return false;
-				}
-				optional_position = optional_index + 1;
-				break;
-			}
-		}
-	}
-	return true;
-}
-
-static bool listener_metrics_record_valid(const char *record, const char *baseline, const char *optional, bool allow_extensions) {
-	static const char prefix[] = "metrics ";
-	return record != NULL && strncmp(record, prefix, sizeof(prefix) - 1U) == 0 && listener_metrics_keys_valid(record + sizeof(prefix) - 1U, baseline, optional, allow_extensions);
-}
-
-static bool listener_metrics_helper_record_valid(const char *record) {
-	static const char prefix[] = "resolver_helper ";
-	if (record == NULL || strncmp(record, prefix, sizeof(prefix) - 1U) != 0) {
-		return false;
-	}
-	const char *fields = record + sizeof(prefix) - 1U;
-	const char *keys = NULL;
-	if (strncmp(fields, "status=degraded ", strlen("status=degraded ")) == 0) {
-		keys = listener_metrics_helper_degraded_keys;
-	} else if (strncmp(fields, "status=recovered ", strlen("status=recovered ")) == 0) {
-		keys = listener_metrics_helper_recovered_keys;
-	} else if (strncmp(fields, "status=event_loss ", strlen("status=event_loss ")) == 0) {
-		keys = listener_metrics_helper_event_loss_keys;
-	} else {
-		return false;
-	}
-	return listener_metrics_keys_valid(fields, keys, NULL, false);
-}
-
 static const char *listener_metrics_schema_keys(size_t line_index) {
 	if (line_index == 0) {
 		return listener_metrics_meta_keys;
@@ -286,43 +210,6 @@ static const char *listener_metrics_schema_keys(size_t line_index) {
 	return line_index < LISTENER_METRICS_LINE_COUNT ? listener_metrics_route_duration_keys : NULL;
 }
 
-static bool listener_metrics_timestamp_valid(const char *timestamp, size_t length) {
-	if (length == 0) {
-		return true;
-	}
-	if (length != 29U || timestamp[4] != '-' || timestamp[7] != '-' || timestamp[10] != ' ' || timestamp[13] != ':' || timestamp[16] != ':'
-		|| memcmp(timestamp + 19, " UTC", 4) != 0 || (timestamp[23] != '+' && timestamp[23] != '-') || timestamp[26] != ':') {
-		return false;
-	}
-	static const size_t separators[] = { 4, 7, 10, 13, 16, 19, 20, 21, 22, 23, 26 };
-	for (size_t index = 0; index < length; index++) {
-		bool separator = false;
-		for (size_t item = 0; item < sizeof(separators) / sizeof(separators[0]); item++) {
-			separator = separator || index == separators[item];
-		}
-		if (!separator && (timestamp[index] < '0' || timestamp[index] > '9')) {
-			return false;
-		}
-	}
-	return true;
-}
-
-static const char *listener_metrics_file_message(const char *line, const char *level) {
-	if (line == NULL || level == NULL || line[0] != '[' || strchr(line, '\n') != NULL || strchr(line, '\r') != NULL) {
-		return NULL;
-	}
-	const char *timestamp_end = strstr(line, "] [");
-	if (timestamp_end == NULL || !listener_metrics_timestamp_valid(line + 1, (size_t)(timestamp_end - line - 1))) {
-		return NULL;
-	}
-	const char *level_start = timestamp_end + 3;
-	size_t level_length = strlen(level);
-	if (strncmp(level_start, level, level_length) != 0 || strncmp(level_start + level_length, "] ", 2) != 0 || level_start[level_length + 2] == '\0') {
-		return NULL;
-	}
-	return level_start + level_length + 2;
-}
-
 static bool listener_metrics_test_capacity(void) {
 	listener_metrics_state metrics = { 0 };
 	listener_metrics_limits_set(&metrics, 100, 20);
@@ -354,71 +241,6 @@ static bool listener_metrics_test_capacity(void) {
 	listener_metrics_worker_remove(&metrics);
 	listener_metrics_worker_remove(&metrics);
 	CHECK(metrics.connections_current == 0 && metrics.workers_current == 0 && metrics.saturation_total == 3, "gauge underflow was not contained");
-	return true;
-}
-
-static bool listener_metrics_test_consumer_grammar(void) {
-	static const char baseline[] =
-		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
-		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0";
-	static const char optional[] = "extension_a extension_b";
-	CHECK(listener_metrics_record_valid(baseline, listener_metrics_meta_keys, optional, true), "valid metrics baseline was rejected");
-	CHECK(listener_metrics_record_valid(
-		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
-		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0 unknown=1",
-		listener_metrics_meta_keys, optional, true), "unique unknown metrics extension was rejected");
-	CHECK(listener_metrics_record_valid(
-		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
-		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0 extension_b=2",
-		listener_metrics_meta_keys, optional, true), "old metrics baseline missing a known optional extension was rejected");
-	CHECK(!listener_metrics_record_valid(
-		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
-		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0",
-		listener_metrics_meta_keys, optional, true), "metrics record missing a baseline key was accepted");
-	CHECK(!listener_metrics_record_valid(
-		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
-		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0 reason=periodic",
-		listener_metrics_meta_keys, optional, true), "metrics record with a duplicate known key was accepted");
-	CHECK(!listener_metrics_record_valid(
-		"metrics schema=1 seq=7 family=meta instance=1234-10-20 lines=48 reason=periodic pid=1234 started_mono_sec=10 started_mono_nsec=20"
-		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0",
-		listener_metrics_meta_keys, optional, true), "metrics record with an out-of-order known key was accepted");
-	CHECK(!listener_metrics_record_valid(
-		"metrics schema=1 seq=7 family=meta instance=1234-10-20 unknown=1 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
-		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0",
-		listener_metrics_meta_keys, optional, true), "metrics extension before the complete baseline was accepted");
-	CHECK(!listener_metrics_record_valid(
-		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
-		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0 unknown=1 unknown=2",
-		listener_metrics_meta_keys, optional, true), "metrics record with a duplicate unknown key was accepted");
-	CHECK(!listener_metrics_record_valid(
-		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
-		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0 trailing",
-		listener_metrics_meta_keys, optional, true), "metrics record with non-token trailing bytes was accepted");
-	CHECK(!listener_metrics_record_valid(
-		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
-		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0 [2026-09-22]",
-		listener_metrics_meta_keys, optional, true), "metrics record with a glued second record was accepted");
-	CHECK(!listener_metrics_record_valid(
-		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
-		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0 extension_b=2 extension_a=1",
-		listener_metrics_meta_keys, optional, true), "metrics record with out-of-order known extensions was accepted");
-	CHECK(listener_metrics_helper_record_valid("resolver_helper status=degraded slot=0 pid=1 failure=io streak=2 backoff_ms=1000 suppressed=0"),
-		"valid degraded helper record was rejected");
-	CHECK(listener_metrics_helper_record_valid(
-		"resolver_helper status=recovered slot=0 pid=2 recovery=success_streak degraded_ms=10 suppressed=0 last_failure=io"),
-		"valid recovered helper record was rejected");
-	CHECK(listener_metrics_helper_record_valid("resolver_helper status=event_loss dropped=3"), "valid event-loss helper record was rejected");
-	CHECK(!listener_metrics_helper_record_valid("resolver_helper status=event_loss dropped=3 unknown=1"), "helper record with an unknown field was accepted");
-	CHECK(!listener_metrics_helper_record_valid("resolver_helper status=event_loss dropped=3 dropped=4"), "helper record with a duplicate field was accepted");
-	CHECK(!listener_metrics_helper_record_valid("resolver_helper status=event_loss"), "helper record with a missing field was accepted");
-	CHECK(!listener_metrics_helper_record_valid("resolver_helper dropped=3 status=event_loss"), "helper record with a misplaced field was accepted");
-	const char *message = listener_metrics_file_message("[2026-09-22 12:34:56 UTC+08:00] [INFO] metrics schema=1 seq=1 family=meta instance=1-1-1", "INFO");
-	CHECK(message != NULL && strncmp(message, "metrics schema=1", strlen("metrics schema=1")) == 0, "normal metrics file prefix was rejected");
-	message = listener_metrics_file_message("[] [WARN] resolver_helper status=event_loss dropped=1", "WARN");
-	CHECK(message != NULL && listener_metrics_helper_record_valid(message), "empty timestamp or helper WARNING prefix was rejected");
-	CHECK(listener_metrics_file_message(
-		"access [] [INFO] metrics schema=1 seq=1 family=meta instance=1-1-1", "INFO") == NULL, "mid-line metrics prefix was accepted");
 	return true;
 }
 
@@ -541,6 +363,268 @@ static bool listener_metrics_test_invalid(void) {
 	return true;
 }
 
+static bool listener_metrics_test_route_duration_error(void) {
+	listener_metrics_state metrics = { 0 };
+	listener_metrics_route_request request = { 0 };
+	const struct timespec start = { .tv_sec = 5, .tv_nsec = 0 };
+	const struct timespec end = { .tv_sec = 4, .tv_nsec = 0 };
+	CHECK(listener_metrics_route_start(&metrics, &request, LISTENER_METRICS_REQUEST_SHORT, &start), "duration-error route start failed");
+	CHECK(listener_metrics_route_duration_enable(&request), "duration-error route did not enable timing");
+	CHECK(listener_metrics_route_pending(&metrics, &request), "duration-error route did not become pending");
+	CHECK(listener_metrics_route_resolution_record(&metrics, &request, LISTENER_METRICS_RESOLUTION_WAITED), "duration-error resolution failed");
+	errno = EDOM;
+	CHECK(listener_metrics_route_settle(&metrics, &request, LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_NONE, &end), "duration-error route did not settle");
+	CHECK(errno == EDOM, "duration-error settlement changed errno");
+	listener_metrics_snapshot snapshot;
+	CHECK(listener_metrics_snapshot_get(&metrics, &snapshot), "duration-error snapshot failed");
+	CHECK(snapshot.route_duration[LISTENER_METRICS_REQUEST_SHORT].count == 0 && snapshot.route_duration[LISTENER_METRICS_REQUEST_SHORT].sample_errors == 1, "invalid route duration was not isolated");
+	return true;
+}
+
+static bool listener_metrics_test_route_immediate(void) {
+	listener_metrics_state metrics = { 0 };
+	listener_metrics_route_request short_request = { 0 };
+	listener_metrics_route_request worker_request = { 0 };
+	const struct timespec now = { .tv_sec = 1, .tv_nsec = 0 };
+	CHECK(listener_metrics_route_start(&metrics, &short_request, LISTENER_METRICS_REQUEST_SHORT, &now), "short route start failed");
+	CHECK(listener_metrics_route_resolution_record(&metrics, &short_request, LISTENER_METRICS_RESOLUTION_LOCAL), "local resolution failed");
+	CHECK(listener_metrics_route_settle(&metrics, &short_request, LISTENER_METRICS_OUTCOME_READY, LISTENER_METRICS_SELECTED_FAMILY_NONE, &now), "local route settlement failed");
+	CHECK(listener_metrics_route_start(&metrics, &worker_request, LISTENER_METRICS_REQUEST_WORKER, &now), "worker route start failed");
+	CHECK(listener_metrics_route_resolution_record(&metrics, &worker_request, LISTENER_METRICS_RESOLUTION_BYPASS), "bypass resolution failed");
+	CHECK(listener_metrics_route_settle(&metrics, &worker_request, LISTENER_METRICS_OUTCOME_READY, LISTENER_METRICS_SELECTED_FAMILY_NONE, &now), "bypass route settlement failed");
+	CHECK(!listener_metrics_route_settle(&metrics, &worker_request, LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_IPV4, &now), "duplicate route settlement succeeded");
+	CHECK(metrics.route[LISTENER_METRICS_REQUEST_SHORT].requests_started == 1
+		&& metrics.route[LISTENER_METRICS_REQUEST_SHORT].resolution[LISTENER_METRICS_RESOLUTION_LOCAL] == 1
+		&& metrics.route[LISTENER_METRICS_REQUEST_SHORT].outcome[LISTENER_METRICS_OUTCOME_READY] == 1, "local route metrics were incorrect");
+	CHECK(metrics.route[LISTENER_METRICS_REQUEST_WORKER].requests_started == 1
+		&& metrics.route[LISTENER_METRICS_REQUEST_WORKER].resolution[LISTENER_METRICS_RESOLUTION_BYPASS] == 1
+		&& metrics.route[LISTENER_METRICS_REQUEST_WORKER].outcome[LISTENER_METRICS_OUTCOME_READY] == 1, "bypass route metrics were incorrect");
+	CHECK(metrics.route_duration[LISTENER_METRICS_REQUEST_SHORT].count == 0 && metrics.route_duration[LISTENER_METRICS_REQUEST_WORKER].count == 0, "local or bypass route produced a duration sample");
+	return true;
+}
+
+static bool listener_metrics_test_route_pending(void) {
+	listener_metrics_state metrics = { 0 };
+	listener_metrics_route_request request = { 0 };
+	const struct timespec start = { .tv_sec = 1, .tv_nsec = 0 };
+	const struct timespec end = { .tv_sec = 1, .tv_nsec = 50000000 };
+	CHECK(listener_metrics_route_start(&metrics, &request, LISTENER_METRICS_REQUEST_WORKER, &start), "pending route start failed");
+	CHECK(listener_metrics_route_duration_enable(&request), "pending route did not enable timing");
+	CHECK(listener_metrics_route_pending(&metrics, &request), "pending route did not enter pending");
+	CHECK(!listener_metrics_route_pending(&metrics, &request), "pending route entered pending twice");
+	CHECK(listener_metrics_route_resolution_record(&metrics, &request, LISTENER_METRICS_RESOLUTION_WAITED), "waited resolution failed");
+	CHECK(!listener_metrics_route_resolution_record(&metrics, &request, LISTENER_METRICS_RESOLUTION_IMMEDIATE), "route recorded two resolutions");
+	CHECK(listener_metrics_route_settle(&metrics, &request, LISTENER_METRICS_OUTCOME_READY, LISTENER_METRICS_SELECTED_FAMILY_IPV6, &end), "pending route settlement failed");
+	CHECK(!request.pending && request.settled, "pending route latch was incorrect");
+	listener_metrics_state original = metrics;
+	listener_metrics_snapshot snapshot;
+	CHECK(listener_metrics_snapshot_get(&metrics, &snapshot), "pending route snapshot failed");
+	CHECK(memcmp(&metrics, &original, sizeof(metrics)) == 0, "listener snapshot changed its source");
+	const listener_metrics_route *route = &snapshot.route[LISTENER_METRICS_REQUEST_WORKER];
+	CHECK(route->requests_started == 1 && route->pending_current == 0 && route->pending_high_water == 1, "pending route gauges were incorrect");
+	CHECK(route->resolution[LISTENER_METRICS_RESOLUTION_WAITED] == 1 && route->outcome[LISTENER_METRICS_OUTCOME_READY] == 1, "pending route resolution or outcome was incorrect");
+	CHECK(route->selected_family[LISTENER_METRICS_SELECTED_FAMILY_IPV6] == 1 && route->selected_family[LISTENER_METRICS_SELECTED_FAMILY_IPV4] == 0, "selected family was incorrect");
+	CHECK(snapshot.route_duration[LISTENER_METRICS_REQUEST_WORKER].count == 1 && snapshot.route_duration[LISTENER_METRICS_REQUEST_WORKER].sum == 50000, "route duration sample was incorrect");
+	CHECK(route->requests_started == route->pending_current + route->outcome[LISTENER_METRICS_OUTCOME_READY], "route conservation failed");
+	return true;
+}
+
+static bool listener_metrics_test_route_terminal_variants(void) {
+	listener_metrics_state metrics = { 0 };
+	const struct timespec start = { .tv_sec = 1, .tv_nsec = 0 };
+	const struct timespec end = { .tv_sec = 2, .tv_nsec = 0 };
+	listener_metrics_route_request create_failure = { 0 };
+	CHECK(listener_metrics_route_start(&metrics, &create_failure, LISTENER_METRICS_REQUEST_SHORT, &start), "create-failure route start failed");
+	CHECK(listener_metrics_route_settle(&metrics, &create_failure, LISTENER_METRICS_OUTCOME_LIMIT, LISTENER_METRICS_SELECTED_FAMILY_IPV4, &end), "create-failure route settlement failed");
+	listener_metrics_route_request abandoned = { 0 };
+	CHECK(listener_metrics_route_start(&metrics, &abandoned, LISTENER_METRICS_REQUEST_SHORT, &start), "abandoned route start failed");
+	CHECK(listener_metrics_route_duration_enable(&abandoned) && listener_metrics_route_pending(&metrics, &abandoned), "abandoned route did not become pending");
+	CHECK(listener_metrics_route_resolution_record(&metrics, &abandoned, LISTENER_METRICS_RESOLUTION_WAITED), "abandoned resolution failed");
+	CHECK(listener_metrics_route_settle(&metrics, &abandoned, LISTENER_METRICS_OUTCOME_ABANDONED, LISTENER_METRICS_SELECTED_FAMILY_NONE, &end), "abandoned route settlement failed");
+	CHECK(listener_metrics_route_release_failure_record(&metrics, &abandoned), "route release failure was not recorded");
+	const listener_metrics_route *route = &metrics.route[LISTENER_METRICS_REQUEST_SHORT];
+	CHECK(route->requests_started == 2 && route->outcome[LISTENER_METRICS_OUTCOME_LIMIT] == 1 && route->outcome[LISTENER_METRICS_OUTCOME_ABANDONED] == 1, "terminal route outcomes were incorrect");
+	CHECK(route->selected_family[LISTENER_METRICS_SELECTED_FAMILY_IPV4] == 0, "failed route recorded a selected family");
+	CHECK(route->release_failure == 1 && route->requests_started == route->pending_current + 2, "release failure or route conservation was incorrect");
+	CHECK(metrics.route_duration[LISTENER_METRICS_REQUEST_SHORT].count == 1, "route duration eligibility was incorrect");
+	return true;
+}
+
+static bool listener_metrics_timestamp_valid(const char *timestamp, size_t length) {
+	if (length == 0) {
+		return true;
+	}
+	if (length != 29U || timestamp[4] != '-' || timestamp[7] != '-' || timestamp[10] != ' ' || timestamp[13] != ':' || timestamp[16] != ':'
+		|| memcmp(timestamp + 19, " UTC", 4) != 0 || (timestamp[23] != '+' && timestamp[23] != '-') || timestamp[26] != ':') {
+		return false;
+	}
+	static const size_t separators[] = { 4, 7, 10, 13, 16, 19, 20, 21, 22, 23, 26 };
+	for (size_t index = 0; index < length; index++) {
+		bool separator = false;
+		for (size_t item = 0; item < sizeof(separators) / sizeof(separators[0]); item++) {
+			separator = separator || index == separators[item];
+		}
+		if (!separator && (timestamp[index] < '0' || timestamp[index] > '9')) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static const char *listener_metrics_file_message(const char *line, const char *level) {
+	if (line == NULL || level == NULL || line[0] != '[' || strchr(line, '\n') != NULL || strchr(line, '\r') != NULL) {
+		return NULL;
+	}
+	const char *timestamp_end = strstr(line, "] [");
+	if (timestamp_end == NULL || !listener_metrics_timestamp_valid(line + 1, (size_t)(timestamp_end - line - 1))) {
+		return NULL;
+	}
+	const char *level_start = timestamp_end + 3;
+	size_t level_length = strlen(level);
+	if (strncmp(level_start, level, level_length) != 0 || strncmp(level_start + level_length, "] ", 2) != 0 || level_start[level_length + 2] == '\0') {
+		return NULL;
+	}
+	return level_start + level_length + 2;
+}
+
+static bool listener_metrics_word_get(const char *words, size_t index, listener_metrics_test_key *result) {
+	if (words == NULL || result == NULL) {
+		return false;
+	}
+	const char *cursor = words;
+	for (size_t current = 0; *cursor != '\0'; current++) {
+		const char *end = strchr(cursor, ' ');
+		if (end == NULL) {
+			end = cursor + strlen(cursor);
+		}
+		if (current == index) {
+			result->data = cursor;
+			result->length = (size_t)(end - cursor);
+			return result->length > 0;
+		}
+		cursor = *end == '\0' ? end : end + 1;
+	}
+	return false;
+}
+
+static bool listener_metrics_keys_valid(const char *record, const char *baseline, const char *optional, bool allow_extensions) {
+	listener_metrics_test_key keys[LISTENER_METRICS_TEST_KEY_LIMIT];
+	size_t key_count;
+	if (!listener_metrics_keys_tokenize(record, keys, &key_count)) {
+		return false;
+	}
+	size_t baseline_count = 0;
+	listener_metrics_test_key expected;
+	while (listener_metrics_word_get(baseline, baseline_count, &expected)) {
+		if (baseline_count >= key_count || !listener_metrics_key_equal(&keys[baseline_count], &expected)) {
+			return false;
+		}
+		baseline_count++;
+	}
+	if (!allow_extensions) {
+		return key_count == baseline_count;
+	}
+	size_t optional_position = 0;
+	for (size_t actual = baseline_count; actual < key_count; actual++) {
+		for (size_t optional_index = 0; listener_metrics_word_get(optional, optional_index, &expected); optional_index++) {
+			if (listener_metrics_key_equal(&keys[actual], &expected)) {
+				if (optional_index < optional_position) {
+					return false;
+				}
+				optional_position = optional_index + 1;
+				break;
+			}
+		}
+	}
+	return true;
+}
+
+static bool listener_metrics_helper_record_valid(const char *record) {
+	static const char prefix[] = "resolver_helper ";
+	if (record == NULL || strncmp(record, prefix, sizeof(prefix) - 1U) != 0) {
+		return false;
+	}
+	const char *fields = record + sizeof(prefix) - 1U;
+	const char *keys = NULL;
+	if (strncmp(fields, "status=degraded ", strlen("status=degraded ")) == 0) {
+		keys = listener_metrics_helper_degraded_keys;
+	} else if (strncmp(fields, "status=recovered ", strlen("status=recovered ")) == 0) {
+		keys = listener_metrics_helper_recovered_keys;
+	} else if (strncmp(fields, "status=event_loss ", strlen("status=event_loss ")) == 0) {
+		keys = listener_metrics_helper_event_loss_keys;
+	} else {
+		return false;
+	}
+	return listener_metrics_keys_valid(fields, keys, NULL, false);
+}
+
+static bool listener_metrics_record_valid(const char *record, const char *baseline, const char *optional, bool allow_extensions) {
+	static const char prefix[] = "metrics ";
+	return record != NULL && strncmp(record, prefix, sizeof(prefix) - 1U) == 0 && listener_metrics_keys_valid(record + sizeof(prefix) - 1U, baseline, optional, allow_extensions);
+}
+
+static bool listener_metrics_test_consumer_grammar(void) {
+	static const char baseline[] =
+		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
+		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0";
+	static const char optional[] = "extension_a extension_b";
+	CHECK(listener_metrics_record_valid(baseline, listener_metrics_meta_keys, optional, true), "valid metrics baseline was rejected");
+	CHECK(listener_metrics_record_valid(
+		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
+		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0 unknown=1",
+		listener_metrics_meta_keys, optional, true), "unique unknown metrics extension was rejected");
+	CHECK(listener_metrics_record_valid(
+		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
+		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0 extension_b=2",
+		listener_metrics_meta_keys, optional, true), "old metrics baseline missing a known optional extension was rejected");
+	CHECK(!listener_metrics_record_valid(
+		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
+		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0",
+		listener_metrics_meta_keys, optional, true), "metrics record missing a baseline key was accepted");
+	CHECK(!listener_metrics_record_valid(
+		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
+		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0 reason=periodic",
+		listener_metrics_meta_keys, optional, true), "metrics record with a duplicate known key was accepted");
+	CHECK(!listener_metrics_record_valid(
+		"metrics schema=1 seq=7 family=meta instance=1234-10-20 lines=48 reason=periodic pid=1234 started_mono_sec=10 started_mono_nsec=20"
+		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0",
+		listener_metrics_meta_keys, optional, true), "metrics record with an out-of-order known key was accepted");
+	CHECK(!listener_metrics_record_valid(
+		"metrics schema=1 seq=7 family=meta instance=1234-10-20 unknown=1 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
+		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0",
+		listener_metrics_meta_keys, optional, true), "metrics extension before the complete baseline was accepted");
+	CHECK(!listener_metrics_record_valid(
+		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
+		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0 unknown=1 unknown=2",
+		listener_metrics_meta_keys, optional, true), "metrics record with a duplicate unknown key was accepted");
+	CHECK(!listener_metrics_record_valid(
+		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
+		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0 trailing",
+		listener_metrics_meta_keys, optional, true), "metrics record with non-token trailing bytes was accepted");
+	CHECK(!listener_metrics_record_valid(
+		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
+		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0 [2026-09-22]",
+		listener_metrics_meta_keys, optional, true), "metrics record with a glued second record was accepted");
+	CHECK(!listener_metrics_record_valid(
+		"metrics schema=1 seq=7 family=meta instance=1234-10-20 reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20"
+		" uptime_ms=1000 missed_intervals=0 scheduler_failures=0 logger_errors=0 format_drops=0 extension_b=2 extension_a=1",
+		listener_metrics_meta_keys, optional, true), "metrics record with out-of-order known extensions was accepted");
+	CHECK(listener_metrics_helper_record_valid("resolver_helper status=degraded slot=0 pid=1 failure=io streak=2 backoff_ms=1000 suppressed=0"), "valid degraded helper record was rejected");
+	CHECK(listener_metrics_helper_record_valid("resolver_helper status=recovered slot=0 pid=2 recovery=success_streak degraded_ms=10 suppressed=0 last_failure=io"),
+		"valid recovered helper record was rejected");
+	CHECK(listener_metrics_helper_record_valid("resolver_helper status=event_loss dropped=3"), "valid event-loss helper record was rejected");
+	CHECK(!listener_metrics_helper_record_valid("resolver_helper status=event_loss dropped=3 unknown=1"), "helper record with an unknown field was accepted");
+	CHECK(!listener_metrics_helper_record_valid("resolver_helper status=event_loss dropped=3 dropped=4"), "helper record with a duplicate field was accepted");
+	CHECK(!listener_metrics_helper_record_valid("resolver_helper status=event_loss"), "helper record with a missing field was accepted");
+	CHECK(!listener_metrics_helper_record_valid("resolver_helper dropped=3 status=event_loss"), "helper record with a misplaced field was accepted");
+	const char *message = listener_metrics_file_message("[2026-09-22 12:34:56 UTC+08:00] [INFO] metrics schema=1 seq=1 family=meta instance=1-1-1", "INFO");
+	CHECK(message != NULL && strncmp(message, "metrics schema=1", strlen("metrics schema=1")) == 0, "normal metrics file prefix was rejected");
+	message = listener_metrics_file_message("[] [WARN] resolver_helper status=event_loss dropped=1", "WARN");
+	CHECK(message != NULL && listener_metrics_helper_record_valid(message), "empty timestamp or helper WARNING prefix was rejected");
+	CHECK(listener_metrics_file_message("access [] [INFO] metrics schema=1 seq=1 family=meta instance=1-1-1", "INFO") == NULL, "mid-line metrics prefix was accepted");
+	return true;
+}
+
 static bool listener_metrics_test_output(void) {
 	char filename[] = "/tmp/mcrelay-listener-metrics-output-XXXXXX";
 	int fd = mkstemp(filename);
@@ -556,11 +640,9 @@ static bool listener_metrics_test_output(void) {
 	errno = ERANGE;
 	listener_metrics_output(&runtime, LISTENER_METRICS_OUTPUT_STARTUP, &snapshot, invalid_filename, MKSYS_LEVEL_INFORMATION, &now);
 	CHECK(errno == ERANGE, "failed aggregate output changed errno");
-	CHECK(runtime.sequence == 1 && runtime.logger_errors == LISTENER_METRICS_LINE_COUNT && runtime.format_drops == 0,
-		"failed aggregate output did not account each line exactly once");
+	CHECK(runtime.sequence == 1 && runtime.logger_errors == LISTENER_METRICS_LINE_COUNT && runtime.format_drops == 0, "failed aggregate output did not account each line exactly once");
 	listener_metrics_output(&runtime, LISTENER_METRICS_OUTPUT_PERIODIC, &snapshot, filename, MKSYS_LEVEL_INFORMATION, &now);
-	CHECK(runtime.sequence == 2 && runtime.logger_errors == LISTENER_METRICS_LINE_COUNT && runtime.format_drops == 0,
-		"successful aggregate output changed error accounting");
+	CHECK(runtime.sequence == 2 && runtime.logger_errors == LISTENER_METRICS_LINE_COUNT && runtime.format_drops == 0, "successful aggregate output changed error accounting");
 	size_t content_size;
 	char *content = file_read(filename, &content_size);
 	CHECK(content != NULL && content_size > 0, "cannot read aggregate metrics log");
@@ -616,12 +698,10 @@ static bool listener_metrics_test_output(void) {
 		const char *metrics_line = listener_metrics_file_message(cursor, "INFO");
 		CHECK(metrics_line != NULL && strncmp(metrics_line, "metrics schema=1 seq=2 ", strlen("metrics schema=1 seq=2 ")) == 0
 			&& strstr(metrics_line, expected[line_index]) != NULL, "aggregate schema line order or dimensions were incorrect");
-		CHECK(listener_metrics_record_valid(metrics_line, listener_metrics_schema_keys(line_index), NULL, false),
-			"aggregate schema baseline key set or order was incorrect");
+		CHECK(listener_metrics_record_valid(metrics_line, listener_metrics_schema_keys(line_index), NULL, false), "aggregate schema baseline key set or order was incorrect");
 		CHECK(strlen(metrics_line) <= LISTENER_METRICS_LINE_SIZE - 1U, "aggregate schema line exceeded its fixed budget");
 		if (line_index == 0) {
-			CHECK(strstr(metrics_line, "reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20 uptime_ms=10000") != NULL,
-				"aggregate meta identity or reason was incorrect");
+			CHECK(strstr(metrics_line, "reason=periodic lines=48 pid=1234 started_mono_sec=10 started_mono_nsec=20 uptime_ms=10000") != NULL, "aggregate meta identity or reason was incorrect");
 			CHECK(strstr(metrics_line, "logger_errors=48 format_drops=0") != NULL, "aggregate meta did not expose retrospective logger errors");
 		}
 		cursor = line_end + 1;
@@ -629,97 +709,6 @@ static bool listener_metrics_test_output(void) {
 	CHECK(*cursor == '\0', "aggregate snapshot emitted more than 48 physical lines");
 	free(content);
 	CHECK(unlink(filename) == 0, "cannot remove aggregate metrics log");
-	return true;
-}
-
-static bool listener_metrics_test_route_duration_error(void) {
-	listener_metrics_state metrics = { 0 };
-	listener_metrics_route_request request = { 0 };
-	const struct timespec start = { .tv_sec = 5, .tv_nsec = 0 };
-	const struct timespec end = { .tv_sec = 4, .tv_nsec = 0 };
-	CHECK(listener_metrics_route_start(&metrics, &request, LISTENER_METRICS_REQUEST_SHORT, &start), "duration-error route start failed");
-	CHECK(listener_metrics_route_duration_enable(&request), "duration-error route did not enable timing");
-	CHECK(listener_metrics_route_pending(&metrics, &request), "duration-error route did not become pending");
-	CHECK(listener_metrics_route_resolution_record(&metrics, &request, LISTENER_METRICS_RESOLUTION_WAITED), "duration-error resolution failed");
-	errno = EDOM;
-	CHECK(listener_metrics_route_settle(&metrics, &request, LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_NONE, &end), "duration-error route did not settle");
-	CHECK(errno == EDOM, "duration-error settlement changed errno");
-	listener_metrics_snapshot snapshot;
-	CHECK(listener_metrics_snapshot_get(&metrics, &snapshot), "duration-error snapshot failed");
-	CHECK(snapshot.route_duration[LISTENER_METRICS_REQUEST_SHORT].count == 0 && snapshot.route_duration[LISTENER_METRICS_REQUEST_SHORT].sample_errors == 1, "invalid route duration was not isolated");
-	return true;
-}
-
-static bool listener_metrics_test_route_immediate(void) {
-	listener_metrics_state metrics = { 0 };
-	listener_metrics_route_request short_request = { 0 };
-	listener_metrics_route_request worker_request = { 0 };
-	const struct timespec now = { .tv_sec = 1, .tv_nsec = 0 };
-	CHECK(listener_metrics_route_start(&metrics, &short_request, LISTENER_METRICS_REQUEST_SHORT, &now), "short route start failed");
-	CHECK(listener_metrics_route_resolution_record(&metrics, &short_request, LISTENER_METRICS_RESOLUTION_LOCAL), "local resolution failed");
-	CHECK(listener_metrics_route_settle(&metrics, &short_request, LISTENER_METRICS_OUTCOME_READY, LISTENER_METRICS_SELECTED_FAMILY_NONE, &now),
-		"local route settlement failed");
-	CHECK(listener_metrics_route_start(&metrics, &worker_request, LISTENER_METRICS_REQUEST_WORKER, &now), "worker route start failed");
-	CHECK(listener_metrics_route_resolution_record(&metrics, &worker_request, LISTENER_METRICS_RESOLUTION_BYPASS), "bypass resolution failed");
-	CHECK(listener_metrics_route_settle(&metrics, &worker_request, LISTENER_METRICS_OUTCOME_READY, LISTENER_METRICS_SELECTED_FAMILY_NONE, &now),
-		"bypass route settlement failed");
-	CHECK(!listener_metrics_route_settle(&metrics, &worker_request, LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_IPV4, &now),
-		"duplicate route settlement succeeded");
-	CHECK(metrics.route[LISTENER_METRICS_REQUEST_SHORT].requests_started == 1
-		&& metrics.route[LISTENER_METRICS_REQUEST_SHORT].resolution[LISTENER_METRICS_RESOLUTION_LOCAL] == 1
-		&& metrics.route[LISTENER_METRICS_REQUEST_SHORT].outcome[LISTENER_METRICS_OUTCOME_READY] == 1, "local route metrics were incorrect");
-	CHECK(metrics.route[LISTENER_METRICS_REQUEST_WORKER].requests_started == 1
-		&& metrics.route[LISTENER_METRICS_REQUEST_WORKER].resolution[LISTENER_METRICS_RESOLUTION_BYPASS] == 1
-		&& metrics.route[LISTENER_METRICS_REQUEST_WORKER].outcome[LISTENER_METRICS_OUTCOME_READY] == 1, "bypass route metrics were incorrect");
-	CHECK(metrics.route_duration[LISTENER_METRICS_REQUEST_SHORT].count == 0 && metrics.route_duration[LISTENER_METRICS_REQUEST_WORKER].count == 0,
-		"local or bypass route produced a duration sample");
-	return true;
-}
-
-static bool listener_metrics_test_route_pending(void) {
-	listener_metrics_state metrics = { 0 };
-	listener_metrics_route_request request = { 0 };
-	const struct timespec start = { .tv_sec = 1, .tv_nsec = 0 };
-	const struct timespec end = { .tv_sec = 1, .tv_nsec = 50000000 };
-	CHECK(listener_metrics_route_start(&metrics, &request, LISTENER_METRICS_REQUEST_WORKER, &start), "pending route start failed");
-	CHECK(listener_metrics_route_duration_enable(&request), "pending route did not enable timing");
-	CHECK(listener_metrics_route_pending(&metrics, &request), "pending route did not enter pending");
-	CHECK(!listener_metrics_route_pending(&metrics, &request), "pending route entered pending twice");
-	CHECK(listener_metrics_route_resolution_record(&metrics, &request, LISTENER_METRICS_RESOLUTION_WAITED), "waited resolution failed");
-	CHECK(!listener_metrics_route_resolution_record(&metrics, &request, LISTENER_METRICS_RESOLUTION_IMMEDIATE), "route recorded two resolutions");
-	CHECK(listener_metrics_route_settle(&metrics, &request, LISTENER_METRICS_OUTCOME_READY, LISTENER_METRICS_SELECTED_FAMILY_IPV6, &end), "pending route settlement failed");
-	CHECK(!request.pending && request.settled, "pending route latch was incorrect");
-	listener_metrics_state original = metrics;
-	listener_metrics_snapshot snapshot;
-	CHECK(listener_metrics_snapshot_get(&metrics, &snapshot), "pending route snapshot failed");
-	CHECK(memcmp(&metrics, &original, sizeof(metrics)) == 0, "listener snapshot changed its source");
-	const listener_metrics_route *route = &snapshot.route[LISTENER_METRICS_REQUEST_WORKER];
-	CHECK(route->requests_started == 1 && route->pending_current == 0 && route->pending_high_water == 1, "pending route gauges were incorrect");
-	CHECK(route->resolution[LISTENER_METRICS_RESOLUTION_WAITED] == 1 && route->outcome[LISTENER_METRICS_OUTCOME_READY] == 1, "pending route resolution or outcome was incorrect");
-	CHECK(route->selected_family[LISTENER_METRICS_SELECTED_FAMILY_IPV6] == 1 && route->selected_family[LISTENER_METRICS_SELECTED_FAMILY_IPV4] == 0, "selected family was incorrect");
-	CHECK(snapshot.route_duration[LISTENER_METRICS_REQUEST_WORKER].count == 1 && snapshot.route_duration[LISTENER_METRICS_REQUEST_WORKER].sum == 50000, "route duration sample was incorrect");
-	CHECK(route->requests_started == route->pending_current + route->outcome[LISTENER_METRICS_OUTCOME_READY], "route conservation failed");
-	return true;
-}
-
-static bool listener_metrics_test_route_terminal_variants(void) {
-	listener_metrics_state metrics = { 0 };
-	const struct timespec start = { .tv_sec = 1, .tv_nsec = 0 };
-	const struct timespec end = { .tv_sec = 2, .tv_nsec = 0 };
-	listener_metrics_route_request create_failure = { 0 };
-	CHECK(listener_metrics_route_start(&metrics, &create_failure, LISTENER_METRICS_REQUEST_SHORT, &start), "create-failure route start failed");
-	CHECK(listener_metrics_route_settle(&metrics, &create_failure, LISTENER_METRICS_OUTCOME_LIMIT, LISTENER_METRICS_SELECTED_FAMILY_IPV4, &end), "create-failure route settlement failed");
-	listener_metrics_route_request abandoned = { 0 };
-	CHECK(listener_metrics_route_start(&metrics, &abandoned, LISTENER_METRICS_REQUEST_SHORT, &start), "abandoned route start failed");
-	CHECK(listener_metrics_route_duration_enable(&abandoned) && listener_metrics_route_pending(&metrics, &abandoned), "abandoned route did not become pending");
-	CHECK(listener_metrics_route_resolution_record(&metrics, &abandoned, LISTENER_METRICS_RESOLUTION_WAITED), "abandoned resolution failed");
-	CHECK(listener_metrics_route_settle(&metrics, &abandoned, LISTENER_METRICS_OUTCOME_ABANDONED, LISTENER_METRICS_SELECTED_FAMILY_NONE, &end), "abandoned route settlement failed");
-	CHECK(listener_metrics_route_release_failure_record(&metrics, &abandoned), "route release failure was not recorded");
-	const listener_metrics_route *route = &metrics.route[LISTENER_METRICS_REQUEST_SHORT];
-	CHECK(route->requests_started == 2 && route->outcome[LISTENER_METRICS_OUTCOME_LIMIT] == 1 && route->outcome[LISTENER_METRICS_OUTCOME_ABANDONED] == 1, "terminal route outcomes were incorrect");
-	CHECK(route->selected_family[LISTENER_METRICS_SELECTED_FAMILY_IPV4] == 0, "failed route recorded a selected family");
-	CHECK(route->release_failure == 1 && route->requests_started == route->pending_current + 2, "release failure or route conservation was incorrect");
-	CHECK(metrics.route_duration[LISTENER_METRICS_REQUEST_SHORT].count == 1, "route duration eligibility was incorrect");
 	return true;
 }
 

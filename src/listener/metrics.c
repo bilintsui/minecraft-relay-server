@@ -111,8 +111,10 @@ static void listener_metrics_line_begin(listener_metrics_line_builder *builder, 
 	memset(builder, 0, sizeof(*builder));
 	builder->data = line;
 	builder->size = line_size;
-	(void)listener_metrics_line_append(builder, "metrics schema=1 seq=%" PRIu64 " family=%s instance=%jd-%jd-%ld", sequence, family,
-		(intmax_t)runtime->process_id, (intmax_t)runtime->started_at.tv_sec, runtime->started_at.tv_nsec);
+	(void)listener_metrics_line_append(builder,
+		"metrics schema=1 seq=%" PRIu64 " family=%s instance=%jd-%jd-%ld",
+		sequence, family, (intmax_t)runtime->process_id, (intmax_t)runtime->started_at.tv_sec, runtime->started_at.tv_nsec
+	);
 }
 
 static void listener_metrics_line_emit(listener_metrics_runtime *runtime, const char *log_filename, uint8_t log_level, listener_metrics_line_builder *builder, const char *metrics_line) {
@@ -221,7 +223,8 @@ void listener_metrics_helper_observation_log(listener_metrics_runtime *runtime, 
 		int length = snprintf(helper_line, sizeof(helper_line),
 			"resolver_helper status=degraded slot=%zu pid=%jd failure=%s streak=%" PRIu64 " backoff_ms=%" PRIu64 " suppressed=%" PRIu64,
 			degraded->slot, (intmax_t)degraded->process_id, listener_metrics_failure_names[degraded->failure], degraded->failure_count,
-			degraded->backoff_milliseconds, state->suppressed);
+			degraded->backoff_milliseconds, state->suppressed
+		);
 		if (length < 0 || (size_t)length >= sizeof(helper_line)) {
 			listener_metrics_counter_add(&runtime->format_drops, 1);
 		} else {
@@ -238,7 +241,8 @@ void listener_metrics_helper_observation_log(listener_metrics_runtime *runtime, 
 			int length = snprintf(helper_line, sizeof(helper_line),
 				"resolver_helper status=recovered slot=%zu pid=%jd recovery=%s degraded_ms=%" PRIu64 " suppressed=%" PRIu64 " last_failure=%s",
 				recovered->slot, (intmax_t)recovered->process_id, listener_metrics_recovery_names[recovered->recovery], degraded_milliseconds,
-				state->suppressed, listener_metrics_failure_names[recovered->last_failure]);
+				state->suppressed, listener_metrics_failure_names[recovered->last_failure]
+			);
 			if (length < 0 || (size_t)length >= sizeof(helper_line)) {
 				listener_metrics_counter_add(&runtime->format_drops, 1);
 			} else {
@@ -309,8 +313,12 @@ void listener_metrics_output(listener_metrics_runtime *runtime, listener_metrics
 	(void)listener_metrics_line_append(&builder,
 		" reason=%s lines=%u pid=%jd started_mono_sec=%jd started_mono_nsec=%ld uptime_ms=%" PRIu64
 		" missed_intervals=%" PRIu64 " scheduler_failures=%" PRIu64 " logger_errors=%" PRIu64 " format_drops=%" PRIu64,
-		listener_metrics_output_reason_names[reason], LISTENER_METRICS_LINE_COUNT, (intmax_t)runtime->process_id, (intmax_t)runtime->started_at.tv_sec,
-		runtime->started_at.tv_nsec, uptime_milliseconds, runtime->missed_intervals, runtime->scheduler_failures, runtime->logger_errors, runtime->format_drops);
+		listener_metrics_output_reason_names[reason], LISTENER_METRICS_LINE_COUNT,
+		(intmax_t)runtime->process_id, (intmax_t)runtime->started_at.tv_sec,
+		runtime->started_at.tv_nsec, uptime_milliseconds,
+		runtime->missed_intervals, runtime->scheduler_failures,
+		runtime->logger_errors, runtime->format_drops
+	);
 	listener_metrics_line_emit(runtime, log_filename, log_level, &builder, metrics_line);
 
 	const listener_metrics_snapshot *listener = &snapshot->listener;
@@ -318,13 +326,19 @@ void listener_metrics_output(listener_metrics_runtime *runtime, listener_metrics
 	(void)listener_metrics_line_append(&builder,
 		" accepted_total=%" PRIu64 " accept_capacity_rejected_total=%" PRIu64 " accept_fd_exhausted_total=%" PRIu64
 		" connection_track_failure_total=%" PRIu64 " connections_current=%" PRIu64 " connections_high_water=%" PRIu64 " connection_limit=%" PRIu64,
-		listener->accepted, listener->accept_capacity_rejected, listener->accept_fd_exhausted, listener->connection_track_failure, listener->connections_current,
-		listener->connections_high_water, listener->connection_limit);
+		listener->accepted, listener->accept_capacity_rejected,
+		listener->accept_fd_exhausted, listener->connection_track_failure,
+		listener->connections_current, listener->connections_high_water,
+		listener->connection_limit
+	);
 	(void)listener_metrics_line_append(&builder,
 		" worker_spawn_total=%" PRIu64 " worker_fork_failure_total=%" PRIu64 " worker_capacity_refusal_total=%" PRIu64
 		" workers_current=%" PRIu64 " workers_high_water=%" PRIu64 " worker_limit=%" PRIu64 " listener_saturation_total=%" PRIu64,
-		listener->worker_spawn, listener->worker_fork_failure, listener->worker_capacity_refusal, listener->workers_current, listener->workers_high_water,
-		listener->worker_limit, listener->saturation_total);
+		listener->worker_spawn, listener->worker_fork_failure,
+		listener->worker_capacity_refusal, listener->workers_current,
+		listener->workers_high_water, listener->worker_limit,
+		listener->saturation_total
+	);
 	listener_metrics_line_emit(runtime, log_filename, log_level, &builder, metrics_line);
 
 	const resolver_cache_metrics_snapshot *cache = &snapshot->cache;
@@ -333,13 +347,18 @@ void listener_metrics_output(listener_metrics_runtime *runtime, listener_metrics
 	(void)listener_metrics_line_append(&builder,
 		" scope=storage cache_entries_current=%" PRIu64 " cache_entries_high_water=%" PRIu64 " cache_entry_limit=%u"
 		" cache_owned_bytes_current=%" PRIu64 " cache_owned_bytes_high_water=%" PRIu64 " cache_owned_byte_limit=%u cache_result_byte_limit=%u",
-		cache->entries_current, cache->entries_high_water, RESOLVER_CACHE_ENTRY_LIMIT, cache->owned_bytes_current, cache->owned_bytes_high_water,
-		RESOLVER_CACHE_OWNED_BYTE_LIMIT, RESOLVER_CACHE_RESULT_BYTE_LIMIT);
+		cache->entries_current, cache->entries_high_water,
+		RESOLVER_CACHE_ENTRY_LIMIT, cache->owned_bytes_current,
+		cache->owned_bytes_high_water, RESOLVER_CACHE_OWNED_BYTE_LIMIT,
+		RESOLVER_CACHE_RESULT_BYTE_LIMIT
+	);
 	(void)listener_metrics_line_append(&builder,
 		" assemblies_nonterminal_current=%" PRIu64 " assembly_owned_bytes_current=%" PRIu64 " assembly_owned_bytes_high_water=%" PRIu64
 		" assembly_owned_byte_limit=%u cache_saturation_total=%" PRIu64 " assembly_saturation_total=%" PRIu64,
-		assembly->nonterminal_current, assembly->owned_bytes_current, assembly->owned_bytes_high_water, RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT,
-		cache->saturation_total, assembly->saturation_total);
+		assembly->nonterminal_current, assembly->owned_bytes_current,
+		assembly->owned_bytes_high_water, RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT,
+		cache->saturation_total, assembly->saturation_total
+	);
 	listener_metrics_line_emit(runtime, log_filename, log_level, &builder, metrics_line);
 
 	const resolver_supervisor_metrics_snapshot *supervisor = &snapshot->supervisor;
@@ -347,20 +366,23 @@ void listener_metrics_output(listener_metrics_runtime *runtime, listener_metrics
 	(void)listener_metrics_line_append(&builder,
 		" scope=supervisor jobs_current=%" PRIu64 " jobs_high_water=%" PRIu64 " job_limit=%u interactive_reserve=%u"
 		" jobs_queued=%" PRIu64 " jobs_sending=%" PRIu64 " jobs_dispatched=%" PRIu64 " jobs_retry_wait=%" PRIu64 " jobs_complete=%" PRIu64,
-		supervisor->jobs_current, supervisor->jobs_high_water, RESOLVER_SUPERVISOR_JOB_LIMIT, RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE,
+		supervisor->jobs_current, supervisor->jobs_high_water,
+		RESOLVER_SUPERVISOR_JOB_LIMIT, RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE,
 		supervisor->jobs_state_current[RESOLVER_SUPERVISOR_JOB_QUEUED], supervisor->jobs_state_current[RESOLVER_SUPERVISOR_JOB_SENDING],
 		supervisor->jobs_state_current[RESOLVER_SUPERVISOR_JOB_DISPATCHED], supervisor->jobs_state_current[RESOLVER_SUPERVISOR_JOB_RETRY_WAIT],
-		supervisor->jobs_state_current[RESOLVER_SUPERVISOR_JOB_COMPLETE]);
+		supervisor->jobs_state_current[RESOLVER_SUPERVISOR_JOB_COMPLETE]
+	);
 	(void)listener_metrics_line_append(&builder,
 		" jobs_background=%" PRIu64 " jobs_interactive=%" PRIu64 " orphaned_dispatched_current=%" PRIu64
 		" queue_background_current=%" PRIu64 " queue_background_high_water=%" PRIu64 " queue_interactive_current=%" PRIu64
-		" queue_interactive_high_water=%" PRIu64 " interests_background_current=%" PRIu64 " interests_interactive_current=%" PRIu64
-		" helper_limit=%u supervisor_saturation_total=%" PRIu64,
+		" queue_interactive_high_water=%" PRIu64 " interests_background_current=%" PRIu64 " interests_interactive_current=%" PRIu64 " helper_limit=%u supervisor_saturation_total=%" PRIu64,
 		supervisor->jobs_priority_current[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND], supervisor->jobs_priority_current[RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE],
 		supervisor->orphaned_dispatched_current, supervisor->queue_current[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND],
 		supervisor->queue_high_water[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND], supervisor->queue_current[RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE],
 		supervisor->queue_high_water[RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE], supervisor->interests_current[RESOLVER_SUPERVISOR_PRIORITY_BACKGROUND],
-		supervisor->interests_current[RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE], RESOLVER_SUPERVISOR_HELPER_COUNT, supervisor->saturation_total);
+		supervisor->interests_current[RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE], RESOLVER_SUPERVISOR_HELPER_COUNT,
+		supervisor->saturation_total
+	);
 	listener_metrics_line_emit(runtime, log_filename, log_level, &builder, metrics_line);
 
 	for (size_t priority = 0; priority < RESOLVER_SUPERVISOR_PRIORITY_COUNT; priority++) {
@@ -370,15 +392,18 @@ void listener_metrics_output(listener_metrics_runtime *runtime, listener_metrics
 			(void)listener_metrics_line_append(&builder,
 				" priority=%s qtype=%s started=%" PRIu64 " coalesced=%" PRIu64 " complete=%" PRIu64 " fresh=%" PRIu64
 				" bad_argument=%" PRIu64 " io=%" PRIu64 " limit=%" PRIu64 " memory=%" PRIu64 " time=%" PRIu64,
-				listener_metrics_priority_names[priority], listener_metrics_query_type_names[query], schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_STARTED],
-				schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_COALESCED], schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_COMPLETE],
-				schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_FRESH], schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT],
-				schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_IO], schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_LIMIT],
-				schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_MEMORY], schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_TIME]);
+				listener_metrics_priority_names[priority], listener_metrics_query_type_names[query],
+				schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_STARTED], schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_COALESCED],
+				schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_COMPLETE], schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_FRESH],
+				schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT], schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_IO],
+				schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_LIMIT], schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_MEMORY],
+				schedule->status[RESOLVER_SUPERVISOR_SCHEDULE_TIME]
+			);
 			(void)listener_metrics_line_append(&builder,
-				" limit_interest_count=%" PRIu64 " limit_background_admission=%" PRIu64 " limit_total_admission=%" PRIu64
-				" limit_entry_reference=%" PRIu64,
-				schedule->limit_interest_count, schedule->limit_background_admission, schedule->limit_total_admission, schedule->limit_entry_reference);
+				" limit_interest_count=%" PRIu64 " limit_background_admission=%" PRIu64 " limit_total_admission=%" PRIu64 " limit_entry_reference=%" PRIu64,
+				schedule->limit_interest_count, schedule->limit_background_admission,
+				schedule->limit_total_admission, schedule->limit_entry_reference
+			);
 			listener_metrics_line_emit(runtime, log_filename, log_level, &builder, metrics_line);
 		}
 	}
@@ -390,30 +415,34 @@ void listener_metrics_output(listener_metrics_runtime *runtime, listener_metrics
 			" qtype=%s dispatched=%" PRIu64 " response_ok=%" PRIu64 " response_bad_argument=%" PRIu64 " response_limit=%" PRIu64
 			" response_malformed=%" PRIu64 " response_memory=%" PRIu64 " response_nodata=%" PRIu64 " response_not_found=%" PRIu64
 			" response_permanent=%" PRIu64 " response_temporary=%" PRIu64 " response_truncated=%" PRIu64,
-			listener_metrics_query_type_names[query], attempt->dispatched, attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK],
-			attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_BAD_ARGUMENT], attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_LIMIT],
-			attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_MALFORMED], attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_MEMORY],
-			attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_NODATA], attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_NOT_FOUND],
-			attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_PERMANENT], attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_TEMPORARY],
-			attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_TRUNCATED]);
+			listener_metrics_query_type_names[query], attempt->dispatched,
+			attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK], attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_BAD_ARGUMENT],
+			attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_LIMIT], attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_MALFORMED],
+			attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_MEMORY], attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_NODATA],
+			attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_NOT_FOUND], attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_PERMANENT],
+			attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_TEMPORARY], attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_TRUNCATED]
+		);
 		(void)listener_metrics_line_append(&builder,
 			" failure_exit=%" PRIu64 " failure_io=%" PRIu64 " failure_protocol=%" PRIu64 " failure_timeout=%" PRIu64
 			" retry_scheduled=%" PRIu64 " orphan_response_ok=%" PRIu64 " orphan_response_bad_argument=%" PRIu64 " orphan_response_limit=%" PRIu64
 			" orphan_response_malformed=%" PRIu64 " orphan_response_memory=%" PRIu64 " orphan_response_nodata=%" PRIu64,
 			attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT], attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_IO],
-			attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL], attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT], attempt->retry_scheduled,
-			attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK], attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_BAD_ARGUMENT],
-			attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_LIMIT], attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_MALFORMED],
-			attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_MEMORY], attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_NODATA]);
+			attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL], attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT],
+			attempt->retry_scheduled, attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK],
+			attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_BAD_ARGUMENT], attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_LIMIT],
+			attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_MALFORMED], attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_MEMORY],
+			attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_NODATA]
+		);
 		(void)listener_metrics_line_append(&builder,
 			" orphan_response_not_found=%" PRIu64 " orphan_response_permanent=%" PRIu64 " orphan_response_temporary=%" PRIu64
 			" orphan_response_truncated=%" PRIu64 " completion_enqueued=%" PRIu64 " completion_taken=%" PRIu64
-			" attempt_abandoned_shutdown=%" PRIu64 " completion_abandoned_shutdown=%" PRIu64 " jobs_dispatched_current=%" PRIu64
-			" jobs_complete_current=%" PRIu64,
+			" attempt_abandoned_shutdown=%" PRIu64 " completion_abandoned_shutdown=%" PRIu64 " jobs_dispatched_current=%" PRIu64 " jobs_complete_current=%" PRIu64,
 			attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_NOT_FOUND], attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_PERMANENT],
 			attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_TEMPORARY], attempt->orphan_response[RESOLVER_SUPERVISOR_DNS_OUTCOME_TRUNCATED],
-			attempt->completion_enqueued, attempt->completion_taken, attempt->attempt_abandoned_shutdown, attempt->completion_abandoned_shutdown,
-			attempt->jobs_dispatched_current, attempt->jobs_complete_current);
+			attempt->completion_enqueued, attempt->completion_taken,
+			attempt->attempt_abandoned_shutdown, attempt->completion_abandoned_shutdown,
+			attempt->jobs_dispatched_current, attempt->jobs_complete_current
+		);
 		listener_metrics_line_emit(runtime, log_filename, log_level, &builder, metrics_line);
 	}
 
@@ -422,22 +451,31 @@ void listener_metrics_output(listener_metrics_runtime *runtime, listener_metrics
 		listener_metrics_line_begin(&builder, metrics_line, sizeof(metrics_line), runtime, sequence, "cache");
 		(void)listener_metrics_line_append(&builder,
 			" qtype=%s acquire_created=%" PRIu64 " acquire_reused=%" PRIu64 " acquire_bad_argument=%" PRIu64
-			" acquire_reference_limit=%" PRIu64 " acquire_entry_limit=%" PRIu64 " acquire_id_limit=%" PRIu64
-			" acquire_owned_byte_limit=%" PRIu64 " acquire_memory=%" PRIu64,
-			listener_metrics_query_type_names[query], entry->acquire_created, entry->acquire_reused, entry->acquire_bad_argument, entry->acquire_reference_limit,
-			entry->acquire_entry_limit, entry->acquire_id_limit, entry->acquire_owned_byte_limit, entry->acquire_memory);
+			" acquire_reference_limit=%" PRIu64 " acquire_entry_limit=%" PRIu64 " acquire_id_limit=%" PRIu64 " acquire_owned_byte_limit=%" PRIu64 " acquire_memory=%" PRIu64,
+			listener_metrics_query_type_names[query], entry->acquire_created,
+			entry->acquire_reused, entry->acquire_bad_argument,
+			entry->acquire_reference_limit, entry->acquire_entry_limit,
+			entry->acquire_id_limit, entry->acquire_owned_byte_limit,
+			entry->acquire_memory
+		);
 		(void)listener_metrics_line_append(&builder,
 			" publish_stored=%" PRIu64 " publish_transient=%" PRIu64 " publish_bad_argument=%" PRIu64 " publish_invalid=%" PRIu64
-			" publish_limit=%" PRIu64 " publish_memory=%" PRIu64 " publish_time=%" PRIu64 " publish_limit_result_bytes=%" PRIu64
-			" publish_limit_owned_bytes=%" PRIu64,
-			entry->publish_stored, entry->publish_transient, entry->publish_bad_argument, entry->publish_invalid, entry->publish_limit, entry->publish_memory,
-			entry->publish_time, entry->publish_limit_result_bytes, entry->publish_limit_owned_bytes);
+			" publish_limit=%" PRIu64 " publish_memory=%" PRIu64 " publish_time=%" PRIu64 " publish_limit_result_bytes=%" PRIu64 " publish_limit_owned_bytes=%" PRIu64,
+			entry->publish_stored, entry->publish_transient,
+			entry->publish_bad_argument, entry->publish_invalid,
+			entry->publish_limit, entry->publish_memory,
+			entry->publish_time, entry->publish_limit_result_bytes,
+			entry->publish_limit_owned_bytes
+		);
 		(void)listener_metrics_line_append(&builder,
 			" value_positive=%" PRIu64 " value_nxdomain=%" PRIu64 " value_nodata=%" PRIu64 " expiry_positive=%" PRIu64
-			" expiry_nxdomain=%" PRIu64 " expiry_nodata=%" PRIu64 " resident_positive=%" PRIu64 " resident_nxdomain=%" PRIu64
-			" resident_nodata=%" PRIu64,
-			entry->value_positive, entry->value_nxdomain, entry->value_nodata, entry->expiry_positive, entry->expiry_nxdomain, entry->expiry_nodata,
-			entry->resident_positive, entry->resident_nxdomain, entry->resident_nodata);
+			" expiry_nxdomain=%" PRIu64 " expiry_nodata=%" PRIu64 " resident_positive=%" PRIu64 " resident_nxdomain=%" PRIu64 " resident_nodata=%" PRIu64,
+			entry->value_positive, entry->value_nxdomain,
+			entry->value_nodata, entry->expiry_positive,
+			entry->expiry_nxdomain, entry->expiry_nodata,
+			entry->resident_positive, entry->resident_nxdomain,
+			entry->resident_nodata
+		);
 		listener_metrics_line_emit(runtime, log_filename, log_level, &builder, metrics_line);
 	}
 
@@ -447,11 +485,14 @@ void listener_metrics_output(listener_metrics_runtime *runtime, listener_metrics
 		(void)listener_metrics_line_append(&builder,
 			" qtype=%s create_ok=%" PRIu64 " create_bad_argument=%" PRIu64 " create_limit=%" PRIu64 " create_memory=%" PRIu64
 			" limit_result_shape=%" PRIu64 " limit_result_bytes=%" PRIu64 " limit_budget_bytes=%" PRIu64 " terminal_complete=%" PRIu64
-			" terminal_bad_argument=%" PRIu64 " terminal_limit=%" PRIu64 " terminal_memory=%" PRIu64 " terminal_protocol=%" PRIu64
-			" abandoned=%" PRIu64 " nonterminal_current=%" PRIu64,
-			listener_metrics_query_type_names[query], item->create_ok, item->create_bad_argument, item->create_limit, item->create_memory, item->limit_result_shape,
-			item->limit_result_bytes, item->limit_budget_bytes, item->terminal_complete, item->terminal_bad_argument, item->terminal_limit, item->terminal_memory,
-			item->terminal_protocol, item->abandoned, item->nonterminal_current);
+			" terminal_bad_argument=%" PRIu64 " terminal_limit=%" PRIu64 " terminal_memory=%" PRIu64 " terminal_protocol=%" PRIu64 " abandoned=%" PRIu64 " nonterminal_current=%" PRIu64,
+			listener_metrics_query_type_names[query], item->create_ok,
+			item->create_bad_argument, item->create_limit,
+			item->create_memory, item->limit_result_shape,
+			item->limit_result_bytes, item->limit_budget_bytes,
+			item->terminal_complete, item->terminal_bad_argument,
+			item->terminal_limit, item->terminal_memory, item->terminal_protocol, item->abandoned, item->nonterminal_current
+		);
 		listener_metrics_line_emit(runtime, log_filename, log_level, &builder, metrics_line);
 	}
 
@@ -462,39 +503,43 @@ void listener_metrics_output(listener_metrics_runtime *runtime, listener_metrics
 			" request_mode=%s requests_started=%" PRIu64 " resolution_local=%" PRIu64 " resolution_bypass=%" PRIu64
 			" resolution_immediate=%" PRIu64 " resolution_waited=%" PRIu64 " outcome_ready=%" PRIu64 " outcome_contradictory=%" PRIu64
 			" outcome_limit=%" PRIu64 " outcome_memory=%" PRIu64 " outcome_no_route=%" PRIu64,
-			listener_metrics_request_mode_names[mode], route->requests_started, route->resolution[LISTENER_METRICS_RESOLUTION_LOCAL],
-			route->resolution[LISTENER_METRICS_RESOLUTION_BYPASS], route->resolution[LISTENER_METRICS_RESOLUTION_IMMEDIATE],
-			route->resolution[LISTENER_METRICS_RESOLUTION_WAITED], route->outcome[LISTENER_METRICS_OUTCOME_READY],
-			route->outcome[LISTENER_METRICS_OUTCOME_CONTRADICTORY], route->outcome[LISTENER_METRICS_OUTCOME_LIMIT],
-			route->outcome[LISTENER_METRICS_OUTCOME_MEMORY], route->outcome[LISTENER_METRICS_OUTCOME_NO_ROUTE]);
+			listener_metrics_request_mode_names[mode], route->requests_started,
+			route->resolution[LISTENER_METRICS_RESOLUTION_LOCAL], route->resolution[LISTENER_METRICS_RESOLUTION_BYPASS],
+			route->resolution[LISTENER_METRICS_RESOLUTION_IMMEDIATE], route->resolution[LISTENER_METRICS_RESOLUTION_WAITED],
+			route->outcome[LISTENER_METRICS_OUTCOME_READY], route->outcome[LISTENER_METRICS_OUTCOME_CONTRADICTORY],
+			route->outcome[LISTENER_METRICS_OUTCOME_LIMIT], route->outcome[LISTENER_METRICS_OUTCOME_MEMORY],
+			route->outcome[LISTENER_METRICS_OUTCOME_NO_ROUTE]
+		);
 		(void)listener_metrics_line_append(&builder,
 			" outcome_service_unavailable=%" PRIu64 " outcome_timeout=%" PRIu64 " outcome_unavailable=%" PRIu64
 			" outcome_abandoned=%" PRIu64 " outcome_shutdown=%" PRIu64 " outcome_internal_error=%" PRIu64 " pending_current=%" PRIu64
 			" pending_high_water=%" PRIu64 " release_failure=%" PRIu64 " selected_ipv4=%" PRIu64 " selected_ipv6=%" PRIu64,
 			route->outcome[LISTENER_METRICS_OUTCOME_SERVICE_UNAVAILABLE], route->outcome[LISTENER_METRICS_OUTCOME_TIMEOUT],
 			route->outcome[LISTENER_METRICS_OUTCOME_UNAVAILABLE], route->outcome[LISTENER_METRICS_OUTCOME_ABANDONED],
-			route->outcome[LISTENER_METRICS_OUTCOME_SHUTDOWN], route->outcome[LISTENER_METRICS_OUTCOME_INTERNAL_ERROR], route->pending_current,
-			route->pending_high_water, route->release_failure, route->selected_family[LISTENER_METRICS_SELECTED_FAMILY_IPV4],
-			route->selected_family[LISTENER_METRICS_SELECTED_FAMILY_IPV6]);
+			route->outcome[LISTENER_METRICS_OUTCOME_SHUTDOWN], route->outcome[LISTENER_METRICS_OUTCOME_INTERNAL_ERROR],
+			route->pending_current, route->pending_high_water,
+			route->release_failure, route->selected_family[LISTENER_METRICS_SELECTED_FAMILY_IPV4],
+			route->selected_family[LISTENER_METRICS_SELECTED_FAMILY_IPV6]
+		);
 		listener_metrics_line_emit(runtime, log_filename, log_level, &builder, metrics_line);
 	}
 
 	listener_metrics_line_begin(&builder, metrics_line, sizeof(metrics_line), runtime, sequence, "helper");
 	(void)listener_metrics_line_append(&builder,
 		" failure_exit=%" PRIu64 " failure_io=%" PRIu64 " failure_protocol=%" PRIu64 " failure_spawn=%" PRIu64
-		" failure_timeout=%" PRIu64 " spawn_attempt=%" PRIu64 " spawn_success=%" PRIu64 " recovery_success_streak=%" PRIu64
-		" recovery_stable_uptime=%" PRIu64 " observation_dropped=%" PRIu64,
+		" failure_timeout=%" PRIu64 " spawn_attempt=%" PRIu64 " spawn_success=%" PRIu64 " recovery_success_streak=%" PRIu64 " recovery_stable_uptime=%" PRIu64 " observation_dropped=%" PRIu64,
 		supervisor->helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT], supervisor->helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_IO],
 		supervisor->helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL], supervisor->helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN],
-		supervisor->helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT], supervisor->helper.spawn_attempt, supervisor->helper.spawn_success,
-		supervisor->helper.recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_SUCCESS_STREAK], supervisor->helper.recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_STABLE_UPTIME],
-		supervisor->helper.observation_dropped);
+		supervisor->helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT], supervisor->helper.spawn_attempt,
+		supervisor->helper.spawn_success, supervisor->helper.recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_SUCCESS_STREAK],
+		supervisor->helper.recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_STABLE_UPTIME], supervisor->helper.observation_dropped
+	);
 	(void)listener_metrics_line_append(&builder,
-		" state_idle=%" PRIu64 " state_sending=%" PRIu64 " state_busy=%" PRIu64 " state_backoff=%" PRIu64
-		" state_shutting_down=%" PRIu64 " state_stopped=%" PRIu64,
+		" state_idle=%" PRIu64 " state_sending=%" PRIu64 " state_busy=%" PRIu64 " state_backoff=%" PRIu64 " state_shutting_down=%" PRIu64 " state_stopped=%" PRIu64,
 		supervisor->helper.state_current[RESOLVER_SUPERVISOR_HELPER_IDLE], supervisor->helper.state_current[RESOLVER_SUPERVISOR_HELPER_SENDING],
 		supervisor->helper.state_current[RESOLVER_SUPERVISOR_HELPER_BUSY], supervisor->helper.state_current[RESOLVER_SUPERVISOR_HELPER_BACKOFF],
-		supervisor->helper.state_current[RESOLVER_SUPERVISOR_HELPER_SHUTTING_DOWN], supervisor->helper.state_current[RESOLVER_SUPERVISOR_HELPER_STOPPED]);
+		supervisor->helper.state_current[RESOLVER_SUPERVISOR_HELPER_SHUTTING_DOWN], supervisor->helper.state_current[RESOLVER_SUPERVISOR_HELPER_STOPPED]
+	);
 	listener_metrics_line_emit(runtime, log_filename, log_level, &builder, metrics_line);
 
 	for (size_t priority = 0; priority < RESOLVER_SUPERVISOR_PRIORITY_COUNT; priority++) {
@@ -504,14 +549,21 @@ void listener_metrics_output(listener_metrics_runtime *runtime, listener_metrics
 			(void)listener_metrics_line_append(&builder,
 				" name=dispatch_wait_ms priority=%s qtype=%s le_1=%" PRIu64 " le_5=%" PRIu64 " le_10=%" PRIu64 " le_25=%" PRIu64
 				" le_50=%" PRIu64 " le_100=%" PRIu64 " le_250=%" PRIu64 " le_500=%" PRIu64,
-				listener_metrics_priority_names[priority], listener_metrics_query_type_names[query], histogram->cumulative[0], histogram->cumulative[1],
-				histogram->cumulative[2], histogram->cumulative[3], histogram->cumulative[4], histogram->cumulative[5], histogram->cumulative[6],
-				histogram->cumulative[7]);
+				listener_metrics_priority_names[priority], listener_metrics_query_type_names[query],
+				histogram->cumulative[0], histogram->cumulative[1],
+				histogram->cumulative[2], histogram->cumulative[3],
+				histogram->cumulative[4], histogram->cumulative[5],
+				histogram->cumulative[6], histogram->cumulative[7]
+			);
 			(void)listener_metrics_line_append(&builder,
 				" le_1000=%" PRIu64 " le_2000=%" PRIu64 " le_5000=%" PRIu64 " le_10000=%" PRIu64 " le_30000=%" PRIu64
 				" le_inf=%" PRIu64 " count=%" PRIu64 " sum_us=%" PRIu64 " sample_errors=%" PRIu64,
-				histogram->cumulative[8], histogram->cumulative[9], histogram->cumulative[10], histogram->cumulative[11], histogram->cumulative[12],
-				histogram->cumulative[13], histogram->count, histogram->sum, histogram->sample_errors);
+				histogram->cumulative[8], histogram->cumulative[9],
+				histogram->cumulative[10], histogram->cumulative[11],
+				histogram->cumulative[12], histogram->cumulative[13],
+				histogram->count, histogram->sum,
+				histogram->sample_errors
+			);
 			listener_metrics_line_emit(runtime, log_filename, log_level, &builder, metrics_line);
 		}
 	}
@@ -522,13 +574,20 @@ void listener_metrics_output(listener_metrics_runtime *runtime, listener_metrics
 		(void)listener_metrics_line_append(&builder,
 			" name=attempt_ms qtype=%s le_1=%" PRIu64 " le_5=%" PRIu64 " le_10=%" PRIu64 " le_25=%" PRIu64 " le_50=%" PRIu64
 			" le_100=%" PRIu64 " le_250=%" PRIu64 " le_500=%" PRIu64 " le_1000=%" PRIu64 " le_2000=%" PRIu64,
-			listener_metrics_query_type_names[query], histogram->cumulative[0], histogram->cumulative[1], histogram->cumulative[2], histogram->cumulative[3],
-			histogram->cumulative[4], histogram->cumulative[5], histogram->cumulative[6], histogram->cumulative[7], histogram->cumulative[8], histogram->cumulative[9]);
+			listener_metrics_query_type_names[query], histogram->cumulative[0],
+			histogram->cumulative[1], histogram->cumulative[2],
+			histogram->cumulative[3], histogram->cumulative[4],
+			histogram->cumulative[5], histogram->cumulative[6],
+			histogram->cumulative[7], histogram->cumulative[8],
+			histogram->cumulative[9]
+		);
 		(void)listener_metrics_line_append(&builder,
-			" le_5000=%" PRIu64 " le_10000=%" PRIu64 " le_30000=%" PRIu64 " le_inf=%" PRIu64 " count=%" PRIu64
-			" sum_us=%" PRIu64 " sample_errors=%" PRIu64,
-			histogram->cumulative[10], histogram->cumulative[11], histogram->cumulative[12], histogram->cumulative[13], histogram->count, histogram->sum,
-			histogram->sample_errors);
+			" le_5000=%" PRIu64 " le_10000=%" PRIu64 " le_30000=%" PRIu64 " le_inf=%" PRIu64 " count=%" PRIu64 " sum_us=%" PRIu64 " sample_errors=%" PRIu64,
+			histogram->cumulative[10], histogram->cumulative[11],
+			histogram->cumulative[12], histogram->cumulative[13],
+			histogram->count, histogram->sum,
+			histogram->sample_errors
+		);
 		listener_metrics_line_emit(runtime, log_filename, log_level, &builder, metrics_line);
 	}
 
@@ -539,14 +598,19 @@ void listener_metrics_output(listener_metrics_runtime *runtime, listener_metrics
 			(void)listener_metrics_line_append(&builder,
 				" name=ttl_seconds qtype=%s payload_kind=%s le_0=%" PRIu64 " le_1=%" PRIu64 " le_5=%" PRIu64 " le_30=%" PRIu64
 				" le_60=%" PRIu64 " le_300=%" PRIu64 " le_1800=%" PRIu64 " le_3600=%" PRIu64,
-				listener_metrics_query_type_names[query], listener_metrics_payload_kind_names[payload], histogram->cumulative[0], histogram->cumulative[1],
-				histogram->cumulative[2], histogram->cumulative[3], histogram->cumulative[4], histogram->cumulative[5], histogram->cumulative[6],
-				histogram->cumulative[7]);
+				listener_metrics_query_type_names[query], listener_metrics_payload_kind_names[payload],
+				histogram->cumulative[0], histogram->cumulative[1],
+				histogram->cumulative[2], histogram->cumulative[3],
+				histogram->cumulative[4], histogram->cumulative[5],
+				histogram->cumulative[6], histogram->cumulative[7]
+			);
 			(void)listener_metrics_line_append(&builder,
-				" le_21600=%" PRIu64 " le_86400=%" PRIu64 " le_604800=%" PRIu64 " le_2592000=%" PRIu64 " le_inf=%" PRIu64
-				" count=%" PRIu64 " sum_seconds=%" PRIu64,
-				histogram->cumulative[8], histogram->cumulative[9], histogram->cumulative[10], histogram->cumulative[11], histogram->cumulative[12],
-				histogram->count, histogram->sum);
+				" le_21600=%" PRIu64 " le_86400=%" PRIu64 " le_604800=%" PRIu64 " le_2592000=%" PRIu64 " le_inf=%" PRIu64 " count=%" PRIu64 " sum_seconds=%" PRIu64,
+				histogram->cumulative[8], histogram->cumulative[9],
+				histogram->cumulative[10], histogram->cumulative[11],
+				histogram->cumulative[12], histogram->count,
+				histogram->sum
+			);
 			listener_metrics_line_emit(runtime, log_filename, log_level, &builder, metrics_line);
 		}
 	}
@@ -556,11 +620,14 @@ void listener_metrics_output(listener_metrics_runtime *runtime, listener_metrics
 		listener_metrics_line_begin(&builder, metrics_line, sizeof(metrics_line), runtime, sequence, "histogram");
 		(void)listener_metrics_line_append(&builder,
 			" name=assembly_bytes qtype=%s le_0=%" PRIu64 " le_64=%" PRIu64 " le_256=%" PRIu64 " le_1024=%" PRIu64
-			" le_4096=%" PRIu64 " le_16384=%" PRIu64 " le_65536=%" PRIu64 " le_262144=%" PRIu64 " le_1048576=%" PRIu64
-			" le_inf=%" PRIu64 " count=%" PRIu64 " sum_bytes=%" PRIu64,
-			listener_metrics_query_type_names[query], histogram->cumulative[0], histogram->cumulative[1], histogram->cumulative[2], histogram->cumulative[3],
-			histogram->cumulative[4], histogram->cumulative[5], histogram->cumulative[6], histogram->cumulative[7], histogram->cumulative[8],
-			histogram->cumulative[9], histogram->count, histogram->sum);
+			" le_4096=%" PRIu64 " le_16384=%" PRIu64 " le_65536=%" PRIu64 " le_262144=%" PRIu64 " le_1048576=%" PRIu64 " le_inf=%" PRIu64 " count=%" PRIu64 " sum_bytes=%" PRIu64,
+			listener_metrics_query_type_names[query], histogram->cumulative[0],
+			histogram->cumulative[1], histogram->cumulative[2],
+			histogram->cumulative[3], histogram->cumulative[4],
+			histogram->cumulative[5], histogram->cumulative[6],
+			histogram->cumulative[7], histogram->cumulative[8],
+			histogram->cumulative[9], histogram->count, histogram->sum
+		);
 		listener_metrics_line_emit(runtime, log_filename, log_level, &builder, metrics_line);
 	}
 
@@ -570,13 +637,20 @@ void listener_metrics_output(listener_metrics_runtime *runtime, listener_metrics
 		(void)listener_metrics_line_append(&builder,
 			" name=route_ms request_mode=%s le_1=%" PRIu64 " le_5=%" PRIu64 " le_10=%" PRIu64 " le_25=%" PRIu64 " le_50=%" PRIu64
 			" le_100=%" PRIu64 " le_250=%" PRIu64 " le_500=%" PRIu64 " le_1000=%" PRIu64 " le_2000=%" PRIu64,
-			listener_metrics_request_mode_names[mode], histogram->cumulative[0], histogram->cumulative[1], histogram->cumulative[2], histogram->cumulative[3],
-			histogram->cumulative[4], histogram->cumulative[5], histogram->cumulative[6], histogram->cumulative[7], histogram->cumulative[8], histogram->cumulative[9]);
+			listener_metrics_request_mode_names[mode], histogram->cumulative[0],
+			histogram->cumulative[1], histogram->cumulative[2],
+			histogram->cumulative[3], histogram->cumulative[4],
+			histogram->cumulative[5], histogram->cumulative[6],
+			histogram->cumulative[7], histogram->cumulative[8],
+			histogram->cumulative[9]
+		);
 		(void)listener_metrics_line_append(&builder,
-			" le_5000=%" PRIu64 " le_10000=%" PRIu64 " le_30000=%" PRIu64 " le_inf=%" PRIu64 " count=%" PRIu64
-			" sum_us=%" PRIu64 " sample_errors=%" PRIu64,
-			histogram->cumulative[10], histogram->cumulative[11], histogram->cumulative[12], histogram->cumulative[13], histogram->count, histogram->sum,
-			histogram->sample_errors);
+			" le_5000=%" PRIu64 " le_10000=%" PRIu64 " le_30000=%" PRIu64 " le_inf=%" PRIu64 " count=%" PRIu64 " sum_us=%" PRIu64 " sample_errors=%" PRIu64,
+			histogram->cumulative[10], histogram->cumulative[11],
+			histogram->cumulative[12], histogram->cumulative[13],
+			histogram->count, histogram->sum,
+			histogram->sample_errors
+		);
 		listener_metrics_line_emit(runtime, log_filename, log_level, &builder, metrics_line);
 	}
 	errno = saved_errno;

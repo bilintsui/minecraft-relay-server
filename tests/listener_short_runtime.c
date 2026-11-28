@@ -424,30 +424,30 @@ static int short_test_fixture_start_internal(short_fixture *fixture, const char 
 		if (console_fd == -1 || dup2(console_fd, STDOUT_FILENO) == -1 || dup2(console_fd, STDERR_FILENO) == -1
 			|| setenv("NOTIFY_SOCKET", fixture->notify_filename, 1) == -1
 			|| ((strcmp(suffix, "hosts-reload") == 0 || strcmp(suffix, "route-cancel") == 0 || strcmp(suffix, "reload-late") == 0 || strcmp(suffix, "reload-late-armed") == 0
-				|| strcmp(suffix, "stop-route") == 0)
-				&& setenv("MCRELAY_TEST_DNS_PENDING", "1", 1) == -1)
+			|| strcmp(suffix, "stop-route") == 0)
+			&& setenv("MCRELAY_TEST_DNS_PENDING", "1", 1) == -1)
 			|| ((strcmp(suffix, "reload-late-short") == 0 || strcmp(suffix, "reload-late-short-armed") == 0)
-				&& setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1)
+			&& setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1)
 			|| (strcmp(suffix, "reload-early") == 0 && (setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1
-				|| setenv("MCRELAY_TEST_DNS_PENDING_TRIGGER", fixture->release_trigger_filename, 1) == -1
-				|| setenv("MCRELAY_TEST_EARLY_COLLECT", "1", 1) == -1))
+			|| setenv("MCRELAY_TEST_DNS_PENDING_TRIGGER", fixture->release_trigger_filename, 1) == -1
+			|| setenv("MCRELAY_TEST_EARLY_COLLECT", "1", 1) == -1))
 			|| ((strcmp(suffix, "reload-late-armed") == 0 || strcmp(suffix, "reload-late-short-armed") == 0)
-				&& setenv("MCRELAY_TEST_ROUTE_TIMER_ARMED", "1", 1) == -1)
+			&& setenv("MCRELAY_TEST_ROUTE_TIMER_ARMED", "1", 1) == -1)
 			|| (strcmp(suffix, "reload-ready-flip") == 0 && setenv("MCRELAY_TEST_READY_FLIP", "1", 1) == -1)
 			|| (strcmp(suffix, "deadline") == 0 && (setenv("MCRELAY_TEST_CONNECT_PENDING", "1", 1) == -1
-				|| setenv("MCRELAY_TEST_TIMER_REARM_RACE", "1", 1) == -1))
+			|| setenv("MCRELAY_TEST_TIMER_REARM_RACE", "1", 1) == -1))
 			|| ((strcmp(suffix, "metrics-arm-fail-changed") == 0 || strcmp(suffix, "metrics-arm-fail-unchanged") == 0)
-				&& setenv("MCRELAY_TEST_METRICS_TIMER_ARM_FAIL", "1", 1) == -1)
+			&& setenv("MCRELAY_TEST_METRICS_TIMER_ARM_FAIL", "1", 1) == -1)
 			|| (strcmp(suffix, "metrics-eagain") == 0 && setenv("MCRELAY_TEST_METRICS_TIMER_READ", "eagain", 1) == -1)
 			|| (strcmp(suffix, "metrics-eintr") == 0 && setenv("MCRELAY_TEST_METRICS_TIMER_READ", "eintr", 1) == -1)
 			|| (strcmp(suffix, "metrics-eio") == 0 && setenv("MCRELAY_TEST_METRICS_TIMER_READ", "eio", 1) == -1)
 			|| (strcmp(suffix, "hosts-recovery") == 0 && setenv("MCRELAY_TEST_HOSTS_RECOVERY", "1", 1) == -1)
 			|| (strcmp(suffix, "metrics-reload-disable") == 0 && (setenv("MCRELAY_TEST_METRICS_TIMER_READ", "reload-disable", 1) == -1
-				|| setenv("MCRELAY_TEST_METRICS_RELOAD_TRIGGER", fixture->release_trigger_filename, 1) == -1))
+			|| setenv("MCRELAY_TEST_METRICS_RELOAD_TRIGGER", fixture->release_trigger_filename, 1) == -1))
 			|| (strcmp(suffix, "metrics-reload-interval") == 0 && (setenv("MCRELAY_TEST_METRICS_TIMER_READ", "reload-interval", 1) == -1
-				|| setenv("MCRELAY_TEST_METRICS_RELOAD_TRIGGER", fixture->release_trigger_filename, 1) == -1))
+			|| setenv("MCRELAY_TEST_METRICS_RELOAD_TRIGGER", fixture->release_trigger_filename, 1) == -1))
 			|| (strcmp(suffix, "metrics-reload-same") == 0 && (setenv("MCRELAY_TEST_METRICS_TIMER_READ", "reload-same", 1) == -1
-				|| setenv("MCRELAY_TEST_METRICS_RELOAD_TRIGGER", fixture->release_trigger_filename, 1) == -1))
+			|| setenv("MCRELAY_TEST_METRICS_RELOAD_TRIGGER", fixture->release_trigger_filename, 1) == -1))
 			|| short_test_fixture_release_environment(fixture, suffix) == -1) {
 			dprintf(STDERR_FILENO, "listener fixture setup failed (errno=%d)\n", errno);
 			_exit(EXIT_FAILURE);
@@ -547,48 +547,6 @@ static int short_test_fixture_wait_exit(short_fixture *fixture, int *status, int
 	}
 	errno = ETIMEDOUT;
 	return -1;
-}
-
-static size_t short_test_varint_write(uint8_t *target, size_t capacity, uint32_t value) {
-	size_t length = 0;
-	do {
-		if (length >= capacity) {
-			return 0;
-		}
-		uint8_t byte = (uint8_t)(value & UINT32_C(0x7f));
-		value >>= 7;
-		target[length++] = value == 0 ? byte : (uint8_t)(byte | UINT8_C(0x80));
-	} while (value != 0);
-	return length;
-}
-
-static size_t short_test_handshake_request_build(uint8_t *target, size_t capacity, const char *vhost) {
-	if (target == NULL || vhost == NULL) {
-		return 0;
-	}
-	size_t vhost_length = strlen(vhost);
-	uint8_t body[BUFSIZ];
-	size_t body_length = 0;
-	body[body_length++] = 0;
-	body[body_length++] = 47;
-	size_t encoded = short_test_varint_write(body + body_length, sizeof(body) - body_length, (uint32_t)vhost_length);
-	if (encoded == 0 || vhost_length > sizeof(body) - body_length - encoded - 3U) {
-		return 0;
-	}
-	body_length += encoded;
-	memcpy(body + body_length, vhost, vhost_length);
-	body_length += vhost_length;
-	body[body_length++] = 0x63;
-	body[body_length++] = 0xdd;
-	body[body_length++] = 1;
-	size_t packet_prefix = short_test_varint_write(target, capacity, (uint32_t)body_length);
-	if (packet_prefix == 0 || capacity < packet_prefix + 2U || body_length > capacity - packet_prefix - 2U) {
-		return 0;
-	}
-	memcpy(target + packet_prefix, body, body_length);
-	target[packet_prefix + body_length] = 1;
-	target[packet_prefix + body_length + 1U] = 0;
-	return packet_prefix + body_length + 2U;
 }
 
 static bool short_test_hosts_write(const char *filename, const char *address, bool replace) {
@@ -693,6 +651,176 @@ static int short_test_listener_open(in_port_t *port) {
 	return short_test_listener_open_address("127.0.0.1", port);
 }
 
+static bool short_test_admission(const char *binary, const char *directory) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int client_fds[3] = { -1, -1, -1 };
+	int upstream_fd = -1;
+	in_port_t upstream_port = 0;
+	upstream_fd = short_test_listener_open(&upstream_port);
+	CHECK(upstream_fd >= 0, "could not open admission upstream");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "admission", "127.0.0.1", upstream_port) == 0, "could not start admission listener");
+	struct pollfd events[3];
+	for (size_t connection_index = 0; connection_index < sizeof(client_fds) / sizeof(client_fds[0]); connection_index++) {
+		client_fds[connection_index] = short_test_client_connect(fixture.listener_port);
+		CHECK(client_fds[connection_index] >= 0, "could not connect admission client");
+		events[connection_index].fd = client_fds[connection_index];
+		events[connection_index].events = POLLIN;
+		events[connection_index].revents = 0;
+	}
+	int poll_result;
+	do {
+		poll_result = poll(events, sizeof(events) / sizeof(events[0]), 1000);
+	} while (poll_result == -1 && errno == EINTR);
+	CHECK(poll_result > 0, "listener did not reject a connection beyond its configured limit");
+	size_t closed_count = 0;
+	for (size_t connection_index = 0; connection_index < sizeof(client_fds) / sizeof(client_fds[0]); connection_index++) {
+		if (events[connection_index].revents & (POLLERR | POLLHUP)) {
+			closed_count++;
+		} else if (events[connection_index].revents & POLLIN) {
+			uint8_t byte;
+			if (recv(client_fds[connection_index], &byte, sizeof(byte), MSG_DONTWAIT) == 0) {
+				closed_count++;
+			}
+		}
+	}
+	CHECK(closed_count == 1U, "listener connection admission did not enforce the exact hard limit");
+	test_result = true;
+
+cleanup:
+	for (size_t connection_index = 0; connection_index < sizeof(client_fds) / sizeof(client_fds[0]); connection_index++) {
+		if (client_fds[connection_index] >= 0) {
+			close(client_fds[connection_index]);
+		}
+	}
+	if (upstream_fd >= 0) {
+		close(upstream_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
+static bool short_test_metrics_lifecycle(const char *binary, const char *directory) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int status = 0;
+	CHECK(short_test_fixture_start_internal(&fixture, binary, directory, "metrics", "127.0.0.1", 9, 1) == 0, "could not start metrics lifecycle listener");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=startup lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS), "metrics startup snapshot was missing");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=periodic lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS), "metrics periodic snapshot was missing");
+	CHECK(short_test_file_count(fixture.log_filename, " reason=reconfigure lines=48 ") == 0, "metrics reconfigured before a configuration transition");
+	CHECK(short_test_config_write_metrics(&fixture, "127.0.0.2", 9, 1) == 0 && short_test_fixture_reload(&fixture) == 0, "same-interval metrics reload failed");
+	CHECK(short_test_file_count(fixture.log_filename, " reason=reconfigure lines=48 ") == 0, "same metrics interval reset cadence or emitted reconfigure");
+	CHECK(short_test_config_write_metrics(&fixture, "127.0.0.1", 9, 2) == 0 && short_test_fixture_reload(&fixture) == 0, "metrics interval-change reload failed");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=reconfigure lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS), "metrics interval change did not emit reconfigure");
+	CHECK(short_test_config_write_metrics(&fixture, "127.0.0.2", 9, 0) == 0 && short_test_fixture_reload(&fixture) == 0, "metrics disable reload failed");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=disable lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS), "metrics disable snapshot was missing");
+	CHECK(short_test_config_write_metrics(&fixture, "127.0.0.1", 9, 1) == 0 && short_test_fixture_reload(&fixture) == 0, "metrics re-enable reload failed");
+	CHECK(short_test_file_count(fixture.log_filename, " reason=reconfigure lines=48 ") == 2, "metrics re-enable did not emit exactly one additional reconfigure");
+	CHECK(kill(fixture.listener, SIGTERM) == 0 && short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
+		&& WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS, "metrics lifecycle listener did not stop cleanly");
+	CHECK(short_test_file_contains(fixture.log_filename, " reason=shutdown lines=48 "), "metrics shutdown snapshot was missing");
+	CHECK(short_test_file_count(fixture.log_filename, " reason=startup lines=48 ") == 1
+		&& short_test_file_count(fixture.log_filename, " reason=disable lines=48 ") == 1
+		&& short_test_file_count(fixture.log_filename, " reason=shutdown lines=48 ") == 1, "metrics lifecycle reasons were not emitted exactly once");
+	test_result = true;
+
+cleanup:
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
+static bool short_test_metrics_reload_batch_case(const char *binary, const char *directory, const char *suffix, uint32_t interval, const char *expected_reason) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int status = 0;
+	CHECK(short_test_fixture_start_internal(&fixture, binary, directory, suffix, "127.0.0.1", 9, 1) == 0, "could not start same-batch metrics reload listener");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=startup lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS), "same-batch metrics reload startup snapshot was missing");
+	CHECK(short_test_config_write_metrics(&fixture, "127.0.0.2", 9, interval) == 0, "could not prepare same-batch metrics reload candidate");
+	CHECK(short_test_fixture_release_trigger(&fixture) == 0, "could not arm same-batch metrics reload trigger");
+	CHECK(short_test_fixture_reload_wait(&fixture) == 0, "same-batch metrics reload did not complete");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, expected_reason, LISTENER_SHORT_TEST_TIMEOUT_MS), "same-batch metrics reload expected snapshot was missing");
+	if (strcmp(suffix, "metrics-reload-same") == 0) {
+		CHECK(short_test_file_count(fixture.log_filename, " reason=periodic lines=48 ") == 1
+			&& short_test_file_count(fixture.log_filename, " reason=reconfigure lines=48 ") == 0
+			&& short_test_file_count(fixture.log_filename, " reason=disable lines=48 ") == 0,
+			"same-interval reload did not consume exactly one unchanged-cadence readiness");
+	} else {
+		CHECK(short_test_file_count(fixture.log_filename, " reason=periodic lines=48 ") == 0, "configuration transition emitted an old-cadence periodic snapshot");
+	}
+	CHECK(short_test_file_count(fixture.log_filename, "missed_intervals=0 ") == 2, "same-batch reload changed missed-interval accounting");
+	CHECK(kill(fixture.listener, SIGTERM) == 0 && short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
+		&& WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS, "same-batch metrics reload listener did not stop cleanly");
+	test_result = true;
+
+cleanup:
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
+static bool short_test_metrics_reload_batch(const char *binary, const char *directory) {
+	return short_test_metrics_reload_batch_case(binary, directory, "metrics-reload-disable", 0, " reason=disable lines=48 ")
+		&& short_test_metrics_reload_batch_case(binary, directory, "metrics-reload-interval", 2, " reason=reconfigure lines=48 ")
+		&& short_test_metrics_reload_batch_case(binary, directory, "metrics-reload-same", 1, " reason=periodic lines=48 ");
+}
+
+static bool short_test_metrics_timer_case(const char *binary, const char *directory, const char *suffix) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int status = 0;
+	CHECK(short_test_fixture_start_internal(&fixture, binary, directory, suffix, "127.0.0.1", 9, 1) == 0, "could not start metrics timer listener");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=startup lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS), "metrics timer startup snapshot was missing");
+	if (strcmp(suffix, "metrics-arm-fail-changed") == 0 || strcmp(suffix, "metrics-arm-fail-unchanged") == 0) {
+		CHECK(short_test_file_contains(fixture.log_filename, "scheduler_failures=1 logger_errors=0 format_drops=0"), "initial metrics timer failure was absent from startup meta");
+		CHECK(short_test_file_contains(fixture.log_filename, "Metrics timer disabled after an observation-subsystem failure"), "initial metrics timer failure warning was missing");
+		if (strcmp(suffix, "metrics-arm-fail-unchanged") == 0) {
+			CHECK(short_test_fixture_reload(&fixture) == 0, "unchanged metrics timer retry reload failed");
+			CHECK(short_test_file_contains(fixture.log_filename, "Configuration file unchanged."), "timer retry did not use the unchanged reload path");
+		} else {
+			CHECK(short_test_config_write_metrics(&fixture, "127.0.0.2", 9, 1) == 0 && short_test_fixture_reload(&fixture) == 0, "changed metrics timer retry reload failed");
+		}
+		CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=periodic lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS), "metrics timer was not retried after initial establishment failure");
+		CHECK(short_test_file_count(fixture.log_filename, " reason=reconfigure lines=48 ") == 0, "same-interval timer retry emitted a reconfigure snapshot");
+	} else if (strcmp(suffix, "metrics-eio") == 0) {
+		CHECK(short_test_file_wait_contains(fixture.log_filename, "Metrics timer disabled after an observation-subsystem failure", LISTENER_SHORT_TEST_TIMEOUT_MS),
+			"established metrics timer read failure was not reported");
+		struct timespec delay = { .tv_sec = 1, .tv_nsec = 500000000L };
+		while (nanosleep(&delay, &delay) == -1) {
+			CHECK(errno == EINTR, "cannot wait after metrics timer read failure");
+		}
+		CHECK(short_test_file_count(fixture.log_filename, " reason=periodic lines=48 ") == 0, "degraded metrics timer continued periodic output");
+	} else {
+		CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=periodic lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS), "recoverable metrics timer read condition suppressed periodic output");
+		CHECK(!short_test_file_contains(fixture.log_filename, "Metrics timer disabled after an observation-subsystem failure"), "recoverable metrics timer read condition degraded the timer");
+	}
+	CHECK(kill(fixture.listener, SIGTERM) == 0 && short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
+		&& WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS, "metrics timer listener did not stop cleanly");
+	CHECK(short_test_file_contains(fixture.log_filename, " reason=shutdown lines=48 "), "metrics timer shutdown snapshot was missing");
+	if (strcmp(suffix, "metrics-eio") == 0) {
+		CHECK(short_test_file_contains(fixture.log_filename, "scheduler_failures=1 logger_errors=0 format_drops=0"), "runtime metrics timer failure was absent from a later meta line");
+	}
+	test_result = true;
+
+cleanup:
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
+static bool short_test_metrics_timer(const char *binary, const char *directory) {
+	return short_test_metrics_timer_case(binary, directory, "metrics-arm-fail-changed")
+		&& short_test_metrics_timer_case(binary, directory, "metrics-arm-fail-unchanged")
+		&& short_test_metrics_timer_case(binary, directory, "metrics-eagain")
+		&& short_test_metrics_timer_case(binary, directory, "metrics-eintr")
+		&& short_test_metrics_timer_case(binary, directory, "metrics-eio");
+}
+
 static int short_test_receive_exact(int socket_fd, uint8_t *data, size_t data_size) {
 	size_t offset = 0;
 	while (offset < data_size) {
@@ -766,6 +894,41 @@ static int short_test_receive_until_close(int socket_fd, uint8_t *data, size_t c
 	}
 }
 
+static bool short_test_reload_ready_flip(const char *binary, const char *directory) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	char notification[128];
+	ssize_t notification_size;
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "reload-ready-flip", "127.0.0.1", 9) == 0, "could not start ready-flip listener");
+	CHECK(kill(fixture.listener, SIGUSR1) == 0, "could not request ready-flip reload");
+	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_READY_FLIP_RELOAD_ACK=1") == 0, "ready-flip reload acknowledgement was invalid");
+	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_RELOAD_BLOCKED=1") == 0, "ready-flip reload was not blocked before route readiness");
+	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	CHECK(notification_size > 0 && strcmp(notification, "READY=1") == 0, "ready-flip route readiness notification was invalid");
+	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_LATE_WAKE_ARMED=1") == 0, "ready-flip late wake marker was missing");
+	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_ROUTE_TIMER_FIRED=1") == 0, "ready-flip route timer marker was missing");
+	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0, "ready-flip reload notification was invalid");
+	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	CHECK(notification_size > 0 && strcmp(notification, "READY=1") == 0, "ready-flip reload completion was invalid");
+	errno = 0;
+	CHECK(short_test_fixture_notification_timeout(&fixture, notification, sizeof(notification), LISTENER_READY_FLIP_TEST_DUPLICATE_MS) == -1
+		&& errno == ETIMEDOUT, "ready-flip reload executed more than once");
+	CHECK(kill(fixture.listener, 0) == 0, "ready-flip reload terminated listener");
+	CHECK(short_test_fixture_stop(&fixture) == 0, "ready-flip listener did not stop cleanly");
+	test_result = true;
+
+cleanup:
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
 static int short_test_send_all(int socket_fd, const uint8_t *data, size_t data_size) {
 	size_t offset = 0;
 	while (offset < data_size) {
@@ -781,6 +944,39 @@ static int short_test_send_all(int socket_fd, const uint8_t *data, size_t data_s
 	return 0;
 }
 
+static bool short_test_deadline(const char *binary, const char *directory) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int client_fd = -1;
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "deadline", "127.0.0.1", 9) == 0, "could not start deadline listener");
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0, "could not connect deadline client");
+	CHECK(short_test_send_all(client_fd, short_status_request, 1) == 0, "could not send deadline request prefix");
+	struct timespec delay = { .tv_sec = 3, .tv_nsec = 200000000L };
+	while (nanosleep(&delay, &delay) == -1) {
+		CHECK(errno == EINTR, "could not wait before completing deadline request");
+	}
+	CHECK(short_test_send_all(client_fd, short_status_request + 1, sizeof(short_status_request) - 1U) == 0, "could not finish deadline request");
+	char notification[128];
+	ssize_t notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
+	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_TIMER_REARM=1") == 0, "timer rearm regression hook did not run");
+	uint8_t response[BUFSIZ];
+	size_t response_size = 0;
+	CHECK(short_test_receive_until_close(client_fd, response, sizeof(response), &response_size, 3000) == 0, "absolute lifetime did not close the pending connection");
+	CHECK(response_size == 0, "absolute lifetime synthesized a connect-timeout response");
+	CHECK(kill(fixture.listener, 0) == 0, "deadline connection terminated listener");
+	test_result = true;
+
+cleanup:
+	if (client_fd >= 0) {
+		close(client_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
 static bool short_test_hosts_hardlink(const char *binary, const char *directory, const char *hosts_filename) {
 	bool test_result = false;
 	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
@@ -794,14 +990,12 @@ static bool short_test_hosts_hardlink(const char *binary, const char *directory,
 	upstream_fd = short_test_listener_open_address("127.0.0.2", &upstream_port);
 	CHECK(upstream_fd >= 0, "could not open hosts-hardlink upstream");
 	CHECK(short_test_hosts_write(ready_filename, "127.0.0.2", false) && unlink(hosts_filename) == 0, "could not prepare absent hosts-hardlink path");
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "hosts-hardlink", "hosts-reload.test", upstream_port) == 0,
-		"could not start hosts-hardlink listener");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "hosts-hardlink", "hosts-reload.test", upstream_port) == 0, "could not start hosts-hardlink listener");
 	CHECK(link(ready_filename, hosts_filename) == 0 && unlink(ready_filename) == 0, "could not publish hosts hardlink and remove its source");
 	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 1, LISTENER_SHORT_TEST_TIMEOUT_MS),
 		"hosts hardlink publication did not trigger automatic reload");
 	client_fd = short_test_client_connect(fixture.listener_port);
-	CHECK(client_fd >= 0 && short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0,
-		"could not send hosts-hardlink request");
+	CHECK(client_fd >= 0 && short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send hosts-hardlink request");
 	upstream_client_fd = short_test_listener_accept(upstream_fd);
 	CHECK(upstream_client_fd >= 0, "hosts-hardlink request did not reach the new upstream");
 	uint8_t forwarded[sizeof(short_status_request)];
@@ -842,18 +1036,14 @@ static bool short_test_hosts_recovery(const char *binary, const char *directory,
 	upstream_b_fd = short_test_listener_open_address("127.0.0.2", &upstream_port);
 	CHECK(upstream_b_fd >= 0, "could not open replacement hosts-recovery upstream");
 	CHECK(short_test_hosts_write(hosts_filename, "127.0.0.1", false), "could not prepare initial hosts-recovery table");
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "hosts-recovery", "hosts-reload.test", upstream_port) == 0,
-		"could not start hosts-recovery listener");
-	CHECK(short_test_file_wait_contains(fixture.log_filename, "SIGUSR1 reload remains available.", LISTENER_SHORT_TEST_TIMEOUT_MS),
-		"initial hosts monitor failure was not injected");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "hosts-recovery", "hosts-reload.test", upstream_port) == 0, "could not start hosts-recovery listener");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, "SIGUSR1 reload remains available.", LISTENER_SHORT_TEST_TIMEOUT_MS), "initial hosts monitor failure was not injected");
 	CHECK(short_test_fixture_reload(&fixture) == 0, "could not manually reload the degraded hosts monitor");
-	CHECK(short_test_file_wait_contains(fixture.log_filename, "Automatic monitoring for local static host table", LISTENER_SHORT_TEST_TIMEOUT_MS),
-		"hosts monitor was not restored before the manual read");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, "Automatic monitoring for local static host table", LISTENER_SHORT_TEST_TIMEOUT_MS), "hosts monitor was not restored before the manual read");
 	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 1, LISTENER_SHORT_TEST_TIMEOUT_MS),
 		"change made during degraded-monitor recovery was not reloaded automatically");
 	client_fd = short_test_client_connect(fixture.listener_port);
-	CHECK(client_fd >= 0 && short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0,
-		"could not send hosts-recovery request");
+	CHECK(client_fd >= 0 && short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send hosts-recovery request");
 	upstream_b_client_fd = short_test_listener_accept(upstream_b_fd);
 	CHECK(upstream_b_client_fd >= 0, "hosts-recovery request did not reach the updated upstream");
 	uint8_t forwarded[sizeof(short_status_request)];
@@ -865,94 +1055,6 @@ static bool short_test_hosts_recovery(const char *binary, const char *directory,
 cleanup:
 	if (client_fd >= 0) {
 		close(client_fd);
-	}
-	if (upstream_a_fd >= 0) {
-		close(upstream_a_fd);
-	}
-	if (upstream_b_client_fd >= 0) {
-		close(upstream_b_client_fd);
-	}
-	if (upstream_b_fd >= 0) {
-		close(upstream_b_fd);
-	}
-	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
-		short_test_fixture_stop(&fixture);
-	}
-	short_test_hosts_write(hosts_filename, "127.0.0.1", false);
-	return test_result;
-}
-
-static bool short_test_hosts_reload(const char *binary, const char *directory, const char *hosts_filename) {
-	bool test_result = false;
-	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
-	int client_fd = -1;
-	int pinned_client_fd = -1;
-	int upstream_a_client_fd = -1;
-	int upstream_a_fd = -1;
-	int upstream_b_client_fd = -1;
-	int upstream_b_fd = -1;
-	in_port_t upstream_port = 0;
-	upstream_a_fd = short_test_listener_open_address("127.0.0.1", &upstream_port);
-	CHECK(upstream_a_fd >= 0, "could not open initial hosts-reload upstream");
-	upstream_b_fd = short_test_listener_open_address("127.0.0.2", &upstream_port);
-	CHECK(upstream_b_fd >= 0, "could not open replacement hosts-reload upstream");
-	CHECK(short_test_hosts_write(hosts_filename, "127.0.0.1", false), "could not prepare initial hosts-reload table");
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "hosts-reload", "hosts-reload.test", upstream_port) == 0,
-		"could not start hosts-reload listener");
-	uint8_t pinned_request[BUFSIZ];
-	size_t pinned_request_size = short_test_handshake_request_build(pinned_request, sizeof(pinned_request), "pin.example");
-	pinned_client_fd = short_test_client_connect(fixture.listener_port);
-	CHECK(pinned_request_size > 0 && pinned_client_fd >= 0 && short_test_send_all(pinned_client_fd, pinned_request, pinned_request_size) == 0,
-		"could not start pinned hosts-reload request");
-	struct timespec pending_delay = { .tv_nsec = 100000000L };
-	while (nanosleep(&pending_delay, &pending_delay) == -1) {
-		CHECK(errno == EINTR, "could not wait for pinned hosts-reload generation");
-	}
-	client_fd = short_test_client_connect(fixture.listener_port);
-	CHECK(client_fd >= 0 && short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0,
-		"could not send initial hosts-reload request");
-	upstream_a_client_fd = short_test_listener_accept(upstream_a_fd);
-	CHECK(upstream_a_client_fd >= 0, "initial hosts-reload request did not reach its upstream");
-	uint8_t forwarded[sizeof(short_status_request)];
-	CHECK(short_test_receive_exact(upstream_a_client_fd, forwarded, sizeof(forwarded)) == 0 && memcmp(forwarded, short_status_request, sizeof(forwarded)) == 0,
-		"initial hosts-reload request was not forwarded correctly");
-	CHECK(short_test_hosts_write(hosts_filename, "127.0.0.2", true), "could not atomically replace hosts-reload table");
-	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 1, LISTENER_SHORT_TEST_TIMEOUT_MS),
-		"first automatic hosts reload was not published");
-	CHECK(close(client_fd) == 0 && close(upstream_a_client_fd) == 0, "could not close initial hosts-reload relay");
-	client_fd = -1;
-	upstream_a_client_fd = -1;
-	CHECK(short_test_hosts_write(hosts_filename, "127.0.0.1", true) && short_test_hosts_write(hosts_filename, "127.0.0.2", true),
-		"could not coalesce deferred hosts replacements");
-	struct timespec delay = { .tv_nsec = 300000000L };
-	while (nanosleep(&delay, &delay) == -1) {
-		CHECK(errno == EINTR, "could not wait for deferred hosts reload");
-	}
-	CHECK(short_test_file_count(fixture.log_filename, "Local static host table reloaded automatically.") == 1U,
-		"hosts reload was not deferred while a retired generation was pinned");
-	CHECK(close(pinned_client_fd) == 0, "could not release pinned hosts-reload generation");
-	pinned_client_fd = -1;
-	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 2, LISTENER_SHORT_TEST_TIMEOUT_MS),
-		"deferred automatic hosts reload was not published");
-	client_fd = short_test_client_connect(fixture.listener_port);
-	CHECK(client_fd >= 0 && short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0,
-		"could not send replacement hosts-reload request");
-	upstream_b_client_fd = short_test_listener_accept(upstream_b_fd);
-	CHECK(upstream_b_client_fd >= 0, "replacement hosts-reload request did not reach its upstream");
-	CHECK(short_test_receive_exact(upstream_b_client_fd, forwarded, sizeof(forwarded)) == 0 && memcmp(forwarded, short_status_request, sizeof(forwarded)) == 0,
-		"replacement hosts-reload request was not forwarded correctly");
-	CHECK(short_test_fixture_stop(&fixture) == 0, "hosts-reload listener did not stop cleanly");
-	test_result = true;
-
-cleanup:
-	if (client_fd >= 0) {
-		close(client_fd);
-	}
-	if (pinned_client_fd >= 0) {
-		close(pinned_client_fd);
-	}
-	if (upstream_a_client_fd >= 0) {
-		close(upstream_a_client_fd);
 	}
 	if (upstream_a_fd >= 0) {
 		close(upstream_a_fd);
@@ -986,23 +1088,18 @@ static bool short_test_hosts_symlink(const char *binary, const char *directory, 
 	upstream_fd = short_test_listener_open_address("127.0.0.2", &upstream_port);
 	CHECK(upstream_fd >= 0, "could not open hosts-symlink upstream");
 	CHECK(short_test_hosts_write(target_filename, "127.0.0.2", false) && unlink(hosts_filename) == 0, "could not prepare absent hosts-symlink path");
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "hosts-symlink", "hosts-reload.test", upstream_port) == 0,
-		"could not start hosts-symlink listener");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "hosts-symlink", "hosts-reload.test", upstream_port) == 0, "could not start hosts-symlink listener");
 	CHECK(symlink(target_filename, hosts_filename) == 0, "could not create watched hosts symlink");
-	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 1, LISTENER_SHORT_TEST_TIMEOUT_MS),
-		"new hosts symlink did not publish its target");
+	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 1, LISTENER_SHORT_TEST_TIMEOUT_MS), "new hosts symlink did not publish its target");
 	CHECK(unlink(target_filename) == 0, "could not delete hosts symlink target");
-	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 2, LISTENER_SHORT_TEST_TIMEOUT_MS),
-		"hosts symlink target deletion was not published");
+	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 2, LISTENER_SHORT_TEST_TIMEOUT_MS), "hosts symlink target deletion was not published");
 	CHECK(short_test_hosts_write(target_filename, "127.0.0.2", false), "could not recreate hosts symlink target");
-	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 3, LISTENER_SHORT_TEST_TIMEOUT_MS),
-		"hosts symlink target recreation was not published");
+	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 3, LISTENER_SHORT_TEST_TIMEOUT_MS), "hosts symlink target recreation was not published");
 	CHECK(short_test_hosts_write(target_filename, "127.0.0.2", false), "could not update recreated hosts symlink target");
 	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 4, LISTENER_SHORT_TEST_TIMEOUT_MS),
 		"recreated hosts symlink target lost automatic monitoring");
 	client_fd = short_test_client_connect(fixture.listener_port);
-	CHECK(client_fd >= 0 && short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0,
-		"could not send hosts-symlink request");
+	CHECK(client_fd >= 0 && short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send hosts-symlink request");
 	upstream_client_fd = short_test_listener_accept(upstream_fd);
 	CHECK(upstream_client_fd >= 0, "hosts-symlink request did not reach the target upstream");
 	uint8_t forwarded[sizeof(short_status_request)];
@@ -1028,90 +1125,6 @@ cleanup:
 	unlink(target_filename);
 	rmdir(target_directory);
 	short_test_hosts_write(hosts_filename, "127.0.0.1", false);
-	return test_result;
-}
-
-static bool short_test_admission(const char *binary, const char *directory) {
-	bool test_result = false;
-	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
-	int client_fds[3] = { -1, -1, -1 };
-	int upstream_fd = -1;
-	in_port_t upstream_port = 0;
-	upstream_fd = short_test_listener_open(&upstream_port);
-	CHECK(upstream_fd >= 0, "could not open admission upstream");
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "admission", "127.0.0.1", upstream_port) == 0, "could not start admission listener");
-	struct pollfd events[3];
-	for (size_t connection_index = 0; connection_index < sizeof(client_fds) / sizeof(client_fds[0]); connection_index++) {
-		client_fds[connection_index] = short_test_client_connect(fixture.listener_port);
-		CHECK(client_fds[connection_index] >= 0, "could not connect admission client");
-		events[connection_index].fd = client_fds[connection_index];
-		events[connection_index].events = POLLIN;
-		events[connection_index].revents = 0;
-	}
-	int poll_result;
-	do {
-		poll_result = poll(events, sizeof(events) / sizeof(events[0]), 1000);
-	} while (poll_result == -1 && errno == EINTR);
-	CHECK(poll_result > 0, "listener did not reject a connection beyond its configured limit");
-	size_t closed_count = 0;
-	for (size_t connection_index = 0; connection_index < sizeof(client_fds) / sizeof(client_fds[0]); connection_index++) {
-		if (events[connection_index].revents & (POLLERR | POLLHUP)) {
-			closed_count++;
-		} else if (events[connection_index].revents & POLLIN) {
-			uint8_t byte;
-			if (recv(client_fds[connection_index], &byte, sizeof(byte), MSG_DONTWAIT) == 0) {
-				closed_count++;
-			}
-		}
-	}
-	CHECK(closed_count == 1U, "listener connection admission did not enforce the exact hard limit");
-	test_result = true;
-
-cleanup:
-	for (size_t connection_index = 0; connection_index < sizeof(client_fds) / sizeof(client_fds[0]); connection_index++) {
-		if (client_fds[connection_index] >= 0) {
-			close(client_fds[connection_index]);
-		}
-	}
-	if (upstream_fd >= 0) {
-		close(upstream_fd);
-	}
-	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
-		short_test_fixture_stop(&fixture);
-	}
-	return test_result;
-}
-
-static bool short_test_deadline(const char *binary, const char *directory) {
-	bool test_result = false;
-	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
-	int client_fd = -1;
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "deadline", "127.0.0.1", 9) == 0, "could not start deadline listener");
-	client_fd = short_test_client_connect(fixture.listener_port);
-	CHECK(client_fd >= 0, "could not connect deadline client");
-	CHECK(short_test_send_all(client_fd, short_status_request, 1) == 0, "could not send deadline request prefix");
-	struct timespec delay = { .tv_sec = 3, .tv_nsec = 200000000L };
-	while (nanosleep(&delay, &delay) == -1) {
-		CHECK(errno == EINTR, "could not wait before completing deadline request");
-	}
-	CHECK(short_test_send_all(client_fd, short_status_request + 1, sizeof(short_status_request) - 1U) == 0, "could not finish deadline request");
-	char notification[128];
-	ssize_t notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_TIMER_REARM=1") == 0, "timer rearm regression hook did not run");
-	uint8_t response[BUFSIZ];
-	size_t response_size = 0;
-	CHECK(short_test_receive_until_close(client_fd, response, sizeof(response), &response_size, 3000) == 0, "absolute lifetime did not close the pending connection");
-	CHECK(response_size == 0, "absolute lifetime synthesized a connect-timeout response");
-	CHECK(kill(fixture.listener, 0) == 0, "deadline connection terminated listener");
-	test_result = true;
-
-cleanup:
-	if (client_fd >= 0) {
-		close(client_fd);
-	}
-	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
-		short_test_fixture_stop(&fixture);
-	}
 	return test_result;
 }
 
@@ -1161,185 +1174,6 @@ cleanup:
 	return test_result;
 }
 
-static bool short_test_log_forgery(const char *binary, const char *directory) {
-	static const char vhost[] =
-		"evil\r\n[2026-09-22 12:34:56 UTC+08:00] [INFO] metrics schema=1 seq=7 family=meta instance=1-1-1"
-		"\r\n[] [INFO] metrics schema=2 seq=8 family=meta instance=1-1-1"
-		"\r\n[] [WARN] resolver_helper status=event_loss dropped=4";
-	bool test_result = false;
-	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
-	int client_fd = -1;
-	uint8_t request[BUFSIZ];
-	size_t request_size = short_test_handshake_request_build(request, sizeof(request), vhost);
-	CHECK(request_size > 0, "could not build forged-vhost request");
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "log-forgery", "127.0.0.1", 9) == 0,
-		"could not start forged-vhost listener");
-	client_fd = short_test_client_connect(fixture.listener_port);
-	CHECK(client_fd >= 0, "could not connect forged-vhost client");
-	CHECK(short_test_send_all(client_fd, request, request_size) == 0, "could not send forged-vhost request");
-	CHECK(short_test_file_wait_contains(fixture.log_filename, "status: reject_vhostinvalid", LISTENER_SHORT_TEST_TIMEOUT_MS),
-		"forged-vhost rejection log was missing");
-	CHECK(short_test_file_contains(fixture.log_filename, "evil\\r\\n[2026-09-22 12:34:56 UTC+08:00] [INFO] metrics schema=1")
-		&& short_test_file_contains(fixture.log_filename, "\\r\\n[] [INFO] metrics schema=2")
-		&& short_test_file_contains(fixture.log_filename, "\\r\\n[] [WARN] resolver_helper status=event_loss dropped=4"),
-		"forged-vhost CR/LF or reserved prefixes were not escaped as printable text");
-	CHECK(short_test_file_reserved_record_count(fixture.log_filename) == 0, "client-controlled text forged a line-start metrics or helper record");
-	test_result = true;
-
-cleanup:
-	if (client_fd >= 0) {
-		close(client_fd);
-	}
-	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
-		short_test_fixture_stop(&fixture);
-	}
-	return test_result;
-}
-
-static bool short_test_metrics_lifecycle(const char *binary, const char *directory) {
-	bool test_result = false;
-	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
-	int status = 0;
-	CHECK(short_test_fixture_start_internal(&fixture, binary, directory, "metrics", "127.0.0.1", 9, 1) == 0,
-		"could not start metrics lifecycle listener");
-	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=startup lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
-		"metrics startup snapshot was missing");
-	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=periodic lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
-		"metrics periodic snapshot was missing");
-	CHECK(short_test_file_count(fixture.log_filename, " reason=reconfigure lines=48 ") == 0, "metrics reconfigured before a configuration transition");
-	CHECK(short_test_config_write_metrics(&fixture, "127.0.0.2", 9, 1) == 0 && short_test_fixture_reload(&fixture) == 0,
-		"same-interval metrics reload failed");
-	CHECK(short_test_file_count(fixture.log_filename, " reason=reconfigure lines=48 ") == 0, "same metrics interval reset cadence or emitted reconfigure");
-	CHECK(short_test_config_write_metrics(&fixture, "127.0.0.1", 9, 2) == 0 && short_test_fixture_reload(&fixture) == 0,
-		"metrics interval-change reload failed");
-	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=reconfigure lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
-		"metrics interval change did not emit reconfigure");
-	CHECK(short_test_config_write_metrics(&fixture, "127.0.0.2", 9, 0) == 0 && short_test_fixture_reload(&fixture) == 0,
-		"metrics disable reload failed");
-	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=disable lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
-		"metrics disable snapshot was missing");
-	CHECK(short_test_config_write_metrics(&fixture, "127.0.0.1", 9, 1) == 0 && short_test_fixture_reload(&fixture) == 0,
-		"metrics re-enable reload failed");
-	CHECK(short_test_file_count(fixture.log_filename, " reason=reconfigure lines=48 ") == 2, "metrics re-enable did not emit exactly one additional reconfigure");
-	CHECK(kill(fixture.listener, SIGTERM) == 0 && short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
-		&& WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS, "metrics lifecycle listener did not stop cleanly");
-	CHECK(short_test_file_contains(fixture.log_filename, " reason=shutdown lines=48 "), "metrics shutdown snapshot was missing");
-	CHECK(short_test_file_count(fixture.log_filename, " reason=startup lines=48 ") == 1
-		&& short_test_file_count(fixture.log_filename, " reason=disable lines=48 ") == 1
-		&& short_test_file_count(fixture.log_filename, " reason=shutdown lines=48 ") == 1, "metrics lifecycle reasons were not emitted exactly once");
-	test_result = true;
-
-cleanup:
-	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
-		short_test_fixture_stop(&fixture);
-	}
-	return test_result;
-}
-
-static bool short_test_metrics_reload_batch_case(const char *binary, const char *directory, const char *suffix, uint32_t interval, const char *expected_reason) {
-	bool test_result = false;
-	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
-	int status = 0;
-	CHECK(short_test_fixture_start_internal(&fixture, binary, directory, suffix, "127.0.0.1", 9, 1) == 0,
-		"could not start same-batch metrics reload listener");
-	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=startup lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
-		"same-batch metrics reload startup snapshot was missing");
-	CHECK(short_test_config_write_metrics(&fixture, "127.0.0.2", 9, interval) == 0, "could not prepare same-batch metrics reload candidate");
-	CHECK(short_test_fixture_release_trigger(&fixture) == 0, "could not arm same-batch metrics reload trigger");
-	CHECK(short_test_fixture_reload_wait(&fixture) == 0, "same-batch metrics reload did not complete");
-	CHECK(short_test_file_wait_contains(fixture.log_filename, expected_reason, LISTENER_SHORT_TEST_TIMEOUT_MS),
-		"same-batch metrics reload expected snapshot was missing");
-	if (strcmp(suffix, "metrics-reload-same") == 0) {
-		CHECK(short_test_file_count(fixture.log_filename, " reason=periodic lines=48 ") == 1
-			&& short_test_file_count(fixture.log_filename, " reason=reconfigure lines=48 ") == 0
-			&& short_test_file_count(fixture.log_filename, " reason=disable lines=48 ") == 0,
-			"same-interval reload did not consume exactly one unchanged-cadence readiness");
-	} else {
-		CHECK(short_test_file_count(fixture.log_filename, " reason=periodic lines=48 ") == 0,
-			"configuration transition emitted an old-cadence periodic snapshot");
-	}
-	CHECK(short_test_file_count(fixture.log_filename, "missed_intervals=0 ") == 2,
-		"same-batch reload changed missed-interval accounting");
-	CHECK(kill(fixture.listener, SIGTERM) == 0 && short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
-		&& WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS, "same-batch metrics reload listener did not stop cleanly");
-	test_result = true;
-
-cleanup:
-	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
-		short_test_fixture_stop(&fixture);
-	}
-	return test_result;
-}
-
-static bool short_test_metrics_reload_batch(const char *binary, const char *directory) {
-	return short_test_metrics_reload_batch_case(binary, directory, "metrics-reload-disable", 0, " reason=disable lines=48 ")
-		&& short_test_metrics_reload_batch_case(binary, directory, "metrics-reload-interval", 2, " reason=reconfigure lines=48 ")
-		&& short_test_metrics_reload_batch_case(binary, directory, "metrics-reload-same", 1, " reason=periodic lines=48 ");
-}
-
-static bool short_test_metrics_timer_case(const char *binary, const char *directory, const char *suffix) {
-	bool test_result = false;
-	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
-	int status = 0;
-	CHECK(short_test_fixture_start_internal(&fixture, binary, directory, suffix, "127.0.0.1", 9, 1) == 0,
-		"could not start metrics timer listener");
-	CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=startup lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
-		"metrics timer startup snapshot was missing");
-	if (strcmp(suffix, "metrics-arm-fail-changed") == 0 || strcmp(suffix, "metrics-arm-fail-unchanged") == 0) {
-		CHECK(short_test_file_contains(fixture.log_filename, "scheduler_failures=1 logger_errors=0 format_drops=0"),
-			"initial metrics timer failure was absent from startup meta");
-		CHECK(short_test_file_contains(fixture.log_filename, "Metrics timer disabled after an observation-subsystem failure"),
-			"initial metrics timer failure warning was missing");
-		if (strcmp(suffix, "metrics-arm-fail-unchanged") == 0) {
-			CHECK(short_test_fixture_reload(&fixture) == 0, "unchanged metrics timer retry reload failed");
-			CHECK(short_test_file_contains(fixture.log_filename, "Configuration file unchanged."), "timer retry did not use the unchanged reload path");
-		} else {
-			CHECK(short_test_config_write_metrics(&fixture, "127.0.0.2", 9, 1) == 0 && short_test_fixture_reload(&fixture) == 0,
-				"changed metrics timer retry reload failed");
-		}
-		CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=periodic lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
-			"metrics timer was not retried after initial establishment failure");
-		CHECK(short_test_file_count(fixture.log_filename, " reason=reconfigure lines=48 ") == 0,
-			"same-interval timer retry emitted a reconfigure snapshot");
-	} else if (strcmp(suffix, "metrics-eio") == 0) {
-		CHECK(short_test_file_wait_contains(fixture.log_filename, "Metrics timer disabled after an observation-subsystem failure", LISTENER_SHORT_TEST_TIMEOUT_MS),
-			"established metrics timer read failure was not reported");
-		struct timespec delay = { .tv_sec = 1, .tv_nsec = 500000000L };
-		while (nanosleep(&delay, &delay) == -1) {
-			CHECK(errno == EINTR, "cannot wait after metrics timer read failure");
-		}
-		CHECK(short_test_file_count(fixture.log_filename, " reason=periodic lines=48 ") == 0,
-			"degraded metrics timer continued periodic output");
-	} else {
-		CHECK(short_test_file_wait_contains(fixture.log_filename, " reason=periodic lines=48 ", LISTENER_SHORT_TEST_TIMEOUT_MS),
-			"recoverable metrics timer read condition suppressed periodic output");
-		CHECK(!short_test_file_contains(fixture.log_filename, "Metrics timer disabled after an observation-subsystem failure"),
-			"recoverable metrics timer read condition degraded the timer");
-	}
-	CHECK(kill(fixture.listener, SIGTERM) == 0 && short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
-		&& WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS, "metrics timer listener did not stop cleanly");
-	CHECK(short_test_file_contains(fixture.log_filename, " reason=shutdown lines=48 "), "metrics timer shutdown snapshot was missing");
-	if (strcmp(suffix, "metrics-eio") == 0) {
-		CHECK(short_test_file_contains(fixture.log_filename, "scheduler_failures=1 logger_errors=0 format_drops=0"),
-			"runtime metrics timer failure was absent from a later meta line");
-	}
-	test_result = true;
-
-cleanup:
-	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
-		short_test_fixture_stop(&fixture);
-	}
-	return test_result;
-}
-
-static bool short_test_metrics_timer(const char *binary, const char *directory) {
-	return short_test_metrics_timer_case(binary, directory, "metrics-arm-fail-changed")
-		&& short_test_metrics_timer_case(binary, directory, "metrics-arm-fail-unchanged")
-		&& short_test_metrics_timer_case(binary, directory, "metrics-eagain")
-		&& short_test_metrics_timer_case(binary, directory, "metrics-eintr")
-		&& short_test_metrics_timer_case(binary, directory, "metrics-eio");
-}
-
 static bool short_test_refusal(const char *binary, const char *directory) {
 	bool test_result = false;
 	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
@@ -1373,112 +1207,6 @@ cleanup:
 	return test_result;
 }
 
-static bool short_test_release_fault_dispatch(const char *binary, const char *directory) {
-	bool test_result = false;
-	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
-	int client_fd = -1;
-	int status = 0;
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "release-dispatch-io", "release-fault.example", 25565) == 0,
-		"could not start dispatch release-failure listener");
-	CHECK(short_test_fixture_release_trigger(&fixture) == 0, "could not arm dispatch release-failure injection");
-	client_fd = short_test_client_connect(fixture.listener_port);
-	CHECK(client_fd >= 0, "could not connect dispatch release-failure client");
-	CHECK(short_test_send_all(client_fd, short_login_request, sizeof(short_login_request)) == 0,
-		"could not send dispatch release-failure request");
-	CHECK(short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
-		&& WIFEXITED(status) && WEXITSTATUS(status) != EXIT_SUCCESS, "dispatch release failure did not terminate the listener");
-	CHECK(short_test_file_contains(fixture.log_filename, "Input/output error"), "dispatch release failure was not listener-fatal");
-	test_result = true;
-
-cleanup:
-	if (client_fd >= 0) {
-		close(client_fd);
-	}
-	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
-		short_test_fixture_stop(&fixture);
-	}
-	return test_result;
-}
-
-static bool short_test_release_fault_refusal(const char *binary, const char *directory) {
-	bool test_result = false;
-	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
-	int upstream_fd = -1;
-	int upstream_a_fd = -1;
-	int client_a_fd = -1;
-	int client_refusal_fd = -1;
-	int status = 0;
-	in_port_t upstream_port = 0;
-	upstream_fd = short_test_listener_open(&upstream_port);
-	CHECK(upstream_fd >= 0, "could not open release-failure upstream");
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "release-refusal-io", "release-fault.example", upstream_port) == 0,
-		"could not start refusal release-failure listener");
-	client_a_fd = short_test_client_connect(fixture.listener_port);
-	CHECK(client_a_fd >= 0 && short_test_send_all(client_a_fd, short_login_request, sizeof(short_login_request)) == 0,
-		"could not start first release-failure worker");
-	upstream_a_fd = short_test_listener_accept(upstream_fd);
-	CHECK(upstream_a_fd >= 0, "first release-failure worker did not reach upstream");
-	CHECK(short_test_fixture_release_trigger(&fixture) == 0, "could not arm refusal release-failure injection");
-	client_refusal_fd = short_test_client_connect(fixture.listener_port);
-	CHECK(client_refusal_fd >= 0 && short_test_send_all(client_refusal_fd, short_login_request, sizeof(short_login_request)) == 0,
-		"could not start refusal release-failure client");
-	CHECK(short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
-		&& WIFEXITED(status) && WEXITSTATUS(status) != EXIT_SUCCESS, "refusal release failure did not terminate the listener");
-	CHECK(short_test_file_contains(fixture.log_filename, "Input/output error"), "refusal release failure was not listener-fatal");
-	test_result = true;
-
-cleanup:
-	if (client_a_fd >= 0) {
-		close(client_a_fd);
-	}
-	if (client_refusal_fd >= 0) {
-		close(client_refusal_fd);
-	}
-	if (upstream_a_fd >= 0) {
-		close(upstream_a_fd);
-	}
-	if (upstream_fd >= 0) {
-		close(upstream_fd);
-	}
-	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
-		short_test_fixture_stop(&fixture);
-	}
-	return test_result;
-}
-
-static bool short_test_release_fault_short_case(const char *binary, const char *directory, const char *suffix, const char *expected_error) {
-	bool test_result = false;
-	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
-	int client_fd = -1;
-	int status = 0;
-	CHECK(short_test_fixture_start(&fixture, binary, directory, suffix, "release-fault.example", 25565) == 0,
-		"could not start short release-failure listener");
-	CHECK(short_test_fixture_release_trigger(&fixture) == 0, "could not arm short release-failure injection");
-	client_fd = short_test_client_connect(fixture.listener_port);
-	CHECK(client_fd >= 0, "could not connect short release-failure client");
-	CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0,
-		"could not send short release-failure request");
-	CHECK(short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
-		&& WIFEXITED(status) && WEXITSTATUS(status) != EXIT_SUCCESS, "short release failure did not terminate the listener");
-	CHECK(short_test_file_contains(fixture.log_filename, expected_error), "short release failure errno was not preserved in the fatal log");
-	test_result = true;
-
-cleanup:
-	if (client_fd >= 0) {
-		close(client_fd);
-	}
-	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
-		short_test_fixture_stop(&fixture);
-	}
-	return test_result;
-}
-
-static bool short_test_release_fault_short(const char *binary, const char *directory) {
-	return short_test_release_fault_short_case(binary, directory, "release-short-bad", "Invalid argument")
-		&& short_test_release_fault_short_case(binary, directory, "release-short-io", "Input/output error")
-		&& short_test_release_fault_short_case(binary, directory, "release-short-time", "Value too large for defined data type");
-}
-
 static bool short_test_relay(const char *binary, const char *directory) {
 	bool test_result = false;
 	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
@@ -1499,27 +1227,23 @@ static bool short_test_relay(const char *binary, const char *directory) {
 	memcpy(request + sizeof(short_status_request), "tail", 4);
 	upstream_fd = short_test_listener_open(&upstream_port);
 	CHECK(upstream_fd >= 0, "could not open relay upstream");
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "relay", "127.0.0.1", upstream_port) == 0,
-		"could not start relay listener");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "relay", "127.0.0.1", upstream_port) == 0, "could not start relay listener");
 	client_fd = short_test_client_connect(fixture.listener_port);
 	CHECK(client_fd >= 0, "could not connect relay client");
 	CHECK(short_test_send_all(client_fd, request, sizeof(request)) == 0, "could not send relay request");
 	upstream_client_fd = short_test_listener_accept(upstream_fd);
 	CHECK(upstream_client_fd >= 0, "relay request did not reach upstream");
 	uint8_t forwarded[sizeof(request)];
-	CHECK(short_test_receive_exact(upstream_client_fd, forwarded, sizeof(forwarded)) == 0 && memcmp(forwarded, request, sizeof(request)) == 0,
-		"relay request ordering was not preserved");
+	CHECK(short_test_receive_exact(upstream_client_fd, forwarded, sizeof(forwarded)) == 0 && memcmp(forwarded, request, sizeof(request)) == 0, "relay request ordering was not preserved");
 	CHECK(short_test_config_write(&fixture, "127.0.0.1", upstream_port) == 0, "could not rewrite relay configuration");
 	CHECK(kill(fixture.listener, SIGUSR1) == 0, "could not reload listener during short relay");
 	char notification[128];
 	ssize_t notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0,
-		"short-relay reload notification was invalid");
+	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0, "short-relay reload notification was invalid");
 	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
 	CHECK(notification_size > 0 && strcmp(notification, "READY=1") == 0, "short-relay reload completion was invalid");
 	CHECK(short_test_send_all(client_fd, marker, sizeof(marker)) == 0, "could not send relay data after reload");
-	CHECK(short_test_receive_exact(upstream_client_fd, received, sizeof(marker)) == 0 && memcmp(received, marker, sizeof(marker)) == 0,
-		"relay data changed or stalled across reload");
+	CHECK(short_test_receive_exact(upstream_client_fd, received, sizeof(marker)) == 0 && memcmp(received, marker, sizeof(marker)) == 0, "relay data changed or stalled across reload");
 	CHECK(shutdown(client_fd, SHUT_WR) == 0, "could not half-close client request");
 	uint8_t upstream_end;
 	size_t upstream_received_size = 0;
@@ -1527,11 +1251,9 @@ static bool short_test_relay(const char *binary, const char *directory) {
 		&& upstream_received_size == 0, "relay did not propagate client half-close");
 	CHECK(short_test_send_all(upstream_client_fd, response, sizeof(response)) == 0, "could not send relay response");
 	CHECK(shutdown(upstream_client_fd, SHUT_WR) == 0, "could not half-close upstream response");
-	CHECK(short_test_receive_exact(client_fd, received, sizeof(received)) == 0 && memcmp(received, response, sizeof(response)) == 0,
-		"relay response ordering was not preserved");
+	CHECK(short_test_receive_exact(client_fd, received, sizeof(received)) == 0 && memcmp(received, response, sizeof(response)) == 0, "relay response ordering was not preserved");
 	uint8_t end_byte;
-	CHECK(short_test_receive_until_close(client_fd, &end_byte, sizeof(end_byte), &received_size, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0 && received_size == 0,
-		"relay did not propagate upstream half-close");
+	CHECK(short_test_receive_until_close(client_fd, &end_byte, sizeof(end_byte), &received_size, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0 && received_size == 0, "relay did not propagate upstream half-close");
 	test_result = true;
 
 cleanup:
@@ -1561,12 +1283,10 @@ static bool short_test_relay_upstream_first(const char *binary, const char *dire
 	static const uint8_t response[] = "upstream-before-client-fin";
 	upstream_fd = short_test_listener_open(&upstream_port);
 	CHECK(upstream_fd >= 0, "could not open reverse-half-close upstream");
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "reverse", "127.0.0.1", upstream_port) == 0,
-		"could not start reverse-half-close listener");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "reverse", "127.0.0.1", upstream_port) == 0, "could not start reverse-half-close listener");
 	client_fd = short_test_client_connect(fixture.listener_port);
 	CHECK(client_fd >= 0, "could not connect reverse-half-close client");
-	CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0,
-		"could not send reverse-half-close request");
+	CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send reverse-half-close request");
 	upstream_client_fd = short_test_listener_accept(upstream_fd);
 	CHECK(upstream_client_fd >= 0, "reverse-half-close request did not reach upstream");
 	uint8_t forwarded[sizeof(short_status_request)];
@@ -1575,12 +1295,10 @@ static bool short_test_relay_upstream_first(const char *binary, const char *dire
 	CHECK(short_test_send_all(upstream_client_fd, response, sizeof(response) - 1U) == 0, "could not send reverse-half-close response");
 	CHECK(shutdown(upstream_client_fd, SHUT_WR) == 0, "could not half-close upstream first");
 	uint8_t received[sizeof(response) - 1U];
-	CHECK(short_test_receive_exact(client_fd, received, sizeof(received)) == 0 && memcmp(received, response, sizeof(received)) == 0,
-		"reverse-half-close response was not forwarded");
+	CHECK(short_test_receive_exact(client_fd, received, sizeof(received)) == 0 && memcmp(received, response, sizeof(received)) == 0, "reverse-half-close response was not forwarded");
 	uint8_t end_byte;
 	size_t end_size = 0;
-	CHECK(short_test_receive_until_close(client_fd, &end_byte, sizeof(end_byte), &end_size, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0 && end_size == 0,
-		"upstream half-close was not propagated to client");
+	CHECK(short_test_receive_until_close(client_fd, &end_byte, sizeof(end_byte), &end_size, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0 && end_size == 0, "upstream half-close was not propagated to client");
 	CHECK(short_test_send_all(client_fd, marker, sizeof(marker) - 1U) == 0, "client could not write after upstream half-close");
 	CHECK(shutdown(client_fd, SHUT_WR) == 0, "could not half-close client second");
 	uint8_t forwarded_marker[sizeof(marker) - 1U];
@@ -1607,18 +1325,115 @@ cleanup:
 	return test_result;
 }
 
+static bool short_test_release_fault_dispatch(const char *binary, const char *directory) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int client_fd = -1;
+	int status = 0;
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "release-dispatch-io", "release-fault.example", 25565) == 0, "could not start dispatch release-failure listener");
+	CHECK(short_test_fixture_release_trigger(&fixture) == 0, "could not arm dispatch release-failure injection");
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0, "could not connect dispatch release-failure client");
+	CHECK(short_test_send_all(client_fd, short_login_request, sizeof(short_login_request)) == 0, "could not send dispatch release-failure request");
+	CHECK(short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
+		&& WIFEXITED(status) && WEXITSTATUS(status) != EXIT_SUCCESS, "dispatch release failure did not terminate the listener");
+	CHECK(short_test_file_contains(fixture.log_filename, "Input/output error"), "dispatch release failure was not listener-fatal");
+	test_result = true;
+
+cleanup:
+	if (client_fd >= 0) {
+		close(client_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
+static bool short_test_release_fault_refusal(const char *binary, const char *directory) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int upstream_fd = -1;
+	int upstream_a_fd = -1;
+	int client_a_fd = -1;
+	int client_refusal_fd = -1;
+	int status = 0;
+	in_port_t upstream_port = 0;
+	upstream_fd = short_test_listener_open(&upstream_port);
+	CHECK(upstream_fd >= 0, "could not open release-failure upstream");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "release-refusal-io", "release-fault.example", upstream_port) == 0, "could not start refusal release-failure listener");
+	client_a_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_a_fd >= 0 && short_test_send_all(client_a_fd, short_login_request, sizeof(short_login_request)) == 0, "could not start first release-failure worker");
+	upstream_a_fd = short_test_listener_accept(upstream_fd);
+	CHECK(upstream_a_fd >= 0, "first release-failure worker did not reach upstream");
+	CHECK(short_test_fixture_release_trigger(&fixture) == 0, "could not arm refusal release-failure injection");
+	client_refusal_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_refusal_fd >= 0 && short_test_send_all(client_refusal_fd, short_login_request, sizeof(short_login_request)) == 0, "could not start refusal release-failure client");
+	CHECK(short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
+		&& WIFEXITED(status) && WEXITSTATUS(status) != EXIT_SUCCESS, "refusal release failure did not terminate the listener");
+	CHECK(short_test_file_contains(fixture.log_filename, "Input/output error"), "refusal release failure was not listener-fatal");
+	test_result = true;
+
+cleanup:
+	if (client_a_fd >= 0) {
+		close(client_a_fd);
+	}
+	if (client_refusal_fd >= 0) {
+		close(client_refusal_fd);
+	}
+	if (upstream_a_fd >= 0) {
+		close(upstream_a_fd);
+	}
+	if (upstream_fd >= 0) {
+		close(upstream_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
+static bool short_test_release_fault_short_case(const char *binary, const char *directory, const char *suffix, const char *expected_error) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int client_fd = -1;
+	int status = 0;
+	CHECK(short_test_fixture_start(&fixture, binary, directory, suffix, "release-fault.example", 25565) == 0, "could not start short release-failure listener");
+	CHECK(short_test_fixture_release_trigger(&fixture) == 0, "could not arm short release-failure injection");
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0, "could not connect short release-failure client");
+	CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send short release-failure request");
+	CHECK(short_test_fixture_wait_exit(&fixture, &status, LISTENER_SHORT_TEST_TIMEOUT_MS) == 0
+		&& WIFEXITED(status) && WEXITSTATUS(status) != EXIT_SUCCESS, "short release failure did not terminate the listener");
+	CHECK(short_test_file_contains(fixture.log_filename, expected_error), "short release failure errno was not preserved in the fatal log");
+	test_result = true;
+
+cleanup:
+	if (client_fd >= 0) {
+		close(client_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
+static bool short_test_release_fault_short(const char *binary, const char *directory) {
+	return short_test_release_fault_short_case(binary, directory, "release-short-bad", "Invalid argument")
+		&& short_test_release_fault_short_case(binary, directory, "release-short-io", "Input/output error")
+		&& short_test_release_fault_short_case(binary, directory, "release-short-time", "Value too large for defined data type");
+}
+
 static bool short_test_reload_early_collect(const char *binary, const char *directory) {
 	bool test_result = false;
 	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
 	int client_fd = -1;
 	char notification[128];
 	ssize_t notification_size;
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "reload-early", "early.example", 25565) == 0,
-		"could not start early-collect listener");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "reload-early", "early.example", 25565) == 0, "could not start early-collect listener");
 	client_fd = short_test_client_connect(fixture.listener_port);
 	CHECK(client_fd >= 0, "could not connect early-collect client");
-	CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0,
-		"could not send early-collect request");
+	CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send early-collect request");
 	struct timespec delay = { .tv_nsec = 100000000L };
 	while (nanosleep(&delay, &delay) == -1) {
 		CHECK(errno == EINTR, "could not wait for early-collect client state");
@@ -1626,28 +1441,23 @@ static bool short_test_reload_early_collect(const char *binary, const char *dire
 	CHECK(short_test_config_write(&fixture, "early.example", 25565) == 0, "could not rewrite configuration for first early reload");
 	CHECK(kill(fixture.listener, SIGUSR1) == 0, "could not request first early reload");
 	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_EARLY_RELOAD_ACK=1") == 0,
-		"first early reload acknowledgement was invalid");
+	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_EARLY_RELOAD_ACK=1") == 0, "first early reload acknowledgement was invalid");
 	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0,
-		"first early reload notification was invalid");
+	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0, "first early reload notification was invalid");
 	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
 	CHECK(notification_size > 0 && strcmp(notification, "READY=1") == 0, "first early reload completion was invalid");
 	CHECK(short_test_config_write(&fixture, "early.example", 25565) == 0, "could not rewrite configuration for deferred early reload");
 	CHECK(kill(fixture.listener, SIGUSR1) == 0, "could not request deferred early reload");
 	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_EARLY_RELOAD_ACK=1") == 0,
-		"deferred early reload acknowledgement was invalid");
+	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_EARLY_RELOAD_ACK=1") == 0, "deferred early reload acknowledgement was invalid");
 	errno = 0;
 	CHECK(short_test_fixture_notification_timeout(&fixture, notification, sizeof(notification), LISTENER_RELOAD_EARLY_TEST_DEFERRED_MS) == -1
 		&& errno == ETIMEDOUT, "deferred early reload unexpectedly completed while the generation was pinned");
 	CHECK(short_test_fixture_release_trigger(&fixture) == 0, "could not release early-collect DNS lookup");
 	notification_size = short_test_fixture_notification_timeout(&fixture, notification, sizeof(notification), LISTENER_RELOAD_EARLY_TEST_RELEASE_MS);
-	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_EARLY_COLLECT=1") == 0,
-		"early collect marker was missing");
+	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_EARLY_COLLECT=1") == 0, "early collect marker was missing");
 	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0,
-		"early-collect reload notification was invalid");
+	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0, "early-collect reload notification was invalid");
 	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
 	CHECK(notification_size > 0 && strcmp(notification, "READY=1") == 0, "early-collect reload completion was invalid");
 	errno = 0;
@@ -1674,12 +1484,10 @@ static bool short_test_reload_late_case(const char *binary, const char *director
 	int client_fd = -1;
 	char notification[128];
 	ssize_t notification_size;
-	CHECK(short_test_fixture_start(&fixture, binary, directory, suffix, address, port) == 0,
-		"could not start late-reload listener");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, suffix, address, port) == 0, "could not start late-reload listener");
 	if (route_timer_armed) {
 		notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-		CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_ROUTE_TIMER_ARMED=1") == 0,
-			"route timer was not held armed for late-reload test");
+		CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_ROUTE_TIMER_ARMED=1") == 0, "route timer was not held armed for late-reload test");
 	}
 	client_fd = short_test_client_connect(fixture.listener_port);
 	CHECK(client_fd >= 0, "could not connect late-reload client");
@@ -1693,8 +1501,7 @@ static bool short_test_reload_late_case(const char *binary, const char *director
 	CHECK(short_test_config_write(&fixture, address, port) == 0, "could not rewrite configuration for first reload");
 	CHECK(kill(fixture.listener, SIGUSR1) == 0, "could not request first late-reload reload");
 	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0,
-		"first late-reload notification was invalid");
+	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0, "first late-reload notification was invalid");
 	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
 	CHECK(notification_size > 0 && strcmp(notification, "READY=1") == 0, "first late-reload completion was invalid");
 	CHECK(short_test_config_write(&fixture, address, port) == 0, "could not rewrite configuration for deferred reload");
@@ -1709,8 +1516,7 @@ static bool short_test_reload_late_case(const char *binary, const char *director
 		client_fd = -1;
 	}
 	notification_size = short_test_fixture_notification_timeout(&fixture, notification, sizeof(notification), LISTENER_RELOAD_LATE_TEST_RELEASE_MS);
-	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0,
-		"deferred late-reload notification was missing");
+	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0, "deferred late-reload notification was missing");
 	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
 	CHECK(notification_size > 0 && strcmp(notification, "READY=1") == 0, "deferred late-reload completion was invalid");
 	if (release_with_short_start) {
@@ -1749,53 +1555,11 @@ static bool short_test_reload_late_release_timer_armed(const char *binary, const
 	return short_test_reload_late_case(binary, directory, "reload-late-short-armed", "127.0.0.1", 9, true, true);
 }
 
-static bool short_test_reload_ready_flip(const char *binary, const char *directory) {
-	bool test_result = false;
-	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
-	char notification[128];
-	ssize_t notification_size;
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "reload-ready-flip", "127.0.0.1", 9) == 0,
-		"could not start ready-flip listener");
-	CHECK(kill(fixture.listener, SIGUSR1) == 0, "could not request ready-flip reload");
-	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_READY_FLIP_RELOAD_ACK=1") == 0,
-		"ready-flip reload acknowledgement was invalid");
-	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_RELOAD_BLOCKED=1") == 0,
-		"ready-flip reload was not blocked before route readiness");
-	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-	CHECK(notification_size > 0 && strcmp(notification, "READY=1") == 0, "ready-flip route readiness notification was invalid");
-	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_LATE_WAKE_ARMED=1") == 0,
-		"ready-flip late wake marker was missing");
-	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-	CHECK(notification_size > 0 && strcmp(notification, "MCRELAY_TEST_ROUTE_TIMER_FIRED=1") == 0,
-		"ready-flip route timer marker was missing");
-	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-	CHECK(notification_size > 0 && strncmp(notification, "RELOADING=1\nMONOTONIC_USEC=", strlen("RELOADING=1\nMONOTONIC_USEC=")) == 0,
-		"ready-flip reload notification was invalid");
-	notification_size = short_test_fixture_notification(&fixture, notification, sizeof(notification));
-	CHECK(notification_size > 0 && strcmp(notification, "READY=1") == 0, "ready-flip reload completion was invalid");
-	errno = 0;
-	CHECK(short_test_fixture_notification_timeout(&fixture, notification, sizeof(notification), LISTENER_READY_FLIP_TEST_DUPLICATE_MS) == -1
-		&& errno == ETIMEDOUT, "ready-flip reload executed more than once");
-	CHECK(kill(fixture.listener, 0) == 0, "ready-flip reload terminated listener");
-	CHECK(short_test_fixture_stop(&fixture) == 0, "ready-flip listener did not stop cleanly");
-	test_result = true;
-
-cleanup:
-	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
-		short_test_fixture_stop(&fixture);
-	}
-	return test_result;
-}
-
 static bool short_test_route_cancel(const char *binary, const char *directory) {
 	bool test_result = false;
 	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
 	int client_fd = -1;
-	CHECK(short_test_fixture_start(&fixture, binary, directory, "route-cancel", "route-wait.example", 25565) == 0,
-		"could not start route-cancellation listener");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "route-cancel", "route-wait.example", 25565) == 0, "could not start route-cancellation listener");
 	client_fd = short_test_client_connect(fixture.listener_port);
 	CHECK(client_fd >= 0, "could not connect route-cancellation client");
 	CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send route-cancellation request");
@@ -1867,8 +1631,7 @@ static bool short_test_stop_route(const char *binary, const char *directory) {
 	bool test_result = false;
 	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
 	int client_fd = -1;
-	CHECK(short_test_fixture_start_internal(&fixture, binary, directory, "stop-route", "route-wait.example", 25565, 1) == 0,
-		"could not start pending-route shutdown listener");
+	CHECK(short_test_fixture_start_internal(&fixture, binary, directory, "stop-route", "route-wait.example", 25565, 1) == 0, "could not start pending-route shutdown listener");
 	client_fd = short_test_client_connect(fixture.listener_port);
 	CHECK(client_fd >= 0, "could not connect pending-route shutdown client");
 	CHECK(short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send pending-route shutdown request");
@@ -1883,6 +1646,161 @@ static bool short_test_stop_route(const char *binary, const char *directory) {
 		"shutdown did not close the pending-route client");
 	CHECK(short_test_file_contains(fixture.log_filename, " reason=shutdown lines=48 ") && short_test_file_contains(fixture.log_filename, " outcome_shutdown=1 "),
 		"pending-route shutdown was not settled in the final metrics");
+	test_result = true;
+
+cleanup:
+	if (client_fd >= 0) {
+		close(client_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	return test_result;
+}
+
+static size_t short_test_varint_write(uint8_t *target, size_t capacity, uint32_t value) {
+	size_t length = 0;
+	do {
+		if (length >= capacity) {
+			return 0;
+		}
+		uint8_t byte = (uint8_t)(value & UINT32_C(0x7f));
+		value >>= 7;
+		target[length++] = value == 0 ? byte : (uint8_t)(byte | UINT8_C(0x80));
+	} while (value != 0);
+	return length;
+}
+
+static size_t short_test_handshake_request_build(uint8_t *target, size_t capacity, const char *vhost) {
+	if (target == NULL || vhost == NULL) {
+		return 0;
+	}
+	size_t vhost_length = strlen(vhost);
+	uint8_t body[BUFSIZ];
+	size_t body_length = 0;
+	body[body_length++] = 0;
+	body[body_length++] = 47;
+	size_t encoded = short_test_varint_write(body + body_length, sizeof(body) - body_length, (uint32_t)vhost_length);
+	if (encoded == 0 || vhost_length > sizeof(body) - body_length - encoded - 3U) {
+		return 0;
+	}
+	body_length += encoded;
+	memcpy(body + body_length, vhost, vhost_length);
+	body_length += vhost_length;
+	body[body_length++] = 0x63;
+	body[body_length++] = 0xdd;
+	body[body_length++] = 1;
+	size_t packet_prefix = short_test_varint_write(target, capacity, (uint32_t)body_length);
+	if (packet_prefix == 0 || capacity < packet_prefix + 2U || body_length > capacity - packet_prefix - 2U) {
+		return 0;
+	}
+	memcpy(target + packet_prefix, body, body_length);
+	target[packet_prefix + body_length] = 1;
+	target[packet_prefix + body_length + 1U] = 0;
+	return packet_prefix + body_length + 2U;
+}
+
+static bool short_test_hosts_reload(const char *binary, const char *directory, const char *hosts_filename) {
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int client_fd = -1;
+	int pinned_client_fd = -1;
+	int upstream_a_client_fd = -1;
+	int upstream_a_fd = -1;
+	int upstream_b_client_fd = -1;
+	int upstream_b_fd = -1;
+	in_port_t upstream_port = 0;
+	upstream_a_fd = short_test_listener_open_address("127.0.0.1", &upstream_port);
+	CHECK(upstream_a_fd >= 0, "could not open initial hosts-reload upstream");
+	upstream_b_fd = short_test_listener_open_address("127.0.0.2", &upstream_port);
+	CHECK(upstream_b_fd >= 0, "could not open replacement hosts-reload upstream");
+	CHECK(short_test_hosts_write(hosts_filename, "127.0.0.1", false), "could not prepare initial hosts-reload table");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "hosts-reload", "hosts-reload.test", upstream_port) == 0, "could not start hosts-reload listener");
+	uint8_t pinned_request[BUFSIZ];
+	size_t pinned_request_size = short_test_handshake_request_build(pinned_request, sizeof(pinned_request), "pin.example");
+	pinned_client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(pinned_request_size > 0 && pinned_client_fd >= 0 && short_test_send_all(pinned_client_fd, pinned_request, pinned_request_size) == 0, "could not start pinned hosts-reload request");
+	struct timespec pending_delay = { .tv_nsec = 100000000L };
+	while (nanosleep(&pending_delay, &pending_delay) == -1) {
+		CHECK(errno == EINTR, "could not wait for pinned hosts-reload generation");
+	}
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0 && short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send initial hosts-reload request");
+	upstream_a_client_fd = short_test_listener_accept(upstream_a_fd);
+	CHECK(upstream_a_client_fd >= 0, "initial hosts-reload request did not reach its upstream");
+	uint8_t forwarded[sizeof(short_status_request)];
+	CHECK(short_test_receive_exact(upstream_a_client_fd, forwarded, sizeof(forwarded)) == 0 && memcmp(forwarded, short_status_request, sizeof(forwarded)) == 0,
+		"initial hosts-reload request was not forwarded correctly");
+	CHECK(short_test_hosts_write(hosts_filename, "127.0.0.2", true), "could not atomically replace hosts-reload table");
+	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 1, LISTENER_SHORT_TEST_TIMEOUT_MS), "first automatic hosts reload was not published");
+	CHECK(close(client_fd) == 0 && close(upstream_a_client_fd) == 0, "could not close initial hosts-reload relay");
+	client_fd = -1;
+	upstream_a_client_fd = -1;
+	CHECK(short_test_hosts_write(hosts_filename, "127.0.0.1", true) && short_test_hosts_write(hosts_filename, "127.0.0.2", true), "could not coalesce deferred hosts replacements");
+	struct timespec delay = { .tv_nsec = 300000000L };
+	while (nanosleep(&delay, &delay) == -1) {
+		CHECK(errno == EINTR, "could not wait for deferred hosts reload");
+	}
+	CHECK(short_test_file_count(fixture.log_filename, "Local static host table reloaded automatically.") == 1U, "hosts reload was not deferred while a retired generation was pinned");
+	CHECK(close(pinned_client_fd) == 0, "could not release pinned hosts-reload generation");
+	pinned_client_fd = -1;
+	CHECK(short_test_file_wait_count(fixture.log_filename, "Local static host table reloaded automatically.", 2, LISTENER_SHORT_TEST_TIMEOUT_MS), "deferred automatic hosts reload was not published");
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0 && short_test_send_all(client_fd, short_status_request, sizeof(short_status_request)) == 0, "could not send replacement hosts-reload request");
+	upstream_b_client_fd = short_test_listener_accept(upstream_b_fd);
+	CHECK(upstream_b_client_fd >= 0, "replacement hosts-reload request did not reach its upstream");
+	CHECK(short_test_receive_exact(upstream_b_client_fd, forwarded, sizeof(forwarded)) == 0 && memcmp(forwarded, short_status_request, sizeof(forwarded)) == 0,
+		"replacement hosts-reload request was not forwarded correctly");
+	CHECK(short_test_fixture_stop(&fixture) == 0, "hosts-reload listener did not stop cleanly");
+	test_result = true;
+
+cleanup:
+	if (client_fd >= 0) {
+		close(client_fd);
+	}
+	if (pinned_client_fd >= 0) {
+		close(pinned_client_fd);
+	}
+	if (upstream_a_client_fd >= 0) {
+		close(upstream_a_client_fd);
+	}
+	if (upstream_a_fd >= 0) {
+		close(upstream_a_fd);
+	}
+	if (upstream_b_client_fd >= 0) {
+		close(upstream_b_client_fd);
+	}
+	if (upstream_b_fd >= 0) {
+		close(upstream_b_fd);
+	}
+	if (fixture.listener > 0 || fixture.notify_fd >= 0) {
+		short_test_fixture_stop(&fixture);
+	}
+	short_test_hosts_write(hosts_filename, "127.0.0.1", false);
+	return test_result;
+}
+
+static bool short_test_log_forgery(const char *binary, const char *directory) {
+	static const char vhost[] =
+		"evil\r\n[2026-09-22 12:34:56 UTC+08:00] [INFO] metrics schema=1 seq=7 family=meta instance=1-1-1"
+		"\r\n[] [INFO] metrics schema=2 seq=8 family=meta instance=1-1-1"
+		"\r\n[] [WARN] resolver_helper status=event_loss dropped=4";
+	bool test_result = false;
+	short_fixture fixture = { .notify_fd = -1, .listener = -1 };
+	int client_fd = -1;
+	uint8_t request[BUFSIZ];
+	size_t request_size = short_test_handshake_request_build(request, sizeof(request), vhost);
+	CHECK(request_size > 0, "could not build forged-vhost request");
+	CHECK(short_test_fixture_start(&fixture, binary, directory, "log-forgery", "127.0.0.1", 9) == 0, "could not start forged-vhost listener");
+	client_fd = short_test_client_connect(fixture.listener_port);
+	CHECK(client_fd >= 0, "could not connect forged-vhost client");
+	CHECK(short_test_send_all(client_fd, request, request_size) == 0, "could not send forged-vhost request");
+	CHECK(short_test_file_wait_contains(fixture.log_filename, "status: reject_vhostinvalid", LISTENER_SHORT_TEST_TIMEOUT_MS), "forged-vhost rejection log was missing");
+	CHECK(short_test_file_contains(fixture.log_filename, "evil\\r\\n[2026-09-22 12:34:56 UTC+08:00] [INFO] metrics schema=1")
+		&& short_test_file_contains(fixture.log_filename, "\\r\\n[] [INFO] metrics schema=2")
+		&& short_test_file_contains(fixture.log_filename, "\\r\\n[] [WARN] resolver_helper status=event_loss dropped=4"),
+		"forged-vhost CR/LF or reserved prefixes were not escaped as printable text");
+	CHECK(short_test_file_reserved_record_count(fixture.log_filename) == 0, "client-controlled text forged a line-start metrics or helper record");
 	test_result = true;
 
 cleanup:

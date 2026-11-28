@@ -3,15 +3,12 @@
 % July 2026
 
 # NAME
-
 mcrelay-run - start an mcrelay server instance
 
 # SYNOPSIS
-
 **mcrelay run** [**-c** _config_file_ | **--config** _config_file_]
 
 # DESCRIPTION
-
 Start a Minecraft Relay Server instance. The server listens on the address and
 port declared in the configuration file and forwards incoming connections to
 upstream servers according to the virtual host sent in the Minecraft handshake
@@ -26,13 +23,11 @@ Sending **SIGUSR1** reloads the configuration file without restarting;
 **SIGINT** and **SIGTERM** stop the server.
 
 # OPTIONS
-
 **-c**, **--config** _config_file_
 : Specify a configuration file to read. Default:
 */etc/mcrelay/config.json*.
 
 # FILES
-
 */etc/mcrelay/config.json*
 : Default configuration file.
 
@@ -43,7 +38,6 @@ Sending **SIGUSR1** reloads the configuration file without restarting;
 : Default log file.
 
 # SEE ALSO
-
 **mcrelay**(1), **mcrelay-dumpconfig**(1), **systemctl**(1)
 
 Documentation and source: <https://github.com/bilintsui/minecraft-relay-server>

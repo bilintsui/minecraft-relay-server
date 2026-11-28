@@ -295,13 +295,6 @@ static bool helper_response_receive(int socket_fd, resolver_ipc_assembly *assemb
 	}
 }
 
-static int helper_time_compare(const struct timespec *left, const struct timespec *right) {
-	if (left->tv_sec != right->tv_sec) {
-		return left->tv_sec < right->tv_sec ? -1 : 1;
-	}
-	return left->tv_nsec == right->tv_nsec ? 0 : (left->tv_nsec < right->tv_nsec ? -1 : 1);
-}
-
 static bool helper_test_arguments(void) {
 	pid_t process_id = 0;
 	int socket_fd = 0;
@@ -498,6 +491,13 @@ static bool helper_test_protocol(void) {
 cleanup:
 	helper_child_stop(&child, &socket_fd);
 	return test_result;
+}
+
+static int helper_time_compare(const struct timespec *left, const struct timespec *right) {
+	if (left->tv_sec != right->tv_sec) {
+		return left->tv_sec < right->tv_sec ? -1 : 1;
+	}
+	return left->tv_nsec == right->tv_nsec ? 0 : (left->tv_nsec < right->tv_nsec ? -1 : 1);
 }
 
 static bool helper_test_responses(void) {

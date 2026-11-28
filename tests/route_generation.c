@@ -86,16 +86,14 @@ static bool generation_test_arguments(void) {
 	route_generation *generation = NULL;
 	CHECK(route_generation_create(0, fixture.config, fixture.hosts, fixture.routes, fixture.bindings, fixture.resolution, &generation) == ROUTE_GENERATION_CREATE_BAD_ARGUMENT,
 		"zero generation identity was accepted");
-	CHECK(route_generation_create(1, NULL, fixture.hosts, fixture.routes, fixture.bindings, fixture.resolution, &generation) == ROUTE_GENERATION_CREATE_BAD_ARGUMENT,
-		"NULL generation config was accepted");
+	CHECK(route_generation_create(1, NULL, fixture.hosts, fixture.routes, fixture.bindings, fixture.resolution, &generation) == ROUTE_GENERATION_CREATE_BAD_ARGUMENT, "NULL generation config was accepted");
 	CHECK(route_generation_create(1, fixture.config, NULL, fixture.routes, fixture.bindings, fixture.resolution, &generation) == ROUTE_GENERATION_CREATE_BAD_ARGUMENT,
 		"NULL generation hosts table was accepted");
 	CHECK(route_generation_create(1, fixture.config, fixture.hosts, NULL, fixture.bindings, fixture.resolution, &generation) == ROUTE_GENERATION_CREATE_BAD_ARGUMENT,
 		"NULL generation route table was accepted");
 	CHECK(route_generation_create(1, fixture.config, fixture.hosts, fixture.routes, NULL, fixture.resolution, &generation) == ROUTE_GENERATION_CREATE_BAD_ARGUMENT,
 		"NULL generation bindings were accepted");
-	CHECK(route_generation_create(1, fixture.config, fixture.hosts, fixture.routes, fixture.bindings, NULL, &generation) == ROUTE_GENERATION_CREATE_BAD_ARGUMENT,
-		"NULL generation resolution was accepted");
+	CHECK(route_generation_create(1, fixture.config, fixture.hosts, fixture.routes, fixture.bindings, NULL, &generation) == ROUTE_GENERATION_CREATE_BAD_ARGUMENT, "NULL generation resolution was accepted");
 	CHECK(route_generation_create(1, fixture.config, fixture.hosts, fixture.routes, fixture.bindings, fixture.resolution, NULL) == ROUTE_GENERATION_CREATE_BAD_ARGUMENT,
 		"NULL generation output was accepted");
 	generation = (route_generation *)(uintptr_t)1;
@@ -118,8 +116,7 @@ static bool generation_test_dispose_in_child(void) {
 	generation_fixture_reset(&fixture);
 	CHECK(route_generation_create(8, fixture.config, fixture.hosts, fixture.routes, fixture.bindings, fixture.resolution, &generation) == ROUTE_GENERATION_CREATE_OK,
 		"child-dispose generation could not be created");
-	CHECK(route_generation_retain(generation) && route_generation_retain(generation) && route_generation_reference_count(generation) == 3,
-		"child-dispose generation references could not be prepared");
+	CHECK(route_generation_retain(generation) && route_generation_retain(generation) && route_generation_reference_count(generation) == 3, "child-dispose generation references could not be prepared");
 	route_generation_dispose_in_child(generation);
 	generation = NULL;
 	CHECK(generation_destroy_count == 5, "child dispose honored the inherited reference count");
@@ -144,15 +141,12 @@ static bool generation_test_lifecycle(void) {
 	generation_fixture fixture = generation_fixture_create();
 	route_generation *generation = NULL;
 	generation_fixture_reset(&fixture);
-	CHECK(route_generation_create(42, fixture.config, fixture.hosts, fixture.routes, fixture.bindings, fixture.resolution, &generation) == ROUTE_GENERATION_CREATE_OK,
-		"generation could not be created");
+	CHECK(route_generation_create(42, fixture.config, fixture.hosts, fixture.routes, fixture.bindings, fixture.resolution, &generation) == ROUTE_GENERATION_CREATE_OK, "generation could not be created");
 	CHECK(route_generation_bindings(generation) == fixture.bindings && route_generation_config(generation) == fixture.config && route_generation_hosts(generation) == fixture.hosts
 		&& route_generation_identity(generation) == 42 && route_generation_reference_count(generation) == 1 && route_generation_resolution(generation) == fixture.resolution
 		&& route_generation_routes(generation) == fixture.routes, "generation accessors did not preserve owned components");
-	CHECK(route_generation_retain(generation) && route_generation_retain(generation) && route_generation_reference_count(generation) == 3,
-		"generation references could not be retained");
-	CHECK(route_generation_release(generation) == 2 && route_generation_release(generation) == 1 && generation_destroy_count == 0,
-		"generation was destroyed while references remained");
+	CHECK(route_generation_retain(generation) && route_generation_retain(generation) && route_generation_reference_count(generation) == 3, "generation references could not be retained");
+	CHECK(route_generation_release(generation) == 2 && route_generation_release(generation) == 1 && generation_destroy_count == 0, "generation was destroyed while references remained");
 	CHECK(route_generation_release(generation) == 0, "final generation release returned a nonzero count");
 	generation = NULL;
 	CHECK(generation_destroy_count == sizeof(expected_order) / sizeof(expected_order[0])

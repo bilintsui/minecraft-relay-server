@@ -49,17 +49,17 @@ typedef struct {
 } resolution_schedule_fixture;
 
 /* section: global variables */
-static size_t resolution_schedule_fixture_count;
-static size_t resolution_schedule_fixture_index;
-static resolution_schedule_fixture resolution_schedule_fixtures[16];
-static resolver_supervisor *resolution_schedule_supervisor;
-static struct timespec resolution_schedule_time;
 static size_t resolution_release_count;
 static resolver_cache_entry *resolution_release_entries[16];
 static uint64_t resolution_release_entry_ids[16];
 static size_t resolution_release_status_count;
 static size_t resolution_release_status_index;
 static resolver_supervisor_release_status resolution_release_statuses[16];
+static size_t resolution_schedule_fixture_count;
+static size_t resolution_schedule_fixture_index;
+static resolution_schedule_fixture resolution_schedule_fixtures[16];
+static resolver_supervisor *resolution_schedule_supervisor;
+static struct timespec resolution_schedule_time;
 
 /* section: functions (local) */
 static bool resolution_address_equal(const net_addr *address, sa_family_t family, const char *expected) {
@@ -203,13 +203,11 @@ static bool resolution_test_arguments(const hosts_table *hosts) {
 	CHECK(route_resolution_destination_count(NULL) == 0 && route_resolution_destination_count(resolution) == 1, "destination count argument handling was incorrect");
 	route_resolution_destination_view destination;
 	memset(&destination, 0xFF, sizeof(destination));
-	CHECK(!route_resolution_destination_get(NULL, 0, &destination) && !destination.first_terminal && destination.target_count == 0,
-		"invalid destination access did not clear its output");
+	CHECK(!route_resolution_destination_get(NULL, 0, &destination) && !destination.first_terminal && destination.target_count == 0, "invalid destination access did not clear its output");
 	CHECK(!route_resolution_destination_get(resolution, 1, &destination), "out-of-range destination was accepted");
 	route_resolution_target_view target;
 	memset(&target, 0xFF, sizeof(target));
-	CHECK(!route_resolution_destination_target_get(resolution, 0, 0, &target) && target.name == NULL && target.addresses == NULL,
-		"invalid target access did not clear its output");
+	CHECK(!route_resolution_destination_target_get(resolution, 0, 0, &target) && target.name == NULL && target.addresses == NULL, "invalid target access did not clear its output");
 	resolver_supervisor_completion completion = { 0 };
 	CHECK(resolution_completion_observe(NULL, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT
 		&& resolution_completion_observe(resolution, NULL, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT
@@ -277,14 +275,11 @@ static bool resolution_test_generation(const hosts_table *hosts) {
 		"DNS binding fixtures were incorrect");
 	resolver_supervisor_completion malformed = resolution_completion(address_binding.ipv4_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_NODATA);
 	malformed.response.query_type = ns_t_srv;
-	CHECK(resolution_completion_observe(resolution, &malformed, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT,
-		"mismatched completion query type was accepted");
+	CHECK(resolution_completion_observe(resolution, &malformed, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT, "mismatched completion query type was accepted");
 	malformed = resolution_completion(address_binding.ipv4_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR);
-	CHECK(resolution_completion_observe(resolution, &malformed, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT,
-		"nonterminal temporary completion was accepted");
+	CHECK(resolution_completion_observe(resolution, &malformed, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT, "nonterminal temporary completion was accepted");
 	malformed = resolution_completion(address_binding.ipv4_entry, (resolver_cache_publish_status)UINT8_MAX, RESOLVER_IPC_LOOKUP_NODATA);
-	CHECK(resolution_completion_observe(resolution, &malformed, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT,
-		"unknown completion publication was accepted");
+	CHECK(resolution_completion_observe(resolution, &malformed, &now) == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT, "unknown completion publication was accepted");
 	CHECK(resolution_address_publish(address_binding.ipv4_entry, AF_INET, "192.0.2.30", 30, &now), "stored address fixture could not be published");
 	CHECK(resolution_srv_publish(srv_binding.srv_entry, srv_targets, sizeof(srv_targets) / sizeof(srv_targets[0]), 30, &now), "stored SRV fixture could not be published");
 	resolution_schedule_reset(supervisor, &now);
@@ -297,12 +292,9 @@ static bool resolution_test_generation(const hosts_table *hosts) {
 			: query_type == ns_t_aaaa ? RESOLVER_SUPERVISOR_SCHEDULE_STARTED : RESOLVER_SUPERVISOR_SCHEDULE_FRESH;
 	}
 	resolution_schedule_fixture_count = route_bindings_entry_count(bindings);
-	CHECK(route_resolution_schedule(resolution, supervisor, &now, 3) == ROUTE_PREWARM_MORE && resolution_schedule_fixture_index == 3,
-		"static prewarm wave was incorrect");
-	CHECK(route_resolution_destination_get(resolution, 2, &address) && !address.first_terminal && address.pending_entry_count == 2,
-		"SCHEDULE_COMPLETE was counted before its completion was consumed");
-	CHECK(route_resolution_destination_get(resolution, 3, &srv) && !srv.first_terminal && srv.pending_entry_count == 2 && srv.target_count == 3,
-		"fresh SRV entry did not expand unique targets");
+	CHECK(route_resolution_schedule(resolution, supervisor, &now, 3) == ROUTE_PREWARM_MORE && resolution_schedule_fixture_index == 3, "static prewarm wave was incorrect");
+	CHECK(route_resolution_destination_get(resolution, 2, &address) && !address.first_terminal && address.pending_entry_count == 2, "SCHEDULE_COMPLETE was counted before its completion was consumed");
+	CHECK(route_resolution_destination_get(resolution, 3, &srv) && !srv.first_terminal && srv.pending_entry_count == 2 && srv.target_count == 3, "fresh SRV entry did not expand unique targets");
 	CHECK(srv.srv_record_count == 4 && srv.srv_records != NULL && strcmp(srv.srv_records[0].target, "192.0.2.60") == 0
 		&& strcmp(srv.srv_records[3].target, "dns.target") == 0 && srv.srv_records[2].priority == 0 && srv.srv_records[2].weight == 3
 		&& srv.srv_records[2].port == 25567, "stored SRV metadata or DNS order was not retained");
@@ -321,8 +313,7 @@ static bool resolution_test_generation(const hosts_table *hosts) {
 	resolution_schedule_reset(supervisor, &now);
 	resolution_schedule_fixtures[0] = (resolution_schedule_fixture){ .entry = dns_target.ipv4_entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_LIMIT };
 	resolution_schedule_fixture_count = 1;
-	CHECK(route_resolution_schedule(resolution, supervisor, &now, 2) == ROUTE_PREWARM_CAPACITY && !route_resolution_scheduling_complete(resolution),
-		"dynamic capacity failure consumed its queued entry");
+	CHECK(route_resolution_schedule(resolution, supervisor, &now, 2) == ROUTE_PREWARM_CAPACITY && !route_resolution_scheduling_complete(resolution), "dynamic capacity failure consumed its queued entry");
 	resolution_schedule_reset(supervisor, &now);
 	resolution_schedule_fixtures[0] = (resolution_schedule_fixture){ .entry = dns_target.ipv4_entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_STARTED };
 	resolution_schedule_fixtures[1] = (resolution_schedule_fixture){ .entry = dns_target.ipv6_entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_MEMORY };
@@ -332,8 +323,7 @@ static bool resolution_test_generation(const hosts_table *hosts) {
 	resolution_schedule_reset(supervisor, &now);
 	resolution_schedule_fixtures[0] = (resolution_schedule_fixture){ .entry = dns_target.ipv6_entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_STARTED };
 	resolution_schedule_fixture_count = 1;
-	CHECK(route_resolution_schedule(resolution, supervisor, &now, 1) == ROUTE_PREWARM_COMPLETE && route_resolution_scheduling_complete(resolution),
-		"dynamic scheduling did not resume to completion");
+	CHECK(route_resolution_schedule(resolution, supervisor, &now, 1) == ROUTE_PREWARM_COMPLETE && route_resolution_scheduling_complete(resolution), "dynamic scheduling did not resume to completion");
 	resolver_supervisor_completion early_completion = resolution_completion(dns_target.ipv4_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_NODATA);
 	CHECK(route_resolution_completion_observe_with_supervisor(resolution, supervisor, &early_completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK,
 		"completion did not clear dynamic background ownership before route processing");
@@ -374,8 +364,7 @@ static bool resolution_test_generation(const hosts_table *hosts) {
 	CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK
 		&& route_resolution_destination_get(resolution, 3, &srv) && srv.first_terminal && srv.result == ROUTE_RESOLUTION_DESTINATION_AVAILABLE
 		&& route_resolution_warmup_complete(resolution), "SRV route did not complete after every target source reached a terminal result");
-	CHECK(route_bindings_build(routes, hosts, cache, &bindings_second) == ROUTE_BINDINGS_BUILD_OK && bindings_second != NULL,
-		"replacement bindings generation could not be built");
+	CHECK(route_bindings_build(routes, hosts, cache, &bindings_second) == ROUTE_BINDINGS_BUILD_OK && bindings_second != NULL, "replacement bindings generation could not be built");
 	CHECK(route_resolution_build(bindings_second, hosts, cache, &now, &resolution_second) == ROUTE_RESOLUTION_BUILD_OK && resolution_second != NULL
 		&& resolution_cache_entry_count(cache) == 5, "replacement coordinator did not retain fresh SRV target entries before handoff");
 	route_resolution_destroy(resolution);
@@ -422,8 +411,7 @@ static bool resolution_test_release_statuses(const hosts_table *hosts) {
 	for (size_t fixture_index = 0; fixture_index < sizeof(fixtures) / sizeof(fixtures[0]); fixture_index++) {
 		cache = resolver_cache_create();
 		CHECK(cache != NULL && resolution_bindings_build(json, hosts, cache, &config, &routes, &bindings), "release-status fixtures could not be prepared");
-		CHECK(route_resolution_build(bindings, hosts, cache, &now, &resolution) == ROUTE_RESOLUTION_BUILD_OK && resolution != NULL,
-			"release-status coordinator could not be built");
+		CHECK(route_resolution_build(bindings, hosts, cache, &now, &resolution) == ROUTE_RESOLUTION_BUILD_OK && resolution != NULL, "release-status coordinator could not be built");
 		resolver_cache_entry *entry = NULL;
 		CHECK(route_bindings_entry_get(bindings, 0, &entry), "release-status entry could not be read");
 		resolution_schedule_reset(supervisor, &now);
@@ -431,8 +419,7 @@ static bool resolution_test_release_statuses(const hosts_table *hosts) {
 		resolution_schedule_fixture_count = 1;
 		CHECK(route_resolution_schedule(resolution, supervisor, &now, 1) == ROUTE_PREWARM_MORE, "release-status interest could not be acquired");
 		resolution_release_statuses[0] = fixtures[fixture_index].input;
-		CHECK(route_resolution_background_release(resolution, supervisor, &now) == fixtures[fixture_index].output && resolution_release_count == 1,
-			"supervisor release status was mapped incorrectly");
+		CHECK(route_resolution_background_release(resolution, supervisor, &now) == fixtures[fixture_index].output && resolution_release_count == 1, "supervisor release status was mapped incorrectly");
 		CHECK(route_resolution_background_release(resolution, supervisor, &now) == ROUTE_RESOLUTION_RELEASE_OK && resolution_release_count == 1,
 			"failed background release was retried after its local marker cleared");
 		route_resolution_destroy(resolution);
@@ -553,8 +540,7 @@ static bool resolution_test_shared_targets(const hosts_table *hosts) {
 	old_ipv6_entry = first_target.ipv6_entry;
 	uint64_t old_ipv4_id = resolver_cache_entry_id(old_ipv4_entry);
 	uint64_t old_ipv6_id = resolver_cache_entry_id(old_ipv6_entry);
-	CHECK(route_bindings_destination_get(bindings, 0, &first_binding) && route_bindings_destination_get(bindings, 1, &second_binding),
-		"shared-target SRV bindings could not be read for replacement");
+	CHECK(route_bindings_destination_get(bindings, 0, &first_binding) && route_bindings_destination_get(bindings, 1, &second_binding), "shared-target SRV bindings could not be read for replacement");
 	resolution_schedule_reset((resolver_supervisor *)(uintptr_t)1, &now);
 	resolution_schedule_fixtures[0] = (resolution_schedule_fixture){ .entry = old_ipv4_entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_STARTED };
 	resolution_schedule_fixtures[1] = (resolution_schedule_fixture){ .entry = old_ipv6_entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_STARTED };
@@ -563,8 +549,7 @@ static bool resolution_test_shared_targets(const hosts_table *hosts) {
 		&& resolution_release_count == 0, "shared-target address entries could not acquire background ownership");
 	static const char *const replacement_targets[] = { "replacement.target" };
 	dns_srv_record replacement_record = { 0 };
-	CHECK(snprintf(replacement_record.target, sizeof(replacement_record.target), "%s", replacement_targets[0]) > 0,
-		"shared-target replacement record could not be prepared");
+	CHECK(snprintf(replacement_record.target, sizeof(replacement_record.target), "%s", replacement_targets[0]) > 0, "shared-target replacement record could not be prepared");
 	resolver_supervisor_completion replacement = resolution_completion(first_binding.srv_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_OK);
 	replacement.response.payload.srv.records = &replacement_record;
 	replacement.response.payload.srv.record_count = 1;
@@ -583,8 +568,7 @@ static bool resolution_test_shared_targets(const hosts_table *hosts) {
 	resolution_schedule_fixtures[0] = (resolution_schedule_fixture){ .entry = first_target.ipv4_entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_FRESH };
 	resolution_schedule_fixtures[1] = (resolution_schedule_fixture){ .entry = first_target.ipv6_entry, .status = RESOLVER_SUPERVISOR_SCHEDULE_COMPLETE };
 	resolution_schedule_fixture_count = 2;
-	CHECK(route_resolution_schedule(resolution, (resolver_supervisor *)(uintptr_t)1, &now, 2) == ROUTE_PREWARM_COMPLETE,
-		"dynamic FRESH and COMPLETE results did not remove their queue entries");
+	CHECK(route_resolution_schedule(resolution, (resolver_supervisor *)(uintptr_t)1, &now, 2) == ROUTE_PREWARM_COMPLETE, "dynamic FRESH and COMPLETE results did not remove their queue entries");
 	resolver_supervisor_completion completion = resolution_completion(first_target.ipv4_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_OK);
 	CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK, "shared IPv4 completion was not observed");
 	completion = resolution_completion(first_target.ipv6_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_OK);
@@ -623,21 +607,18 @@ static bool resolution_test_srv_terminals(const hosts_table *hosts) {
 	CHECK(route_resolution_build(bindings, hosts, cache, &now, &resolution) == ROUTE_RESOLUTION_BUILD_OK && resolution != NULL, "SRV terminal coordinator could not be built");
 	for (size_t destination_index = 0; destination_index < 2; destination_index++) {
 		route_binding_view binding;
-		CHECK(route_bindings_destination_get(bindings, destination_index, &binding) && binding.source == ROUTE_BINDING_SOURCE_DNS_SRV,
-			"SRV terminal binding was incorrect");
+		CHECK(route_bindings_destination_get(bindings, destination_index, &binding) && binding.source == ROUTE_BINDING_SOURCE_DNS_SRV, "SRV terminal binding was incorrect");
 		resolver_supervisor_completion completion = resolution_completion(binding.srv_entry, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_OK);
 		size_t record_count = destination_index == 0 ? 1U : 2U;
 		completion.response.payload.srv.records = calloc(record_count, sizeof(*completion.response.payload.srv.records));
 		CHECK(completion.response.payload.srv.records != NULL, "transient SRV completion could not be allocated");
 		completion.response.payload.srv.record_count = record_count;
-		CHECK(snprintf(completion.response.payload.srv.records[0].target, sizeof(completion.response.payload.srv.records[0].target), "%s", ".") > 0,
-			"root SRV target could not be prepared");
+		CHECK(snprintf(completion.response.payload.srv.records[0].target, sizeof(completion.response.payload.srv.records[0].target), "%s", ".") > 0, "root SRV target could not be prepared");
 		if (destination_index == 1) {
 			CHECK(snprintf(completion.response.payload.srv.records[1].target, sizeof(completion.response.payload.srv.records[1].target), "%s", "dns.target") > 0,
 				"ordinary mixed SRV target could not be prepared");
 		}
-		CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK,
-			"transient SRV terminal completion was not observed");
+		CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_OK, "transient SRV terminal completion was not observed");
 		free(completion.response.payload.srv.records);
 	}
 	route_binding_view negative_binding;
@@ -651,14 +632,12 @@ static bool resolution_test_srv_terminals(const hosts_table *hosts) {
 		"root-only SRV RRset was not service-unavailable");
 	CHECK(route_resolution_destination_get(resolution, 1, &mixed) && mixed.first_terminal && mixed.result == ROUTE_RESOLUTION_DESTINATION_CONTRADICTORY && mixed.target_count == 0,
 		"mixed root and ordinary SRV RRset was not contradictory");
-	CHECK(root.srv_records == NULL && root.srv_record_count == 0 && mixed.srv_records == NULL && mixed.srv_record_count == 0,
-		"transient SRV metadata was retained after completion observation");
+	CHECK(root.srv_records == NULL && root.srv_record_count == 0 && mixed.srv_records == NULL && mixed.srv_record_count == 0, "transient SRV metadata was retained after completion observation");
 	CHECK(route_resolution_destination_get(resolution, 2, &negative) && negative.first_terminal && negative.result == ROUTE_RESOLUTION_DESTINATION_UNAVAILABLE
 		&& route_resolution_warmup_complete(resolution), "negative SRV route was not terminal unavailable");
 	CHECK(resolver_cache_entry_acquire(cache, "unrelated.example", ns_t_a, &unrelated) == RESOLVER_CACHE_ACQUIRE_OK, "unrelated completion entry could not be acquired");
 	completion = resolution_completion(unrelated, RESOLVER_CACHE_PUBLISH_TRANSIENT, RESOLVER_IPC_LOOKUP_NODATA);
-	CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_IGNORED,
-		"unrelated generation completion was not ignored");
+	CHECK(resolution_completion_observe(resolution, &completion, &now) == ROUTE_RESOLUTION_COMPLETION_IGNORED, "unrelated generation completion was not ignored");
 	test_result = true;
 
 cleanup:

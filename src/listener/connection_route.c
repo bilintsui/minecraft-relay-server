@@ -154,7 +154,8 @@ listener_connection_progress listener_connection_route_progress(listener_connect
 				return LISTENER_CONNECTION_FATAL;
 			}
 			(void)listener_metrics_route_settle(metrics, &connection->route_metrics, LISTENER_METRICS_OUTCOME_READY,
-				listener_connection_route_metrics_family(connection), now);
+				listener_connection_route_metrics_family(connection), now
+			);
 			return LISTENER_CONNECTION_READY;
 		case ROUTE_WAITER_BAD_ARGUMENT:
 			listener_connection_route_record_error(connection, metrics, now);
@@ -177,7 +178,8 @@ listener_connection_progress listener_connection_route_progress(listener_connect
 		case ROUTE_WAITER_UNAVAILABLE:
 		default:
 			(void)listener_metrics_route_settle(metrics, &connection->route_metrics, listener_connection_route_metrics_outcome(connection->waiter_status),
-				LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
+				LISTENER_METRICS_SELECTED_FAMILY_NONE, now
+			);
 			return LISTENER_CONNECTION_READY;
 	}
 }
@@ -193,14 +195,17 @@ listener_connection_progress listener_connection_route_start(listener_connection
 	(void)listener_metrics_route_start(metrics, &connection->route_metrics, mode, now);
 	if (route == LISTENER_CONNECTION_ROUTE_SHORT_LOCAL || route == LISTENER_CONNECTION_ROUTE_WORKER_BYPASS) {
 		(void)listener_metrics_route_resolution_record(metrics, &connection->route_metrics,
-			route == LISTENER_CONNECTION_ROUTE_SHORT_LOCAL ? LISTENER_METRICS_RESOLUTION_LOCAL : LISTENER_METRICS_RESOLUTION_BYPASS);
+			route == LISTENER_CONNECTION_ROUTE_SHORT_LOCAL ? LISTENER_METRICS_RESOLUTION_LOCAL : LISTENER_METRICS_RESOLUTION_BYPASS
+		);
 		(void)listener_metrics_route_settle(metrics, &connection->route_metrics,
-			LISTENER_METRICS_OUTCOME_READY, LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
+			LISTENER_METRICS_OUTCOME_READY, LISTENER_METRICS_SELECTED_FAMILY_NONE, now
+		);
 		return LISTENER_CONNECTION_READY;
 	}
 	if (connection->inbound_proxy.family == AF_UNSPEC && !protocol_proxy_socket_read(connection->socket_fd, &connection->inbound_proxy)) {
 		(void)listener_metrics_route_settle(metrics, &connection->route_metrics,
-			LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
+			LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_NONE, now
+		);
 		return LISTENER_CONNECTION_ABORT;
 	}
 	connection->state = LISTENER_CONNECTION_ROUTE_WAITING;
@@ -208,14 +213,15 @@ listener_connection_progress listener_connection_route_start(listener_connection
 	if (create_status != ROUTE_WAITER_CREATE_OK) {
 		if (create_status == ROUTE_WAITER_CREATE_BAD_ARGUMENT || create_status == ROUTE_WAITER_CREATE_TIME) {
 			(void)listener_metrics_route_settle(metrics, &connection->route_metrics,
-				LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
+				LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_NONE, now
+			);
 			errno = create_status == ROUTE_WAITER_CREATE_TIME ? EOVERFLOW : EINVAL;
 			return LISTENER_CONNECTION_FATAL;
 		}
 		connection->waiter_status = create_status == ROUTE_WAITER_CREATE_LIMIT ? ROUTE_WAITER_LIMIT : ROUTE_WAITER_MEMORY;
 		(void)listener_metrics_route_settle(metrics, &connection->route_metrics,
-			create_status == ROUTE_WAITER_CREATE_LIMIT ? LISTENER_METRICS_OUTCOME_LIMIT : LISTENER_METRICS_OUTCOME_MEMORY,
-			LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
+			create_status == ROUTE_WAITER_CREATE_LIMIT ? LISTENER_METRICS_OUTCOME_LIMIT : LISTENER_METRICS_OUTCOME_MEMORY, LISTENER_METRICS_SELECTED_FAMILY_NONE, now
+		);
 		return LISTENER_CONNECTION_READY;
 	}
 	(void)listener_metrics_route_duration_enable(&connection->route_metrics);
@@ -227,9 +233,11 @@ listener_connection_progress listener_connection_route_start(listener_connection
 	if (!route_waiter_deadline(connection->waiter, &deadline) || listener_connection_timer_set(connection, LISTENER_CONNECTION_TIMER_ROUTE, &deadline) == -1
 		|| listener_connection_interests_update(connection, events) == -1) {
 		(void)listener_metrics_route_resolution_record(metrics, &connection->route_metrics,
-			LISTENER_METRICS_RESOLUTION_WAITED);
+			LISTENER_METRICS_RESOLUTION_WAITED
+		);
 		(void)listener_metrics_route_settle(metrics, &connection->route_metrics,
-			LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_NONE, now);
+			LISTENER_METRICS_OUTCOME_INTERNAL_ERROR, LISTENER_METRICS_SELECTED_FAMILY_NONE, now
+		);
 		return LISTENER_CONNECTION_FATAL;
 	}
 	return LISTENER_CONNECTION_PENDING;

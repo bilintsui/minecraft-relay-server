@@ -66,6 +66,25 @@ static void metrics_saturation_record(uint64_t *saturation_total) {
 	}
 }
 
+static bool metrics_timespec_subtract(const struct timespec *start, const struct timespec *end, uint64_t *nanoseconds) {
+	if (!timeutil_valid(start) || !timeutil_valid(end) || timeutil_compare(end, start) < 0) {
+		return false;
+	}
+	uintmax_t seconds = (uintmax_t)end->tv_sec - (uintmax_t)start->tv_sec;
+	uintmax_t remainder;
+	if (end->tv_nsec < start->tv_nsec) {
+		seconds--;
+		remainder = UINTMAX_C(1000000000) + (uintmax_t)end->tv_nsec - (uintmax_t)start->tv_nsec;
+	} else {
+		remainder = (uintmax_t)end->tv_nsec - (uintmax_t)start->tv_nsec;
+	}
+	if (seconds > (UINT64_MAX - remainder) / UINT64_C(1000000000)) {
+		return false;
+	}
+	*nanoseconds = (uint64_t)(seconds * UINTMAX_C(1000000000) + remainder);
+	return true;
+}
+
 static bool metrics_value_add(uint64_t *value, uint64_t amount) {
 	if (UINT64_MAX - *value < amount) {
 		*value = UINT64_MAX;
@@ -86,25 +105,6 @@ static void metrics_histogram_observe(metrics_histogram *histogram, const uint64
 	if (!exact) {
 		metrics_saturation_record(saturation_total);
 	}
-}
-
-static bool metrics_timespec_subtract(const struct timespec *start, const struct timespec *end, uint64_t *nanoseconds) {
-	if (!timeutil_valid(start) || !timeutil_valid(end) || timeutil_compare(end, start) < 0) {
-		return false;
-	}
-	uintmax_t seconds = (uintmax_t)end->tv_sec - (uintmax_t)start->tv_sec;
-	uintmax_t remainder;
-	if (end->tv_nsec < start->tv_nsec) {
-		seconds--;
-		remainder = UINTMAX_C(1000000000) + (uintmax_t)end->tv_nsec - (uintmax_t)start->tv_nsec;
-	} else {
-		remainder = (uintmax_t)end->tv_nsec - (uintmax_t)start->tv_nsec;
-	}
-	if (seconds > (UINT64_MAX - remainder) / UINT64_C(1000000000)) {
-		return false;
-	}
-	*nanoseconds = (uint64_t)(seconds * UINTMAX_C(1000000000) + remainder);
-	return true;
 }
 
 /* section: functions (exported) */

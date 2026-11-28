@@ -28,10 +28,6 @@
 #define RESOLVER_CACHE_HASH_PRIME	UINT64_C(1099511628211)
 
 /* section: types */
-typedef enum {
-	RESOLVER_CACHE_PAYLOAD_ADDRESS,
-	RESOLVER_CACHE_PAYLOAD_SRV
-} resolver_cache_payload_type;
 typedef struct {
 	uint64_t entries_high_water;
 	uint64_t owned_bytes_high_water;
@@ -39,6 +35,10 @@ typedef struct {
 	uint64_t saturation_total;
 	metrics_histogram ttl[METRICS_RESOLVER_QUERY_TYPE_COUNT][METRICS_PAYLOAD_KIND_COUNT];
 } resolver_cache_metrics_state;
+typedef enum {
+	RESOLVER_CACHE_PAYLOAD_ADDRESS,
+	RESOLVER_CACHE_PAYLOAD_SRV
+} resolver_cache_payload_type;
 typedef struct {
 	struct timespec completed_at;
 	struct timespec expires_at;
@@ -70,6 +70,19 @@ struct resolver_cache {
 };
 
 /* section: functions (local) */
+static bool resolver_cache_address_result_size(const dns_address_result *result, size_t *result_size) {
+	size_t size = sizeof(resolver_cache_payload);
+	size_t array_size;
+	if (!resolver_size_multiply(result->address_count, sizeof(*result->addresses), &array_size) || !resolver_size_add(&size, array_size)) {
+		return false;
+	}
+	if (result->cnames != NULL && (!resolver_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(*result->cnames), &array_size) || !resolver_size_add(&size, array_size))) {
+		return false;
+	}
+	*result_size = size;
+	return true;
+}
+
 static resolver_cache_entry *resolver_cache_entry_find(const resolver_cache *cache, const char *name, uint16_t query_type, uint64_t hash) {
 	size_t bucket_index = (size_t)(hash % cache->bucket_count);
 	for (resolver_cache_entry *entry = cache->buckets[bucket_index]; entry != NULL; entry = entry->next) {
@@ -97,6 +110,24 @@ static void resolver_cache_entry_payload_clear(resolver_cache_entry *entry) {
 		entry->cache->owned_bytes = 0;
 	}
 	free(payload);
+}
+
+static bool resolver_cache_expiry_calculate(const struct timespec *completed_at, uint32_t ttl, struct timespec *expires_at) {
+	if (!timeutil_valid(completed_at) || expires_at == NULL) {
+		return false;
+	}
+	uintmax_t completed_seconds = (uintmax_t)completed_at->tv_sec;
+	if (completed_seconds > UINTMAX_MAX - ttl) {
+		return false;
+	}
+	uintmax_t expiry_seconds = completed_seconds + ttl;
+	time_t converted_seconds = (time_t)expiry_seconds;
+	if (converted_seconds < 0 || (uintmax_t)converted_seconds != expiry_seconds) {
+		return false;
+	}
+	*expires_at = *completed_at;
+	expires_at->tv_sec = converted_seconds;
+	return true;
 }
 
 static uint64_t resolver_cache_hash(const char *name, uint16_t query_type) {
@@ -171,6 +202,54 @@ static metrics_query_type resolver_cache_metrics_query_type(uint16_t query_type)
 	}
 }
 
+static resolver_cache_publish_status resolver_cache_entry_payload_publish(resolver_cache_entry *entry, resolver_cache_payload_type payload_type, resolver_cache_view_status view_status,
+	const struct timespec *completed_at, uint32_t ttl, size_t result_size, void *result) {
+	resolver_cache *cache = entry->cache;
+	resolver_cache_metrics_query *metrics = &cache->metrics.query[resolver_cache_metrics_query_type(entry->query_type)];
+	if (!timeutil_valid(completed_at)) {
+		return RESOLVER_CACHE_PUBLISH_TIME;
+	}
+	if (result_size > (size_t)RESOLVER_CACHE_RESULT_BYTE_LIMIT) {
+		resolver_cache_metrics_increment(cache, &metrics->publish_limit_result_bytes);
+		return RESOLVER_CACHE_PUBLISH_LIMIT;
+	}
+	if (ttl == 0) {
+		resolver_cache_entry_payload_clear(entry);
+		return RESOLVER_CACHE_PUBLISH_TRANSIENT;
+	}
+	struct timespec expires_at;
+	if (!resolver_cache_expiry_calculate(completed_at, ttl, &expires_at)) {
+		return RESOLVER_CACHE_PUBLISH_TIME;
+	}
+	size_t old_payload_size = entry->payload == NULL ? 0 : entry->payload->owned_bytes;
+	size_t retained_size = cache->owned_bytes - old_payload_size;
+	if (result_size > (size_t)RESOLVER_CACHE_OWNED_BYTE_LIMIT || retained_size > (size_t)RESOLVER_CACHE_OWNED_BYTE_LIMIT - result_size) {
+		resolver_cache_metrics_increment(cache, &metrics->publish_limit_owned_bytes);
+		return RESOLVER_CACHE_PUBLISH_LIMIT;
+	}
+	resolver_cache_payload *payload = calloc(1, sizeof(*payload));
+	if (payload == NULL) {
+		return RESOLVER_CACHE_PUBLISH_MEMORY;
+	}
+	payload->completed_at = *completed_at;
+	payload->expires_at = expires_at;
+	payload->owned_bytes = result_size;
+	payload->status = view_status;
+	payload->type = payload_type;
+	if (payload_type == RESOLVER_CACHE_PAYLOAD_ADDRESS) {
+		payload->result.address = *((dns_address_result *)result);
+		memset(result, 0, sizeof(dns_address_result));
+	} else {
+		payload->result.srv = *((dns_srv_result *)result);
+		memset(result, 0, sizeof(dns_srv_result));
+	}
+	resolver_cache_entry_payload_clear(entry);
+	entry->payload = payload;
+	cache->owned_bytes += result_size;
+	metrics_high_water_update(&cache->metrics.owned_bytes_high_water, cache->owned_bytes);
+	return RESOLVER_CACHE_PUBLISH_STORED;
+}
+
 static void resolver_cache_metrics_value_record(resolver_cache *cache, metrics_query_type query, resolver_cache_view_status status, uint32_t ttl) {
 	metrics_payload_kind kind = resolver_cache_metrics_payload_kind(status);
 	resolver_cache_metrics_query *metrics = &cache->metrics.query[query];
@@ -222,19 +301,6 @@ static bool resolver_cache_query_type_valid(uint16_t query_type) {
 static bool resolver_cache_question_matches(const resolver_cache_entry *entry, const char *question_name) {
 	char normalized[NS_MAXDNAME];
 	return resolver_name_normalize(question_name, normalized) && strcmp(entry->name, normalized) == 0;
-}
-
-static bool resolver_cache_address_result_size(const dns_address_result *result, size_t *result_size) {
-	size_t size = sizeof(resolver_cache_payload);
-	size_t array_size;
-	if (!resolver_size_multiply(result->address_count, sizeof(*result->addresses), &array_size) || !resolver_size_add(&size, array_size)) {
-		return false;
-	}
-	if (result->cnames != NULL && (!resolver_size_multiply(DNS_CNAME_DEPTH_LIMIT, sizeof(*result->cnames), &array_size) || !resolver_size_add(&size, array_size))) {
-		return false;
-	}
-	*result_size = size;
-	return true;
 }
 
 static bool resolver_cache_address_result_validate(const resolver_cache_entry *entry, dns_address_lookup_status lookup_status, const dns_address_result *result, uint32_t *ttl,
@@ -315,72 +381,6 @@ static bool resolver_cache_srv_result_validate(const resolver_cache_entry *entry
 	*ttl = result->negative.valid ? result->negative.effective_ttl : 0;
 	*view_status = lookup_status == DNS_SRV_LOOKUP_NODATA ? RESOLVER_CACHE_VIEW_FRESH_NODATA : RESOLVER_CACHE_VIEW_FRESH_NXDOMAIN;
 	return true;
-}
-
-static bool resolver_cache_expiry_calculate(const struct timespec *completed_at, uint32_t ttl, struct timespec *expires_at) {
-	if (!timeutil_valid(completed_at) || expires_at == NULL) {
-		return false;
-	}
-	uintmax_t completed_seconds = (uintmax_t)completed_at->tv_sec;
-	if (completed_seconds > UINTMAX_MAX - ttl) {
-		return false;
-	}
-	uintmax_t expiry_seconds = completed_seconds + ttl;
-	time_t converted_seconds = (time_t)expiry_seconds;
-	if (converted_seconds < 0 || (uintmax_t)converted_seconds != expiry_seconds) {
-		return false;
-	}
-	*expires_at = *completed_at;
-	expires_at->tv_sec = converted_seconds;
-	return true;
-}
-
-static resolver_cache_publish_status resolver_cache_entry_payload_publish(resolver_cache_entry *entry, resolver_cache_payload_type payload_type, resolver_cache_view_status view_status,
-	const struct timespec *completed_at, uint32_t ttl, size_t result_size, void *result) {
-	resolver_cache *cache = entry->cache;
-	resolver_cache_metrics_query *metrics = &cache->metrics.query[resolver_cache_metrics_query_type(entry->query_type)];
-	if (!timeutil_valid(completed_at)) {
-		return RESOLVER_CACHE_PUBLISH_TIME;
-	}
-	if (result_size > (size_t)RESOLVER_CACHE_RESULT_BYTE_LIMIT) {
-		resolver_cache_metrics_increment(cache, &metrics->publish_limit_result_bytes);
-		return RESOLVER_CACHE_PUBLISH_LIMIT;
-	}
-	if (ttl == 0) {
-		resolver_cache_entry_payload_clear(entry);
-		return RESOLVER_CACHE_PUBLISH_TRANSIENT;
-	}
-	struct timespec expires_at;
-	if (!resolver_cache_expiry_calculate(completed_at, ttl, &expires_at)) {
-		return RESOLVER_CACHE_PUBLISH_TIME;
-	}
-	size_t old_payload_size = entry->payload == NULL ? 0 : entry->payload->owned_bytes;
-	size_t retained_size = cache->owned_bytes - old_payload_size;
-	if (result_size > (size_t)RESOLVER_CACHE_OWNED_BYTE_LIMIT || retained_size > (size_t)RESOLVER_CACHE_OWNED_BYTE_LIMIT - result_size) {
-		resolver_cache_metrics_increment(cache, &metrics->publish_limit_owned_bytes);
-		return RESOLVER_CACHE_PUBLISH_LIMIT;
-	}
-	resolver_cache_payload *payload = calloc(1, sizeof(*payload));
-	if (payload == NULL) {
-		return RESOLVER_CACHE_PUBLISH_MEMORY;
-	}
-	payload->completed_at = *completed_at;
-	payload->expires_at = expires_at;
-	payload->owned_bytes = result_size;
-	payload->status = view_status;
-	payload->type = payload_type;
-	if (payload_type == RESOLVER_CACHE_PAYLOAD_ADDRESS) {
-		payload->result.address = *((dns_address_result *)result);
-		memset(result, 0, sizeof(dns_address_result));
-	} else {
-		payload->result.srv = *((dns_srv_result *)result);
-		memset(result, 0, sizeof(dns_srv_result));
-	}
-	resolver_cache_entry_payload_clear(entry);
-	entry->payload = payload;
-	cache->owned_bytes += result_size;
-	metrics_high_water_update(&cache->metrics.owned_bytes_high_water, cache->owned_bytes);
-	return RESOLVER_CACHE_PUBLISH_STORED;
 }
 
 /* section: functions (exported) */

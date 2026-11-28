@@ -48,6 +48,45 @@ static failure_schedule fdopen_failure;
 static int fdopen_injected_fd = -1;
 
 /* section: functions (local) */
+static bool daemon_stderr_check(bool use_socket) {
+	int ends[2];
+	if ((use_socket ? socketpair(AF_UNIX, SOCK_STREAM, 0, ends) : pipe(ends)) == -1 || dup2(ends[1], STDERR_FILENO) == -1) {
+		return false;
+	}
+	log_stderr_prepare();
+	if ((fcntl(ends[1], F_GETFL) & O_NONBLOCK) != 0) {
+		return false;
+	}
+	close(ends[1]);
+	const char expected[] = "[CRIT] diagnostic\n\n";
+	char record[sizeof(expected)];
+	if (mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, MKSYS_PARAGRAPH_END, "diagnostic") != 0
+		|| read(ends[0], record, sizeof(record)) != (ssize_t)(sizeof(expected) - 1) || memcmp(record, expected, sizeof(expected) - 1) != 0) {
+		return false;
+	}
+	/* A full sink reports an unwritten record without waiting for the reader. */
+	char payload[1024];
+	memset(payload, 'x', sizeof(payload) - 1);
+	payload[sizeof(payload) - 1] = '\0';
+	while (MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "%s", payload) == 0) {}
+	close(ends[0]);
+	if (MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "closed sink") != 1) {
+		return false;
+	}
+	sigset_t mask, pending;
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGPIPE);
+	return sigprocmask(SIG_BLOCK, &mask, NULL) == 0 && raise(SIGPIPE) == 0
+		&& MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "closed sink with pending signal") == 1 && sigpending(&pending) == 0 && sigismember(&pending, SIGPIPE) == 1;
+}
+
+static bool directory_test(const char *directory) {
+	errno = 0;
+	CHECK(log_file_validate(directory) == -1 && errno == EISDIR, "validation accepted a directory path");
+	CHECK(mksysmsg(MKSYS_PREFIX_ON, directory, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "never lands") == 1, "directory open failure was not reported");
+	return true;
+}
+
 static bool failure_schedule_hit(failure_schedule *schedule) {
 	if (!schedule->enabled) {
 		return false;
@@ -62,6 +101,25 @@ static void failure_schedule_set(failure_schedule *schedule, bool enabled, size_
 	schedule->first = first;
 	schedule->index = 0;
 	schedule->last = last;
+}
+
+static bool fifo_test(const char *directory) {
+	char filename[256];
+	int reader = -1;
+	/* The alarm covers every open below: removing O_NONBLOCK would otherwise hang the whole test. */
+	alarm(5);
+	snprintf(filename, sizeof(filename), "%s/pipe.log", directory);
+	CHECK(mkfifo(filename, 0600) == 0, "cannot create the FIFO probe");
+	CHECK(log_file_validate(filename) == -1 && errno == ENXIO, "reader-less FIFO did not fail at open");
+	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "never lands") == 1, "reader-less FIFO failure was not reported");
+	reader = open(filename, O_RDONLY | O_NONBLOCK);
+	CHECK(reader != -1, "cannot open the FIFO reader probe");
+	CHECK(log_file_validate(filename) == -1 && errno == EIO, "FIFO was accepted by the type check");
+	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "never lands") == 1, "FIFO type failure was not reported");
+	close(reader);
+	reader = -1;
+	alarm(0);
+	return true;
 }
 
 static bool file_read(const char *filename, char *buffer, size_t capacity, size_t *size) {
@@ -95,6 +153,38 @@ static bool file_contains(const char *filename, const char *needle) {
 	return file_read(filename, buffer, sizeof(buffer), &size) && strstr(buffer, needle) != NULL;
 }
 
+static bool append_test(const char *directory) {
+	char filename[256];
+	struct stat file_status;
+	snprintf(filename, sizeof(filename), "%s/append.log", directory);
+	CHECK(log_file_validate(filename) == 0, "validation of a fresh log path failed");
+	/* The validated file is created and kept in place instead of being probed and unlinked. */
+	CHECK(stat(filename, &file_status) == 0 && file_status.st_size == 0, "validated log file was not kept in place");
+	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "first line") == 0, "first append failed");
+	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "second line") == 0, "second append failed");
+	CHECK(file_contains(filename, "[INFO] first line") && file_contains(filename, "[INFO] second line"), "appended lines were not written");
+	return true;
+}
+
+static bool fclose_failure_test(const char *directory) {
+	char filename[256];
+	snprintf(filename, sizeof(filename), "%s/fclose.log", directory);
+	CHECK(log_file_validate(filename) == 0, "cannot prepare the fclose failure probe");
+	fclose_injected_fd = -1;
+	failure_schedule_set(&fclose_failure, true, 1, 2);
+	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "close call zero") == 0, "fclose schedule failed before its range");
+	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "close call one") == 1, "first scheduled fclose failure was not reported");
+	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "close call two") == 1, "second scheduled fclose failure was not reported");
+	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "close call three") == 0, "fclose schedule remained active past its range");
+	failure_schedule_set(&fclose_failure, false, 0, 0);
+	CHECK(fclose_injected_fd >= 0, "fclose failure was not injected");
+	errno = 0;
+	CHECK(fcntl(fclose_injected_fd, F_GETFD) == -1 && errno == EBADF, "fclose injection leaked the log descriptor");
+	CHECK(file_contains(filename, "close call zero") && file_contains(filename, "close call one") && file_contains(filename, "close call two") && file_contains(filename, "close call three"),
+		"post-close failure incorrectly implied that a line was absent");
+	return true;
+}
+
 static bool file_seed(const char *filename, const char *content) {
 	FILE *file = fopen(filename, "wb");
 	if (file == NULL) {
@@ -114,6 +204,49 @@ static bool file_size(const char *filename, off_t *size) {
 	return true;
 }
 
+static bool fdopen_failure_test(const char *directory) {
+	char filename[256];
+	off_t initial_size;
+	off_t final_size;
+	snprintf(filename, sizeof(filename), "%s/fdopen.log", directory);
+	CHECK(log_file_validate(filename) == 0 && file_size(filename, &initial_size), "cannot prepare the fdopen failure probe");
+	fdopen_injected_fd = -1;
+	failure_schedule_set(&fdopen_failure, true, 0, 0);
+	int result = mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "fdopen failure probe");
+	failure_schedule_set(&fdopen_failure, false, 0, 0);
+	CHECK(result == 1, "fdopen failure was not reported");
+	CHECK(fdopen_injected_fd >= 0, "fdopen failure was not injected");
+	errno = 0;
+	CHECK(fcntl(fdopen_injected_fd, F_GETFD) == -1 && errno == EBADF, "fdopen failure leaked the log descriptor");
+	CHECK(file_size(filename, &final_size) && final_size == initial_size, "fdopen failure wrote a log line");
+	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "fdopen recovered") == 0, "logging did not recover after fdopen injection");
+	return true;
+}
+
+static bool filter_test(const char *directory) {
+	char filename[256];
+	snprintf(filename, sizeof(filename), "%s/missing/filter.log", directory);
+	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_CRITICAL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "filtered") == 0, "filtered line reported an unattempted sink failure");
+	return true;
+}
+
+static void log_file_cleanup(const char *directory) {
+	static const char *const names[] = { "append.log", "fdopen.log", "fclose.log", "partial.log", "pipe.log", "real.log", "link.log", "zero.log" };
+	char filename[256];
+	for (size_t index = 0; index < sizeof(names) / sizeof(names[0]); index++) {
+		snprintf(filename, sizeof(filename), "%s/%s", directory, names[index]);
+		(void)unlink(filename);
+	}
+	(void)rmdir(directory);
+}
+
+static bool prefix_off_failure_test(const char *directory) {
+	char filename[256];
+	snprintf(filename, sizeof(filename), "%s/missing/prefix-off.log", directory);
+	CHECK(mksysmsg(MKSYS_PREFIX_OFF, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "prefix-off failure") == 1, "prefix-off non-TTY path discarded the file sink failure");
+	return true;
+}
+
 static bool process_wait_success(pid_t process_id) {
 	int status;
 	pid_t waited;
@@ -121,6 +254,31 @@ static bool process_wait_success(pid_t process_id) {
 		waited = waitpid(process_id, &status, 0);
 	} while (waited == -1 && errno == EINTR);
 	return waited == process_id && WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS;
+}
+
+static bool console_failure_test(void) {
+	pid_t process_id = fork();
+	CHECK(process_id != -1, "cannot fork the console failure probe");
+	if (process_id == 0) {
+		if (close(STDERR_FILENO) == -1) {
+			_exit(EXIT_FAILURE);
+		}
+		int result = mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, MKSYS_LINE_END, "console failure probe");
+		_exit(result == 1 ? EXIT_SUCCESS : EXIT_FAILURE);
+	}
+	CHECK(process_wait_success(process_id), "console sink failure was not reported");
+	return true;
+}
+
+static bool daemon_stderr_test(bool use_socket) {
+	pid_t pid = fork();
+	CHECK(pid != -1, "cannot fork the daemon stderr test");
+	if (pid == 0) {
+		alarm(5);
+		signal(SIGPIPE, SIG_DFL);
+		_exit(daemon_stderr_check(use_socket) ? EXIT_SUCCESS : EXIT_FAILURE);
+	}
+	return process_wait_success(pid);
 }
 
 static bool rlimit_log_failure(const char *filename, rlim_t limit) {
@@ -147,164 +305,6 @@ static bool rlimit_log_failure(const char *filename, rlim_t limit) {
 	return process_wait_success(process_id);
 }
 
-static bool append_test(const char *directory) {
-	char filename[256];
-	struct stat file_status;
-	snprintf(filename, sizeof(filename), "%s/append.log", directory);
-	CHECK(log_file_validate(filename) == 0, "validation of a fresh log path failed");
-	/* The validated file is created and kept in place instead of being probed and unlinked. */
-	CHECK(stat(filename, &file_status) == 0 && file_status.st_size == 0, "validated log file was not kept in place");
-	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "first line") == 0, "first append failed");
-	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "second line") == 0, "second append failed");
-	CHECK(file_contains(filename, "[INFO] first line") && file_contains(filename, "[INFO] second line"), "appended lines were not written");
-	return true;
-}
-
-static bool console_failure_test(void) {
-	pid_t process_id = fork();
-	CHECK(process_id != -1, "cannot fork the console failure probe");
-	if (process_id == 0) {
-		if (close(STDERR_FILENO) == -1) {
-			_exit(EXIT_FAILURE);
-		}
-		int result = mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, MKSYS_LINE_END, "console failure probe");
-		_exit(result == 1 ? EXIT_SUCCESS : EXIT_FAILURE);
-	}
-	CHECK(process_wait_success(process_id), "console sink failure was not reported");
-	return true;
-}
-
-static bool daemon_stderr_check(bool use_socket) {
-	int ends[2];
-	if ((use_socket ? socketpair(AF_UNIX, SOCK_STREAM, 0, ends) : pipe(ends)) == -1 || dup2(ends[1], STDERR_FILENO) == -1) {
-		return false;
-	}
-	log_stderr_prepare();
-	if ((fcntl(ends[1], F_GETFL) & O_NONBLOCK) != 0) {
-		return false;
-	}
-	close(ends[1]);
-	const char expected[] = "[CRIT] diagnostic\n\n";
-	char record[sizeof(expected)];
-	if (mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, MKSYS_PARAGRAPH_END, "diagnostic") != 0
-		|| read(ends[0], record, sizeof(record)) != (ssize_t)(sizeof(expected) - 1) || memcmp(record, expected, sizeof(expected) - 1) != 0) {
-		return false;
-	}
-	/* A full sink reports an unwritten record without waiting for the reader. */
-	char payload[1024];
-	memset(payload, 'x', sizeof(payload) - 1);
-	payload[sizeof(payload) - 1] = '\0';
-	while (MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "%s", payload) == 0) {}
-	close(ends[0]);
-	if (MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "closed sink") != 1) {
-		return false;
-	}
-	sigset_t mask, pending;
-	sigemptyset(&mask);
-	sigaddset(&mask, SIGPIPE);
-	return sigprocmask(SIG_BLOCK, &mask, NULL) == 0 && raise(SIGPIPE) == 0
-		&& MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "closed sink with pending signal") == 1 && sigpending(&pending) == 0 && sigismember(&pending, SIGPIPE) == 1;
-}
-
-static bool daemon_stderr_test(bool use_socket) {
-	pid_t pid = fork();
-	CHECK(pid != -1, "cannot fork the daemon stderr test");
-	if (pid == 0) {
-		alarm(5);
-		signal(SIGPIPE, SIG_DFL);
-		_exit(daemon_stderr_check(use_socket) ? EXIT_SUCCESS : EXIT_FAILURE);
-	}
-	return process_wait_success(pid);
-}
-
-static bool directory_test(const char *directory) {
-	errno = 0;
-	CHECK(log_file_validate(directory) == -1 && errno == EISDIR, "validation accepted a directory path");
-	CHECK(mksysmsg(MKSYS_PREFIX_ON, directory, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "never lands") == 1, "directory open failure was not reported");
-	return true;
-}
-
-static bool fdopen_failure_test(const char *directory) {
-	char filename[256];
-	off_t initial_size;
-	off_t final_size;
-	snprintf(filename, sizeof(filename), "%s/fdopen.log", directory);
-	CHECK(log_file_validate(filename) == 0 && file_size(filename, &initial_size), "cannot prepare the fdopen failure probe");
-	fdopen_injected_fd = -1;
-	failure_schedule_set(&fdopen_failure, true, 0, 0);
-	int result = mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "fdopen failure probe");
-	failure_schedule_set(&fdopen_failure, false, 0, 0);
-	CHECK(result == 1, "fdopen failure was not reported");
-	CHECK(fdopen_injected_fd >= 0, "fdopen failure was not injected");
-	errno = 0;
-	CHECK(fcntl(fdopen_injected_fd, F_GETFD) == -1 && errno == EBADF, "fdopen failure leaked the log descriptor");
-	CHECK(file_size(filename, &final_size) && final_size == initial_size, "fdopen failure wrote a log line");
-	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "fdopen recovered") == 0, "logging did not recover after fdopen injection");
-	return true;
-}
-
-static bool fifo_test(const char *directory) {
-	char filename[256];
-	int reader = -1;
-	/* The alarm covers every open below: removing O_NONBLOCK would otherwise hang the whole test. */
-	alarm(5);
-	snprintf(filename, sizeof(filename), "%s/pipe.log", directory);
-	CHECK(mkfifo(filename, 0600) == 0, "cannot create the FIFO probe");
-	CHECK(log_file_validate(filename) == -1 && errno == ENXIO, "reader-less FIFO did not fail at open");
-	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "never lands") == 1, "reader-less FIFO failure was not reported");
-	reader = open(filename, O_RDONLY | O_NONBLOCK);
-	CHECK(reader != -1, "cannot open the FIFO reader probe");
-	CHECK(log_file_validate(filename) == -1 && errno == EIO, "FIFO was accepted by the type check");
-	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "never lands") == 1, "FIFO type failure was not reported");
-	close(reader);
-	reader = -1;
-	alarm(0);
-	return true;
-}
-
-static bool filter_test(const char *directory) {
-	char filename[256];
-	snprintf(filename, sizeof(filename), "%s/missing/filter.log", directory);
-	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_CRITICAL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "filtered") == 0, "filtered line reported an unattempted sink failure");
-	return true;
-}
-
-static bool fclose_failure_test(const char *directory) {
-	char filename[256];
-	snprintf(filename, sizeof(filename), "%s/fclose.log", directory);
-	CHECK(log_file_validate(filename) == 0, "cannot prepare the fclose failure probe");
-	fclose_injected_fd = -1;
-	failure_schedule_set(&fclose_failure, true, 1, 2);
-	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "close call zero") == 0, "fclose schedule failed before its range");
-	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "close call one") == 1, "first scheduled fclose failure was not reported");
-	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "close call two") == 1, "second scheduled fclose failure was not reported");
-	CHECK(mksysmsg(MKSYS_PREFIX_ON, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "close call three") == 0, "fclose schedule remained active past its range");
-	failure_schedule_set(&fclose_failure, false, 0, 0);
-	CHECK(fclose_injected_fd >= 0, "fclose failure was not injected");
-	errno = 0;
-	CHECK(fcntl(fclose_injected_fd, F_GETFD) == -1 && errno == EBADF, "fclose injection leaked the log descriptor");
-	CHECK(file_contains(filename, "close call zero") && file_contains(filename, "close call one") && file_contains(filename, "close call two") && file_contains(filename, "close call three"),
-		"post-close failure incorrectly implied that a line was absent");
-	return true;
-}
-
-static void log_file_cleanup(const char *directory) {
-	static const char *const names[] = { "append.log", "fdopen.log", "fclose.log", "partial.log", "pipe.log", "real.log", "link.log", "zero.log" };
-	char filename[256];
-	for (size_t index = 0; index < sizeof(names) / sizeof(names[0]); index++) {
-		snprintf(filename, sizeof(filename), "%s/%s", directory, names[index]);
-		(void)unlink(filename);
-	}
-	(void)rmdir(directory);
-}
-
-static bool prefix_off_failure_test(const char *directory) {
-	char filename[256];
-	snprintf(filename, sizeof(filename), "%s/missing/prefix-off.log", directory);
-	CHECK(mksysmsg(MKSYS_PREFIX_OFF, filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "prefix-off failure") == 1, "prefix-off non-TTY path discarded the file sink failure");
-	return true;
-}
-
 static bool rlimit_failure_test(const char *directory) {
 	char buffer[BUFSIZ];
 	char partial_filename[256];
@@ -324,8 +324,7 @@ static bool rlimit_failure_test(const char *directory) {
 	CHECK(file_size(partial_filename, &size) && size == baseline + partial_bytes, "partial RLIMIT_FSIZE probe wrote the wrong byte count");
 	CHECK(file_read(partial_filename, buffer, sizeof(buffer), &read_size) && read_size == (size_t)size && buffer[baseline] == '['
 		&& memchr(buffer + baseline, '\n', (size_t)partial_bytes) == NULL, "partial RLIMIT_FSIZE probe did not leave an unterminated prefix");
-	CHECK(mksysmsg(MKSYS_PREFIX_ON, partial_filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "after partial") == 0,
-		"logging did not recover after the RLIMIT_FSIZE child exited");
+	CHECK(mksysmsg(MKSYS_PREFIX_ON, partial_filename, MKSYS_LEVEL_ALL, MKSYS_LEVEL_INFORMATION, MKSYS_LINE_END, "after partial") == 0, "logging did not recover after the RLIMIT_FSIZE child exited");
 	CHECK(file_read(partial_filename, buffer, sizeof(buffer), &read_size) && read_size > (size_t)(baseline + partial_bytes) && buffer[baseline + partial_bytes] == '[',
 		"the next complete record was not glued directly to the truncated record");
 	return true;

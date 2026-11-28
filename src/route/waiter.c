@@ -51,28 +51,6 @@ struct route_waiter {
 };
 
 /* section: functions (local) */
-static void route_waiter_entry_overlay_clear(route_waiter_entry *entry) {
-	free((void *)entry->overlay.addresses);
-	free((void *)entry->overlay.srv_records);
-	memset(&entry->overlay, 0, sizeof(entry->overlay));
-	entry->overlay.entry = entry->entry;
-}
-
-static route_waiter_completion_status route_waiter_entry_overlay_records_copy(route_waiter_entry *entry, size_t record_count, size_t record_limit, size_t record_size, const void *source, void **result) {
-	if (record_count == 0 || record_count > record_limit || record_size == 0 || source == NULL || result == NULL || record_count > SIZE_MAX / record_size) {
-		entry->overlay.status = ROUTE_ENDPOINT_OVERLAY_UNAVAILABLE;
-		return ROUTE_WAITER_COMPLETION_BAD_ARGUMENT;
-	}
-	void *records = malloc(record_count * record_size);
-	if (records == NULL) {
-		entry->overlay.status = ROUTE_ENDPOINT_OVERLAY_UNAVAILABLE;
-		return ROUTE_WAITER_COMPLETION_MEMORY;
-	}
-	memcpy(records, source, record_count * record_size);
-	*result = records;
-	return ROUTE_WAITER_COMPLETION_OK;
-}
-
 static route_waiter_destroy_status route_waiter_destroy_status_from_release(resolver_supervisor_release_status status) {
 	switch (status) {
 		case RESOLVER_SUPERVISOR_RELEASE_OK:
@@ -92,18 +70,13 @@ static route_waiter_destroy_status route_waiter_destroy_status_merge(route_waite
 	return result == ROUTE_WAITER_DESTROY_OK ? status : result;
 }
 
-static route_waiter_status route_waiter_status_from_destroy(route_waiter_destroy_status status) {
-	switch (status) {
-		case ROUTE_WAITER_DESTROY_IO:
-			return ROUTE_WAITER_IO;
-		case ROUTE_WAITER_DESTROY_TIME:
-			return ROUTE_WAITER_TIME;
-		case ROUTE_WAITER_DESTROY_BAD_ARGUMENT:
-			return ROUTE_WAITER_BAD_ARGUMENT;
-		case ROUTE_WAITER_DESTROY_OK:
-		default:
-			return ROUTE_WAITER_PENDING;
+static route_waiter_entry *route_waiter_entry_find(route_waiter *waiter, const resolver_cache_entry *entry) {
+	for (size_t entry_index = 0; entry_index < ROUTE_ENDPOINT_REQUIREMENT_LIMIT; entry_index++) {
+		if (waiter->entries[entry_index].entry == entry) {
+			return &waiter->entries[entry_index];
+		}
 	}
+	return NULL;
 }
 
 static route_waiter_destroy_status route_waiter_entry_interest_release(route_waiter_entry *entry, resolver_supervisor *supervisor, const struct timespec *now) {
@@ -123,6 +96,28 @@ static route_waiter_destroy_status route_waiter_entry_interest_release(route_wai
 		release_status = resolver_supervisor_entry_interactive_release(supervisor, entry->entry, now);
 	}
 	return route_waiter_destroy_status_from_release(release_status);
+}
+
+static route_waiter_destroy_status route_waiter_entries_interests_release(route_waiter *waiter, resolver_supervisor *supervisor, const struct timespec *now) {
+	if (waiter == NULL) {
+		return ROUTE_WAITER_DESTROY_BAD_ARGUMENT;
+	}
+	route_waiter_destroy_status result = ROUTE_WAITER_DESTROY_OK;
+	for (size_t entry_index = 0; entry_index < ROUTE_ENDPOINT_REQUIREMENT_LIMIT; entry_index++) {
+		route_waiter_entry *entry = &waiter->entries[entry_index];
+		if (entry->interest) {
+			route_waiter_destroy_status status = route_waiter_entry_interest_release(entry, supervisor, now);
+			result = route_waiter_destroy_status_merge(result, status);
+		}
+	}
+	return result;
+}
+
+static void route_waiter_entry_overlay_clear(route_waiter_entry *entry) {
+	free((void *)entry->overlay.addresses);
+	free((void *)entry->overlay.srv_records);
+	memset(&entry->overlay, 0, sizeof(entry->overlay));
+	entry->overlay.entry = entry->entry;
 }
 
 static route_waiter_destroy_status route_waiter_entry_clear(route_waiter_entry *entry, resolver_supervisor *supervisor, const struct timespec *now) {
@@ -146,13 +141,19 @@ static void route_waiter_entry_dispose(route_waiter_entry *entry) {
 	memset(entry, 0, sizeof(*entry));
 }
 
-static route_waiter_entry *route_waiter_entry_find(route_waiter *waiter, const resolver_cache_entry *entry) {
-	for (size_t entry_index = 0; entry_index < ROUTE_ENDPOINT_REQUIREMENT_LIMIT; entry_index++) {
-		if (waiter->entries[entry_index].entry == entry) {
-			return &waiter->entries[entry_index];
-		}
+static route_waiter_completion_status route_waiter_entry_overlay_records_copy(route_waiter_entry *entry, size_t record_count, size_t record_limit, size_t record_size, const void *source, void **result) {
+	if (record_count == 0 || record_count > record_limit || record_size == 0 || source == NULL || result == NULL || record_count > SIZE_MAX / record_size) {
+		entry->overlay.status = ROUTE_ENDPOINT_OVERLAY_UNAVAILABLE;
+		return ROUTE_WAITER_COMPLETION_BAD_ARGUMENT;
 	}
-	return NULL;
+	void *records = malloc(record_count * record_size);
+	if (records == NULL) {
+		entry->overlay.status = ROUTE_ENDPOINT_OVERLAY_UNAVAILABLE;
+		return ROUTE_WAITER_COMPLETION_MEMORY;
+	}
+	memcpy(records, source, record_count * record_size);
+	*result = records;
+	return ROUTE_WAITER_COMPLETION_OK;
 }
 
 static const route_endpoint_overlay *route_waiter_entry_overlays_link(route_waiter *waiter) {
@@ -169,19 +170,18 @@ static const route_endpoint_overlay *route_waiter_entry_overlays_link(route_wait
 	return head;
 }
 
-static route_waiter_destroy_status route_waiter_entries_interests_release(route_waiter *waiter, resolver_supervisor *supervisor, const struct timespec *now) {
-	if (waiter == NULL) {
-		return ROUTE_WAITER_DESTROY_BAD_ARGUMENT;
+static route_waiter_status route_waiter_status_from_destroy(route_waiter_destroy_status status) {
+	switch (status) {
+		case ROUTE_WAITER_DESTROY_IO:
+			return ROUTE_WAITER_IO;
+		case ROUTE_WAITER_DESTROY_TIME:
+			return ROUTE_WAITER_TIME;
+		case ROUTE_WAITER_DESTROY_BAD_ARGUMENT:
+			return ROUTE_WAITER_BAD_ARGUMENT;
+		case ROUTE_WAITER_DESTROY_OK:
+		default:
+			return ROUTE_WAITER_PENDING;
 	}
-	route_waiter_destroy_status result = ROUTE_WAITER_DESTROY_OK;
-	for (size_t entry_index = 0; entry_index < ROUTE_ENDPOINT_REQUIREMENT_LIMIT; entry_index++) {
-		route_waiter_entry *entry = &waiter->entries[entry_index];
-		if (entry->interest) {
-			route_waiter_destroy_status status = route_waiter_entry_interest_release(entry, supervisor, now);
-			result = route_waiter_destroy_status_merge(result, status);
-		}
-	}
-	return result;
 }
 
 static route_waiter_status route_waiter_entries_reconcile(route_waiter *waiter, const route_endpoint_requirements *requirements, resolver_supervisor *supervisor, const struct timespec *now) {

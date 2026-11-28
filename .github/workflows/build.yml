@@ -82,7 +82,10 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
-          cmake -S . -B build-asan-ubsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DDEBUG_MODE=OFF -DBUILD_TESTING=ON -DUBSAN_TEST=OFF -DCMAKE_C_FLAGS="-Wall -Wextra -Wshadow -Wpedantic -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          cmake -S . -B build-asan-ubsan -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc \
+            -DDEBUG_MODE=OFF -DBUILD_TESTING=ON -DUBSAN_TEST=OFF \
+            -DCMAKE_C_FLAGS="-Wall -Wextra -Wshadow -Wpedantic -Werror -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           cmake --build build-asan-ubsan --parallel "$(nproc)"
           python3 .github/scripts/check-registered-tests.py build-asan-ubsan
           ctest --test-dir build-asan-ubsan --output-on-failure --parallel 1

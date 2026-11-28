@@ -245,6 +245,54 @@ static bool resolver_ipc_reader_u64(resolver_ipc_reader *reader, uint64_t *resul
 	return true;
 }
 
+static resolver_ipc_codec_status resolver_ipc_header_decode(const void *packet, size_t packet_size, resolver_ipc_packet_kind expected_kind, resolver_ipc_reader *reader, resolver_ipc_packet_header *result) {
+	if (packet == NULL || reader == NULL || result == NULL) {
+		return RESOLVER_IPC_CODEC_BAD_ARGUMENT;
+	}
+	memset(result, 0, sizeof(*result));
+	if (packet_size > RESOLVER_IPC_PACKET_BYTE_LIMIT) {
+		return RESOLVER_IPC_CODEC_LIMIT;
+	}
+	if (packet_size < RESOLVER_IPC_HEADER_SIZE) {
+		return RESOLVER_IPC_CODEC_MALFORMED;
+	}
+	reader->data = packet;
+	reader->offset = 0;
+	reader->size = packet_size;
+	uint32_t magic;
+	uint16_t version;
+	uint16_t encoded_kind;
+	uint16_t encoded_size;
+	uint16_t reserved;
+	if (!resolver_ipc_reader_u32(reader, &magic) || !resolver_ipc_reader_u16(reader, &version) || !resolver_ipc_reader_u16(reader, &encoded_kind)
+		|| !resolver_ipc_reader_u16(reader, &encoded_size) || !resolver_ipc_reader_u16(reader, &reserved) || !resolver_ipc_reader_u64(reader, &result->query_id)) {
+		return RESOLVER_IPC_CODEC_MALFORMED;
+	}
+	if (magic != RESOLVER_IPC_MAGIC || encoded_size != packet_size || reserved != 0 || result->query_id == 0) {
+		return RESOLVER_IPC_CODEC_MALFORMED;
+	}
+	if (version != RESOLVER_IPC_PROTOCOL_VERSION) {
+		return RESOLVER_IPC_CODEC_UNSUPPORTED;
+	}
+	if (!resolver_ipc_packet_kind_decode(encoded_kind, &result->kind)) {
+		return RESOLVER_IPC_CODEC_UNSUPPORTED;
+	}
+	if (expected_kind != 0 && result->kind != expected_kind) {
+		return RESOLVER_IPC_CODEC_MALFORMED;
+	}
+	return RESOLVER_IPC_CODEC_OK;
+}
+
+static bool resolver_ipc_response_count_valid(uint16_t query_type, size_t cname_count, size_t record_count) {
+	if (cname_count > DNS_CNAME_DEPTH_LIMIT) {
+		return false;
+	}
+	if (query_type == ns_t_a || query_type == ns_t_aaaa) {
+		return record_count <= DNS_ADDRESS_RECORD_LIMIT;
+	}
+	return query_type == ns_t_srv && record_count <= DNS_SRV_RECORD_LIMIT;
+}
+
 static bool resolver_ipc_status_decode(uint16_t encoded, resolver_ipc_lookup_status *result) {
 	resolver_ipc_lookup_status status = (resolver_ipc_lookup_status)encoded;
 	if (result == NULL || !resolver_ipc_lookup_status_valid(status)) {
@@ -351,44 +399,6 @@ static bool resolver_ipc_writer_u64(resolver_ipc_writer *writer, uint64_t value)
 	return true;
 }
 
-static resolver_ipc_codec_status resolver_ipc_header_decode(const void *packet, size_t packet_size, resolver_ipc_packet_kind expected_kind, resolver_ipc_reader *reader, resolver_ipc_packet_header *result) {
-	if (packet == NULL || reader == NULL || result == NULL) {
-		return RESOLVER_IPC_CODEC_BAD_ARGUMENT;
-	}
-	memset(result, 0, sizeof(*result));
-	if (packet_size > RESOLVER_IPC_PACKET_BYTE_LIMIT) {
-		return RESOLVER_IPC_CODEC_LIMIT;
-	}
-	if (packet_size < RESOLVER_IPC_HEADER_SIZE) {
-		return RESOLVER_IPC_CODEC_MALFORMED;
-	}
-	reader->data = packet;
-	reader->offset = 0;
-	reader->size = packet_size;
-	uint32_t magic;
-	uint16_t version;
-	uint16_t encoded_kind;
-	uint16_t encoded_size;
-	uint16_t reserved;
-	if (!resolver_ipc_reader_u32(reader, &magic) || !resolver_ipc_reader_u16(reader, &version) || !resolver_ipc_reader_u16(reader, &encoded_kind)
-		|| !resolver_ipc_reader_u16(reader, &encoded_size) || !resolver_ipc_reader_u16(reader, &reserved) || !resolver_ipc_reader_u64(reader, &result->query_id)) {
-		return RESOLVER_IPC_CODEC_MALFORMED;
-	}
-	if (magic != RESOLVER_IPC_MAGIC || encoded_size != packet_size || reserved != 0 || result->query_id == 0) {
-		return RESOLVER_IPC_CODEC_MALFORMED;
-	}
-	if (version != RESOLVER_IPC_PROTOCOL_VERSION) {
-		return RESOLVER_IPC_CODEC_UNSUPPORTED;
-	}
-	if (!resolver_ipc_packet_kind_decode(encoded_kind, &result->kind)) {
-		return RESOLVER_IPC_CODEC_UNSUPPORTED;
-	}
-	if (expected_kind != 0 && result->kind != expected_kind) {
-		return RESOLVER_IPC_CODEC_MALFORMED;
-	}
-	return RESOLVER_IPC_CODEC_OK;
-}
-
 static resolver_ipc_codec_status resolver_ipc_header_encode(resolver_ipc_packet_kind kind, uint64_t query_id, void *packet, size_t packet_capacity, size_t packet_size, resolver_ipc_writer *writer) {
 	if (packet == NULL || writer == NULL || query_id == 0) {
 		return RESOLVER_IPC_CODEC_BAD_ARGUMENT;
@@ -409,16 +419,6 @@ static resolver_ipc_codec_status resolver_ipc_header_encode(resolver_ipc_packet_
 		return RESOLVER_IPC_CODEC_LIMIT;
 	}
 	return RESOLVER_IPC_CODEC_OK;
-}
-
-static bool resolver_ipc_response_count_valid(uint16_t query_type, size_t cname_count, size_t record_count) {
-	if (cname_count > DNS_CNAME_DEPTH_LIMIT) {
-		return false;
-	}
-	if (query_type == ns_t_a || query_type == ns_t_aaaa) {
-		return record_count <= DNS_ADDRESS_RECORD_LIMIT;
-	}
-	return query_type == ns_t_srv && record_count <= DNS_SRV_RECORD_LIMIT;
 }
 
 /* section: functions (exported) */

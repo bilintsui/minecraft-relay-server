@@ -143,8 +143,7 @@ static bool route_test_bindings(const hosts_table *hosts) {
 		&& route_test_address_equal(&binding.addresses[0], AF_INET, "192.0.2.10") && route_test_address_equal(&binding.addresses[1], AF_INET6, "2001:db8::10"),
 		"hosts route binding did not preserve all file-order addresses");
 	CHECK(binding.ipv4_entry == NULL && binding.ipv6_entry == NULL && binding.srv_entry == NULL, "hosts route binding retained DNS entries");
-	CHECK(route_bindings_destination_get(bindings, 2, &binding) && binding.source == ROUTE_BINDING_SOURCE_HOSTS && binding.port == 25566,
-		"terminal-dot hosts route binding failed");
+	CHECK(route_bindings_destination_get(bindings, 2, &binding) && binding.source == ROUTE_BINDING_SOURCE_HOSTS && binding.port == 25566, "terminal-dot hosts route binding failed");
 	route_binding_view dns_first;
 	route_binding_view dns_second;
 	CHECK(route_bindings_destination_get(bindings, 3, &dns_first) && route_bindings_destination_get(bindings, 4, &dns_second)
@@ -152,8 +151,7 @@ static bool route_test_bindings(const hosts_table *hosts) {
 		"explicit-port DNS route bindings were incorrect");
 	CHECK(dns_first.ipv4_entry != NULL && dns_first.ipv6_entry != NULL && dns_first.ipv4_entry == dns_second.ipv4_entry && dns_first.ipv6_entry == dns_second.ipv6_entry,
 		"identical DNS keys were not shared across destination ports");
-	CHECK(route_bindings_destination_get(bindings, 5, &binding) && binding.source == ROUTE_BINDING_SOURCE_DNS_SRV && binding.port == 0 && binding.srv_entry != NULL,
-		"SRV route binding was incorrect");
+	CHECK(route_bindings_destination_get(bindings, 5, &binding) && binding.source == ROUTE_BINDING_SOURCE_DNS_SRV && binding.port == 0 && binding.srv_entry != NULL, "SRV route binding was incorrect");
 	CHECK(route_bindings_destination_get(bindings, 6, &binding) && binding.source == ROUTE_BINDING_SOURCE_UNAVAILABLE && binding.ipv4_entry == NULL
 		&& binding.ipv6_entry == NULL && binding.srv_entry == NULL, "invalid route name did not remain locally unavailable");
 	CHECK(route_bindings_destination_get(bindings, 7, &binding) && binding.source == ROUTE_BINDING_SOURCE_HOSTS && binding.address_count == 2

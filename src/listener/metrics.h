@@ -27,6 +27,12 @@
 #define LISTENER_METRICS_LINE_SIZE	2049U
 
 /* section: types */
+typedef struct {
+	uint64_t cycle_id;
+	struct timespec degraded_logged_at;
+	bool degraded_logged_at_valid;
+	uint64_t suppressed;
+} listener_metrics_helper_log_state;
 typedef enum {
 	LISTENER_METRICS_OUTCOME_READY,
 	LISTENER_METRICS_OUTCOME_CONTRADICTORY,
@@ -53,6 +59,28 @@ typedef enum {
 	LISTENER_METRICS_RESOLUTION_WAITED,
 	LISTENER_METRICS_RESOLUTION_COUNT
 } listener_metrics_resolution;
+typedef struct {
+	bool duration_enabled;
+	listener_metrics_request_mode mode;
+	bool pending;
+	bool resolution_recorded;
+	bool settled;
+	struct timespec started_at;
+	bool started;
+} listener_metrics_route_request;
+typedef struct {
+	bool event_loss_logged_at_valid;
+	struct timespec event_loss_logged_at;
+	uint64_t format_drops;
+	listener_metrics_helper_log_state helper[RESOLVER_SUPERVISOR_HELPER_COUNT];
+	uint64_t logger_errors;
+	uint64_t missed_intervals;
+	uint64_t observation_dropped_seen;
+	pid_t process_id;
+	uint64_t scheduler_failures;
+	uint64_t sequence;
+	struct timespec started_at;
+} listener_metrics_runtime;
 typedef enum {
 	LISTENER_METRICS_SELECTED_FAMILY_NONE = -1,
 	LISTENER_METRICS_SELECTED_FAMILY_IPV4,
@@ -76,33 +104,6 @@ typedef struct {
 	uint64_t resolution[LISTENER_METRICS_RESOLUTION_COUNT];
 	uint64_t selected_family[LISTENER_METRICS_SELECTED_FAMILY_COUNT];
 } listener_metrics_route;
-typedef struct {
-	bool duration_enabled;
-	listener_metrics_request_mode mode;
-	bool pending;
-	bool resolution_recorded;
-	bool settled;
-	struct timespec started_at;
-	bool started;
-} listener_metrics_route_request;
-typedef struct {
-	uint64_t accept_capacity_rejected;
-	uint64_t accept_fd_exhausted;
-	uint64_t accepted;
-	uint64_t connection_limit;
-	uint64_t connection_track_failure;
-	uint64_t connections_current;
-	uint64_t connections_high_water;
-	listener_metrics_route route[LISTENER_METRICS_REQUEST_COUNT];
-	metrics_histogram route_duration[LISTENER_METRICS_REQUEST_COUNT];
-	uint64_t saturation_total;
-	uint64_t worker_capacity_refusal;
-	uint64_t worker_fork_failure;
-	uint64_t worker_limit;
-	uint64_t worker_spawn;
-	uint64_t workers_current;
-	uint64_t workers_high_water;
-} listener_metrics_state;
 typedef struct {
 	uint64_t accept_capacity_rejected;
 	uint64_t accept_fd_exhausted;
@@ -128,24 +129,23 @@ typedef struct {
 	resolver_supervisor_metrics_snapshot supervisor;
 } listener_metrics_aggregate_snapshot;
 typedef struct {
-	uint64_t cycle_id;
-	struct timespec degraded_logged_at;
-	bool degraded_logged_at_valid;
-	uint64_t suppressed;
-} listener_metrics_helper_log_state;
-typedef struct {
-	bool event_loss_logged_at_valid;
-	struct timespec event_loss_logged_at;
-	uint64_t format_drops;
-	listener_metrics_helper_log_state helper[RESOLVER_SUPERVISOR_HELPER_COUNT];
-	uint64_t logger_errors;
-	uint64_t missed_intervals;
-	uint64_t observation_dropped_seen;
-	pid_t process_id;
-	uint64_t scheduler_failures;
-	uint64_t sequence;
-	struct timespec started_at;
-} listener_metrics_runtime;
+	uint64_t accept_capacity_rejected;
+	uint64_t accept_fd_exhausted;
+	uint64_t accepted;
+	uint64_t connection_limit;
+	uint64_t connection_track_failure;
+	uint64_t connections_current;
+	uint64_t connections_high_water;
+	listener_metrics_route route[LISTENER_METRICS_REQUEST_COUNT];
+	metrics_histogram route_duration[LISTENER_METRICS_REQUEST_COUNT];
+	uint64_t saturation_total;
+	uint64_t worker_capacity_refusal;
+	uint64_t worker_fork_failure;
+	uint64_t worker_limit;
+	uint64_t worker_spawn;
+	uint64_t workers_current;
+	uint64_t workers_high_water;
+} listener_metrics_state;
 
 /* section: functions (exported) */
 void listener_metrics_accept_capacity_rejected_record(listener_metrics_state *metrics);

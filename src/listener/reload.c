@@ -125,18 +125,13 @@ int listener_hosts_reload(listener_context *context) {
 		return 0;
 	}
 	if (!config_clone(context->config, &config_candidate)) {
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
-			"Cannot clone the active configuration for an automatic local static host table reload, keeping the existing generation."
-		);
+		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot clone the active configuration for an automatic local static host table reload, keeping the existing generation.");
 		goto cleanup;
 	}
 	listener_route_prepare_status prepare_status = listener_generation_prepare(context, &config_candidate, &hosts_candidate, MKSYS_LEVEL_WARNING,
 		", keeping the existing generation", &generation_candidate);
 	if (prepare_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-			"Cannot sample the monotonic clock while preparing automatic local static host route resolution: %s",
-			strerror(errno)
-		);
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock while preparing automatic local static host route resolution: %s", strerror(errno));
 		result = -1;
 		goto cleanup;
 	}
@@ -145,16 +140,11 @@ int listener_hosts_reload(listener_context *context) {
 	}
 	route_generation_registry_publish_status publish_status = listener_generation_publish(context, &generation_candidate);
 	if (publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-			"Cannot publish the automatically reloaded local static host route generation: %s.",
-			listener_generation_publish_error(publish_status)
-		);
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot publish the automatically reloaded local static host route generation: %s.", listener_generation_publish_error(publish_status));
 		result = -1;
 		goto cleanup;
 	}
-	LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION,
-		"Local static host table reloaded automatically."
-	);
+	LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION, "Local static host table reloaded automatically.");
 
 cleanup:
 	config_destroy(config_candidate);
@@ -202,10 +192,7 @@ void listener_hosts_watch_retry(listener_context *context, listener_events *even
 	int status = listener_hosts_watch_establish(context, events, NULL);
 	if (status == -1) {
 		int saved_errno = errno;
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
-			"Cannot monitor local static host table %s automatically: %s; SIGUSR1 reload remains available.",
-			LISTENER_HOSTS_FILENAME, strerror(saved_errno)
-		);
+		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot monitor local static host table %s automatically: %s; SIGUSR1 reload remains available.", LISTENER_HOSTS_FILENAME, strerror(saved_errno));
 	}
 }
 
@@ -290,8 +277,7 @@ int listener_reload(listener_context *context, listener_socket *listener, listen
 				break;
 			}
 			bool metrics_effective_new = listener_metrics_effectively_enabled(context->config);
-			bool metrics_transition = metrics_effective_old != metrics_effective_new
-				|| (metrics_effective_new && metrics_interval_old != context->config->metrics.interval);
+			bool metrics_transition = metrics_effective_old != metrics_effective_new || (metrics_effective_new && metrics_interval_old != context->config->metrics.interval);
 			*metrics_readiness_invalidated = metrics_transition;
 			if (metrics_effective_old && !metrics_effective_new) {
 				listener_reload_metrics_snapshot(context, LISTENER_METRICS_OUTPUT_DISABLE, config_logfull_old, config_maxlevel);

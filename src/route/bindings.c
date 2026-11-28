@@ -45,6 +45,13 @@ typedef enum {
 } route_bindings_entry_status;
 
 /* section: functions (local) */
+static void route_bindings_cache_entries_rollback(route_bindings *bindings, size_t retained_count) {
+	while (bindings->entry_count > retained_count) {
+		resolver_cache_entry_release(bindings->entries[--bindings->entry_count]);
+		bindings->entries[bindings->entry_count] = NULL;
+	}
+}
+
 static route_bindings_entry_status route_bindings_cache_entry_acquire(route_bindings *bindings, resolver_cache *cache, const char *query_name, uint16_t query_type, resolver_cache_entry **result) {
 	resolver_cache_entry *entry = NULL;
 	resolver_cache_acquire_status status = resolver_cache_entry_acquire(cache, query_name, query_type, &entry);
@@ -69,13 +76,6 @@ static route_bindings_entry_status route_bindings_cache_entry_acquire(route_bind
 	bindings->entries[bindings->entry_count++] = entry;
 	*result = entry;
 	return ROUTE_BINDINGS_ENTRY_OK;
-}
-
-static void route_bindings_cache_entries_rollback(route_bindings *bindings, size_t retained_count) {
-	while (bindings->entry_count > retained_count) {
-		resolver_cache_entry_release(bindings->entries[--bindings->entry_count]);
-		bindings->entries[bindings->entry_count] = NULL;
-	}
 }
 
 static route_bindings_build_status route_bindings_destination_prepare(route_bindings *bindings, route_binding *binding, const route_destination_view *destination,

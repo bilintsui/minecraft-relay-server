@@ -62,7 +62,6 @@
 #define RESOLVER_SUPERVISOR_PROCESS_NAME_CAPACITY	16U
 
 /* section: types */
-typedef struct resolver_supervisor_job resolver_supervisor_job;
 typedef enum {
 	RESOLVER_SUPERVISOR_ASSIGN_OK,
 	RESOLVER_SUPERVISOR_ASSIGN_RETRY,
@@ -70,11 +69,7 @@ typedef enum {
 	RESOLVER_SUPERVISOR_ASSIGN_TIME,
 	RESOLVER_SUPERVISOR_ASSIGN_IO
 } resolver_supervisor_assign_status;
-typedef enum {
-	RESOLVER_SUPERVISOR_SEND_OK,
-	RESOLVER_SUPERVISOR_SEND_IO,
-	RESOLVER_SUPERVISOR_SEND_TIME
-} resolver_supervisor_send_status;
+typedef struct resolver_supervisor_job resolver_supervisor_job;
 typedef struct {
 	size_t consecutive_successes;
 	uint64_t cycle_id;
@@ -91,21 +86,6 @@ typedef struct {
 	size_t request_size;
 	resolver_supervisor_helper_state state;
 } resolver_supervisor_helper;
-typedef struct {
-	resolver_supervisor_job *head;
-	size_t count;
-	resolver_supervisor_job *tail;
-} resolver_supervisor_job_queue;
-typedef struct {
-	resolver_supervisor_metrics_attempt attempt[METRICS_RESOLVER_QUERY_TYPE_COUNT];
-	metrics_histogram attempt_duration[METRICS_RESOLVER_QUERY_TYPE_COUNT];
-	metrics_histogram dispatch_wait[RESOLVER_SUPERVISOR_PRIORITY_COUNT][METRICS_RESOLVER_QUERY_TYPE_COUNT];
-	resolver_supervisor_metrics_helper helper;
-	uint64_t jobs_high_water;
-	uint64_t queue_high_water[RESOLVER_SUPERVISOR_PRIORITY_COUNT];
-	resolver_supervisor_metrics_schedule schedule[RESOLVER_SUPERVISOR_PRIORITY_COUNT][METRICS_QUERY_TYPE_COUNT];
-	uint64_t saturation_total;
-} resolver_supervisor_metrics_state;
 struct resolver_supervisor_job {
 	size_t background_interest_count;
 #ifdef RESOLVER_SUPERVISOR_TEST_API
@@ -132,6 +112,21 @@ struct resolver_supervisor_job {
 	size_t slot_index;
 	resolver_supervisor_job_state state;
 };
+typedef struct {
+	resolver_supervisor_job *head;
+	size_t count;
+	resolver_supervisor_job *tail;
+} resolver_supervisor_job_queue;
+typedef struct {
+	resolver_supervisor_metrics_attempt attempt[METRICS_RESOLVER_QUERY_TYPE_COUNT];
+	metrics_histogram attempt_duration[METRICS_RESOLVER_QUERY_TYPE_COUNT];
+	metrics_histogram dispatch_wait[RESOLVER_SUPERVISOR_PRIORITY_COUNT][METRICS_RESOLVER_QUERY_TYPE_COUNT];
+	resolver_supervisor_metrics_helper helper;
+	uint64_t jobs_high_water;
+	uint64_t queue_high_water[RESOLVER_SUPERVISOR_PRIORITY_COUNT];
+	resolver_supervisor_metrics_schedule schedule[RESOLVER_SUPERVISOR_PRIORITY_COUNT][METRICS_QUERY_TYPE_COUNT];
+	uint64_t saturation_total;
+} resolver_supervisor_metrics_state;
 struct resolver_supervisor {
 	resolver_ipc_assembly_budget *assembly_budget;
 	resolver_supervisor_job_queue background_queue;
@@ -153,35 +148,17 @@ struct resolver_supervisor {
 	bool shutdown_prepared;
 	int timer_fd;
 };
+typedef enum {
+	RESOLVER_SUPERVISOR_SEND_OK,
+	RESOLVER_SUPERVISOR_SEND_IO,
+	RESOLVER_SUPERVISOR_SEND_TIME
+} resolver_supervisor_send_status;
 
 /* section: functions (local) */
 static bool resolver_supervisor_completion_empty(const resolver_supervisor_completion *completion) {
 	return completion != NULL && completion->entry == NULL && completion->publication == 0 && completion->response.budget == NULL && completion->response.completed_at.tv_sec == 0
 		&& completion->response.completed_at.tv_nsec == 0 && completion->response.dynamic_bytes == 0 && completion->response.query_id == 0 && completion->response.query_type == 0
 		&& completion->response.status == 0;
-}
-
-static uint64_t resolver_supervisor_hash_byte(uint64_t hash, uint8_t value) {
-	return (hash ^ value) * RESOLVER_SUPERVISOR_FNV_PRIME;
-}
-
-static uint64_t resolver_supervisor_hash_u64(uint64_t hash, uint64_t value) {
-	for (unsigned int shift = 56; ; shift -= 8) {
-		hash = resolver_supervisor_hash_byte(hash, (uint8_t)(value >> shift));
-		if (shift == 0) {
-			return hash;
-		}
-	}
-}
-
-static uint64_t resolver_supervisor_delay_jitter(uint64_t base_milliseconds, uint64_t maximum_milliseconds, uint8_t domain, uint64_t identity, uint64_t attempt) {
-	uint64_t hash = resolver_supervisor_hash_byte(RESOLVER_SUPERVISOR_FNV_OFFSET, domain);
-	hash = resolver_supervisor_hash_u64(hash, identity);
-	hash = resolver_supervisor_hash_u64(hash, attempt);
-	int percentage = (int)(hash % (uint64_t)(RESOLVER_SUPERVISOR_JITTER_PERCENT * 2 + 1)) - RESOLVER_SUPERVISOR_JITTER_PERCENT;
-	uint64_t factor = (uint64_t)(100 + percentage);
-	uint64_t delay = factor == 0 ? 0 : (base_milliseconds > UINT64_MAX / factor ? UINT64_MAX : base_milliseconds * factor / 100U);
-	return delay < maximum_milliseconds ? delay : maximum_milliseconds;
 }
 
 static uint64_t resolver_supervisor_delay_query_base(uint64_t retry_count) {
@@ -214,158 +191,55 @@ static uint64_t resolver_supervisor_delay_respawn_base(uint64_t failure_count) {
 	return delay < RESOLVER_SUPERVISOR_RESPAWN_MAX_MS ? delay : RESOLVER_SUPERVISOR_RESPAWN_MAX_MS;
 }
 
-static bool resolver_supervisor_time_update(resolver_supervisor *supervisor, const struct timespec *now) {
-	if (supervisor == NULL || !timeutil_valid(now) || timeutil_compare(now, &supervisor->last_now) < 0) {
-		return false;
+static uint64_t resolver_supervisor_hash_byte(uint64_t hash, uint8_t value) {
+	return (hash ^ value) * RESOLVER_SUPERVISOR_FNV_PRIME;
+}
+
+static uint64_t resolver_supervisor_hash_u64(uint64_t hash, uint64_t value) {
+	for (unsigned int shift = 56; ; shift -= 8) {
+		hash = resolver_supervisor_hash_byte(hash, (uint8_t)(value >> shift));
+		if (shift == 0) {
+			return hash;
+		}
 	}
-	supervisor->last_now = *now;
-	return true;
+}
+
+static uint64_t resolver_supervisor_delay_jitter(uint64_t base_milliseconds, uint64_t maximum_milliseconds, uint8_t domain, uint64_t identity, uint64_t attempt) {
+	uint64_t hash = resolver_supervisor_hash_byte(RESOLVER_SUPERVISOR_FNV_OFFSET, domain);
+	hash = resolver_supervisor_hash_u64(hash, identity);
+	hash = resolver_supervisor_hash_u64(hash, attempt);
+	int percentage = (int)(hash % (uint64_t)(RESOLVER_SUPERVISOR_JITTER_PERCENT * 2 + 1)) - RESOLVER_SUPERVISOR_JITTER_PERCENT;
+	uint64_t factor = (uint64_t)(100 + percentage);
+	uint64_t delay = factor == 0 ? 0 : (base_milliseconds > UINT64_MAX / factor ? UINT64_MAX : base_milliseconds * factor / 100U);
+	return delay < maximum_milliseconds ? delay : maximum_milliseconds;
+}
+
+static int resolver_supervisor_helper_events_update(resolver_supervisor *supervisor, size_t helper_index) {
+	resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
+	if (helper->fd == -1) {
+		return 0;
+	}
+	struct epoll_event event;
+	memset(&event, 0, sizeof(event));
+	event.events = EPOLLIN | EPOLLRDHUP;
+	if (helper->state == RESOLVER_SUPERVISOR_HELPER_SENDING) {
+		event.events |= EPOLLOUT;
+	}
+	event.data.u32 = (uint32_t)(helper_index + 1U);
+	return epoll_ctl(supervisor->epoll_fd, EPOLL_CTL_MOD, helper->fd, &event);
+}
+
+static bool resolver_supervisor_helper_receive_zero_is_end(int socket_fd) {
+	uint8_t marker;
+	ssize_t received;
+	do {
+		received = recv(socket_fd, &marker, sizeof(marker), MSG_DONTWAIT | MSG_PEEK);
+	} while (received == -1 && errno == EINTR);
+	return received == 0;
 }
 
 static size_t resolver_supervisor_job_bucket(const resolver_cache_entry *entry) {
 	return (size_t)(resolver_cache_entry_id(entry) % (uint64_t)RESOLVER_SUPERVISOR_JOB_LIMIT);
-}
-
-static resolver_supervisor_metrics_attempt *resolver_supervisor_metrics_attempt_select(resolver_supervisor *supervisor, const resolver_supervisor_job *job) {
-	uint16_t query_type = resolver_cache_entry_query_type(job->entry);
-	if (query_type == ns_t_a) {
-		return &supervisor->metrics.attempt[METRICS_QUERY_TYPE_A];
-	}
-	if (query_type == ns_t_aaaa) {
-		return &supervisor->metrics.attempt[METRICS_QUERY_TYPE_AAAA];
-	}
-	if (query_type == ns_t_srv) {
-		return &supervisor->metrics.attempt[METRICS_QUERY_TYPE_SRV];
-	}
-	return NULL;
-}
-
-static resolver_supervisor_dns_outcome resolver_supervisor_metrics_dns_outcome(resolver_ipc_lookup_status status) {
-	switch (status) {
-		case RESOLVER_IPC_LOOKUP_OK:
-			return RESOLVER_SUPERVISOR_DNS_OUTCOME_OK;
-		case RESOLVER_IPC_LOOKUP_BAD_ARGUMENT:
-			return RESOLVER_SUPERVISOR_DNS_OUTCOME_BAD_ARGUMENT;
-		case RESOLVER_IPC_LOOKUP_LIMIT:
-			return RESOLVER_SUPERVISOR_DNS_OUTCOME_LIMIT;
-		case RESOLVER_IPC_LOOKUP_MALFORMED:
-			return RESOLVER_SUPERVISOR_DNS_OUTCOME_MALFORMED;
-		case RESOLVER_IPC_LOOKUP_MEMORY:
-			return RESOLVER_SUPERVISOR_DNS_OUTCOME_MEMORY;
-		case RESOLVER_IPC_LOOKUP_NODATA:
-			return RESOLVER_SUPERVISOR_DNS_OUTCOME_NODATA;
-		case RESOLVER_IPC_LOOKUP_NOT_FOUND:
-			return RESOLVER_SUPERVISOR_DNS_OUTCOME_NOT_FOUND;
-		case RESOLVER_IPC_LOOKUP_PERMANENT_ERROR:
-			return RESOLVER_SUPERVISOR_DNS_OUTCOME_PERMANENT;
-		case RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR:
-			return RESOLVER_SUPERVISOR_DNS_OUTCOME_TEMPORARY;
-		case RESOLVER_IPC_LOOKUP_TRUNCATED:
-			return RESOLVER_SUPERVISOR_DNS_OUTCOME_TRUNCATED;
-	}
-	return RESOLVER_SUPERVISOR_DNS_OUTCOME_BAD_ARGUMENT;
-}
-
-static void resolver_supervisor_metrics_increment(resolver_supervisor *supervisor, uint64_t *counter) {
-	(void)metrics_counter_add(counter, 1, &supervisor->metrics.saturation_total);
-}
-
-static void resolver_supervisor_metrics_gauge_add(uint64_t *gauge, size_t amount) {
-	uint64_t value = (uint64_t)amount;
-	*gauge = UINT64_MAX - *gauge < value ? UINT64_MAX : *gauge + value;
-}
-
-static void resolver_supervisor_observation_drop(resolver_supervisor *supervisor) {
-	resolver_supervisor_metrics_increment(supervisor, &supervisor->metrics.helper.observation_dropped);
-}
-
-static void resolver_supervisor_observation_push(resolver_supervisor *supervisor, const resolver_supervisor_observation *observation) {
-	if (supervisor->observation_count == RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY) {
-		supervisor->observation_head = (supervisor->observation_head + 1U) % RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY;
-		supervisor->observation_count--;
-		resolver_supervisor_observation_drop(supervisor);
-	}
-	size_t index = (supervisor->observation_head + supervisor->observation_count) % RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY;
-	supervisor->observations[index] = *observation;
-	supervisor->observation_count++;
-}
-
-static metrics_query_type resolver_supervisor_metrics_query_type(const resolver_cache_entry *entry) {
-	if (entry != NULL) {
-		uint16_t query_type = resolver_cache_entry_query_type(entry);
-		if (query_type == ns_t_a) {
-			return METRICS_QUERY_TYPE_A;
-		}
-		if (query_type == ns_t_aaaa) {
-			return METRICS_QUERY_TYPE_AAAA;
-		}
-		if (query_type == ns_t_srv) {
-			return METRICS_QUERY_TYPE_SRV;
-		}
-	}
-	return METRICS_QUERY_TYPE_OTHER;
-}
-
-static void resolver_supervisor_metrics_schedule_record(resolver_supervisor *supervisor, const resolver_cache_entry *entry, resolver_supervisor_priority priority, resolver_supervisor_schedule_status status) {
-	if (supervisor == NULL || priority >= RESOLVER_SUPERVISOR_PRIORITY_COUNT || status >= RESOLVER_SUPERVISOR_SCHEDULE_STATUS_COUNT) {
-		return;
-	}
-	metrics_query_type query = resolver_supervisor_metrics_query_type(entry);
-	resolver_supervisor_metrics_increment(supervisor, &supervisor->metrics.schedule[priority][query].status[status]);
-}
-
-static void resolver_supervisor_metrics_attempt_failure_record(resolver_supervisor *supervisor, const resolver_supervisor_job *job, resolver_supervisor_helper_failure failure, const struct timespec *now) {
-	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
-	if (metrics == NULL || failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE || failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN || failure >= RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT) {
-		return;
-	}
-	resolver_supervisor_metrics_increment(supervisor, &metrics->failure[failure]);
-	metrics_query_type query = resolver_supervisor_metrics_query_type(job->entry);
-	(void)metrics_duration_histogram_observe(&supervisor->metrics.attempt_duration[query], &job->dispatched_at, now, &supervisor->metrics.saturation_total);
-}
-
-static void resolver_supervisor_metrics_dispatch_record(resolver_supervisor *supervisor, const resolver_supervisor_job *job, const struct timespec *now) {
-	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
-	if (metrics == NULL || job->priority >= RESOLVER_SUPERVISOR_PRIORITY_COUNT) {
-		return;
-	}
-	resolver_supervisor_metrics_increment(supervisor, &metrics->dispatched);
-	metrics_query_type query = resolver_supervisor_metrics_query_type(job->entry);
-	(void)metrics_duration_histogram_observe(&supervisor->metrics.dispatch_wait[job->priority][query], &job->dispatch_wait_at, now, &supervisor->metrics.saturation_total);
-}
-
-static void resolver_supervisor_metrics_response_record(resolver_supervisor *supervisor, const resolver_supervisor_job *job, const resolver_ipc_assembly_result *response) {
-	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
-	if (metrics == NULL) {
-		return;
-	}
-	resolver_supervisor_dns_outcome outcome = resolver_supervisor_metrics_dns_outcome(response->status);
-	resolver_supervisor_metrics_increment(supervisor, &metrics->response[outcome]);
-	if (job->orphaned) {
-		resolver_supervisor_metrics_increment(supervisor, &metrics->orphan_response[outcome]);
-	}
-	metrics_query_type query = resolver_supervisor_metrics_query_type(job->entry);
-	(void)metrics_duration_histogram_observe(&supervisor->metrics.attempt_duration[query], &job->dispatched_at, &response->completed_at, &supervisor->metrics.saturation_total);
-}
-
-static void resolver_supervisor_job_complete(resolver_supervisor *supervisor, resolver_supervisor_job *job, resolver_cache_publish_status publication, resolver_ipc_assembly_result *response) {
-	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
-	if (metrics != NULL) {
-		resolver_supervisor_metrics_increment(supervisor, &metrics->completion_enqueued);
-	}
-	job->background_interest_count = 0;
-	job->interactive_interest_count = 0;
-	job->publication = publication;
-	job->response = *response;
-	memset(response, 0, sizeof(*response));
-	job->state = RESOLVER_SUPERVISOR_JOB_COMPLETE;
-	job->completion_previous = supervisor->completion_tail;
-	if (supervisor->completion_tail == NULL) {
-		supervisor->completion_head = job;
-	} else {
-		supervisor->completion_tail->completion_next = job;
-	}
-	supervisor->completion_tail = job;
 }
 
 static void resolver_supervisor_job_completion_remove(resolver_supervisor *supervisor, resolver_supervisor_job *job) {
@@ -415,6 +289,34 @@ static resolver_supervisor_job_queue *resolver_supervisor_job_queue_select(resol
 	return priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE ? &supervisor->interactive_queue : &supervisor->background_queue;
 }
 
+static void resolver_supervisor_job_queue_append(resolver_supervisor *supervisor, resolver_supervisor_job *job) {
+	resolver_supervisor_job_queue *queue = resolver_supervisor_job_queue_select(supervisor, job->priority);
+	job->queue_previous = queue->tail;
+	if (queue->tail == NULL) {
+		queue->head = job;
+	} else {
+		queue->tail->queue_next = job;
+	}
+	queue->tail = job;
+	queue->count++;
+	metrics_high_water_update(&supervisor->metrics.queue_high_water[job->priority], queue->count);
+	job->state = RESOLVER_SUPERVISOR_JOB_QUEUED;
+}
+
+static void resolver_supervisor_job_queue_prepend(resolver_supervisor *supervisor, resolver_supervisor_job *job) {
+	resolver_supervisor_job_queue *queue = resolver_supervisor_job_queue_select(supervisor, job->priority);
+	job->queue_next = queue->head;
+	if (queue->head == NULL) {
+		queue->tail = job;
+	} else {
+		queue->head->queue_previous = job;
+	}
+	queue->head = job;
+	queue->count++;
+	metrics_high_water_update(&supervisor->metrics.queue_high_water[job->priority], queue->count);
+	job->state = RESOLVER_SUPERVISOR_JOB_QUEUED;
+}
+
 static void resolver_supervisor_job_queue_remove(resolver_supervisor *supervisor, resolver_supervisor_job *job) {
 	resolver_supervisor_job_queue *queue = resolver_supervisor_job_queue_select(supervisor, job->priority);
 	if (job->queue_previous == NULL) {
@@ -453,34 +355,6 @@ static void resolver_supervisor_job_destroy(resolver_supervisor *supervisor, res
 	free(job);
 }
 
-static void resolver_supervisor_job_queue_append(resolver_supervisor *supervisor, resolver_supervisor_job *job) {
-	resolver_supervisor_job_queue *queue = resolver_supervisor_job_queue_select(supervisor, job->priority);
-	job->queue_previous = queue->tail;
-	if (queue->tail == NULL) {
-		queue->head = job;
-	} else {
-		queue->tail->queue_next = job;
-	}
-	queue->tail = job;
-	queue->count++;
-	metrics_high_water_update(&supervisor->metrics.queue_high_water[job->priority], queue->count);
-	job->state = RESOLVER_SUPERVISOR_JOB_QUEUED;
-}
-
-static void resolver_supervisor_job_queue_prepend(resolver_supervisor *supervisor, resolver_supervisor_job *job) {
-	resolver_supervisor_job_queue *queue = resolver_supervisor_job_queue_select(supervisor, job->priority);
-	job->queue_next = queue->head;
-	if (queue->head == NULL) {
-		queue->tail = job;
-	} else {
-		queue->head->queue_previous = job;
-	}
-	queue->head = job;
-	queue->count++;
-	metrics_high_water_update(&supervisor->metrics.queue_high_water[job->priority], queue->count);
-	job->state = RESOLVER_SUPERVISOR_JOB_QUEUED;
-}
-
 static void resolver_supervisor_job_priority_downgrade(resolver_supervisor *supervisor, resolver_supervisor_job *job) {
 	if (job->priority != RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE || job->interactive_interest_count != 0) {
 		return;
@@ -513,6 +387,79 @@ static bool resolver_supervisor_job_result_retryable(resolver_ipc_lookup_status 
 	return status == RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR;
 }
 
+static bool resolver_supervisor_job_timestamp_valid(const resolver_supervisor_job *job, const struct timespec *completed_at, const struct timespec *now) {
+	return timeutil_valid(completed_at) && timeutil_compare(completed_at, &job->dispatched_at) >= 0 && timeutil_compare(completed_at, &job->deadline) <= 0 && timeutil_compare(completed_at, now) <= 0;
+}
+
+static resolver_supervisor_metrics_attempt *resolver_supervisor_metrics_attempt_select(resolver_supervisor *supervisor, const resolver_supervisor_job *job) {
+	uint16_t query_type = resolver_cache_entry_query_type(job->entry);
+	if (query_type == ns_t_a) {
+		return &supervisor->metrics.attempt[METRICS_QUERY_TYPE_A];
+	}
+	if (query_type == ns_t_aaaa) {
+		return &supervisor->metrics.attempt[METRICS_QUERY_TYPE_AAAA];
+	}
+	if (query_type == ns_t_srv) {
+		return &supervisor->metrics.attempt[METRICS_QUERY_TYPE_SRV];
+	}
+	return NULL;
+}
+
+static resolver_supervisor_dns_outcome resolver_supervisor_metrics_dns_outcome(resolver_ipc_lookup_status status) {
+	switch (status) {
+		case RESOLVER_IPC_LOOKUP_OK:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_OK;
+		case RESOLVER_IPC_LOOKUP_BAD_ARGUMENT:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_BAD_ARGUMENT;
+		case RESOLVER_IPC_LOOKUP_LIMIT:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_LIMIT;
+		case RESOLVER_IPC_LOOKUP_MALFORMED:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_MALFORMED;
+		case RESOLVER_IPC_LOOKUP_MEMORY:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_MEMORY;
+		case RESOLVER_IPC_LOOKUP_NODATA:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_NODATA;
+		case RESOLVER_IPC_LOOKUP_NOT_FOUND:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_NOT_FOUND;
+		case RESOLVER_IPC_LOOKUP_PERMANENT_ERROR:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_PERMANENT;
+		case RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_TEMPORARY;
+		case RESOLVER_IPC_LOOKUP_TRUNCATED:
+			return RESOLVER_SUPERVISOR_DNS_OUTCOME_TRUNCATED;
+	}
+	return RESOLVER_SUPERVISOR_DNS_OUTCOME_BAD_ARGUMENT;
+}
+
+static void resolver_supervisor_metrics_gauge_add(uint64_t *gauge, size_t amount) {
+	uint64_t value = (uint64_t)amount;
+	*gauge = UINT64_MAX - *gauge < value ? UINT64_MAX : *gauge + value;
+}
+
+static void resolver_supervisor_metrics_increment(resolver_supervisor *supervisor, uint64_t *counter) {
+	(void)metrics_counter_add(counter, 1, &supervisor->metrics.saturation_total);
+}
+
+static void resolver_supervisor_job_complete(resolver_supervisor *supervisor, resolver_supervisor_job *job, resolver_cache_publish_status publication, resolver_ipc_assembly_result *response) {
+	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
+	if (metrics != NULL) {
+		resolver_supervisor_metrics_increment(supervisor, &metrics->completion_enqueued);
+	}
+	job->background_interest_count = 0;
+	job->interactive_interest_count = 0;
+	job->publication = publication;
+	job->response = *response;
+	memset(response, 0, sizeof(*response));
+	job->state = RESOLVER_SUPERVISOR_JOB_COMPLETE;
+	job->completion_previous = supervisor->completion_tail;
+	if (supervisor->completion_tail == NULL) {
+		supervisor->completion_head = job;
+	} else {
+		supervisor->completion_tail->completion_next = job;
+	}
+	supervisor->completion_tail = job;
+}
+
 static void resolver_supervisor_job_retry(resolver_supervisor *supervisor, resolver_supervisor_job *job, const struct timespec *now) {
 #ifdef RESOLVER_SUPERVISOR_TEST_API
 	if (job->cancelled || job->orphaned) {
@@ -542,71 +489,146 @@ static void resolver_supervisor_job_retry(resolver_supervisor *supervisor, resol
 	}
 }
 
-static bool resolver_supervisor_job_timestamp_valid(const resolver_supervisor_job *job, const struct timespec *completed_at, const struct timespec *now) {
-	return timeutil_valid(completed_at) && timeutil_compare(completed_at, &job->dispatched_at) >= 0 && timeutil_compare(completed_at, &job->deadline) <= 0 && timeutil_compare(completed_at, now) <= 0;
-}
-
-static void resolver_supervisor_process_reap(pid_t process_id) {
-	if (process_id <= 0) {
+static void resolver_supervisor_jobs_destroy_all(resolver_supervisor *supervisor) {
+	if (supervisor->buckets == NULL) {
 		return;
 	}
-	while (waitpid(process_id, NULL, 0) == -1 && errno == EINTR) {
+	for (size_t bucket = 0; bucket < RESOLVER_SUPERVISOR_JOB_LIMIT; bucket++) {
+		while (supervisor->buckets[bucket] != NULL) {
+			resolver_supervisor_job *job = supervisor->buckets[bucket];
+			resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
+			if (supervisor->shutting_down && metrics != NULL) {
+				if (job->state == RESOLVER_SUPERVISOR_JOB_COMPLETE) {
+					resolver_supervisor_metrics_increment(supervisor, &metrics->completion_abandoned_shutdown);
+				} else if (job->state == RESOLVER_SUPERVISOR_JOB_DISPATCHED) {
+#ifdef RESOLVER_SUPERVISOR_TEST_API
+					if (!job->cancelled) {
+						resolver_supervisor_metrics_increment(supervisor, &metrics->attempt_abandoned_shutdown);
+					}
+#else
+					resolver_supervisor_metrics_increment(supervisor, &metrics->attempt_abandoned_shutdown);
+#endif
+				}
+			}
+			if (job->state == RESOLVER_SUPERVISOR_JOB_SENDING || job->state == RESOLVER_SUPERVISOR_JOB_DISPATCHED) {
+				job->query_id = 0;
+				resolver_ipc_assembly_destroy(job->assembly);
+				job->assembly = NULL;
+				if (job->slot_index < RESOLVER_SUPERVISOR_HELPER_COUNT && supervisor->helpers[job->slot_index].job == job) {
+					supervisor->helpers[job->slot_index].job = NULL;
+					supervisor->helpers[job->slot_index].request_size = 0;
+				}
+			}
+			resolver_supervisor_job_destroy(supervisor, job);
+		}
 	}
 }
 
-static void resolver_supervisor_process_terminate(pid_t process_id, int signal_number) {
-	if (process_id <= 0 || signal_number == 0) {
-		return;
+static metrics_query_type resolver_supervisor_metrics_query_type(const resolver_cache_entry *entry) {
+	if (entry != NULL) {
+		uint16_t query_type = resolver_cache_entry_query_type(entry);
+		if (query_type == ns_t_a) {
+			return METRICS_QUERY_TYPE_A;
+		}
+		if (query_type == ns_t_aaaa) {
+			return METRICS_QUERY_TYPE_AAAA;
+		}
+		if (query_type == ns_t_srv) {
+			return METRICS_QUERY_TYPE_SRV;
+		}
 	}
-	if (kill(process_id, signal_number) == -1 && errno != ESRCH) {
-		return;
-	}
-	if (signal_number == SIGKILL) {
-		resolver_supervisor_process_reap(process_id);
-	}
+	return METRICS_QUERY_TYPE_OTHER;
 }
 
-static void resolver_supervisor_process_reap_or_kill(pid_t process_id) {
-	if (process_id <= 0) {
+static void resolver_supervisor_metrics_attempt_failure_record(resolver_supervisor *supervisor, const resolver_supervisor_job *job, resolver_supervisor_helper_failure failure, const struct timespec *now) {
+	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
+	if (metrics == NULL || failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE || failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN || failure >= RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT) {
 		return;
 	}
-	pid_t result;
-	do {
-		result = waitpid(process_id, NULL, WNOHANG);
-	} while (result == -1 && errno == EINTR);
-	if (result == 0) {
-		resolver_supervisor_process_terminate(process_id, SIGKILL);
-	}
+	resolver_supervisor_metrics_increment(supervisor, &metrics->failure[failure]);
+	metrics_query_type query = resolver_supervisor_metrics_query_type(job->entry);
+	(void)metrics_duration_histogram_observe(&supervisor->metrics.attempt_duration[query], &job->dispatched_at, now, &supervisor->metrics.saturation_total);
 }
 
-static int resolver_supervisor_helper_events_update(resolver_supervisor *supervisor, size_t helper_index) {
+static void resolver_supervisor_metrics_dispatch_record(resolver_supervisor *supervisor, const resolver_supervisor_job *job, const struct timespec *now) {
+	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
+	if (metrics == NULL || job->priority >= RESOLVER_SUPERVISOR_PRIORITY_COUNT) {
+		return;
+	}
+	resolver_supervisor_metrics_increment(supervisor, &metrics->dispatched);
+	metrics_query_type query = resolver_supervisor_metrics_query_type(job->entry);
+	(void)metrics_duration_histogram_observe(&supervisor->metrics.dispatch_wait[job->priority][query], &job->dispatch_wait_at, now, &supervisor->metrics.saturation_total);
+}
+
+static resolver_supervisor_send_status resolver_supervisor_helper_request_send(resolver_supervisor *supervisor, size_t helper_index, const struct timespec *now) {
 	resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
-	if (helper->fd == -1) {
-		return 0;
+	resolver_supervisor_job *job = helper->job;
+	struct timespec deadline;
+	if (!timeutil_add_seconds(now, RESOLVER_SUPERVISOR_QUERY_TIMEOUT_SEC, &deadline)) {
+		return RESOLVER_SUPERVISOR_SEND_TIME;
 	}
-	struct epoll_event event;
-	memset(&event, 0, sizeof(event));
-	event.events = EPOLLIN | EPOLLRDHUP;
-	if (helper->state == RESOLVER_SUPERVISOR_HELPER_SENDING) {
-		event.events |= EPOLLOUT;
+	while (true) {
+		ssize_t sent = send(helper->fd, helper->request_packet, helper->request_size, MSG_NOSIGNAL);
+		if (sent == (ssize_t)helper->request_size) {
+			job->state = RESOLVER_SUPERVISOR_JOB_DISPATCHED;
+			job->dispatched_at = *now;
+			job->deadline = deadline;
+			resolver_supervisor_metrics_dispatch_record(supervisor, job, now);
+			helper->request_size = 0;
+			helper->state = RESOLVER_SUPERVISOR_HELPER_BUSY;
+			return resolver_supervisor_helper_events_update(supervisor, helper_index) == 0 ? RESOLVER_SUPERVISOR_SEND_OK : RESOLVER_SUPERVISOR_SEND_IO;
+		}
+		if (sent >= 0) {
+			errno = EIO;
+			return RESOLVER_SUPERVISOR_SEND_IO;
+		}
+		if (errno == EINTR) {
+			continue;
+		}
+		if (errno == EAGAIN || errno == EWOULDBLOCK) {
+			job->state = RESOLVER_SUPERVISOR_JOB_SENDING;
+			helper->state = RESOLVER_SUPERVISOR_HELPER_SENDING;
+			return resolver_supervisor_helper_events_update(supervisor, helper_index) == 0 ? RESOLVER_SUPERVISOR_SEND_OK : RESOLVER_SUPERVISOR_SEND_IO;
+		}
+		return RESOLVER_SUPERVISOR_SEND_IO;
 	}
-	event.data.u32 = (uint32_t)(helper_index + 1U);
-	return epoll_ctl(supervisor->epoll_fd, EPOLL_CTL_MOD, helper->fd, &event);
 }
 
-static void resolver_supervisor_helper_process_close(resolver_supervisor *supervisor, resolver_supervisor_helper *helper, int signal_number) {
-	pid_t process_id = helper->process_id;
-	if (helper->fd != -1) {
-		epoll_ctl(supervisor->epoll_fd, EPOLL_CTL_DEL, helper->fd, NULL);
-		close(helper->fd);
-		helper->fd = -1;
+static void resolver_supervisor_metrics_response_record(resolver_supervisor *supervisor, const resolver_supervisor_job *job, const resolver_ipc_assembly_result *response) {
+	resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
+	if (metrics == NULL) {
+		return;
 	}
-	helper->process_id = -1;
-	if (signal_number == 0) {
-		resolver_supervisor_process_reap_or_kill(process_id);
-	} else {
-		resolver_supervisor_process_terminate(process_id, signal_number);
+	resolver_supervisor_dns_outcome outcome = resolver_supervisor_metrics_dns_outcome(response->status);
+	resolver_supervisor_metrics_increment(supervisor, &metrics->response[outcome]);
+	if (job->orphaned) {
+		resolver_supervisor_metrics_increment(supervisor, &metrics->orphan_response[outcome]);
 	}
+	metrics_query_type query = resolver_supervisor_metrics_query_type(job->entry);
+	(void)metrics_duration_histogram_observe(&supervisor->metrics.attempt_duration[query], &job->dispatched_at, &response->completed_at, &supervisor->metrics.saturation_total);
+}
+
+static void resolver_supervisor_metrics_schedule_record(resolver_supervisor *supervisor, const resolver_cache_entry *entry, resolver_supervisor_priority priority, resolver_supervisor_schedule_status status) {
+	if (supervisor == NULL || priority >= RESOLVER_SUPERVISOR_PRIORITY_COUNT || status >= RESOLVER_SUPERVISOR_SCHEDULE_STATUS_COUNT) {
+		return;
+	}
+	metrics_query_type query = resolver_supervisor_metrics_query_type(entry);
+	resolver_supervisor_metrics_increment(supervisor, &supervisor->metrics.schedule[priority][query].status[status]);
+}
+
+static void resolver_supervisor_observation_drop(resolver_supervisor *supervisor) {
+	resolver_supervisor_metrics_increment(supervisor, &supervisor->metrics.helper.observation_dropped);
+}
+
+static void resolver_supervisor_observation_push(resolver_supervisor *supervisor, const resolver_supervisor_observation *observation) {
+	if (supervisor->observation_count == RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY) {
+		supervisor->observation_head = (supervisor->observation_head + 1U) % RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY;
+		supervisor->observation_count--;
+		resolver_supervisor_observation_drop(supervisor);
+	}
+	size_t index = (supervisor->observation_head + supervisor->observation_count) % RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY;
+	supervisor->observations[index] = *observation;
+	supervisor->observation_count++;
 }
 
 static void resolver_supervisor_helper_recover(resolver_supervisor *supervisor, size_t helper_index, resolver_supervisor_helper_recovery recovery, const struct timespec *now) {
@@ -703,30 +725,24 @@ static void resolver_supervisor_helper_success(resolver_supervisor *supervisor, 
 	}
 }
 
-static void resolver_supervisor_helper_fail(resolver_supervisor *supervisor, size_t helper_index, resolver_supervisor_helper_failure failure, const struct timespec *now) {
-	resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
-	helper->last_failed_process_id = helper->process_id;
-	resolver_supervisor_job *job = helper->job;
-	if (job != NULL) {
-		bool dispatched = job->state == RESOLVER_SUPERVISOR_JOB_DISPATCHED;
-		job->query_id = 0;
-		resolver_ipc_assembly_destroy(job->assembly);
-		job->assembly = NULL;
-		helper->job = NULL;
-		helper->request_size = 0;
-		if (dispatched) {
-			resolver_supervisor_metrics_attempt_failure_record(supervisor, job, failure, now);
-			resolver_supervisor_job_retry(supervisor, job, now);
-#ifdef RESOLVER_SUPERVISOR_TEST_API
-		} else if (job->cancelled) {
-			resolver_supervisor_job_destroy(supervisor, job);
-#endif
-		} else {
-			resolver_supervisor_job_queue_prepend(supervisor, job);
-		}
+static void resolver_supervisor_process_reap(pid_t process_id) {
+	if (process_id <= 0) {
+		return;
 	}
-	resolver_supervisor_helper_process_close(supervisor, helper, failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT ? 0 : SIGKILL);
-	resolver_supervisor_helper_respawn_schedule(supervisor, helper_index, failure, now);
+	while (waitpid(process_id, NULL, 0) == -1 && errno == EINTR) {
+	}
+}
+
+static void resolver_supervisor_process_terminate(pid_t process_id, int signal_number) {
+	if (process_id <= 0 || signal_number == 0) {
+		return;
+	}
+	if (kill(process_id, signal_number) == -1 && errno != ESRCH) {
+		return;
+	}
+	if (signal_number == SIGKILL) {
+		resolver_supervisor_process_reap(process_id);
+	}
 }
 
 static int resolver_supervisor_helper_spawn(resolver_supervisor *supervisor, size_t helper_index, const struct timespec *now) {
@@ -763,44 +779,64 @@ static int resolver_supervisor_helper_spawn(resolver_supervisor *supervisor, siz
 	return 0;
 }
 
+static void resolver_supervisor_process_reap_or_kill(pid_t process_id) {
+	if (process_id <= 0) {
+		return;
+	}
+	pid_t result;
+	do {
+		result = waitpid(process_id, NULL, WNOHANG);
+	} while (result == -1 && errno == EINTR);
+	if (result == 0) {
+		resolver_supervisor_process_terminate(process_id, SIGKILL);
+	}
+}
+
+static void resolver_supervisor_helper_process_close(resolver_supervisor *supervisor, resolver_supervisor_helper *helper, int signal_number) {
+	pid_t process_id = helper->process_id;
+	if (helper->fd != -1) {
+		epoll_ctl(supervisor->epoll_fd, EPOLL_CTL_DEL, helper->fd, NULL);
+		close(helper->fd);
+		helper->fd = -1;
+	}
+	helper->process_id = -1;
+	if (signal_number == 0) {
+		resolver_supervisor_process_reap_or_kill(process_id);
+	} else {
+		resolver_supervisor_process_terminate(process_id, signal_number);
+	}
+}
+
+static void resolver_supervisor_helper_fail(resolver_supervisor *supervisor, size_t helper_index, resolver_supervisor_helper_failure failure, const struct timespec *now) {
+	resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
+	helper->last_failed_process_id = helper->process_id;
+	resolver_supervisor_job *job = helper->job;
+	if (job != NULL) {
+		bool dispatched = job->state == RESOLVER_SUPERVISOR_JOB_DISPATCHED;
+		job->query_id = 0;
+		resolver_ipc_assembly_destroy(job->assembly);
+		job->assembly = NULL;
+		helper->job = NULL;
+		helper->request_size = 0;
+		if (dispatched) {
+			resolver_supervisor_metrics_attempt_failure_record(supervisor, job, failure, now);
+			resolver_supervisor_job_retry(supervisor, job, now);
+#ifdef RESOLVER_SUPERVISOR_TEST_API
+		} else if (job->cancelled) {
+			resolver_supervisor_job_destroy(supervisor, job);
+#endif
+		} else {
+			resolver_supervisor_job_queue_prepend(supervisor, job);
+		}
+	}
+	resolver_supervisor_helper_process_close(supervisor, helper, failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT ? 0 : SIGKILL);
+	resolver_supervisor_helper_respawn_schedule(supervisor, helper_index, failure, now);
+}
+
 static void resolver_supervisor_helper_stop(resolver_supervisor *supervisor, resolver_supervisor_helper *helper, bool force) {
 	resolver_supervisor_helper_process_close(supervisor, helper, force ? SIGKILL : 0);
 	helper->state = RESOLVER_SUPERVISOR_HELPER_STOPPED;
 	memset(&helper->next_event_at, 0, sizeof(helper->next_event_at));
-}
-
-static resolver_supervisor_send_status resolver_supervisor_helper_request_send(resolver_supervisor *supervisor, size_t helper_index, const struct timespec *now) {
-	resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
-	resolver_supervisor_job *job = helper->job;
-	struct timespec deadline;
-	if (!timeutil_add_seconds(now, RESOLVER_SUPERVISOR_QUERY_TIMEOUT_SEC, &deadline)) {
-		return RESOLVER_SUPERVISOR_SEND_TIME;
-	}
-	while (true) {
-		ssize_t sent = send(helper->fd, helper->request_packet, helper->request_size, MSG_NOSIGNAL);
-		if (sent == (ssize_t)helper->request_size) {
-			job->state = RESOLVER_SUPERVISOR_JOB_DISPATCHED;
-			job->dispatched_at = *now;
-			job->deadline = deadline;
-			resolver_supervisor_metrics_dispatch_record(supervisor, job, now);
-			helper->request_size = 0;
-			helper->state = RESOLVER_SUPERVISOR_HELPER_BUSY;
-			return resolver_supervisor_helper_events_update(supervisor, helper_index) == 0 ? RESOLVER_SUPERVISOR_SEND_OK : RESOLVER_SUPERVISOR_SEND_IO;
-		}
-		if (sent >= 0) {
-			errno = EIO;
-			return RESOLVER_SUPERVISOR_SEND_IO;
-		}
-		if (errno == EINTR) {
-			continue;
-		}
-		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			job->state = RESOLVER_SUPERVISOR_JOB_SENDING;
-			helper->state = RESOLVER_SUPERVISOR_HELPER_SENDING;
-			return resolver_supervisor_helper_events_update(supervisor, helper_index) == 0 ? RESOLVER_SUPERVISOR_SEND_OK : RESOLVER_SUPERVISOR_SEND_IO;
-		}
-		return RESOLVER_SUPERVISOR_SEND_IO;
-	}
 }
 
 static bool resolver_supervisor_query_id_allocate(resolver_supervisor *supervisor, uint64_t *result) {
@@ -895,6 +931,34 @@ static void resolver_supervisor_dispatch(resolver_supervisor *supervisor, const 
 	}
 }
 
+static void resolver_supervisor_resources_destroy(resolver_supervisor *supervisor, bool terminate_processes) {
+	if (supervisor == NULL) {
+		return;
+	}
+	resolver_supervisor_jobs_destroy_all(supervisor);
+	if (supervisor->helpers != NULL) {
+		for (size_t helper_index = 0; helper_index < RESOLVER_SUPERVISOR_HELPER_COUNT; helper_index++) {
+			if (terminate_processes) {
+				resolver_supervisor_helper_process_close(supervisor, &supervisor->helpers[helper_index], SIGKILL);
+			} else if (supervisor->helpers[helper_index].fd != -1) {
+				close(supervisor->helpers[helper_index].fd);
+				supervisor->helpers[helper_index].fd = -1;
+				supervisor->helpers[helper_index].process_id = -1;
+			}
+		}
+	}
+	if (supervisor->timer_fd != -1) {
+		close(supervisor->timer_fd);
+	}
+	if (supervisor->epoll_fd != -1) {
+		close(supervisor->epoll_fd);
+	}
+	resolver_ipc_assembly_budget_destroy(supervisor->assembly_budget);
+	free(supervisor->buckets);
+	free(supervisor->helpers);
+	free(supervisor);
+}
+
 static resolver_cache_publish_status resolver_supervisor_result_publish(resolver_supervisor_job *job, resolver_ipc_assembly_result *response) {
 	if (response->query_type == ns_t_srv) {
 		dns_srv_lookup_status lookup_status;
@@ -968,15 +1032,6 @@ static resolver_supervisor_event_status resolver_supervisor_helper_result_finish
 	return RESOLVER_SUPERVISOR_EVENT_OK;
 }
 
-static bool resolver_supervisor_helper_receive_zero_is_end(int socket_fd) {
-	uint8_t marker;
-	ssize_t received;
-	do {
-		received = recv(socket_fd, &marker, sizeof(marker), MSG_DONTWAIT | MSG_PEEK);
-	} while (received == -1 && errno == EINTR);
-	return received == 0;
-}
-
 static resolver_supervisor_event_status resolver_supervisor_helper_drain(resolver_supervisor *supervisor, size_t helper_index, const struct timespec *now) {
 	resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
 	while (helper->fd != -1) {
@@ -1024,6 +1079,14 @@ static resolver_supervisor_event_status resolver_supervisor_helper_drain(resolve
 	return RESOLVER_SUPERVISOR_EVENT_OK;
 }
 
+static bool resolver_supervisor_time_update(resolver_supervisor *supervisor, const struct timespec *now) {
+	if (supervisor == NULL || !timeutil_valid(now) || timeutil_compare(now, &supervisor->last_now) < 0) {
+		return false;
+	}
+	supervisor->last_now = *now;
+	return true;
+}
+
 static void resolver_supervisor_timer_candidate(struct timespec *target, bool *available, const struct timespec *candidate) {
 	if (!timeutil_valid(candidate)) {
 		return;
@@ -1031,6 +1094,24 @@ static void resolver_supervisor_timer_candidate(struct timespec *target, bool *a
 	if (!*available || timeutil_compare(candidate, target) < 0) {
 		*target = *candidate;
 		*available = true;
+	}
+}
+
+static int resolver_supervisor_timer_drain(int timer_fd) {
+	while (true) {
+		uint64_t expirations;
+		ssize_t bytes = read(timer_fd, &expirations, sizeof(expirations));
+		if (bytes == (ssize_t)sizeof(expirations)) {
+			continue;
+		}
+		if (bytes == -1 && errno == EINTR) {
+			continue;
+		}
+		if (bytes == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+			return 0;
+		}
+		errno = EIO;
+		return -1;
 	}
 }
 
@@ -1062,124 +1143,6 @@ static int resolver_supervisor_timer_rearm(resolver_supervisor *supervisor) {
 		}
 	}
 	return timerfd_settime(supervisor->timer_fd, TFD_TIMER_ABSTIME, &timer, NULL);
-}
-
-static int resolver_supervisor_timer_drain(int timer_fd) {
-	while (true) {
-		uint64_t expirations;
-		ssize_t bytes = read(timer_fd, &expirations, sizeof(expirations));
-		if (bytes == (ssize_t)sizeof(expirations)) {
-			continue;
-		}
-		if (bytes == -1 && errno == EINTR) {
-			continue;
-		}
-		if (bytes == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-			return 0;
-		}
-		errno = EIO;
-		return -1;
-	}
-}
-
-static void resolver_supervisor_timers_process_jobs(resolver_supervisor *supervisor, const struct timespec *now) {
-	for (size_t bucket = 0; bucket < RESOLVER_SUPERVISOR_JOB_LIMIT; bucket++) {
-		resolver_supervisor_job *job = supervisor->buckets[bucket];
-		while (job != NULL) {
-			resolver_supervisor_job *next = job->hash_next;
-			if (job->state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT && timeutil_compare(now, &job->retry_at) >= 0) {
-				job->dispatch_wait_at = *now;
-				resolver_supervisor_job_queue_append(supervisor, job);
-			}
-			job = next;
-		}
-	}
-}
-
-static void resolver_supervisor_timers_process_helpers(resolver_supervisor *supervisor, const struct timespec *now) {
-	for (size_t helper_index = 0; helper_index < RESOLVER_SUPERVISOR_HELPER_COUNT; helper_index++) {
-		resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
-		if (helper->state == RESOLVER_SUPERVISOR_HELPER_BUSY && helper->job != NULL && timeutil_compare(now, &helper->job->deadline) >= 0) {
-			resolver_supervisor_helper_drain(supervisor, helper_index, now);
-			if (helper->state == RESOLVER_SUPERVISOR_HELPER_BUSY && helper->job != NULL) {
-				resolver_supervisor_helper_fail(supervisor, helper_index, RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT, now);
-			}
-		}
-		helper = &supervisor->helpers[helper_index];
-		if (helper->failure_count > 0 && (helper->state == RESOLVER_SUPERVISOR_HELPER_IDLE || helper->state == RESOLVER_SUPERVISOR_HELPER_SENDING
-			|| helper->state == RESOLVER_SUPERVISOR_HELPER_BUSY) && timeutil_compare(now, &helper->next_event_at) >= 0) {
-			resolver_supervisor_helper_recover(supervisor, helper_index, RESOLVER_SUPERVISOR_HELPER_RECOVERY_STABLE_UPTIME, now);
-		}
-		helper = &supervisor->helpers[helper_index];
-		if (helper->state == RESOLVER_SUPERVISOR_HELPER_BACKOFF && timeutil_compare(now, &helper->next_event_at) >= 0) {
-			resolver_supervisor_helper_spawn(supervisor, helper_index, now);
-		} else if (helper->state == RESOLVER_SUPERVISOR_HELPER_SHUTTING_DOWN && timeutil_compare(now, &helper->next_event_at) >= 0) {
-			resolver_supervisor_helper_stop(supervisor, helper, true);
-		}
-	}
-}
-
-static void resolver_supervisor_jobs_destroy_all(resolver_supervisor *supervisor) {
-	if (supervisor->buckets == NULL) {
-		return;
-	}
-	for (size_t bucket = 0; bucket < RESOLVER_SUPERVISOR_JOB_LIMIT; bucket++) {
-		while (supervisor->buckets[bucket] != NULL) {
-			resolver_supervisor_job *job = supervisor->buckets[bucket];
-			resolver_supervisor_metrics_attempt *metrics = resolver_supervisor_metrics_attempt_select(supervisor, job);
-			if (supervisor->shutting_down && metrics != NULL) {
-				if (job->state == RESOLVER_SUPERVISOR_JOB_COMPLETE) {
-					resolver_supervisor_metrics_increment(supervisor, &metrics->completion_abandoned_shutdown);
-				} else if (job->state == RESOLVER_SUPERVISOR_JOB_DISPATCHED) {
-#ifdef RESOLVER_SUPERVISOR_TEST_API
-					if (!job->cancelled) {
-						resolver_supervisor_metrics_increment(supervisor, &metrics->attempt_abandoned_shutdown);
-					}
-#else
-					resolver_supervisor_metrics_increment(supervisor, &metrics->attempt_abandoned_shutdown);
-#endif
-				}
-			}
-			if (job->state == RESOLVER_SUPERVISOR_JOB_SENDING || job->state == RESOLVER_SUPERVISOR_JOB_DISPATCHED) {
-				job->query_id = 0;
-				resolver_ipc_assembly_destroy(job->assembly);
-				job->assembly = NULL;
-				if (job->slot_index < RESOLVER_SUPERVISOR_HELPER_COUNT && supervisor->helpers[job->slot_index].job == job) {
-					supervisor->helpers[job->slot_index].job = NULL;
-					supervisor->helpers[job->slot_index].request_size = 0;
-				}
-			}
-			resolver_supervisor_job_destroy(supervisor, job);
-		}
-	}
-}
-
-static void resolver_supervisor_resources_destroy(resolver_supervisor *supervisor, bool terminate_processes) {
-	if (supervisor == NULL) {
-		return;
-	}
-	resolver_supervisor_jobs_destroy_all(supervisor);
-	if (supervisor->helpers != NULL) {
-		for (size_t helper_index = 0; helper_index < RESOLVER_SUPERVISOR_HELPER_COUNT; helper_index++) {
-			if (terminate_processes) {
-				resolver_supervisor_helper_process_close(supervisor, &supervisor->helpers[helper_index], SIGKILL);
-			} else if (supervisor->helpers[helper_index].fd != -1) {
-				close(supervisor->helpers[helper_index].fd);
-				supervisor->helpers[helper_index].fd = -1;
-				supervisor->helpers[helper_index].process_id = -1;
-			}
-		}
-	}
-	if (supervisor->timer_fd != -1) {
-		close(supervisor->timer_fd);
-	}
-	if (supervisor->epoll_fd != -1) {
-		close(supervisor->epoll_fd);
-	}
-	resolver_ipc_assembly_budget_destroy(supervisor->assembly_budget);
-	free(supervisor->buckets);
-	free(supervisor->helpers);
-	free(supervisor);
 }
 
 static resolver_supervisor_release_status resolver_supervisor_entry_release(resolver_supervisor *supervisor, resolver_cache_entry *entry, const struct timespec *now, resolver_supervisor_priority priority) {
@@ -1305,6 +1268,43 @@ static resolver_supervisor_schedule_status resolver_supervisor_entry_schedule_pr
 		return RESOLVER_SUPERVISOR_SCHEDULE_IO;
 	}
 	return RESOLVER_SUPERVISOR_SCHEDULE_STARTED;
+}
+
+static void resolver_supervisor_timers_process_helpers(resolver_supervisor *supervisor, const struct timespec *now) {
+	for (size_t helper_index = 0; helper_index < RESOLVER_SUPERVISOR_HELPER_COUNT; helper_index++) {
+		resolver_supervisor_helper *helper = &supervisor->helpers[helper_index];
+		if (helper->state == RESOLVER_SUPERVISOR_HELPER_BUSY && helper->job != NULL && timeutil_compare(now, &helper->job->deadline) >= 0) {
+			resolver_supervisor_helper_drain(supervisor, helper_index, now);
+			if (helper->state == RESOLVER_SUPERVISOR_HELPER_BUSY && helper->job != NULL) {
+				resolver_supervisor_helper_fail(supervisor, helper_index, RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT, now);
+			}
+		}
+		helper = &supervisor->helpers[helper_index];
+		if (helper->failure_count > 0 && (helper->state == RESOLVER_SUPERVISOR_HELPER_IDLE || helper->state == RESOLVER_SUPERVISOR_HELPER_SENDING
+			|| helper->state == RESOLVER_SUPERVISOR_HELPER_BUSY) && timeutil_compare(now, &helper->next_event_at) >= 0) {
+			resolver_supervisor_helper_recover(supervisor, helper_index, RESOLVER_SUPERVISOR_HELPER_RECOVERY_STABLE_UPTIME, now);
+		}
+		helper = &supervisor->helpers[helper_index];
+		if (helper->state == RESOLVER_SUPERVISOR_HELPER_BACKOFF && timeutil_compare(now, &helper->next_event_at) >= 0) {
+			resolver_supervisor_helper_spawn(supervisor, helper_index, now);
+		} else if (helper->state == RESOLVER_SUPERVISOR_HELPER_SHUTTING_DOWN && timeutil_compare(now, &helper->next_event_at) >= 0) {
+			resolver_supervisor_helper_stop(supervisor, helper, true);
+		}
+	}
+}
+
+static void resolver_supervisor_timers_process_jobs(resolver_supervisor *supervisor, const struct timespec *now) {
+	for (size_t bucket = 0; bucket < RESOLVER_SUPERVISOR_JOB_LIMIT; bucket++) {
+		resolver_supervisor_job *job = supervisor->buckets[bucket];
+		while (job != NULL) {
+			resolver_supervisor_job *next = job->hash_next;
+			if (job->state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT && timeutil_compare(now, &job->retry_at) >= 0) {
+				job->dispatch_wait_at = *now;
+				resolver_supervisor_job_queue_append(supervisor, job);
+			}
+			job = next;
+		}
+	}
 }
 
 /* section: functions (exported) */

@@ -278,12 +278,9 @@ static bool endpoint_test_arguments(const hosts_table *hosts) {
 		"invalid endpoint-selection arguments were accepted");
 	p_proxy invalid_proxy = inbound;
 	invalid_proxy.dstaddr.family = AF_INET;
-	CHECK(endpoint_select((route_generation *)&fixture, "numeric", &now, &invalid_proxy, &snapshot) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT,
-		"inconsistent inbound endpoints were accepted");
-	CHECK(endpoint_select((route_generation *)&fixture, "missing", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_NO_ROUTE,
-		"unknown virtual host was not distinguished");
-	CHECK(endpoint_select((route_generation *)&fixture, "invalid", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_UNAVAILABLE,
-		"locally unavailable route was accepted");
+	CHECK(endpoint_select((route_generation *)&fixture, "numeric", &now, &invalid_proxy, &snapshot) == ROUTE_ENDPOINT_SELECT_BAD_ARGUMENT, "inconsistent inbound endpoints were accepted");
+	CHECK(endpoint_select((route_generation *)&fixture, "missing", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_NO_ROUTE, "unknown virtual host was not distinguished");
+	CHECK(endpoint_select((route_generation *)&fixture, "invalid", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_UNAVAILABLE, "locally unavailable route was accepted");
 	CHECK(endpoint_select((route_generation *)&fixture, "NUMERIC.", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET, "192.0.2.10") && snapshot.port == 25560 && snapshot.generation_identity == 42
 		&& snapshot.destination_index == 0 && snapshot.pheader_version == PROXY_PREFIX_V2 && snapshot.rewrite && strcmp(snapshot.configured_address, "192.0.2.10") == 0
@@ -309,8 +306,7 @@ static bool endpoint_test_dns(const hosts_table *hosts) {
 	route_endpoint_snapshot snapshot;
 	route_binding_view binding;
 	CHECK(endpoint_fixture_build(&fixture, hosts, &built_at) && endpoint_binding_get(&fixture, "dns", &binding, NULL), "DNS endpoint fixture could not be built");
-	CHECK(endpoint_select((route_generation *)&fixture, "dns", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_PENDING,
-		"empty dual-family DNS route was not pending");
+	CHECK(endpoint_select((route_generation *)&fixture, "dns", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_PENDING, "empty dual-family DNS route was not pending");
 	static const char *const ipv4_addresses[] = { "192.0.2.40", "192.0.2.41" };
 	CHECK(endpoint_address_publish(binding.ipv4_entry, ipv4_addresses, 2, 30, &built_at)
 		&& endpoint_select((route_generation *)&fixture, "dns", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
@@ -362,8 +358,7 @@ static bool endpoint_test_snapshot(const hosts_table *hosts) {
 	p_proxy inbound = endpoint_proxy(AF_INET);
 	route_endpoint_snapshot snapshot;
 	CHECK(endpoint_fixture_build(&fixture, hosts, &now), "snapshot fixture could not be built");
-	CHECK(endpoint_select((route_generation *)&fixture, "numeric", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK,
-		"snapshot endpoint could not be selected");
+	CHECK(endpoint_select((route_generation *)&fixture, "numeric", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK, "snapshot endpoint could not be selected");
 	endpoint_fixture_destroy(&fixture);
 	char proxy_header[PROTOPROXY_PACKETMAXLEN + 1] = { 0 };
 	CHECK(snapshot.generation_identity == 42 && endpoint_address_equal(&snapshot.address, AF_INET, "192.0.2.10") && snapshot.port == 25560
@@ -386,8 +381,7 @@ static bool endpoint_test_srv(const hosts_table *hosts) {
 	route_binding_view binding;
 	size_t destination_index = 0;
 	CHECK(endpoint_fixture_build(&fixture, hosts, &built_at) && endpoint_binding_get(&fixture, "srv", &binding, &destination_index), "SRV endpoint fixture could not be built");
-	CHECK(endpoint_select((route_generation *)&fixture, "srv", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_PENDING,
-		"empty SRV owner was not pending");
+	CHECK(endpoint_select((route_generation *)&fixture, "srv", &built_at, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_PENDING, "empty SRV owner was not pending");
 	dns_srv_record records[4];
 	memset(records, 0, sizeof(records));
 	records[0].priority = 10;
@@ -408,8 +402,7 @@ static bool endpoint_test_srv(const hosts_table *hosts) {
 		&& snprintf(records[3].target, sizeof(records[3].target), "%s", "later.target") > 0
 		&& endpoint_srv_publish(&fixture, binding.srv_entry, destination_index, records, 4, 30, &built_at), "deterministic SRV RRset could not be published");
 	route_resolution_target_view target;
-	CHECK(endpoint_target_get(&fixture, destination_index, "chosen.target", &target) && target.source == ROUTE_RESOLUTION_TARGET_DNS,
-		"selected SRV target was not expanded as DNS work");
+	CHECK(endpoint_target_get(&fixture, destination_index, "chosen.target", &target) && target.source == ROUTE_RESOLUTION_TARGET_DNS, "selected SRV target was not expanded as DNS work");
 	static const char *const target_ipv4[] = { "192.0.2.72", "192.0.2.73" };
 	static const char *const target_ipv6[] = { "2001:db8::72" };
 	CHECK(endpoint_address_publish(target.ipv4_entry, target_ipv4, 2, 30, &built_at) && endpoint_address_publish(target.ipv6_entry, target_ipv6, 1, 5, &built_at),

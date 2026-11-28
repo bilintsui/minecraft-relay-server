@@ -57,8 +57,7 @@ static pid_t daemon_start(const char *binary, const char *config_filename) {
 		return process;
 	}
 	int null_fd = open("/dev/null", O_RDWR);
-	if (setpgid(0, 0) == -1 || null_fd == -1 || dup2(null_fd, STDIN_FILENO) == -1 || dup2(null_fd, STDOUT_FILENO) == -1 || dup2(null_fd, STDERR_FILENO) == -1
-		|| unsetenv("NOTIFY_SOCKET") == -1) {
+	if (setpgid(0, 0) == -1 || null_fd == -1 || dup2(null_fd, STDIN_FILENO) == -1 || dup2(null_fd, STDOUT_FILENO) == -1 || dup2(null_fd, STDERR_FILENO) == -1 || unsetenv("NOTIFY_SOCKET") == -1) {
 		_exit(EXIT_FAILURE);
 	}
 	if (null_fd > STDERR_FILENO) {
@@ -246,8 +245,7 @@ static bool run_case(const char *binary, const char *name, int stop_signal, size
 	CHECK(reservation >= 0, "cannot reserve a loopback port");
 	struct sockaddr_in address = { .sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
 	socklen_t address_size = sizeof(address);
-	CHECK(bind(reservation, (const struct sockaddr *)&address, sizeof(address)) == 0
-		&& getsockname(reservation, (struct sockaddr *)&address, &address_size) == 0, "cannot obtain a loopback port");
+	CHECK(bind(reservation, (const struct sockaddr *)&address, sizeof(address)) == 0 && getsockname(reservation, (struct sockaddr *)&address, &address_size) == 0, "cannot obtain a loopback port");
 	CHECK(close(reservation) == 0, "cannot release reserved port");
 	reservation = -1;
 	config = fopen(config_filename, "w");
@@ -298,8 +296,7 @@ static bool run_case(const char *binary, const char *name, int stop_signal, size
 	CHECK(process_wait(&listener, 0, &status) && WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS, "listener did not shut down successfully");
 	CHECK(metrics_read(log_filename, &first, &last, &snapshots, &events, &shutdown_seen) && snapshots == 2 && shutdown_seen, "final shutdown metrics missing");
 	uint64_t expected_recovery = recovery ? 1U : 0U;
-	CHECK(last.spawn_attempt == first.spawn_attempt + expected_recovery && last.spawn_success == first.spawn_success + expected_recovery,
-		"shutdown respawned resolver helpers");
+	CHECK(last.spawn_attempt == first.spawn_attempt + expected_recovery && last.spawn_success == first.spawn_success + expected_recovery, "shutdown respawned resolver helpers");
 	CHECK(last.failure_exit == expected_recovery && last.failure_io == 0 && last.failure_protocol == 0 && last.failure_spawn == 0 && last.failure_timeout == 0,
 		"shutdown counted an expected helper exit as a failure");
 	CHECK(events == expected_recovery && last.observation_dropped == 0, "shutdown emitted unexpected helper observations");

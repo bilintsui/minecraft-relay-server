@@ -106,16 +106,19 @@ if __name__ == "__main__":
     lines += ["", "## Snapshot getter plus formatter and regular-file logging", "", "Ten warm-up frames excluded; 1,000 individually timed frames in each repetition.", ""]
     for entries, values in report["snapshot"].items():
         cost = values["cpu_ms_per_snapshot"]
-        lines.append("- {} unpublished cache entries: {:.3f} ms CPU/frame (run means {:.3f}–{:.3f}); predicted {:.2f} ms CPU/day at 900 seconds.".format(entries, cost["median"], cost["min"], cost["max"], values["predicted_cpu_ms_per_day_at_900s"]))
+        lines.append("- {} unpublished cache entries: {:.3f} ms CPU/frame (run means {:.3f}–{:.3f}); predicted {:.2f} ms CPU/day at 900 seconds.".format(
+            entries, cost["median"], cost["min"], cost["max"], values["predicted_cpu_ms_per_day_at_900s"]))
     if report["cadence_cpu_usec"]:
         cadence = report["cadence_cpu_usec"]
         delta = cadence["paired_C_minus_B"]
         lines += ["", "## Actual 900-second idle cadence", "", "Complete-frame endpoint required in every record: {}.".format(cadence["full_frame_gate"]),
                   "Paired C−B CPU: {:.3f} ms, range {:.3f}–{:.3f} ms; independently accounted co-resident instances.".format(delta["median"] / 1000, delta["min"] / 1000, delta["max"] / 1000)]
     lines += ["", "## Compiler object sizes", "", "```json", json.dumps(report["layouts"]["size_difference_bytes"], indent=2), "```", "",
-              "## Scope", "", "A is a source-level measurement control, not a supported product mode. B/C short load runs do not reach a 900-second periodic tick; their startup/shutdown frames are outside timed CPU windows.",
+              "## Scope", "",
+              "A is a source-level measurement control, not a supported product mode. B/C short load runs do not reach a 900-second periodic tick; their startup/shutdown frames are outside timed CPU windows.",
               "The separate cadence run uses five staggered, co-resident idle B/C pairs with independent cgroup CPU accounting. Its PSS is not a single-instance memory estimate.",
-              "PSS shares pages across processes; per-process smaps values are in integer KiB and summation retains quantization error. cgroup memory.current also includes file cache and kernel memory. Sampled maxima are not guaranteed transient peaks.",
+              "PSS shares pages across processes; per-process smaps values are in integer KiB and summation retains quantization error. "
+              "cgroup memory.current also includes file cache and kernel memory. Sampled maxima are not guaranteed transient peaks.",
               "Snapshot timings use an idle supervisor and 0/512 unpublished cache entries; they do not establish worst-case cost at maximum cache/job capacity or slow-storage stalls.",
               "No sanitizer is enabled. Results are specific to this guest and workload; a range crossing zero does not establish zero cost. Operational acceptance remains a maintainer decision."]
     (args.root / "report.md").write_text("\n".join(lines) + "\n")

@@ -34,51 +34,8 @@
 
 /* section: global variables */
 static bool connect_force_success;
-int __real_connect(int socket_fd, const struct sockaddr *address, socklen_t address_size);
 
 /* section: functions (local) */
-static int connect_test_bound_socket(in_port_t *port, bool listening) {
-	struct sockaddr_in address;
-	socklen_t address_size = sizeof(address);
-	int option = 1;
-	int result;
-	if (port == NULL) {
-		errno = EINVAL;
-		return -1;
-	}
-	result = socket(AF_INET, SOCK_STREAM, 0);
-	if (result == -1) {
-		return -1;
-	}
-	if (listening && setsockopt(result, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) == -1) {
-		close(result);
-		return -1;
-	}
-	address = (struct sockaddr_in){
-		.sin_family = AF_INET,
-		.sin_addr = { .s_addr = htonl(INADDR_LOOPBACK) },
-		.sin_port = htons(0)
-	};
-	if (bind(result, (const struct sockaddr *)&address, sizeof(address)) == -1 || (listening && listen(result, 8) == -1)
-		|| getsockname(result, (struct sockaddr *)&address, &address_size) == -1) {
-		close(result);
-		return -1;
-	}
-	*port = ntohs(address.sin_port);
-	return result;
-}
-
-static bool connect_test_poll(int socket_fd) {
-	struct pollfd event = { .fd = socket_fd, .events = POLLOUT };
-	int result;
-	if (socket_fd < 0) {
-		errno = EINVAL;
-		return false;
-	}
-	result = poll(&event, 1, 1000);
-	return result == 1 && (event.revents & (POLLOUT | POLLERR | POLLHUP)) != 0;
-}
-
 static bool connect_test_arguments(void) {
 	bool test_result = false;
 	int pipe_fds[2] = { -1, -1 };
@@ -114,6 +71,74 @@ cleanup:
 	return test_result;
 }
 
+static int connect_test_bound_socket(in_port_t *port, bool listening) {
+	struct sockaddr_in address;
+	socklen_t address_size = sizeof(address);
+	int option = 1;
+	int result;
+	if (port == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+	result = socket(AF_INET, SOCK_STREAM, 0);
+	if (result == -1) {
+		return -1;
+	}
+	if (listening && setsockopt(result, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) == -1) {
+		close(result);
+		return -1;
+	}
+	address = (struct sockaddr_in){
+		.sin_family = AF_INET,
+		.sin_addr = { .s_addr = htonl(INADDR_LOOPBACK) },
+		.sin_port = htons(0)
+	};
+	if (bind(result, (const struct sockaddr *)&address, sizeof(address)) == -1 || (listening && listen(result, 8) == -1) || getsockname(result, (struct sockaddr *)&address, &address_size) == -1) {
+		close(result);
+		return -1;
+	}
+	*port = ntohs(address.sin_port);
+	return result;
+}
+
+static bool connect_test_immediate_success(void) {
+	bool test_result = false;
+	int listener_fd = -1;
+	int socket_fd = -1;
+	in_port_t port = 0;
+	net_addr address = net_addr_parse("127.0.0.1");
+	CHECK(address.family == AF_INET, "could not parse loopback address");
+	listener_fd = connect_test_bound_socket(&port, true);
+	CHECK(listener_fd >= 0, "could not create immediate-connect listener");
+	connect_force_success = true;
+	CHECK(net_connect_nonblocking(&address, port, &socket_fd) == NET_CONNECT_OK, "immediate connect was not accepted");
+	CHECK(socket_fd >= 0, "immediate connect did not return a socket");
+	close(socket_fd);
+	socket_fd = -1;
+	test_result = true;
+
+cleanup:
+	connect_force_success = false;
+	if (listener_fd >= 0) {
+		close(listener_fd);
+	}
+	if (socket_fd >= 0) {
+		close(socket_fd);
+	}
+	return test_result;
+}
+
+static bool connect_test_poll(int socket_fd) {
+	struct pollfd event = { .fd = socket_fd, .events = POLLOUT };
+	int result;
+	if (socket_fd < 0) {
+		errno = EINVAL;
+		return false;
+	}
+	result = poll(&event, 1, 1000);
+	return result == 1 && (event.revents & (POLLOUT | POLLERR | POLLHUP)) != 0;
+}
+
 static bool connect_test_failure(void) {
 	bool test_result = false;
 	int reservation_fd = -1;
@@ -141,33 +166,6 @@ static bool connect_test_failure(void) {
 cleanup:
 	if (reservation_fd >= 0) {
 		close(reservation_fd);
-	}
-	if (socket_fd >= 0) {
-		close(socket_fd);
-	}
-	return test_result;
-}
-
-static bool connect_test_immediate_success(void) {
-	bool test_result = false;
-	int listener_fd = -1;
-	int socket_fd = -1;
-	in_port_t port = 0;
-	net_addr address = net_addr_parse("127.0.0.1");
-	CHECK(address.family == AF_INET, "could not parse loopback address");
-	listener_fd = connect_test_bound_socket(&port, true);
-	CHECK(listener_fd >= 0, "could not create immediate-connect listener");
-	connect_force_success = true;
-	CHECK(net_connect_nonblocking(&address, port, &socket_fd) == NET_CONNECT_OK, "immediate connect was not accepted");
-	CHECK(socket_fd >= 0, "immediate connect did not return a socket");
-	close(socket_fd);
-	socket_fd = -1;
-	test_result = true;
-
-cleanup:
-	connect_force_success = false;
-	if (listener_fd >= 0) {
-		close(listener_fd);
 	}
 	if (socket_fd >= 0) {
 		close(socket_fd);
@@ -213,6 +211,8 @@ cleanup:
 }
 
 /* section: functions (exported) */
+int __real_connect(int socket_fd, const struct sockaddr *address, socklen_t address_size);
+
 int __wrap_connect(int socket_fd, const struct sockaddr *address, socklen_t address_size) {
 	int result = __real_connect(socket_fd, address, address_size);
 	if (connect_force_success) {

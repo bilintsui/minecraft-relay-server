@@ -37,8 +37,6 @@
 /* section: global variables */
 static size_t cache_calloc_failures;
 
-void *__real_calloc(size_t count, size_t size);
-
 /* section: functions (local) */
 static bool cache_address_result_create(dns_address_result *result, const char *question_name, sa_family_t family, size_t address_count, uint32_t effective_ttl, bool with_cname) {
 	if (result == NULL || question_name == NULL || (family != AF_INET && family != AF_INET6) || address_count == 0) {
@@ -159,19 +157,6 @@ static bool cache_srv_result_create(dns_srv_result *result, const char *question
 	return true;
 }
 
-static bool cache_time_equal(const struct timespec *left, const struct timespec *right) {
-	return left != NULL && right != NULL && left->tv_sec == right->tv_sec && left->tv_nsec == right->tv_nsec;
-}
-
-static time_t cache_time_max(void) {
-	uintmax_t maximum = UINTMAX_MAX;
-	maximum >>= (sizeof(uintmax_t) - sizeof(time_t)) * CHAR_BIT;
-	if ((time_t)-1 < 0) {
-		maximum >>= 1;
-	}
-	return (time_t)maximum;
-}
-
 static bool cache_test_arguments(void) {
 	int test_result = false;
 	dns_address_result address_result = { 0 };
@@ -243,8 +228,7 @@ static bool cache_test_capacity(void) {
 		CHECK(snprintf(name, sizeof(name), "entry%zu.cache.test", index) > 0, "entry-limit name could not be formatted");
 		CHECK(resolver_cache_entry_acquire(entry_cache, name, ns_t_a, &entries[index]) == RESOLVER_CACHE_ACQUIRE_OK, "entry below the entry limit was rejected");
 	}
-	CHECK(resolver_cache_entry_acquire(entry_cache, "overflow.cache.test", ns_t_a, &extra_entry) == RESOLVER_CACHE_ACQUIRE_LIMIT && extra_entry == NULL,
-		"entry above the entry limit was accepted");
+	CHECK(resolver_cache_entry_acquire(entry_cache, "overflow.cache.test", ns_t_a, &extra_entry) == RESOLVER_CACHE_ACQUIRE_LIMIT && extra_entry == NULL, "entry above the entry limit was accepted");
 	CHECK(resolver_cache_metrics_get(entry_cache, &metrics) && metrics.query[METRICS_QUERY_TYPE_A].acquire_created == RESOLVER_CACHE_ENTRY_LIMIT
 		&& metrics.query[METRICS_QUERY_TYPE_A].acquire_entry_limit == 1, "cache entry-limit metrics were incorrect");
 
@@ -355,25 +339,19 @@ static bool cache_test_metrics(void) {
 		"NULL cache metrics input was accepted or left output data behind");
 	CHECK(cache != NULL && resolver_cache_metrics_get(cache, &snapshot), "cache metrics state could not be created or read");
 	uint64_t baseline_bytes = snapshot.owned_bytes_current;
-	CHECK(baseline_bytes > 0 && snapshot.owned_bytes_high_water == baseline_bytes && snapshot.entries_current == 0 && snapshot.entries_high_water == 0,
-		"initial cache metrics gauges were incorrect");
-	CHECK(resolver_cache_entry_acquire(cache, "invalid.metrics.test", ns_t_txt, &entry) == RESOLVER_CACHE_ACQUIRE_BAD_ARGUMENT && entry == NULL,
-		"invalid metrics query type was accepted");
+	CHECK(baseline_bytes > 0 && snapshot.owned_bytes_high_water == baseline_bytes && snapshot.entries_current == 0 && snapshot.entries_high_water == 0, "initial cache metrics gauges were incorrect");
+	CHECK(resolver_cache_entry_acquire(cache, "invalid.metrics.test", ns_t_txt, &entry) == RESOLVER_CACHE_ACQUIRE_BAD_ARGUMENT && entry == NULL, "invalid metrics query type was accepted");
 	cache_calloc_failures = 1;
-	CHECK(resolver_cache_entry_acquire(cache, "metrics.test", ns_t_a, &entry) == RESOLVER_CACHE_ACQUIRE_MEMORY && entry == NULL,
-		"cache entry allocation failure was not reported");
-	CHECK(resolver_cache_entry_acquire(cache, "metrics.test", ns_t_a, &entry) == RESOLVER_CACHE_ACQUIRE_OK && entry != NULL,
-		"cache metrics entry could not be acquired");
-	CHECK(resolver_cache_entry_acquire(cache, "METRICS.TEST.", ns_t_a, &entry_again) == RESOLVER_CACHE_ACQUIRE_OK && entry_again == entry,
-		"cache metrics reuse was not detected");
+	CHECK(resolver_cache_entry_acquire(cache, "metrics.test", ns_t_a, &entry) == RESOLVER_CACHE_ACQUIRE_MEMORY && entry == NULL, "cache entry allocation failure was not reported");
+	CHECK(resolver_cache_entry_acquire(cache, "metrics.test", ns_t_a, &entry) == RESOLVER_CACHE_ACQUIRE_OK && entry != NULL, "cache metrics entry could not be acquired");
+	CHECK(resolver_cache_entry_acquire(cache, "METRICS.TEST.", ns_t_a, &entry_again) == RESOLVER_CACHE_ACQUIRE_OK && entry_again == entry, "cache metrics reuse was not detected");
 	resolver_cache_entry_release(entry_again);
 	entry_again = NULL;
 	CHECK(cache_address_result_create(&result, "metrics.test", AF_INET, 1, 30, false), "cache metrics result could not be created");
 	cache_calloc_failures = 1;
 	CHECK(resolver_cache_entry_publish_address(entry, DNS_ADDRESS_LOOKUP_OK, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_MEMORY && result.addresses != NULL,
 		"cache payload allocation failure was not reported or consumed its result");
-	CHECK(resolver_cache_entry_publish_address(entry, DNS_ADDRESS_LOOKUP_OK, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_STORED && result.addresses == NULL,
-		"cache metrics result was not stored");
+	CHECK(resolver_cache_entry_publish_address(entry, DNS_ADDRESS_LOOKUP_OK, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_STORED && result.addresses == NULL, "cache metrics result was not stored");
 	CHECK(resolver_cache_metrics_get(cache, &snapshot), "stored cache metrics could not be read");
 	const resolver_cache_metrics_query *a = &snapshot.query[METRICS_QUERY_TYPE_A];
 	CHECK(snapshot.entries_current == 1 && snapshot.entries_high_water == 1 && snapshot.owned_bytes_current > baseline_bytes
@@ -390,10 +368,8 @@ static bool cache_test_metrics(void) {
 		&& snprintf(result.canonical_name, sizeof(result.canonical_name), "%s", "metrics.test") > 0 && cache_negative_set(&result.negative, NULL, 0, false),
 		"cache metrics transient result could not be created");
 	result.rcode = ns_r_noerror;
-	CHECK(resolver_cache_entry_publish_address(entry, DNS_ADDRESS_LOOKUP_NODATA, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_TRANSIENT,
-		"cache metrics zero-TTL result was not transient");
-	CHECK(resolver_cache_entry_publish_address(entry, DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_INVALID,
-		"cache metrics invalid result was accepted");
+	CHECK(resolver_cache_entry_publish_address(entry, DNS_ADDRESS_LOOKUP_NODATA, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_TRANSIENT, "cache metrics zero-TTL result was not transient");
+	CHECK(resolver_cache_entry_publish_address(entry, DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_INVALID, "cache metrics invalid result was accepted");
 	CHECK(resolver_cache_metrics_get(cache, &snapshot), "final cache metrics could not be read");
 	a = &snapshot.query[METRICS_QUERY_TYPE_A];
 	CHECK(a->publish_transient == 1 && a->publish_invalid == 1 && a->value_nodata == 1
@@ -437,14 +413,12 @@ static bool cache_test_negative(void) {
 		"negative NXDOMAIN result could not be created");
 	result.rcode = ns_r_nxdomain;
 	CHECK(resolver_cache_entry_publish_address(entry, DNS_ADDRESS_LOOKUP_NOT_FOUND, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_STORED, "authoritative NXDOMAIN result was not stored");
-	CHECK(resolver_cache_entry_view(entry, &completed_at, &view) && view.status == RESOLVER_CACHE_VIEW_FRESH_NXDOMAIN && view.expires_at.tv_sec == 57,
-		"authoritative NXDOMAIN view was invalid");
+	CHECK(resolver_cache_entry_view(entry, &completed_at, &view) && view.status == RESOLVER_CACHE_VIEW_FRESH_NXDOMAIN && view.expires_at.tv_sec == 57, "authoritative NXDOMAIN view was invalid");
 	CHECK(snprintf(result.question_name, sizeof(result.question_name), "%s", "negative.cache.test") > 0
 		&& snprintf(result.canonical_name, sizeof(result.canonical_name), "%s", "negative.cache.test") > 0 && cache_negative_set(&result.negative, NULL, 0, false),
 		"non-authoritative NODATA result could not be created");
 	result.rcode = ns_r_noerror;
-	CHECK(resolver_cache_entry_publish_address(entry, DNS_ADDRESS_LOOKUP_NODATA, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_TRANSIENT,
-		"NODATA without SOA was persisted");
+	CHECK(resolver_cache_entry_publish_address(entry, DNS_ADDRESS_LOOKUP_NODATA, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_TRANSIENT, "NODATA without SOA was persisted");
 	CHECK(result.question_name[0] != '\0' && resolver_cache_entry_view(entry, &completed_at, &view) && view.status == RESOLVER_CACHE_VIEW_EMPTY,
 		"transient NODATA did not preserve caller ownership and clear the old payload");
 	dns_address_result_destroy(&result);
@@ -495,6 +469,38 @@ cleanup:
 	return test_result;
 }
 
+static bool cache_test_positive_srv(void) {
+	int test_result = false;
+	resolver_cache *cache = resolver_cache_create();
+	resolver_cache_entry *entry = NULL;
+	dns_srv_result result = { 0 };
+	resolver_cache_view view = { 0 };
+	const struct timespec completed_at = { .tv_sec = 200, .tv_nsec = 500 };
+	CHECK(cache != NULL, "SRV cache could not be created");
+	CHECK(resolver_cache_entry_acquire(cache, "_minecraft._tcp.cache.test", ns_t_srv, &entry) == RESOLVER_CACHE_ACQUIRE_OK, "SRV entry could not be acquired");
+	CHECK(cache_srv_result_create(&result, "_MINECRAFT._TCP.CACHE.TEST.", 2, 20, true), "SRV result could not be created");
+	result.records[0].effective_ttl = 8;
+	CHECK(resolver_cache_entry_publish_srv(entry, DNS_SRV_LOOKUP_OK, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_STORED, "SRV result was not stored");
+	CHECK(result.records == NULL && result.cnames == NULL && result.question_name[0] == '\0', "stored SRV result ownership was not transferred");
+	const struct timespec fresh_now = { .tv_sec = 208, .tv_nsec = 499 };
+	CHECK(resolver_cache_entry_view(entry, &fresh_now, &view) && view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE && view.srv_record_count == 2 && view.srv_records != NULL, "fresh SRV view was invalid");
+	CHECK(view.addresses == NULL && view.address_count == 0 && view.srv_records[0].port == 25565 && strcmp(view.srv_records[1].target, "target1.cache.test") == 0,
+		"SRV record order or data was not preserved");
+	const struct timespec expired_now = { .tv_sec = 208, .tv_nsec = 500 };
+	CHECK(resolver_cache_entry_view(entry, &expired_now, &view) && view.status == RESOLVER_CACHE_VIEW_EMPTY, "SRV payload remained visible at its exact expiry");
+	test_result = true;
+
+cleanup:
+	dns_srv_result_destroy(&result);
+	resolver_cache_entry_release(entry);
+	resolver_cache_destroy(cache);
+	return test_result;
+}
+
+static bool cache_time_equal(const struct timespec *left, const struct timespec *right) {
+	return left != NULL && right != NULL && left->tv_sec == right->tv_sec && left->tv_nsec == right->tv_nsec;
+}
+
 static bool cache_test_positive_address(void) {
 	int test_result = false;
 	resolver_cache *cache = resolver_cache_create();
@@ -513,13 +519,11 @@ static bool cache_test_positive_address(void) {
 	CHECK(cache_owned_bytes(cache) > empty_bytes, "stored address payload was not counted");
 	const struct timespec fresh_now = { .tv_sec = 112, .tv_nsec = 320 };
 	const struct timespec expected_expiry = { .tv_sec = 112, .tv_nsec = 321 };
-	CHECK(resolver_cache_entry_view(entry, &fresh_now, &view) && view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE && view.address_count == 2 && view.addresses != NULL,
-		"fresh address view was invalid");
+	CHECK(resolver_cache_entry_view(entry, &fresh_now, &view) && view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE && view.address_count == 2 && view.addresses != NULL, "fresh address view was invalid");
 	CHECK(view.srv_records == NULL && view.srv_record_count == 0 && cache_time_equal(&view.completed_at, &completed_at) && cache_time_equal(&view.expires_at, &expected_expiry),
 		"fresh address metadata was invalid");
 	CHECK(view.addresses[0].address.family == AF_INET && view.addresses[1].effective_ttl == 12, "address record order or data was not preserved");
-	CHECK(resolver_cache_entry_view(entry, &expected_expiry, &view) && view.status == RESOLVER_CACHE_VIEW_EMPTY && view.addresses == NULL,
-		"address payload remained visible at its exact expiry");
+	CHECK(resolver_cache_entry_view(entry, &expected_expiry, &view) && view.status == RESOLVER_CACHE_VIEW_EMPTY && view.addresses == NULL, "address payload remained visible at its exact expiry");
 	CHECK(cache_owned_bytes(cache) == empty_bytes, "expired address payload was not removed from the byte budget");
 	test_result = true;
 
@@ -530,33 +534,13 @@ cleanup:
 	return test_result;
 }
 
-static bool cache_test_positive_srv(void) {
-	int test_result = false;
-	resolver_cache *cache = resolver_cache_create();
-	resolver_cache_entry *entry = NULL;
-	dns_srv_result result = { 0 };
-	resolver_cache_view view = { 0 };
-	const struct timespec completed_at = { .tv_sec = 200, .tv_nsec = 500 };
-	CHECK(cache != NULL, "SRV cache could not be created");
-	CHECK(resolver_cache_entry_acquire(cache, "_minecraft._tcp.cache.test", ns_t_srv, &entry) == RESOLVER_CACHE_ACQUIRE_OK, "SRV entry could not be acquired");
-	CHECK(cache_srv_result_create(&result, "_MINECRAFT._TCP.CACHE.TEST.", 2, 20, true), "SRV result could not be created");
-	result.records[0].effective_ttl = 8;
-	CHECK(resolver_cache_entry_publish_srv(entry, DNS_SRV_LOOKUP_OK, &completed_at, &result) == RESOLVER_CACHE_PUBLISH_STORED, "SRV result was not stored");
-	CHECK(result.records == NULL && result.cnames == NULL && result.question_name[0] == '\0', "stored SRV result ownership was not transferred");
-	const struct timespec fresh_now = { .tv_sec = 208, .tv_nsec = 499 };
-	CHECK(resolver_cache_entry_view(entry, &fresh_now, &view) && view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE && view.srv_record_count == 2 && view.srv_records != NULL,
-		"fresh SRV view was invalid");
-	CHECK(view.addresses == NULL && view.address_count == 0 && view.srv_records[0].port == 25565 && strcmp(view.srv_records[1].target, "target1.cache.test") == 0,
-		"SRV record order or data was not preserved");
-	const struct timespec expired_now = { .tv_sec = 208, .tv_nsec = 500 };
-	CHECK(resolver_cache_entry_view(entry, &expired_now, &view) && view.status == RESOLVER_CACHE_VIEW_EMPTY, "SRV payload remained visible at its exact expiry");
-	test_result = true;
-
-cleanup:
-	dns_srv_result_destroy(&result);
-	resolver_cache_entry_release(entry);
-	resolver_cache_destroy(cache);
-	return test_result;
+static time_t cache_time_max(void) {
+	uintmax_t maximum = UINTMAX_MAX;
+	maximum >>= (sizeof(uintmax_t) - sizeof(time_t)) * CHAR_BIT;
+	if ((time_t)-1 < 0) {
+		maximum >>= 1;
+	}
+	return (time_t)maximum;
 }
 
 static bool cache_test_publication_failures(void) {
@@ -607,6 +591,8 @@ cleanup:
 }
 
 /* section: functions (exported) */
+void *__real_calloc(size_t count, size_t size);
+
 void *__wrap_calloc(size_t count, size_t size) {
 	if (cache_calloc_failures > 0) {
 		cache_calloc_failures--;

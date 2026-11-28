@@ -27,24 +27,6 @@ typedef struct {
 } audit_span;
 
 typedef struct {
-	size_t begin;
-	size_t end;
-} call_argument;
-
-typedef struct {
-	const char *definition;
-	const char *definition_path;
-	size_t format_index;
-	const char *name;
-} log_symbol;
-
-typedef struct {
-	const char *first_expression;
-	const char *format;
-	const char *path;
-} log_exception;
-
-typedef struct {
 	size_t call_count;
 	size_t config_binding_count;
 	size_t config_definition_count;
@@ -57,6 +39,24 @@ typedef struct {
 	bool quiet;
 	size_t startup_count;
 } audit_state;
+
+typedef struct {
+	size_t begin;
+	size_t end;
+} call_argument;
+
+typedef struct {
+	const char *first_expression;
+	const char *format;
+	const char *path;
+} log_exception;
+
+typedef struct {
+	const char *definition;
+	const char *definition_path;
+	size_t format_index;
+	const char *name;
+} log_symbol;
 
 /* section: global variables */
 static const log_exception log_exceptions[] = {
@@ -81,13 +81,6 @@ static const log_symbol log_symbols[] = {
 static const char *const reserved_starts[] = { "metrics schema=", "resolver_helper", "Starting mcrelay " };
 
 /* section: functions (local) */
-static bool audit_error(const audit_state *state, const char *path, size_t offset, const char *message) {
-	if (!state->quiet) {
-		fprintf(stderr, "%s:%zu: %s\n", path, offset, message);
-	}
-	return false;
-}
-
 static bool ascii_identifier_start(char character) {
 	return (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || character == '_';
 }
@@ -100,15 +93,145 @@ static bool ascii_space(char character) {
 	return character == ' ' || character == '\t' || character == '\v' || character == '\f' || character == '\n';
 }
 
+static bool audit_error(const audit_state *state, const char *path, size_t offset, const char *message) {
+	if (!state->quiet) {
+		fprintf(stderr, "%s:%zu: %s\n", path, offset, message);
+	}
+	return false;
+}
+
+static bool audit_finalize(const audit_state *state) {
+	if (state->startup_count != 1) {
+		fprintf(stderr, "log audit startup emitter mismatch: %zu\n", state->startup_count);
+		return false;
+	}
+	if (state->call_count == 0 || state->definition_count != 1 || state->declaration_count != 1 || state->direct_root_call_count != 6
+		|| state->config_binding_count != 1 || state->config_definition_count != 1 || state->config_message_count == 0) {
+		fprintf(stderr, "log audit inventory mismatch: calls=%zu root_calls=%zu definitions=%zu declarations=%zu binding=%zu config_definition=%zu config_messages=%zu\n",
+			state->call_count, state->direct_root_call_count, state->definition_count, state->declaration_count, state->config_binding_count, state->config_definition_count,
+			state->config_message_count);
+		return false;
+	}
+	for (size_t index = 1; index < ARRAY_SIZE(log_symbols); index++) {
+		if (state->macro_definition_count[index] != 1) {
+			fprintf(stderr, "log audit macro definition mismatch for %s: %zu\n", log_symbols[index].name, state->macro_definition_count[index]);
+			return false;
+		}
+	}
+	for (size_t index = 0; index < ARRAY_SIZE(log_exceptions); index++) {
+		if (state->exception_count[index] != 1) {
+			fprintf(stderr, "log audit exception mismatch for %s/%s: %zu\n", log_exceptions[index].path, log_exceptions[index].format, state->exception_count[index]);
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool code_compact(const char *text, size_t begin, size_t end, char *result, size_t capacity, audit_state *state, const char *path) {
+	size_t output = 0;
+	for (size_t position = begin; position < end;) {
+		if (ascii_space(text[position])) {
+			position++;
+			continue;
+		}
+		if (position + 1U < end && text[position] == '/' && text[position + 1U] == '/') {
+			break;
+		}
+		if (position + 1U < end && text[position] == '/' && text[position + 1U] == '*') {
+			position += 2U;
+			while (position + 1U < end && !(text[position] == '*' && text[position + 1U] == '/')) {
+				position++;
+			}
+			if (position + 1U >= end) {
+				return audit_error(state, path, position, "unterminated block comment while compacting code");
+			}
+			position += 2U;
+			continue;
+		}
+		if (output + 1U >= capacity) {
+			return audit_error(state, path, position, "compacted code exceeds audit buffer");
+		}
+		result[output++] = text[position++];
+	}
+	result[output] = '\0';
+	return true;
+}
+
+static bool decoded_append(char *result, size_t capacity, size_t *size, unsigned int value, audit_state *state, const char *path, size_t position) {
+	if (*size + 1U >= capacity || value > UINT8_MAX) {
+		return audit_error(state, path, position, "decoded string exceeds audit bounds");
+	}
+	result[(*size)++] = (char)value;
+	return true;
+}
+
 static bool path_has_suffix(const char *path, const char *suffix) {
 	size_t path_length = strlen(path);
 	size_t suffix_length = strlen(suffix);
 	return path_length >= suffix_length && strcmp(path + path_length - suffix_length, suffix) == 0 && (path_length == suffix_length || path[path_length - suffix_length - 1U] == '/');
 }
 
+static bool exception_match(const char *path, const char *format, const char *expression, audit_state *state) {
+	for (size_t index = 0; index < ARRAY_SIZE(log_exceptions); index++) {
+		if (path_has_suffix(path, log_exceptions[index].path) && strcmp(format, log_exceptions[index].format) == 0 && strcmp(expression, log_exceptions[index].first_expression) == 0) {
+			state->exception_count[index]++;
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool position_in_spans(size_t position, const audit_span *spans, size_t span_count, size_t *span_end) {
+	for (size_t index = 0; index < span_count; index++) {
+		if (position >= spans[index].begin && position < spans[index].end) {
+			*span_end = spans[index].end;
+			return true;
+		}
+	}
+	return false;
+}
+
 static bool prefix_matches(const char *text, size_t text_size, const char *prefix) {
 	size_t prefix_size = strlen(prefix);
 	return text_size >= prefix_size && memcmp(text, prefix, prefix_size) == 0;
+}
+
+static bool config_message_safe(const char *message, size_t size) {
+	for (size_t index = 0; index < ARRAY_SIZE(reserved_starts); index++) {
+		size_t reserved_size = strlen(reserved_starts[index]);
+		if (prefix_matches(message, size, reserved_starts[index]) || (size < reserved_size && memcmp(reserved_starts[index], message, size) == 0)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool format_message_safe(const char *format, size_t format_size) {
+	char literal[AUDIT_TEXT_LIMIT];
+	size_t literal_size = 0;
+	bool conversion = false;
+	for (size_t position = 0; position < format_size && format[position] != '\0' && format[position] != '\n'; position++) {
+		if (format[position] == '%' && position + 1U < format_size && format[position + 1U] == '%') {
+			literal[literal_size++] = '%';
+			position++;
+			continue;
+		}
+		if (format[position] == '%') {
+			conversion = true;
+			break;
+		}
+		literal[literal_size++] = format[position];
+	}
+	for (size_t index = 0; index < ARRAY_SIZE(reserved_starts); index++) {
+		if (prefix_matches(literal, literal_size, reserved_starts[index])) {
+			return false;
+		}
+		size_t reserved_size = strlen(reserved_starts[index]);
+		if (conversion && literal_size <= reserved_size && memcmp(reserved_starts[index], literal, literal_size) == 0) {
+			return false;
+		}
+	}
+	return true;
 }
 
 static bool source_literal_skip(const char *text, size_t size, size_t *position, audit_state *state, const char *path) {
@@ -132,35 +255,6 @@ static bool source_literal_skip(const char *text, size_t size, size_t *position,
 		cursor++;
 	}
 	return audit_error(state, path, *position, "unterminated literal");
-}
-
-static bool source_space_skip(const char *text, size_t size, size_t *position, audit_state *state, const char *path) {
-	while (*position < size) {
-		if (ascii_space(text[*position])) {
-			(*position)++;
-			continue;
-		}
-		if (*position + 1U < size && text[*position] == '/' && text[*position + 1U] == '/') {
-			*position += 2U;
-			while (*position < size && text[*position] != '\n') {
-				(*position)++;
-			}
-			continue;
-		}
-		if (*position + 1U < size && text[*position] == '/' && text[*position + 1U] == '*') {
-			*position += 2U;
-			while (*position + 1U < size && !(text[*position] == '*' && text[*position + 1U] == '/')) {
-				(*position)++;
-			}
-			if (*position + 1U >= size) {
-				return audit_error(state, path, *position, "unterminated block comment");
-			}
-			*position += 2U;
-			continue;
-		}
-		break;
-	}
-	return true;
 }
 
 static bool source_normalize(const unsigned char *input, size_t input_size, char **result, size_t *result_size, audit_state *state, const char *path) {
@@ -258,142 +352,33 @@ static bool source_read(const char *path, unsigned char **content, size_t *size,
 	return true;
 }
 
-static int symbol_index(const char *text, size_t size) {
-	for (size_t index = 0; index < ARRAY_SIZE(log_symbols); index++) {
-		if (strlen(log_symbols[index].name) == size && memcmp(text, log_symbols[index].name, size) == 0) {
-			return (int)index;
-		}
-	}
-	return -1;
-}
-
-static bool code_compact(const char *text, size_t begin, size_t end, char *result, size_t capacity, audit_state *state, const char *path) {
-	size_t output = 0;
-	for (size_t position = begin; position < end;) {
-		if (ascii_space(text[position])) {
-			position++;
+static bool source_space_skip(const char *text, size_t size, size_t *position, audit_state *state, const char *path) {
+	while (*position < size) {
+		if (ascii_space(text[*position])) {
+			(*position)++;
 			continue;
 		}
-		if (position + 1U < end && text[position] == '/' && text[position + 1U] == '/') {
-			break;
-		}
-		if (position + 1U < end && text[position] == '/' && text[position + 1U] == '*') {
-			position += 2U;
-			while (position + 1U < end && !(text[position] == '*' && text[position + 1U] == '/')) {
-				position++;
-			}
-			if (position + 1U >= end) {
-				return audit_error(state, path, position, "unterminated block comment while compacting code");
-			}
-			position += 2U;
-			continue;
-		}
-		if (output + 1U >= capacity) {
-			return audit_error(state, path, position, "compacted code exceeds audit buffer");
-		}
-		result[output++] = text[position++];
-	}
-	result[output] = '\0';
-	return true;
-}
-
-static bool macro_registered_parse(const char *text, size_t line_begin, size_t line_end, size_t name_begin, size_t name_end, const char *path, audit_span *spans, size_t *span_count, audit_state *state) {
-	int index = symbol_index(text + name_begin, name_end - name_begin);
-	char compact[AUDIT_TEXT_LIMIT];
-	if (index == 0) {
-		return audit_error(state, path, name_begin, "logging root cannot be defined as a macro");
-	}
-	if (index > 0) {
-		if (!path_has_suffix(path, log_symbols[index].definition_path)
-			|| !code_compact(text, line_begin, line_end, compact, sizeof(compact), state, path) || strcmp(compact, log_symbols[index].definition) != 0) {
-			return audit_error(state, path, name_begin, "registered logging macro definition does not match its audited form");
-		}
-		if (*span_count >= AUDIT_MACRO_LIMIT) {
-			return audit_error(state, path, line_begin, "too many registered logging macro definitions");
-		}
-		spans[*span_count].begin = line_begin;
-		spans[*span_count].end = line_end;
-		(*span_count)++;
-		state->macro_definition_count[index]++;
-		return true;
-	}
-	for (size_t position = name_end; position < line_end;) {
-		if (text[position] == '"' || text[position] == '\'') {
-			if (!source_literal_skip(text, line_end, &position, state, path)) {
-				return false;
+		if (*position + 1U < size && text[*position] == '/' && text[*position + 1U] == '/') {
+			*position += 2U;
+			while (*position < size && text[*position] != '\n') {
+				(*position)++;
 			}
 			continue;
 		}
-		if (position + 1U < line_end && text[position] == '/' && (text[position + 1U] == '/' || text[position + 1U] == '*')) {
-			size_t skipped = position;
-			if (!source_space_skip(text, line_end, &skipped, state, path)) {
-				return false;
+		if (*position + 1U < size && text[*position] == '/' && text[*position + 1U] == '*') {
+			*position += 2U;
+			while (*position + 1U < size && !(text[*position] == '*' && text[*position + 1U] == '/')) {
+				(*position)++;
 			}
-			position = skipped;
+			if (*position + 1U >= size) {
+				return audit_error(state, path, *position, "unterminated block comment");
+			}
+			*position += 2U;
 			continue;
 		}
-		if (ascii_identifier_start(text[position])) {
-			size_t identifier_begin = position++;
-			while (position < line_end && ascii_identifier_continue(text[position])) {
-				position++;
-			}
-			if (symbol_index(text + identifier_begin, position - identifier_begin) >= 0) {
-				return audit_error(state, path, identifier_begin, "unregistered macro references a logging root or wrapper");
-			}
-			continue;
-		}
-		position++;
+		break;
 	}
 	return true;
-}
-
-static bool source_macros_parse(const char *text, size_t size, const char *path, audit_span *spans, size_t *span_count, audit_state *state) {
-	for (size_t line_begin = 0; line_begin < size;) {
-		size_t line_end = line_begin;
-		while (line_end < size && text[line_end] != '\n') {
-			line_end++;
-		}
-		size_t position = line_begin;
-		while (position < line_end && (text[position] == ' ' || text[position] == '\t' || text[position] == '\v' || text[position] == '\f')) {
-			position++;
-		}
-		if (position < line_end && text[position] == '#') {
-			position++;
-			while (position < line_end && ascii_space(text[position])) {
-				position++;
-			}
-			static const char define_word[] = "define";
-			if (position + sizeof(define_word) - 1U <= line_end && memcmp(text + position, define_word, sizeof(define_word) - 1U) == 0
-				&& (position + sizeof(define_word) - 1U == line_end || !ascii_identifier_continue(text[position + sizeof(define_word) - 1U]))) {
-				position += sizeof(define_word) - 1U;
-				while (position < line_end && ascii_space(text[position])) {
-					position++;
-				}
-				if (position >= line_end || !ascii_identifier_start(text[position])) {
-					return audit_error(state, path, position, "cannot classify macro definition");
-				}
-				size_t name_begin = position++;
-				while (position < line_end && ascii_identifier_continue(text[position])) {
-					position++;
-				}
-				if (!macro_registered_parse(text, line_begin, line_end, name_begin, position, path, spans, span_count, state)) {
-					return false;
-				}
-			}
-		}
-		line_begin = line_end < size ? line_end + 1U : size;
-	}
-	return true;
-}
-
-static bool position_in_spans(size_t position, const audit_span *spans, size_t span_count, size_t *span_end) {
-	for (size_t index = 0; index < span_count; index++) {
-		if (position >= spans[index].begin && position < spans[index].end) {
-			*span_end = spans[index].end;
-			return true;
-		}
-	}
-	return false;
 }
 
 static bool call_arguments_parse(const char *text, size_t size, size_t open, call_argument *arguments, size_t *argument_count, size_t *close, audit_state *state, const char *path) {
@@ -472,12 +457,42 @@ static bool call_arguments_parse(const char *text, size_t size, size_t open, cal
 	return audit_error(state, path, open, "unterminated logging call");
 }
 
-static bool decoded_append(char *result, size_t capacity, size_t *size, unsigned int value, audit_state *state, const char *path, size_t position) {
-	if (*size + 1U >= capacity || value > UINT8_MAX) {
-		return audit_error(state, path, position, "decoded string exceeds audit bounds");
+static bool mksysmsg_declaration_audit(const char *text, size_t size, size_t identifier_begin, size_t open, const char *path, bool *classified, audit_state *state) {
+	size_t line_begin = identifier_begin;
+	while (line_begin > 0 && text[line_begin - 1U] != '\n') {
+		line_begin--;
 	}
-	result[(*size)++] = (char)value;
-	return true;
+	char prefix[64];
+	if (!code_compact(text, line_begin, identifier_begin, prefix, sizeof(prefix), state, path)) {
+		return false;
+	}
+	if (strcmp(prefix, "int") != 0) {
+		*classified = false;
+		return true;
+	}
+	call_argument arguments[AUDIT_ARGUMENT_LIMIT];
+	size_t argument_count;
+	size_t close;
+	if (!call_arguments_parse(text, size, open, arguments, &argument_count, &close, state, path)) {
+		return false;
+	}
+	(void)arguments;
+	(void)argument_count;
+	size_t following = close + 1U;
+	if (!source_space_skip(text, size, &following, state, path)) {
+		return false;
+	}
+	if (path_has_suffix(path, "src/log.c") && following < size && text[following] == '{') {
+		state->definition_count++;
+		*classified = true;
+		return true;
+	}
+	if (path_has_suffix(path, "src/log.h") && following < size && text[following] == ';') {
+		state->declaration_count++;
+		*classified = true;
+		return true;
+	}
+	return audit_error(state, path, identifier_begin, "mksysmsg declaration or definition appears outside its fixed location");
 }
 
 static bool string_expression_decode(const char *text, size_t begin, size_t end, char *result, size_t capacity, size_t *result_size, audit_state *state, const char *path) {
@@ -573,144 +588,6 @@ static bool string_expression_decode(const char *text, size_t begin, size_t end,
 	}
 	result[output] = '\0';
 	*result_size = output;
-	return true;
-}
-
-static bool format_message_safe(const char *format, size_t format_size) {
-	char literal[AUDIT_TEXT_LIMIT];
-	size_t literal_size = 0;
-	bool conversion = false;
-	for (size_t position = 0; position < format_size && format[position] != '\0' && format[position] != '\n'; position++) {
-		if (format[position] == '%' && position + 1U < format_size && format[position + 1U] == '%') {
-			literal[literal_size++] = '%';
-			position++;
-			continue;
-		}
-		if (format[position] == '%') {
-			conversion = true;
-			break;
-		}
-		literal[literal_size++] = format[position];
-	}
-	for (size_t index = 0; index < ARRAY_SIZE(reserved_starts); index++) {
-		if (prefix_matches(literal, literal_size, reserved_starts[index])) {
-			return false;
-		}
-		size_t reserved_size = strlen(reserved_starts[index]);
-		if (conversion && literal_size <= reserved_size && memcmp(reserved_starts[index], literal, literal_size) == 0) {
-			return false;
-		}
-	}
-	return true;
-}
-
-static bool exception_match(const char *path, const char *format, const char *expression, audit_state *state) {
-	for (size_t index = 0; index < ARRAY_SIZE(log_exceptions); index++) {
-		if (path_has_suffix(path, log_exceptions[index].path) && strcmp(format, log_exceptions[index].format) == 0 && strcmp(expression, log_exceptions[index].first_expression) == 0) {
-			state->exception_count[index]++;
-			return true;
-		}
-	}
-	return false;
-}
-
-static bool logging_call_audit(const char *text, size_t size, size_t open, int symbol, const char *path, audit_state *state) {
-	call_argument arguments[AUDIT_ARGUMENT_LIMIT];
-	size_t argument_count;
-	size_t close;
-	if (!call_arguments_parse(text, size, open, arguments, &argument_count, &close, state, path)) {
-		return false;
-	}
-	(void)close;
-	if (log_symbols[symbol].format_index >= argument_count) {
-		return audit_error(state, path, open, "logging call has no auditable format argument");
-	}
-	char format[AUDIT_TEXT_LIMIT];
-	size_t format_size;
-	call_argument format_argument = arguments[log_symbols[symbol].format_index];
-	if (!string_expression_decode(text, format_argument.begin, format_argument.end, format, sizeof(format), &format_size, state, path)) {
-		return audit_error(state, path, format_argument.begin, "logging format is not a complete string-literal chain");
-	}
-	const char startup_format[] = "Starting mcrelay %s on PID %jd...";
-	if (format_size == sizeof(startup_format) - 1U && strcmp(format, startup_format) == 0) {
-		const char *const expected[] = { "&context", "MKSYS_LEVEL_INFORMATION", NULL, "version_info_get()", "(intmax_t)getpid()" };
-		if (!path_has_suffix(path, "src/listener/runtime.c") || strcmp(log_symbols[symbol].name, "LISTENER_LOG") != 0 || argument_count != ARRAY_SIZE(expected)) {
-			return audit_error(state, path, open, "startup record appears outside its controlled emitter");
-		}
-		for (size_t index = 0; index < ARRAY_SIZE(expected); index++) {
-			if (expected[index] != NULL) {
-				char expression[AUDIT_TEXT_LIMIT];
-				if (!code_compact(text, arguments[index].begin, arguments[index].end, expression, sizeof(expression), state, path) || strcmp(expression, expected[index]) != 0) {
-					return audit_error(state, path, open, "startup record uses an uncontrolled argument");
-				}
-			}
-		}
-		state->startup_count++;
-		if (state->startup_count != 1) {
-			return audit_error(state, path, open, "duplicate startup record emitter");
-		}
-	} else if (!format_message_safe(format, format_size)) {
-		if (log_symbols[symbol].format_index + 1U >= argument_count) {
-			return audit_error(state, path, format_argument.begin, "reserved-prefix logging call has no first format argument");
-		}
-		char expression[AUDIT_TEXT_LIMIT];
-		call_argument first = arguments[log_symbols[symbol].format_index + 1U];
-		if (!code_compact(text, first.begin, first.end, expression, sizeof(expression), state, path) || !exception_match(path, format, expression, state)) {
-			return audit_error(state, path, format_argument.begin, "logging message can produce a reserved record prefix");
-		}
-	}
-	state->call_count++;
-	if (symbol == 0) {
-		state->direct_root_call_count++;
-	}
-	return true;
-}
-
-static bool mksysmsg_declaration_audit(const char *text, size_t size, size_t identifier_begin, size_t open, const char *path, bool *classified, audit_state *state) {
-	size_t line_begin = identifier_begin;
-	while (line_begin > 0 && text[line_begin - 1U] != '\n') {
-		line_begin--;
-	}
-	char prefix[64];
-	if (!code_compact(text, line_begin, identifier_begin, prefix, sizeof(prefix), state, path)) {
-		return false;
-	}
-	if (strcmp(prefix, "int") != 0) {
-		*classified = false;
-		return true;
-	}
-	call_argument arguments[AUDIT_ARGUMENT_LIMIT];
-	size_t argument_count;
-	size_t close;
-	if (!call_arguments_parse(text, size, open, arguments, &argument_count, &close, state, path)) {
-		return false;
-	}
-	(void)arguments;
-	(void)argument_count;
-	size_t following = close + 1U;
-	if (!source_space_skip(text, size, &following, state, path)) {
-		return false;
-	}
-	if (path_has_suffix(path, "src/log.c") && following < size && text[following] == '{') {
-		state->definition_count++;
-		*classified = true;
-		return true;
-	}
-	if (path_has_suffix(path, "src/log.h") && following < size && text[following] == ';') {
-		state->declaration_count++;
-		*classified = true;
-		return true;
-	}
-	return audit_error(state, path, identifier_begin, "mksysmsg declaration or definition appears outside its fixed location");
-}
-
-static bool config_message_safe(const char *message, size_t size) {
-	for (size_t index = 0; index < ARRAY_SIZE(reserved_starts); index++) {
-		size_t reserved_size = strlen(reserved_starts[index]);
-		if (prefix_matches(message, size, reserved_starts[index]) || (size < reserved_size && memcmp(reserved_starts[index], message, size) == 0)) {
-			return false;
-		}
-	}
 	return true;
 }
 
@@ -858,6 +735,156 @@ static bool config_source_audit(const char *text, size_t size, const char *path,
 			return false;
 		}
 		position = body_end;
+	}
+	return true;
+}
+
+static bool logging_call_audit(const char *text, size_t size, size_t open, int symbol, const char *path, audit_state *state) {
+	call_argument arguments[AUDIT_ARGUMENT_LIMIT];
+	size_t argument_count;
+	size_t close;
+	if (!call_arguments_parse(text, size, open, arguments, &argument_count, &close, state, path)) {
+		return false;
+	}
+	(void)close;
+	if (log_symbols[symbol].format_index >= argument_count) {
+		return audit_error(state, path, open, "logging call has no auditable format argument");
+	}
+	char format[AUDIT_TEXT_LIMIT];
+	size_t format_size;
+	call_argument format_argument = arguments[log_symbols[symbol].format_index];
+	if (!string_expression_decode(text, format_argument.begin, format_argument.end, format, sizeof(format), &format_size, state, path)) {
+		return audit_error(state, path, format_argument.begin, "logging format is not a complete string-literal chain");
+	}
+	const char startup_format[] = "Starting mcrelay %s on PID %jd...";
+	if (format_size == sizeof(startup_format) - 1U && strcmp(format, startup_format) == 0) {
+		const char *const expected[] = { "&context", "MKSYS_LEVEL_INFORMATION", NULL, "version_info_get()", "(intmax_t)getpid()" };
+		if (!path_has_suffix(path, "src/listener/runtime.c") || strcmp(log_symbols[symbol].name, "LISTENER_LOG") != 0 || argument_count != ARRAY_SIZE(expected)) {
+			return audit_error(state, path, open, "startup record appears outside its controlled emitter");
+		}
+		for (size_t index = 0; index < ARRAY_SIZE(expected); index++) {
+			if (expected[index] != NULL) {
+				char expression[AUDIT_TEXT_LIMIT];
+				if (!code_compact(text, arguments[index].begin, arguments[index].end, expression, sizeof(expression), state, path) || strcmp(expression, expected[index]) != 0) {
+					return audit_error(state, path, open, "startup record uses an uncontrolled argument");
+				}
+			}
+		}
+		state->startup_count++;
+		if (state->startup_count != 1) {
+			return audit_error(state, path, open, "duplicate startup record emitter");
+		}
+	} else if (!format_message_safe(format, format_size)) {
+		if (log_symbols[symbol].format_index + 1U >= argument_count) {
+			return audit_error(state, path, format_argument.begin, "reserved-prefix logging call has no first format argument");
+		}
+		char expression[AUDIT_TEXT_LIMIT];
+		call_argument first = arguments[log_symbols[symbol].format_index + 1U];
+		if (!code_compact(text, first.begin, first.end, expression, sizeof(expression), state, path) || !exception_match(path, format, expression, state)) {
+			return audit_error(state, path, format_argument.begin, "logging message can produce a reserved record prefix");
+		}
+	}
+	state->call_count++;
+	if (symbol == 0) {
+		state->direct_root_call_count++;
+	}
+	return true;
+}
+
+static int symbol_index(const char *text, size_t size) {
+	for (size_t index = 0; index < ARRAY_SIZE(log_symbols); index++) {
+		if (strlen(log_symbols[index].name) == size && memcmp(text, log_symbols[index].name, size) == 0) {
+			return (int)index;
+		}
+	}
+	return -1;
+}
+
+static bool macro_registered_parse(const char *text, size_t line_begin, size_t line_end, size_t name_begin, size_t name_end, const char *path, audit_span *spans, size_t *span_count, audit_state *state) {
+	int index = symbol_index(text + name_begin, name_end - name_begin);
+	char compact[AUDIT_TEXT_LIMIT];
+	if (index == 0) {
+		return audit_error(state, path, name_begin, "logging root cannot be defined as a macro");
+	}
+	if (index > 0) {
+		if (!path_has_suffix(path, log_symbols[index].definition_path)
+			|| !code_compact(text, line_begin, line_end, compact, sizeof(compact), state, path) || strcmp(compact, log_symbols[index].definition) != 0) {
+			return audit_error(state, path, name_begin, "registered logging macro definition does not match its audited form");
+		}
+		if (*span_count >= AUDIT_MACRO_LIMIT) {
+			return audit_error(state, path, line_begin, "too many registered logging macro definitions");
+		}
+		spans[*span_count].begin = line_begin;
+		spans[*span_count].end = line_end;
+		(*span_count)++;
+		state->macro_definition_count[index]++;
+		return true;
+	}
+	for (size_t position = name_end; position < line_end;) {
+		if (text[position] == '"' || text[position] == '\'') {
+			if (!source_literal_skip(text, line_end, &position, state, path)) {
+				return false;
+			}
+			continue;
+		}
+		if (position + 1U < line_end && text[position] == '/' && (text[position + 1U] == '/' || text[position + 1U] == '*')) {
+			size_t skipped = position;
+			if (!source_space_skip(text, line_end, &skipped, state, path)) {
+				return false;
+			}
+			position = skipped;
+			continue;
+		}
+		if (ascii_identifier_start(text[position])) {
+			size_t identifier_begin = position++;
+			while (position < line_end && ascii_identifier_continue(text[position])) {
+				position++;
+			}
+			if (symbol_index(text + identifier_begin, position - identifier_begin) >= 0) {
+				return audit_error(state, path, identifier_begin, "unregistered macro references a logging root or wrapper");
+			}
+			continue;
+		}
+		position++;
+	}
+	return true;
+}
+
+static bool source_macros_parse(const char *text, size_t size, const char *path, audit_span *spans, size_t *span_count, audit_state *state) {
+	for (size_t line_begin = 0; line_begin < size;) {
+		size_t line_end = line_begin;
+		while (line_end < size && text[line_end] != '\n') {
+			line_end++;
+		}
+		size_t position = line_begin;
+		while (position < line_end && (text[position] == ' ' || text[position] == '\t' || text[position] == '\v' || text[position] == '\f')) {
+			position++;
+		}
+		if (position < line_end && text[position] == '#') {
+			position++;
+			while (position < line_end && ascii_space(text[position])) {
+				position++;
+			}
+			static const char define_word[] = "define";
+			if (position + sizeof(define_word) - 1U <= line_end && memcmp(text + position, define_word, sizeof(define_word) - 1U) == 0
+				&& (position + sizeof(define_word) - 1U == line_end || !ascii_identifier_continue(text[position + sizeof(define_word) - 1U]))) {
+				position += sizeof(define_word) - 1U;
+				while (position < line_end && ascii_space(text[position])) {
+					position++;
+				}
+				if (position >= line_end || !ascii_identifier_start(text[position])) {
+					return audit_error(state, path, position, "cannot classify macro definition");
+				}
+				size_t name_begin = position++;
+				while (position < line_end && ascii_identifier_continue(text[position])) {
+					position++;
+				}
+				if (!macro_registered_parse(text, line_begin, line_end, name_begin, position, path, spans, span_count, state)) {
+					return false;
+				}
+			}
+		}
+		line_begin = line_end < size ? line_end + 1U : size;
 	}
 	return true;
 }
@@ -1016,8 +1043,7 @@ static bool self_tests(void) {
 			return false;
 		}
 	}
-	if (!source_bytes_audit(startup_call, sizeof(startup_call) - 1U, "src/listener/runtime.c", &state)
-		|| source_bytes_audit(startup_call, sizeof(startup_call) - 1U, "src/listener/runtime.c", &state)) {
+	if (!source_bytes_audit(startup_call, sizeof(startup_call) - 1U, "src/listener/runtime.c", &state) || source_bytes_audit(startup_call, sizeof(startup_call) - 1U, "src/listener/runtime.c", &state)) {
 		fprintf(stderr, "log audit duplicate startup emitter fixture failed\n");
 		return false;
 	}
@@ -1044,35 +1070,6 @@ static bool self_tests(void) {
 	if (!config_message_safe("ordinary", 8U) || config_message_safe("metrics schema=1", 16U) || config_message_safe("resolver_", 9U) || config_message_safe("Starting mcrelay ", 16U)) {
 		fprintf(stderr, "log audit config_errmsg provenance fixture failed\n");
 		return false;
-	}
-	return true;
-}
-
-static bool audit_finalize(const audit_state *state) {
-	if (state->startup_count != 1) {
-		fprintf(stderr, "log audit startup emitter mismatch: %zu\n", state->startup_count);
-		return false;
-	}
-	if (state->call_count == 0 || state->definition_count != 1 || state->declaration_count != 1 || state->direct_root_call_count != 6
-		|| state->config_binding_count != 1 || state->config_definition_count != 1 || state->config_message_count == 0) {
-		fprintf(stderr, "log audit inventory mismatch: calls=%zu root_calls=%zu definitions=%zu declarations=%zu binding=%zu config_definition=%zu config_messages=%zu\n",
-			state->call_count, state->direct_root_call_count, state->definition_count, state->declaration_count, state->config_binding_count, state->config_definition_count,
-			state->config_message_count);
-		return false;
-	}
-	for (size_t index = 1; index < ARRAY_SIZE(log_symbols); index++) {
-		if (state->macro_definition_count[index] != 1) {
-			fprintf(stderr, "log audit macro definition mismatch for %s: %zu\n",
-				log_symbols[index].name, state->macro_definition_count[index]);
-			return false;
-		}
-	}
-	for (size_t index = 0; index < ARRAY_SIZE(log_exceptions); index++) {
-		if (state->exception_count[index] != 1) {
-			fprintf(stderr, "log audit exception mismatch for %s/%s: %zu\n", log_exceptions[index].path,
-				log_exceptions[index].format, state->exception_count[index]);
-			return false;
-		}
 	}
 	return true;
 }

@@ -201,8 +201,7 @@ bool protocol_proxy_socket_read(int socket_fd, p_proxy *result) {
 	socklen_t source_socket_size = sizeof(source_socket);
 	memset(&destination_socket, 0, sizeof(destination_socket));
 	memset(&source_socket, 0, sizeof(source_socket));
-	if (getpeername(socket_fd, (struct sockaddr *)&source_socket, &source_socket_size) == -1
-		|| getsockname(socket_fd, (struct sockaddr *)&destination_socket, &destination_socket_size) == -1) {
+	if (getpeername(socket_fd, (struct sockaddr *)&source_socket, &source_socket_size) == -1 || getsockname(socket_fd, (struct sockaddr *)&destination_socket, &destination_socket_size) == -1) {
 		return false;
 	}
 	if (!net_addr_from_socket(&source_socket, &result->srcaddr, &result->srcport)

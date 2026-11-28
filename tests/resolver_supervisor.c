@@ -65,7 +65,6 @@ typedef struct {
 } supervisor_test_helper;
 
 /* section: global variables */
-static supervisor_test_helper supervisor_helpers[SUPERVISOR_TEST_HELPER_LIMIT];
 static size_t supervisor_calloc_failures;
 static bool supervisor_clock_controlled;
 static size_t supervisor_clock_failures;
@@ -75,20 +74,11 @@ static struct timespec supervisor_clock_value;
 static size_t supervisor_entry_retain_failures;
 static size_t supervisor_epoll_failures;
 static size_t supervisor_helper_count;
+static supervisor_test_helper supervisor_helpers[SUPERVISOR_TEST_HELPER_LIMIT];
 static bool supervisor_send_blocked;
 static size_t supervisor_start_failures;
 static size_t supervisor_timer_failures;
 static bool supervisor_use_real_helper;
-
-void *__real_calloc(size_t count, size_t size);
-int __real_clock_gettime(clockid_t clock, struct timespec *value);
-int __real_epoll_ctl(int epoll_fd, int operation, int fd, struct epoll_event *event);
-int __real_kill(pid_t process_id, int signal_number);
-bool __real_resolver_cache_entry_retain(resolver_cache_entry *entry);
-int __real_resolver_helper_process_start(const sigset_t *signal_mask, const char *process_name, pid_t *process_id, int *socket_fd);
-ssize_t __real_send(int socket_fd, const void *buffer, size_t length, int flags);
-int __real_timerfd_settime(int fd, int flags, const struct itimerspec *new_value, struct itimerspec *old_value);
-pid_t __real_waitpid(pid_t process_id, int *status, int options);
 
 /* section: functions (local) */
 static resolver_cache_entry *supervisor_cache_entry_create(resolver_cache *cache, const char *name, uint16_t query_type) {
@@ -330,28 +320,6 @@ static uint64_t supervisor_retry_delay_expected(uint64_t entry_id, uint64_t retr
 	return delay < RESOLVER_SUPERVISOR_QUERY_RETRY_MAX_MS ? delay : RESOLVER_SUPERVISOR_QUERY_RETRY_MAX_MS;
 }
 
-static struct timespec supervisor_time_add(const struct timespec *source, time_t seconds, long nanoseconds) {
-	struct timespec result = {
-		.tv_sec = source->tv_sec + seconds,
-		.tv_nsec = source->tv_nsec + nanoseconds
-	};
-	while (result.tv_nsec >= 1000000000L) {
-		result.tv_sec++;
-		result.tv_nsec -= 1000000000L;
-	}
-	return result;
-}
-
-static uint64_t supervisor_time_difference_milliseconds(const struct timespec *later, const struct timespec *earlier) {
-	time_t seconds = later->tv_sec - earlier->tv_sec;
-	long nanoseconds = later->tv_nsec - earlier->tv_nsec;
-	if (nanoseconds < 0) {
-		seconds--;
-		nanoseconds += 1000000000L;
-	}
-	return (uint64_t)seconds * 1000U + (uint64_t)nanoseconds / 1000000U;
-}
-
 static bool supervisor_test_arguments(void) {
 	bool test_result = false;
 	sigset_t signal_mask;
@@ -402,8 +370,7 @@ static bool supervisor_test_arguments(void) {
 	CHECK(resolver_supervisor_entry_background_release(supervisor, entry, &now) == RESOLVER_SUPERVISOR_RELEASE_SATISFIED
 		&& resolver_supervisor_entry_interactive_release(supervisor, entry, &now) == RESOLVER_SUPERVISOR_RELEASE_SATISFIED,
 		"release after an already satisfied or absent job was rejected");
-	CHECK(resolver_supervisor_entry_background_release(supervisor, entry, &invalid_time) == RESOLVER_SUPERVISOR_RELEASE_TIME,
-		"invalid release timestamp was accepted");
+	CHECK(resolver_supervisor_entry_background_release(supervisor, entry, &invalid_time) == RESOLVER_SUPERVISOR_RELEASE_TIME, "invalid release timestamp was accepted");
 	CHECK(resolver_supervisor_events_process(supervisor, &invalid_time) == RESOLVER_SUPERVISOR_EVENT_TIME, "invalid event timestamp was accepted");
 	CHECK(!resolver_supervisor_completion_take(supervisor, &completion) && !resolver_supervisor_helper_view_get(supervisor, RESOLVER_SUPERVISOR_HELPER_COUNT, &(resolver_supervisor_helper_view){ 0 }),
 		"invalid supervisor inspection succeeded");
@@ -540,6 +507,442 @@ cleanup:
 	return test_result;
 }
 
+static bool supervisor_test_child_dispose(void) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 275 };
+	resolver_supervisor *supervisor = NULL;
+	resolver_cache *cache = NULL;
+	resolver_cache_entry *entry = NULL;
+	supervisor_fake_reset();
+	resolver_supervisor_dispose_in_child(NULL);
+	supervisor = resolver_supervisor_create(&signal_mask, &now);
+	cache = resolver_cache_create();
+	entry = supervisor_cache_entry_create(cache, "child-dispose.supervisor.test", ns_t_a);
+	CHECK(supervisor != NULL && cache != NULL && entry != NULL, "child-disposal test state could not be created");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "child-disposal test job could not be scheduled");
+	resolver_supervisor_dispose_in_child(supervisor);
+	supervisor = NULL;
+	for (size_t helper_index = 0; helper_index < RESOLVER_SUPERVISOR_HELPER_COUNT; helper_index++) {
+		CHECK(supervisor_helpers[helper_index].active && supervisor_helpers[helper_index].last_signal == 0 && supervisor_helpers[helper_index].wait_count == 0,
+			"child disposal signalled or reaped a listener-owned helper");
+		struct pollfd poll_fd = { .fd = supervisor_helpers[helper_index].peer_fd, .events = POLLIN | POLLHUP };
+		CHECK(poll(&poll_fd, 1, 0) == 1 && (poll_fd.revents & POLLHUP) != 0, "child disposal did not close an inherited helper channel");
+	}
+	test_result = true;
+
+cleanup:
+	resolver_supervisor_destroy(supervisor);
+	resolver_cache_entry_release(entry);
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
+static bool supervisor_test_helper_observation(void) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 450 };
+	struct timespec first_degraded_at = { 0 };
+	resolver_supervisor *supervisor = NULL;
+	resolver_cache *cache = NULL;
+	resolver_supervisor_completion completion = { 0 };
+	supervisor_fake_reset();
+	supervisor = resolver_supervisor_create(&signal_mask, &now);
+	cache = resolver_cache_create();
+	CHECK(supervisor != NULL && cache != NULL, "helper-observation test state could not be created");
+	CHECK(supervisor_helper_exit(supervisor, 0, &now), "first helper degradation could not be generated");
+	resolver_supervisor_observation observation;
+	CHECK(resolver_supervisor_observation_take(supervisor, &observation) && observation.type == RESOLVER_SUPERVISOR_OBSERVATION_DEGRADED
+		&& observation.data.degraded.slot == 0 && observation.data.degraded.cycle_id == 1 && observation.data.degraded.process_id > 0
+		&& observation.data.degraded.failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT && observation.data.degraded.failure_count == 1
+		&& observation.data.degraded.backoff_milliseconds == 0, "first helper degradation observation was invalid");
+	first_degraded_at = observation.data.degraded.observed_at;
+	for (size_t index = 0; index < RESOLVER_SUPERVISOR_RESPAWN_RESET_SUCCESS_COUNT; index++) {
+		char name[64];
+		snprintf(name, sizeof(name), "observation-recovery-%zu.supervisor.test", index);
+		resolver_cache_entry *entry = supervisor_cache_entry_create(cache, name, ns_t_a);
+		CHECK(entry != NULL && resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "helper-observation recovery job could not be scheduled");
+		int peer_fd = supervisor_fake_peer(supervisor, 0);
+		resolver_ipc_request request;
+		CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request) && supervisor_response_address_send(peer_fd, &request, &now, 10)
+			&& resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_completion_take(supervisor, &completion),
+			"helper-observation recovery response did not complete");
+		supervisor_completion_clear(&completion);
+		resolver_cache_entry_release(entry);
+	}
+	CHECK(resolver_supervisor_observation_take(supervisor, &observation) && observation.type == RESOLVER_SUPERVISOR_OBSERVATION_RECOVERED
+		&& observation.data.recovered.slot == 0 && observation.data.recovered.cycle_id == 1 && observation.data.recovered.process_id > 0
+		&& observation.data.recovered.recovery == RESOLVER_SUPERVISOR_HELPER_RECOVERY_SUCCESS_STREAK && observation.data.recovered.failure_count == 1
+		&& observation.data.recovered.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT
+		&& observation.data.recovered.degraded_at.tv_sec == first_degraded_at.tv_sec && observation.data.recovered.degraded_at.tv_nsec == first_degraded_at.tv_nsec
+		&& observation.data.recovered.observed_at.tv_sec == first_degraded_at.tv_sec && observation.data.recovered.observed_at.tv_nsec == first_degraded_at.tv_nsec,
+		"success-streak recovery observation was not self-contained");
+	CHECK(!resolver_supervisor_observation_take(supervisor, &observation), "unexpected observation remained after first recovery");
+	CHECK(supervisor_helper_exit(supervisor, 0, &now), "second helper degradation cycle could not start");
+	for (size_t failure_index = 1; failure_index < RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY; failure_index++) {
+		if (failure_index + 1U == RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY) {
+			supervisor_start_failures = 1;
+		}
+		CHECK(supervisor_helper_exit(supervisor, 0, &now), "helper observation ring could not be filled");
+	}
+	resolver_supervisor_helper_view helper_view;
+	CHECK(resolver_supervisor_helper_view_get(supervisor, 0, &helper_view) && helper_view.failure_count == RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY + 1U
+		&& helper_view.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN, "repeated helper failures did not preserve the degradation cycle");
+	now = helper_view.next_event_at;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK, "stable helper recovery could not be processed");
+	for (uint64_t failure_count = 3; failure_count <= RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY + 1U; failure_count++) {
+		CHECK(resolver_supervisor_observation_take(supervisor, &observation) && observation.type == RESOLVER_SUPERVISOR_OBSERVATION_DEGRADED
+			&& observation.data.degraded.slot == 0 && observation.data.degraded.cycle_id == 2 && observation.data.degraded.failure_count == failure_count,
+			"helper observation FIFO order was incorrect after overflow");
+		if (failure_count == RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY + 1U) {
+			CHECK(observation.data.degraded.failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN && observation.data.degraded.process_id == 0,
+				"pre-fork spawn failure was not normalized in the degradation event");
+		}
+	}
+	CHECK(resolver_supervisor_observation_take(supervisor, &observation) && observation.type == RESOLVER_SUPERVISOR_OBSERVATION_RECOVERED
+		&& observation.data.recovered.slot == 0 && observation.data.recovered.cycle_id == 2
+		&& observation.data.recovered.recovery == RESOLVER_SUPERVISOR_HELPER_RECOVERY_STABLE_UPTIME
+		&& observation.data.recovered.failure_count == RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY + 1U
+		&& observation.data.recovered.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN
+		&& observation.data.recovered.degraded_at.tv_sec == first_degraded_at.tv_sec && observation.data.recovered.degraded_at.tv_nsec == first_degraded_at.tv_nsec,
+		"stable recovery did not retain the dropped degradation event's cycle state");
+	CHECK(!resolver_supervisor_observation_take(supervisor, &observation), "helper observation ring did not drain completely");
+	CHECK(supervisor_helper_exit(supervisor, 0, &now) && resolver_supervisor_helper_view_get(supervisor, 0, &helper_view), "post-identifier-exhaustion helper failure affected business recovery");
+	now = helper_view.next_event_at;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && !resolver_supervisor_observation_take(supervisor, &observation),
+		"exhausted helper cycle identifier emitted an observation");
+	resolver_supervisor_metrics_snapshot metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics) && metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT] == 34
+		&& metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN] == 1 && metrics.helper.spawn_attempt == 37 && metrics.helper.spawn_success == 36
+		&& metrics.helper.recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_SUCCESS_STREAK] == 1
+		&& metrics.helper.recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_STABLE_UPTIME] == 2 && metrics.helper.observation_dropped == 4
+		&& resolver_supervisor_observation_dropped(supervisor) == metrics.helper.observation_dropped
+		&& metrics.helper.state_current[RESOLVER_SUPERVISOR_HELPER_IDLE] == RESOLVER_SUPERVISOR_HELPER_COUNT,
+		"helper lifecycle metrics or identifier-exhaustion drops were incorrect");
+	CHECK(resolver_supervisor_shutdown(supervisor, &now), "helper-observation supervisor could not shut down");
+	resolver_supervisor_metrics_snapshot shutdown_metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &shutdown_metrics)
+		&& shutdown_metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT] == metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT]
+		&& shutdown_metrics.helper.observation_dropped == metrics.helper.observation_dropped && !resolver_supervisor_observation_take(supervisor, &observation),
+		"shutdown generated a helper degradation observation or failure metric");
+	test_result = true;
+
+cleanup:
+	supervisor_completion_clear(&completion);
+	resolver_supervisor_destroy(supervisor);
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
+static bool supervisor_test_real_process(void) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now;
+	resolver_supervisor *supervisor = NULL;
+	resolver_cache *cache = NULL;
+	resolver_cache_entry *entry = NULL;
+	resolver_supervisor_completion completion = { 0 };
+	supervisor_fake_reset();
+	supervisor_use_real_helper = true;
+	CHECK(clock_gettime(CLOCK_MONOTONIC, &now) == 0, "real-helper start time could not be read");
+	supervisor = resolver_supervisor_create(&signal_mask, &now);
+	cache = resolver_cache_create();
+	entry = supervisor_cache_entry_create(cache, "real-process.supervisor.test", ns_t_a);
+	CHECK(supervisor != NULL && cache != NULL && entry != NULL, "real-helper test state could not be created");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "real-helper job could not be scheduled");
+	struct pollfd descriptor = { .fd = resolver_supervisor_event_fd(supervisor), .events = POLLIN };
+	bool completed = false;
+	for (int attempt = 0; attempt < 50 && !completed; attempt++) {
+		int poll_result;
+		do {
+			poll_result = poll(&descriptor, 1, 100);
+		} while (poll_result == -1 && errno == EINTR);
+		CHECK(poll_result >= 0, "real-helper supervisor event source could not be polled");
+		if (poll_result == 0) {
+			continue;
+		}
+		CHECK((descriptor.revents & POLLIN) && clock_gettime(CLOCK_MONOTONIC, &now) == 0
+			&& resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK, "real helper event could not be processed");
+		completed = resolver_supervisor_completion_take(supervisor, &completion);
+	}
+	CHECK(completed && completion.publication == RESOLVER_CACHE_PUBLISH_STORED && completion.response.status == RESOLVER_IPC_LOOKUP_OK, "real helper response did not complete end to end");
+	test_result = true;
+
+cleanup:
+	supervisor_completion_clear(&completion);
+	resolver_supervisor_destroy(supervisor);
+	resolver_cache_entry_release(entry);
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
+static bool supervisor_test_release_io(void) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 390 };
+	resolver_supervisor *epoll_supervisor = NULL;
+	resolver_supervisor *timer_supervisor = NULL;
+	resolver_cache *cache = NULL;
+	resolver_cache_entry *epoll_entry = NULL;
+	resolver_cache_entry *timer_entry = NULL;
+	supervisor_fake_reset();
+	epoll_supervisor = resolver_supervisor_create(&signal_mask, &now);
+	timer_supervisor = resolver_supervisor_create(&signal_mask, &now);
+	cache = resolver_cache_create();
+	epoll_entry = supervisor_cache_entry_create(cache, "release-epoll-io.supervisor.test", ns_t_a);
+	timer_entry = supervisor_cache_entry_create(cache, "release-timer-io.supervisor.test", ns_t_a);
+	CHECK(epoll_supervisor != NULL && timer_supervisor != NULL && cache != NULL && epoll_entry != NULL && timer_entry != NULL, "release-IO test state could not be created");
+	supervisor_send_blocked = true;
+	CHECK(resolver_supervisor_entry_schedule(epoll_supervisor, epoll_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "epoll-failure release job could not be scheduled");
+	supervisor_send_blocked = false;
+	CHECK(resolver_supervisor_entry_schedule(timer_supervisor, timer_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "timer-failure release job could not be scheduled");
+	resolver_supervisor_job_view job_view;
+	CHECK(resolver_supervisor_entry_view(epoll_supervisor, epoll_entry, &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_SENDING, "epoll-failure release job did not enter SENDING");
+	supervisor_epoll_failures = 1;
+	CHECK(resolver_supervisor_entry_background_release(epoll_supervisor, epoll_entry, &now) == RESOLVER_SUPERVISOR_RELEASE_IO
+		&& !resolver_supervisor_entry_view(epoll_supervisor, epoll_entry, &job_view), "SENDING release did not report epoll failure after consuming ownership");
+	CHECK(resolver_supervisor_entry_view(timer_supervisor, timer_entry, &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_DISPATCHED, "timer-failure release job was not dispatched");
+	supervisor_timer_failures = 1;
+	CHECK(resolver_supervisor_entry_background_release(timer_supervisor, timer_entry, &now) == RESOLVER_SUPERVISOR_RELEASE_IO
+		&& resolver_supervisor_entry_view(timer_supervisor, timer_entry, &job_view) && job_view.orphaned && job_view.background_interest_count == 0,
+		"DISPATCHED release did not report timer failure after consuming ownership");
+	test_result = true;
+
+cleanup:
+	resolver_supervisor_destroy(epoll_supervisor);
+	resolver_supervisor_destroy(timer_supervisor);
+	resolver_cache_entry_release(epoll_entry);
+	resolver_cache_entry_release(timer_entry);
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
+static bool supervisor_test_response_clock_case(const struct timespec *completed_at, const struct timespec *reading, bool fail, resolver_supervisor_event_status expected_event,
+	resolver_supervisor_helper_failure expected_failure, size_t expected_reads) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 800 };
+	resolver_supervisor *supervisor = NULL;
+	resolver_cache *cache = NULL;
+	resolver_cache_entry *entry = NULL;
+	resolver_supervisor_completion completion = { 0 };
+
+	supervisor_fake_reset();
+	supervisor = resolver_supervisor_create(&signal_mask, &now);
+	cache = resolver_cache_create();
+	entry = supervisor_cache_entry_create(cache, "response-clock.supervisor.test", ns_t_a);
+	CHECK(supervisor != NULL && cache != NULL && entry != NULL, "response-clock state could not be created");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "response-clock job could not be dispatched");
+	int peer_fd = supervisor_fake_peer(supervisor, 0);
+	resolver_ipc_request request;
+	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "response-clock request was not received");
+	CHECK(supervisor_response_address_send(peer_fd, &request, completed_at, 30), "response-clock response could not be sent");
+	supervisor_clock_controlled = true;
+	supervisor_clock_failures = fail ? 1 : 0;
+	supervisor_clock_value = *reading;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == expected_event, "response-clock processing returned the wrong local time status");
+	bool expect_completion = expected_event == RESOLVER_SUPERVISOR_EVENT_OK && expected_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE;
+	CHECK(supervisor_clock_reads == expected_reads && resolver_supervisor_completion_take(supervisor, &completion) == expect_completion,
+		"response-clock validation published incorrectly or sampled the clock unnecessarily");
+	if (expect_completion) {
+		CHECK(completion.publication == RESOLVER_CACHE_PUBLISH_STORED && completion.response.completed_at.tv_sec == completed_at->tv_sec
+			&& completion.response.completed_at.tv_nsec == completed_at->tv_nsec, "response-clock validation changed a trusted completion");
+	}
+	resolver_supervisor_helper_view helper;
+	CHECK(resolver_supervisor_helper_view_get(supervisor, 0, &helper), "response-clock helper could not be inspected");
+	if (expected_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE) {
+		CHECK(helper.failure_count == 0 && supervisor_helper_count == RESOLVER_SUPERVISOR_HELPER_COUNT, "valid completion or local clock failure was blamed on the helper");
+	} else {
+		CHECK(helper.failure_count == 1 && helper.last_failure == expected_failure, "invalid completion did not follow its existing protocol/timeout failure path");
+	}
+	test_result = true;
+
+cleanup:
+	supervisor_completion_clear(&completion);
+	resolver_supervisor_destroy(supervisor);
+	resolver_cache_entry_release(entry);
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
+static bool supervisor_test_response_clock(void) {
+	const struct {
+		const char *name;
+		struct timespec completed_at;
+		struct timespec reading;
+		bool fail;
+		resolver_supervisor_event_status expected_event;
+		resolver_supervisor_helper_failure expected_failure;
+		size_t expected_reads;
+	} cases[] = {
+		{
+			"clock syscall failure", { 800, 10000000 }, { 800, 20000000 }, true,
+			RESOLVER_SUPERVISOR_EVENT_TIME, RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE, 1
+		},
+		{
+			"invalid clock sample", { 800, 10000000 }, { 800, 1000000000L }, false,
+			RESOLVER_SUPERVISOR_EVENT_TIME, RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE, 1
+		},
+		{
+			"backward clock sample", { 800, 10000000 }, { 799, 999999999 }, false,
+			RESOLVER_SUPERVISOR_EVENT_TIME, RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE, 1
+		},
+		{
+			"completion after actual receipt time", { 800, 20000000 }, { 800, 10000000 }, false,
+			RESOLVER_SUPERVISOR_EVENT_OK, RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL, 1
+		},
+		{
+			"completion before dispatch", { 799, 999999999 }, { 800, 20000000 }, false,
+			RESOLVER_SUPERVISOR_EVENT_OK, RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL, 0
+		},
+		{
+			"completion beyond deadline", { 811, 0 }, { 900, 0 }, false,
+			RESOLVER_SUPERVISOR_EVENT_OK, RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT, 0
+		},
+		{
+			"completion at deadline", { 810, 0 }, { 810, 0 }, false,
+			RESOLVER_SUPERVISOR_EVENT_OK, RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE, 1
+		},
+		{
+			"completion at receipt time", { 800, 10000000 }, { 800, 10000000 }, false,
+			RESOLVER_SUPERVISOR_EVENT_OK, RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE, 1
+		},
+		{
+			"completion at dispatch and batch time", { 800, 0 }, { 800, 20000000 }, true,
+			RESOLVER_SUPERVISOR_EVENT_OK, RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE, 0
+		}
+	};
+	for (size_t index = 0; index < sizeof(cases) / sizeof(cases[0]); index++) {
+		if (!supervisor_test_response_clock_case(&cases[index].completed_at, &cases[index].reading, cases[index].fail, cases[index].expected_event,
+			cases[index].expected_failure, cases[index].expected_reads)) {
+			fprintf(stderr, "response-clock case failed: %s\n", cases[index].name);
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool supervisor_test_shutdown_release_case(bool stopping, bool sending, bool queued, bool background, int signal_number) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 650 };
+	resolver_cache *cache = NULL;
+	resolver_cache_entry *entries[3] = { 0 };
+	resolver_supervisor *supervisor = NULL;
+	supervisor_fake_reset();
+	cache = resolver_cache_create();
+	supervisor = resolver_supervisor_create(&signal_mask, &now);
+	CHECK(cache != NULL && supervisor != NULL, "shutdown-release state could not be created");
+	for (size_t index = 0; index < 3; index++) {
+		char name[64];
+		snprintf(name, sizeof(name), "shutdown-release-%zu.supervisor.test", index);
+		entries[index] = supervisor_cache_entry_create(cache, name, ns_t_a);
+		CHECK(entries[index] != NULL, "shutdown-release cache entry could not be created");
+	}
+	supervisor_send_blocked = sending;
+	for (size_t index = 0; index < 2; index++) {
+		resolver_supervisor_schedule_status status = background ? resolver_supervisor_entry_schedule(supervisor, entries[index], &now)
+			: resolver_supervisor_entry_schedule_interactive(supervisor, entries[index], &now);
+		CHECK(status == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "shutdown-release helper job could not be scheduled");
+	}
+	if (queued) {
+		CHECK(resolver_supervisor_entry_schedule(supervisor, entries[2], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "shutdown-release queued job could not be scheduled");
+	}
+	resolver_supervisor_job_view job;
+	CHECK(resolver_supervisor_entry_view(supervisor, entries[0], &job)
+		&& job.state == (sending ? RESOLVER_SUPERVISOR_JOB_SENDING : RESOLVER_SUPERVISOR_JOB_DISPATCHED), "shutdown-release initial job state was incorrect");
+	if (stopping) {
+		for (size_t index = 0; index < RESOLVER_SUPERVISOR_HELPER_COUNT; index++) {
+			resolver_supervisor_helper_view helper;
+			CHECK(resolver_supervisor_helper_view_get(supervisor, index, &helper) && kill(helper.process_id, signal_number) == 0, "shutdown-release helper peer could not be closed");
+		}
+		resolver_supervisor_shutdown_prepare(NULL);
+		resolver_supervisor_shutdown_prepare(supervisor);
+		resolver_supervisor_shutdown_prepare(supervisor);
+		CHECK(!resolver_supervisor_shutdown_complete(supervisor), "shutdown preparation completed shutdown prematurely");
+		CHECK(resolver_supervisor_entry_schedule(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT
+			&& resolver_supervisor_entry_schedule_interactive(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT
+			&& resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_BAD_ARGUMENT,
+			"shutdown preparation allowed new scheduling or normal event processing");
+	}
+	supervisor_send_blocked = false;
+	resolver_supervisor_release_status released = background ? resolver_supervisor_entry_background_release(supervisor, entries[0], &now)
+		: resolver_supervisor_entry_interactive_release(supervisor, entries[0], &now);
+	CHECK(released == RESOLVER_SUPERVISOR_RELEASE_OK, "shutdown-release interest could not be released");
+	if (queued) {
+		CHECK(resolver_supervisor_entry_view(supervisor, entries[2], &job)
+			&& job.state == (stopping ? RESOLVER_SUPERVISOR_JOB_QUEUED : RESOLVER_SUPERVISOR_JOB_DISPATCHED), "interest release dispatched work during shutdown or stalled normal dispatch");
+		if (!stopping) {
+			resolver_ipc_request request;
+			CHECK(supervisor_request_receive(supervisor_fake_peer(supervisor, 0), &request), "normal interest release did not send the queued request");
+		}
+	}
+	CHECK(resolver_supervisor_shutdown(supervisor, &now) && resolver_supervisor_shutdown(supervisor, &now), "shutdown-release orderly shutdown could not start");
+	resolver_supervisor_shutdown_prepare(supervisor);
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_shutdown_complete(supervisor),
+		"shutdown-release helpers did not finish orderly shutdown");
+	resolver_supervisor_metrics_snapshot metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics) && supervisor_helper_count == RESOLVER_SUPERVISOR_HELPER_COUNT && metrics.jobs_current == 0,
+		"shutdown-release leaked jobs or restarted a helper");
+	for (size_t failure = 0; failure < RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT; failure++) {
+		CHECK(metrics.helper.failure[failure] == 0 && metrics.attempt[METRICS_QUERY_TYPE_A].failure[failure] == 0, "shutdown release recorded a helper or attempt failure");
+	}
+	resolver_supervisor_observation observation;
+	CHECK(!resolver_supervisor_observation_take(supervisor, &observation), "shutdown release generated a helper observation");
+	test_result = true;
+
+cleanup:
+	resolver_supervisor_destroy(supervisor);
+	for (size_t index = 0; index < 3; index++) {
+		resolver_cache_entry_release(entries[index]);
+	}
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
+static bool supervisor_test_shutdown_release(void) {
+	const int signals[] = { SIGINT, SIGTERM };
+	for (size_t index = 0; index < sizeof(signals) / sizeof(signals[0]); index++) {
+		for (unsigned int background = 0; background < 2; background++) {
+			for (unsigned int sending = 0; sending < 2; sending++) {
+				for (unsigned int queued = 0; queued < 2; queued++) {
+					if (!supervisor_test_shutdown_release_case(true, sending != 0, queued != 0, background != 0, signals[index])) {
+						return false;
+					}
+				}
+			}
+			if (!supervisor_test_shutdown_release_case(false, true, true, background != 0, signals[index])) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+static struct timespec supervisor_time_add(const struct timespec *source, time_t seconds, long nanoseconds) {
+	struct timespec result = {
+		.tv_sec = source->tv_sec + seconds,
+		.tv_nsec = source->tv_nsec + nanoseconds
+	};
+	while (result.tv_nsec >= 1000000000L) {
+		result.tv_sec++;
+		result.tv_nsec -= 1000000000L;
+	}
+	return result;
+}
+
 static bool supervisor_test_cancel(void) {
 	bool test_result = false;
 	sigset_t signal_mask;
@@ -609,39 +1012,6 @@ static bool supervisor_test_cancel(void) {
 
 cleanup:
 	supervisor_completion_clear(&completion);
-	resolver_supervisor_destroy(supervisor);
-	resolver_cache_entry_release(entry);
-	resolver_cache_destroy(cache);
-	supervisor_fake_reset();
-	return test_result;
-}
-
-static bool supervisor_test_child_dispose(void) {
-	bool test_result = false;
-	sigset_t signal_mask;
-	sigemptyset(&signal_mask);
-	struct timespec now = { .tv_sec = 275 };
-	resolver_supervisor *supervisor = NULL;
-	resolver_cache *cache = NULL;
-	resolver_cache_entry *entry = NULL;
-	supervisor_fake_reset();
-	resolver_supervisor_dispose_in_child(NULL);
-	supervisor = resolver_supervisor_create(&signal_mask, &now);
-	cache = resolver_cache_create();
-	entry = supervisor_cache_entry_create(cache, "child-dispose.supervisor.test", ns_t_a);
-	CHECK(supervisor != NULL && cache != NULL && entry != NULL, "child-disposal test state could not be created");
-	CHECK(resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "child-disposal test job could not be scheduled");
-	resolver_supervisor_dispose_in_child(supervisor);
-	supervisor = NULL;
-	for (size_t helper_index = 0; helper_index < RESOLVER_SUPERVISOR_HELPER_COUNT; helper_index++) {
-		CHECK(supervisor_helpers[helper_index].active && supervisor_helpers[helper_index].last_signal == 0 && supervisor_helpers[helper_index].wait_count == 0,
-			"child disposal signalled or reaped a listener-owned helper");
-		struct pollfd poll_fd = { .fd = supervisor_helpers[helper_index].peer_fd, .events = POLLIN | POLLHUP };
-		CHECK(poll(&poll_fd, 1, 0) == 1 && (poll_fd.revents & POLLHUP) != 0, "child disposal did not close an inherited helper channel");
-	}
-	test_result = true;
-
-cleanup:
 	resolver_supervisor_destroy(supervisor);
 	resolver_cache_entry_release(entry);
 	resolver_cache_destroy(cache);
@@ -735,106 +1105,6 @@ cleanup:
 	return test_result;
 }
 
-static bool supervisor_test_helper_observation(void) {
-	bool test_result = false;
-	sigset_t signal_mask;
-	sigemptyset(&signal_mask);
-	struct timespec now = { .tv_sec = 450 };
-	struct timespec first_degraded_at = { 0 };
-	resolver_supervisor *supervisor = NULL;
-	resolver_cache *cache = NULL;
-	resolver_supervisor_completion completion = { 0 };
-	supervisor_fake_reset();
-	supervisor = resolver_supervisor_create(&signal_mask, &now);
-	cache = resolver_cache_create();
-	CHECK(supervisor != NULL && cache != NULL, "helper-observation test state could not be created");
-	CHECK(supervisor_helper_exit(supervisor, 0, &now), "first helper degradation could not be generated");
-	resolver_supervisor_observation observation;
-	CHECK(resolver_supervisor_observation_take(supervisor, &observation) && observation.type == RESOLVER_SUPERVISOR_OBSERVATION_DEGRADED
-		&& observation.data.degraded.slot == 0 && observation.data.degraded.cycle_id == 1 && observation.data.degraded.process_id > 0
-		&& observation.data.degraded.failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT && observation.data.degraded.failure_count == 1
-		&& observation.data.degraded.backoff_milliseconds == 0, "first helper degradation observation was invalid");
-	first_degraded_at = observation.data.degraded.observed_at;
-	for (size_t index = 0; index < RESOLVER_SUPERVISOR_RESPAWN_RESET_SUCCESS_COUNT; index++) {
-		char name[64];
-		snprintf(name, sizeof(name), "observation-recovery-%zu.supervisor.test", index);
-		resolver_cache_entry *entry = supervisor_cache_entry_create(cache, name, ns_t_a);
-		CHECK(entry != NULL && resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
-			"helper-observation recovery job could not be scheduled");
-		int peer_fd = supervisor_fake_peer(supervisor, 0);
-		resolver_ipc_request request;
-		CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request) && supervisor_response_address_send(peer_fd, &request, &now, 10)
-			&& resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_completion_take(supervisor, &completion),
-			"helper-observation recovery response did not complete");
-		supervisor_completion_clear(&completion);
-		resolver_cache_entry_release(entry);
-	}
-	CHECK(resolver_supervisor_observation_take(supervisor, &observation) && observation.type == RESOLVER_SUPERVISOR_OBSERVATION_RECOVERED
-		&& observation.data.recovered.slot == 0 && observation.data.recovered.cycle_id == 1 && observation.data.recovered.process_id > 0
-		&& observation.data.recovered.recovery == RESOLVER_SUPERVISOR_HELPER_RECOVERY_SUCCESS_STREAK && observation.data.recovered.failure_count == 1
-		&& observation.data.recovered.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT
-		&& observation.data.recovered.degraded_at.tv_sec == first_degraded_at.tv_sec && observation.data.recovered.degraded_at.tv_nsec == first_degraded_at.tv_nsec
-		&& observation.data.recovered.observed_at.tv_sec == first_degraded_at.tv_sec && observation.data.recovered.observed_at.tv_nsec == first_degraded_at.tv_nsec,
-		"success-streak recovery observation was not self-contained");
-	CHECK(!resolver_supervisor_observation_take(supervisor, &observation), "unexpected observation remained after first recovery");
-	CHECK(supervisor_helper_exit(supervisor, 0, &now), "second helper degradation cycle could not start");
-	for (size_t failure_index = 1; failure_index < RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY; failure_index++) {
-		if (failure_index + 1U == RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY) {
-			supervisor_start_failures = 1;
-		}
-		CHECK(supervisor_helper_exit(supervisor, 0, &now), "helper observation ring could not be filled");
-	}
-	resolver_supervisor_helper_view helper_view;
-	CHECK(resolver_supervisor_helper_view_get(supervisor, 0, &helper_view) && helper_view.failure_count == RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY + 1U
-		&& helper_view.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN, "repeated helper failures did not preserve the degradation cycle");
-	now = helper_view.next_event_at;
-	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK, "stable helper recovery could not be processed");
-	for (uint64_t failure_count = 3; failure_count <= RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY + 1U; failure_count++) {
-		CHECK(resolver_supervisor_observation_take(supervisor, &observation) && observation.type == RESOLVER_SUPERVISOR_OBSERVATION_DEGRADED
-			&& observation.data.degraded.slot == 0 && observation.data.degraded.cycle_id == 2 && observation.data.degraded.failure_count == failure_count,
-			"helper observation FIFO order was incorrect after overflow");
-		if (failure_count == RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY + 1U) {
-			CHECK(observation.data.degraded.failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN && observation.data.degraded.process_id == 0,
-				"pre-fork spawn failure was not normalized in the degradation event");
-		}
-	}
-	CHECK(resolver_supervisor_observation_take(supervisor, &observation) && observation.type == RESOLVER_SUPERVISOR_OBSERVATION_RECOVERED
-		&& observation.data.recovered.slot == 0 && observation.data.recovered.cycle_id == 2
-		&& observation.data.recovered.recovery == RESOLVER_SUPERVISOR_HELPER_RECOVERY_STABLE_UPTIME
-		&& observation.data.recovered.failure_count == RESOLVER_SUPERVISOR_OBSERVATION_CAPACITY + 1U
-		&& observation.data.recovered.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN
-		&& observation.data.recovered.degraded_at.tv_sec == first_degraded_at.tv_sec && observation.data.recovered.degraded_at.tv_nsec == first_degraded_at.tv_nsec,
-		"stable recovery did not retain the dropped degradation event's cycle state");
-	CHECK(!resolver_supervisor_observation_take(supervisor, &observation), "helper observation ring did not drain completely");
-	CHECK(supervisor_helper_exit(supervisor, 0, &now) && resolver_supervisor_helper_view_get(supervisor, 0, &helper_view),
-		"post-identifier-exhaustion helper failure affected business recovery");
-	now = helper_view.next_event_at;
-	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && !resolver_supervisor_observation_take(supervisor, &observation),
-		"exhausted helper cycle identifier emitted an observation");
-	resolver_supervisor_metrics_snapshot metrics;
-	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics) && metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT] == 34
-		&& metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_SPAWN] == 1 && metrics.helper.spawn_attempt == 37 && metrics.helper.spawn_success == 36
-		&& metrics.helper.recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_SUCCESS_STREAK] == 1
-		&& metrics.helper.recovery[RESOLVER_SUPERVISOR_HELPER_RECOVERY_STABLE_UPTIME] == 2 && metrics.helper.observation_dropped == 4
-		&& resolver_supervisor_observation_dropped(supervisor) == metrics.helper.observation_dropped
-		&& metrics.helper.state_current[RESOLVER_SUPERVISOR_HELPER_IDLE] == RESOLVER_SUPERVISOR_HELPER_COUNT,
-		"helper lifecycle metrics or identifier-exhaustion drops were incorrect");
-	CHECK(resolver_supervisor_shutdown(supervisor, &now), "helper-observation supervisor could not shut down");
-	resolver_supervisor_metrics_snapshot shutdown_metrics;
-	CHECK(resolver_supervisor_metrics_get(supervisor, &shutdown_metrics)
-		&& shutdown_metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT] == metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_EXIT]
-		&& shutdown_metrics.helper.observation_dropped == metrics.helper.observation_dropped && !resolver_supervisor_observation_take(supervisor, &observation),
-		"shutdown generated a helper degradation observation or failure metric");
-	test_result = true;
-
-cleanup:
-	supervisor_completion_clear(&completion);
-	resolver_supervisor_destroy(supervisor);
-	resolver_cache_destroy(cache);
-	supervisor_fake_reset();
-	return test_result;
-}
-
 static bool supervisor_test_interest_release(void) {
 	bool test_result = false;
 	sigset_t signal_mask;
@@ -851,10 +1121,8 @@ static bool supervisor_test_interest_release(void) {
 	entries[1] = supervisor_cache_entry_create(cache, "release-sending-a.supervisor.test", ns_t_a);
 	entries[2] = supervisor_cache_entry_create(cache, "release-sending-b.supervisor.test", ns_t_a);
 	entries[3] = supervisor_cache_entry_create(cache, "release-queued.supervisor.test", ns_t_a);
-	CHECK(supervisor != NULL && cache != NULL && entries[0] != NULL && entries[1] != NULL && entries[2] != NULL && entries[3] != NULL,
-		"interest-release test state could not be created");
-	CHECK(resolver_supervisor_entry_schedule(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
-		"retry-wait release job could not be scheduled");
+	CHECK(supervisor != NULL && cache != NULL && entries[0] != NULL && entries[1] != NULL && entries[2] != NULL && entries[3] != NULL, "interest-release test state could not be created");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "retry-wait release job could not be scheduled");
 	resolver_supervisor_job_view job_view;
 	CHECK(resolver_supervisor_entry_view(supervisor, entries[0], &job_view) && job_view.background_interest_count == 1
 		&& job_view.state == RESOLVER_SUPERVISOR_JOB_DISPATCHED, "retry-wait release job was not dispatched with one background interest");
@@ -884,8 +1152,7 @@ static bool supervisor_test_interest_release(void) {
 		&& !resolver_supervisor_entry_view(supervisor, entries[1], &job_view)
 		&& resolver_supervisor_entry_background_release(supervisor, entries[2], &now) == RESOLVER_SUPERVISOR_RELEASE_OK
 		&& !resolver_supervisor_entry_view(supervisor, entries[2], &job_view), "last sending interest did not detach and destroy the jobs");
-	CHECK(!resolver_supervisor_completion_take(supervisor, &completion) && resolver_supervisor_job_count(supervisor) == 0,
-		"released work left a completion or live job behind");
+	CHECK(!resolver_supervisor_completion_take(supervisor, &completion) && resolver_supervisor_job_count(supervisor) == 0, "released work left a completion or live job behind");
 	resolver_supervisor_metrics_snapshot metrics;
 	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics) && metrics.jobs_current == 0
 		&& metrics.attempt[METRICS_QUERY_TYPE_A].dispatched == 1
@@ -954,8 +1221,7 @@ static bool supervisor_test_metrics(void) {
 	resolver_supervisor_job_view job_view;
 	int peer_fd = supervisor_fake_peer(supervisor, 0);
 	resolver_ipc_request request;
-	CHECK(resolver_supervisor_entry_view(supervisor, entries[0], &job_view) && peer_fd != -1 && supervisor_request_receive(peer_fd, &request),
-		"first metrics-test request was not available");
+	CHECK(resolver_supervisor_entry_view(supervisor, entries[0], &job_view) && peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "first metrics-test request was not available");
 	struct timespec completed_at = supervisor_time_add(&job_view.dispatched_at, 1, 0);
 	CHECK(supervisor_response_address_send(peer_fd, &request, &completed_at, 30), "first metrics-test response could not be sent");
 	now = completed_at;
@@ -1019,10 +1285,8 @@ static bool supervisor_test_orphan(void) {
 	complete_entry = supervisor_cache_entry_create(cache, "orphan-complete.supervisor.test", ns_t_a);
 	success_entry = supervisor_cache_entry_create(cache, "orphan-success.supervisor.test", ns_t_a);
 	temporary_entry = supervisor_cache_entry_create(cache, "orphan-temporary.supervisor.test", ns_t_a);
-	CHECK(supervisor != NULL && cache != NULL && complete_entry != NULL && success_entry != NULL && temporary_entry != NULL,
-		"orphan test state could not be created");
-	CHECK(resolver_supervisor_entry_schedule(supervisor, success_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
-		"orphan-success job could not be scheduled");
+	CHECK(supervisor != NULL && cache != NULL && complete_entry != NULL && success_entry != NULL && temporary_entry != NULL, "orphan test state could not be created");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, success_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "orphan-success job could not be scheduled");
 	resolver_supervisor_job_view job_view;
 	CHECK(resolver_supervisor_entry_view(supervisor, success_entry, &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_DISPATCHED
 		&& job_view.background_interest_count == 1 && !job_view.orphaned, "orphan-success job did not start with one owner");
@@ -1206,6 +1470,211 @@ cleanup:
 	return test_result;
 }
 
+static bool supervisor_test_response_timestamps(void) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 750 };
+	resolver_supervisor *supervisor = NULL;
+	resolver_cache *cache = NULL;
+	resolver_cache_entry *entries[RESOLVER_SUPERVISOR_HELPER_COUNT] = { 0 };
+	resolver_supervisor_completion completion = { 0 };
+	pid_t helper_pids[RESOLVER_SUPERVISOR_HELPER_COUNT];
+	const uint16_t query_types[] = { ns_t_a, ns_t_aaaa };
+
+	supervisor_fake_reset();
+	supervisor = resolver_supervisor_create(&signal_mask, &now);
+	cache = resolver_cache_create();
+	CHECK(supervisor != NULL && cache != NULL && RESOLVER_SUPERVISOR_HELPER_COUNT == 2, "response timestamp state could not be created");
+	for (size_t index = 0; index < RESOLVER_SUPERVISOR_HELPER_COUNT; index++) {
+		entries[index] = supervisor_cache_entry_create(cache, "response-time.supervisor.test", query_types[index]);
+		CHECK(entries[index] != NULL && resolver_supervisor_entry_schedule(supervisor, entries[index], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "response timestamp job could not be dispatched");
+		resolver_supervisor_helper_view helper;
+		CHECK(resolver_supervisor_helper_view_get(supervisor, index, &helper) && helper.state == RESOLVER_SUPERVISOR_HELPER_BUSY, "response timestamp helper did not dispatch");
+		helper_pids[index] = helper.process_id;
+		int peer_fd = supervisor_fake_peer(supervisor, index);
+		resolver_ipc_request request;
+		CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "response timestamp request was not received");
+		if (request.query_type != query_types[index]) {
+			fprintf(stderr, "response timestamp query index=%zu actual=%u expected=%u\n", index, (unsigned int)request.query_type, (unsigned int)query_types[index]);
+			goto cleanup;
+		}
+		struct timespec completed_at = supervisor_time_add(&now, 0, 5000000 + (long)index * 10000000);
+		CHECK(supervisor_response_address_send(peer_fd, &request, &completed_at, index == 0 ? 0 : 30), "response timestamp reply could not be sent");
+	}
+	/* Each helper completes after the caller's sample, and the second also
+	 * completes after the first helper's receipt sample. */
+	supervisor_clock_controlled = true;
+	supervisor_clock_value = supervisor_time_add(&now, 0, 10000000);
+	supervisor_clock_step = 10000000;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK, "response timestamp batch could not be processed");
+	bool seen[RESOLVER_SUPERVISOR_HELPER_COUNT] = { false };
+	for (size_t count = 0; count < RESOLVER_SUPERVISOR_HELPER_COUNT; count++) {
+		CHECK(resolver_supervisor_completion_take(supervisor, &completion), "valid completion after the batch time sample was rejected");
+		size_t index = completion.entry == entries[0] ? 0 : 1;
+		struct timespec expected = supervisor_time_add(&now, 0, 5000000 + (long)index * 10000000);
+		CHECK(completion.entry == entries[index] && !seen[index] && completion.response.completed_at.tv_sec == expected.tv_sec
+			&& completion.response.completed_at.tv_nsec == expected.tv_nsec, "response timestamp was clamped or associated with the wrong job");
+		CHECK(completion.publication == (index == 0 ? RESOLVER_CACHE_PUBLISH_TRANSIENT : RESOLVER_CACHE_PUBLISH_STORED), "response timestamp changed TTL publication semantics");
+		seen[index] = true;
+		supervisor_completion_clear(&completion);
+	}
+	CHECK(supervisor_clock_reads == 2 && supervisor_helper_count == RESOLVER_SUPERVISOR_HELPER_COUNT
+		&& !resolver_supervisor_completion_take(supervisor, &completion), "response timestamp processing did not refresh each late result or produced extra work");
+	for (size_t index = 0; index < RESOLVER_SUPERVISOR_HELPER_COUNT; index++) {
+		resolver_supervisor_helper_view helper;
+		CHECK(resolver_supervisor_helper_view_get(supervisor, index, &helper) && helper.process_id == helper_pids[index] && helper.failure_count == 0,
+			"valid response timestamps restarted or degraded a helper");
+	}
+	resolver_supervisor_metrics_snapshot metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics) && metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] == 0
+		&& metrics.attempt[METRICS_QUERY_TYPE_A].response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == 1
+		&& metrics.attempt[METRICS_QUERY_TYPE_AAAA].response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == 1
+		&& metrics.attempt_duration[METRICS_QUERY_TYPE_A].count == 1 && metrics.attempt_duration[METRICS_QUERY_TYPE_AAAA].count == 1,
+		"valid response timestamps contaminated response, failure or duration metrics");
+	test_result = true;
+
+cleanup:
+	supervisor_completion_clear(&completion);
+	resolver_supervisor_destroy(supervisor);
+	for (size_t index = 0; index < RESOLVER_SUPERVISOR_HELPER_COUNT; index++) {
+		resolver_cache_entry_release(entries[index]);
+	}
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
+static bool supervisor_test_shutdown(void) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 600 };
+	resolver_supervisor *supervisor = NULL;
+	supervisor_test_helper *helpers[RESOLVER_SUPERVISOR_HELPER_COUNT];
+	memset(helpers, 0, sizeof(helpers));
+	supervisor_fake_reset();
+	supervisor = resolver_supervisor_create(&signal_mask, &now);
+	CHECK(supervisor != NULL, "shutdown-test supervisor could not be created");
+	for (size_t helper_index = 0; helper_index < RESOLVER_SUPERVISOR_HELPER_COUNT; helper_index++) {
+		resolver_supervisor_helper_view view;
+		CHECK(resolver_supervisor_helper_view_get(supervisor, helper_index, &view), "shutdown helper could not be prepared");
+		helpers[helper_index] = supervisor_fake_find(view.process_id);
+		CHECK(helpers[helper_index] != NULL, "shutdown fake helper was unavailable");
+		char expected_process_name[SUPERVISOR_TEST_PROCESS_NAME_CAPACITY];
+		snprintf(expected_process_name, sizeof(expected_process_name), "resolver-%zu", helper_index);
+		CHECK(strcmp(helpers[helper_index]->process_name, expected_process_name) == 0, "resolver helper process name was incorrect");
+	}
+	helpers[RESOLVER_SUPERVISOR_HELPER_COUNT - 1U]->close_on_sigterm = false;
+	CHECK(resolver_supervisor_shutdown(supervisor, &now), "orderly shutdown could not start");
+	for (size_t helper_index = 0; helper_index < RESOLVER_SUPERVISOR_HELPER_COUNT; helper_index++) {
+		CHECK(helpers[helper_index]->last_signal == SIGTERM, "orderly shutdown did not send SIGTERM");
+	}
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && !resolver_supervisor_shutdown_complete(supervisor),
+		"shutdown grace was not retained for the surviving helper");
+	now = supervisor_time_add(&now, 1, 0);
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_shutdown_complete(supervisor)
+		&& helpers[RESOLVER_SUPERVISOR_HELPER_COUNT - 1U]->last_signal == SIGKILL, "shutdown grace did not fall back to SIGKILL");
+	test_result = true;
+
+cleanup:
+	resolver_supervisor_destroy(supervisor);
+	supervisor_fake_reset();
+	return test_result;
+}
+
+static bool supervisor_test_timeout_and_order(void) {
+	bool test_result = false;
+	sigset_t signal_mask;
+	sigemptyset(&signal_mask);
+	struct timespec now = { .tv_sec = 500 };
+	resolver_supervisor *supervisor = NULL;
+	resolver_cache *cache = NULL;
+	resolver_cache_entry *entry = NULL;
+	resolver_cache_entry *future_entry = NULL;
+	resolver_cache_entry *late_entry = NULL;
+	resolver_supervisor_completion completion = { 0 };
+	supervisor_fake_reset();
+	supervisor = resolver_supervisor_create(&signal_mask, &now);
+	cache = resolver_cache_create();
+	entry = supervisor_cache_entry_create(cache, "deadline.supervisor.test", ns_t_a);
+	future_entry = supervisor_cache_entry_create(cache, "future.supervisor.test", ns_t_a);
+	late_entry = supervisor_cache_entry_create(cache, "late.supervisor.test", ns_t_a);
+	CHECK(supervisor != NULL && cache != NULL && entry != NULL && future_entry != NULL && late_entry != NULL, "deadline-test state could not be created");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "deadline job could not be scheduled");
+	resolver_supervisor_job_view job_view;
+	CHECK(resolver_supervisor_entry_view(supervisor, entry, &job_view), "deadline job could not be inspected");
+	int peer_fd = supervisor_fake_peer(supervisor, 0);
+	resolver_ipc_request request;
+	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "deadline request was not received");
+	CHECK(supervisor_response_address_send(peer_fd, &request, &job_view.deadline, 10), "deadline-boundary response could not be sent");
+	now = supervisor_time_add(&job_view.deadline, 1, 0);
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_completion_take(supervisor, &completion)
+		&& completion.publication == RESOLVER_CACHE_PUBLISH_STORED, "response ready with the timer was not drained first");
+	supervisor_completion_clear(&completion);
+	CHECK(resolver_supervisor_entry_schedule(supervisor, late_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "late job could not be scheduled");
+	CHECK(resolver_supervisor_entry_view(supervisor, late_entry, &job_view), "late job could not be inspected");
+	peer_fd = supervisor_fake_peer(supervisor, 0);
+	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "late request was not received");
+	struct timespec late_completed = supervisor_time_add(&job_view.deadline, 1, 0);
+	CHECK(supervisor_response_address_send(peer_fd, &request, &late_completed, 10), "late response could not be sent");
+	now = late_completed;
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK, "late response processing failed");
+	resolver_supervisor_job_view retry_view;
+	CHECK(resolver_supervisor_entry_view(supervisor, late_entry, &retry_view) && retry_view.state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT
+		&& !resolver_supervisor_completion_take(supervisor, &completion), "late helper result was accepted");
+	resolver_supervisor_helper_view helper_view;
+	CHECK(resolver_supervisor_helper_view_get(supervisor, 0, &helper_view) && helper_view.failure_count == 1 && helper_view.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT,
+		"late helper was not retired as timed out");
+	CHECK(resolver_supervisor_entry_schedule(supervisor, future_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
+		&& resolver_supervisor_entry_view(supervisor, future_entry, &job_view), "future-timestamp job could not be dispatched");
+	peer_fd = supervisor_fake_peer(supervisor, 0);
+	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "future-timestamp request was not received");
+	struct timespec future_completed = supervisor_time_add(&job_view.dispatched_at, 5, 0);
+	now = supervisor_time_add(&job_view.dispatched_at, 1, 0);
+	supervisor_clock_controlled = true;
+	supervisor_clock_value = now;
+	CHECK(supervisor_response_address_send(peer_fd, &request, &future_completed, 10) && resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK,
+		"future-timestamp response could not be processed");
+	CHECK(resolver_supervisor_entry_view(supervisor, future_entry, &retry_view) && retry_view.state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT
+		&& resolver_supervisor_helper_view_get(supervisor, 0, &helper_view) && helper_view.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL,
+		"future helper completion timestamp was accepted");
+	resolver_supervisor_metrics_snapshot metrics;
+	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics), "deadline metrics could not be read");
+	const resolver_supervisor_metrics_attempt *attempt = &metrics.attempt[METRICS_QUERY_TYPE_A];
+	CHECK(attempt->dispatched == 4 && attempt->jobs_dispatched_current == 1, "deadline dispatch metrics were incorrect");
+	CHECK(attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == 1, "deadline response metrics were incorrect");
+	CHECK(attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT] == 1 && attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] == 1
+		&& attempt->retry_scheduled == 2 && metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT] == 1
+		&& metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] == 1, "deadline failure or retry metrics were incorrect");
+	CHECK(attempt->completion_enqueued == 1 && attempt->completion_taken == 1, "deadline completion metrics were incorrect");
+	CHECK(metrics.attempt_duration[METRICS_QUERY_TYPE_A].count == 3, "deadline duration metrics were incorrect");
+	CHECK(attempt->dispatched == attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] + attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT]
+		+ attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] + attempt->jobs_dispatched_current,
+		"deadline attempt conservation did not hold");
+	test_result = true;
+
+cleanup:
+	supervisor_completion_clear(&completion);
+	resolver_supervisor_destroy(supervisor);
+	resolver_cache_entry_release(entry);
+	resolver_cache_entry_release(future_entry);
+	resolver_cache_entry_release(late_entry);
+	resolver_cache_destroy(cache);
+	supervisor_fake_reset();
+	return test_result;
+}
+
+static uint64_t supervisor_time_difference_milliseconds(const struct timespec *later, const struct timespec *earlier) {
+	time_t seconds = later->tv_sec - earlier->tv_sec;
+	long nanoseconds = later->tv_nsec - earlier->tv_nsec;
+	if (nanoseconds < 0) {
+		seconds--;
+		nanoseconds += 1000000000L;
+	}
+	return (uint64_t)seconds * 1000U + (uint64_t)nanoseconds / 1000000U;
+}
+
 static bool supervisor_test_protocol_and_recovery(void) {
 	bool test_result = false;
 	sigset_t signal_mask;
@@ -1231,8 +1700,7 @@ static bool supervisor_test_protocol_and_recovery(void) {
 	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "protocol request was not received");
 	uint8_t malformed = 0;
 	CHECK(supervisor_packet_send(peer_fd, &malformed, sizeof(malformed)), "malformed helper packet could not be sent");
-	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && failed_helper->last_signal == SIGKILL,
-		"protocol-corrupt helper was not killed immediately");
+	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && failed_helper->last_signal == SIGKILL, "protocol-corrupt helper was not killed immediately");
 	resolver_supervisor_job_view job_view;
 	CHECK(resolver_supervisor_entry_view(supervisor, entry, &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT
 		&& job_view.priority == RESOLVER_SUPERVISOR_PRIORITY_INTERACTIVE && job_view.interactive_interest_count == 1,
@@ -1295,282 +1763,6 @@ cleanup:
 	resolver_cache_entry_release(entry);
 	for (size_t index = 0; index < RESOLVER_SUPERVISOR_RESPAWN_RESET_SUCCESS_COUNT; index++) {
 		resolver_cache_entry_release(success_entries[index]);
-	}
-	resolver_cache_destroy(cache);
-	supervisor_fake_reset();
-	return test_result;
-}
-
-static bool supervisor_test_real_process(void) {
-	bool test_result = false;
-	sigset_t signal_mask;
-	sigemptyset(&signal_mask);
-	struct timespec now;
-	resolver_supervisor *supervisor = NULL;
-	resolver_cache *cache = NULL;
-	resolver_cache_entry *entry = NULL;
-	resolver_supervisor_completion completion = { 0 };
-	supervisor_fake_reset();
-	supervisor_use_real_helper = true;
-	CHECK(clock_gettime(CLOCK_MONOTONIC, &now) == 0, "real-helper start time could not be read");
-	supervisor = resolver_supervisor_create(&signal_mask, &now);
-	cache = resolver_cache_create();
-	entry = supervisor_cache_entry_create(cache, "real-process.supervisor.test", ns_t_a);
-	CHECK(supervisor != NULL && cache != NULL && entry != NULL, "real-helper test state could not be created");
-	CHECK(resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "real-helper job could not be scheduled");
-	struct pollfd descriptor = { .fd = resolver_supervisor_event_fd(supervisor), .events = POLLIN };
-	bool completed = false;
-	for (int attempt = 0; attempt < 50 && !completed; attempt++) {
-		int poll_result;
-		do {
-			poll_result = poll(&descriptor, 1, 100);
-		} while (poll_result == -1 && errno == EINTR);
-		CHECK(poll_result >= 0, "real-helper supervisor event source could not be polled");
-		if (poll_result == 0) {
-			continue;
-		}
-		CHECK((descriptor.revents & POLLIN) && clock_gettime(CLOCK_MONOTONIC, &now) == 0
-			&& resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK, "real helper event could not be processed");
-		completed = resolver_supervisor_completion_take(supervisor, &completion);
-	}
-	CHECK(completed && completion.publication == RESOLVER_CACHE_PUBLISH_STORED && completion.response.status == RESOLVER_IPC_LOOKUP_OK,
-		"real helper response did not complete end to end");
-	test_result = true;
-
-cleanup:
-	supervisor_completion_clear(&completion);
-	resolver_supervisor_destroy(supervisor);
-	resolver_cache_entry_release(entry);
-	resolver_cache_destroy(cache);
-	supervisor_fake_reset();
-	return test_result;
-}
-
-static bool supervisor_test_release_io(void) {
-	bool test_result = false;
-	sigset_t signal_mask;
-	sigemptyset(&signal_mask);
-	struct timespec now = { .tv_sec = 390 };
-	resolver_supervisor *epoll_supervisor = NULL;
-	resolver_supervisor *timer_supervisor = NULL;
-	resolver_cache *cache = NULL;
-	resolver_cache_entry *epoll_entry = NULL;
-	resolver_cache_entry *timer_entry = NULL;
-	supervisor_fake_reset();
-	epoll_supervisor = resolver_supervisor_create(&signal_mask, &now);
-	timer_supervisor = resolver_supervisor_create(&signal_mask, &now);
-	cache = resolver_cache_create();
-	epoll_entry = supervisor_cache_entry_create(cache, "release-epoll-io.supervisor.test", ns_t_a);
-	timer_entry = supervisor_cache_entry_create(cache, "release-timer-io.supervisor.test", ns_t_a);
-	CHECK(epoll_supervisor != NULL && timer_supervisor != NULL && cache != NULL && epoll_entry != NULL && timer_entry != NULL,
-		"release-IO test state could not be created");
-	supervisor_send_blocked = true;
-	CHECK(resolver_supervisor_entry_schedule(epoll_supervisor, epoll_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
-		"epoll-failure release job could not be scheduled");
-	supervisor_send_blocked = false;
-	CHECK(resolver_supervisor_entry_schedule(timer_supervisor, timer_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
-		"timer-failure release job could not be scheduled");
-	resolver_supervisor_job_view job_view;
-	CHECK(resolver_supervisor_entry_view(epoll_supervisor, epoll_entry, &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_SENDING,
-		"epoll-failure release job did not enter SENDING");
-	supervisor_epoll_failures = 1;
-	CHECK(resolver_supervisor_entry_background_release(epoll_supervisor, epoll_entry, &now) == RESOLVER_SUPERVISOR_RELEASE_IO
-		&& !resolver_supervisor_entry_view(epoll_supervisor, epoll_entry, &job_view), "SENDING release did not report epoll failure after consuming ownership");
-	CHECK(resolver_supervisor_entry_view(timer_supervisor, timer_entry, &job_view) && job_view.state == RESOLVER_SUPERVISOR_JOB_DISPATCHED,
-		"timer-failure release job was not dispatched");
-	supervisor_timer_failures = 1;
-	CHECK(resolver_supervisor_entry_background_release(timer_supervisor, timer_entry, &now) == RESOLVER_SUPERVISOR_RELEASE_IO
-		&& resolver_supervisor_entry_view(timer_supervisor, timer_entry, &job_view) && job_view.orphaned && job_view.background_interest_count == 0,
-		"DISPATCHED release did not report timer failure after consuming ownership");
-	test_result = true;
-
-cleanup:
-	resolver_supervisor_destroy(epoll_supervisor);
-	resolver_supervisor_destroy(timer_supervisor);
-	resolver_cache_entry_release(epoll_entry);
-	resolver_cache_entry_release(timer_entry);
-	resolver_cache_destroy(cache);
-	supervisor_fake_reset();
-	return test_result;
-}
-
-static bool supervisor_test_response_clock_case(const struct timespec *completed_at, const struct timespec *reading, bool fail, resolver_supervisor_event_status expected_event,
-	resolver_supervisor_helper_failure expected_failure, size_t expected_reads) {
-	bool test_result = false;
-	sigset_t signal_mask;
-	sigemptyset(&signal_mask);
-	struct timespec now = { .tv_sec = 800 };
-	resolver_supervisor *supervisor = NULL;
-	resolver_cache *cache = NULL;
-	resolver_cache_entry *entry = NULL;
-	resolver_supervisor_completion completion = { 0 };
-
-	supervisor_fake_reset();
-	supervisor = resolver_supervisor_create(&signal_mask, &now);
-	cache = resolver_cache_create();
-	entry = supervisor_cache_entry_create(cache, "response-clock.supervisor.test", ns_t_a);
-	CHECK(supervisor != NULL && cache != NULL && entry != NULL, "response-clock state could not be created");
-	CHECK(resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "response-clock job could not be dispatched");
-	int peer_fd = supervisor_fake_peer(supervisor, 0);
-	resolver_ipc_request request;
-	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "response-clock request was not received");
-	CHECK(supervisor_response_address_send(peer_fd, &request, completed_at, 30), "response-clock response could not be sent");
-	supervisor_clock_controlled = true;
-	supervisor_clock_failures = fail ? 1 : 0;
-	supervisor_clock_value = *reading;
-	CHECK(resolver_supervisor_events_process(supervisor, &now) == expected_event, "response-clock processing returned the wrong local time status");
-	bool expect_completion = expected_event == RESOLVER_SUPERVISOR_EVENT_OK && expected_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE;
-	CHECK(supervisor_clock_reads == expected_reads && resolver_supervisor_completion_take(supervisor, &completion) == expect_completion,
-		"response-clock validation published incorrectly or sampled the clock unnecessarily");
-	if (expect_completion) {
-		CHECK(completion.publication == RESOLVER_CACHE_PUBLISH_STORED && completion.response.completed_at.tv_sec == completed_at->tv_sec
-			&& completion.response.completed_at.tv_nsec == completed_at->tv_nsec, "response-clock validation changed a trusted completion");
-	}
-	resolver_supervisor_helper_view helper;
-	CHECK(resolver_supervisor_helper_view_get(supervisor, 0, &helper), "response-clock helper could not be inspected");
-	if (expected_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE) {
-		CHECK(helper.failure_count == 0 && supervisor_helper_count == RESOLVER_SUPERVISOR_HELPER_COUNT, "valid completion or local clock failure was blamed on the helper");
-	} else {
-		CHECK(helper.failure_count == 1 && helper.last_failure == expected_failure, "invalid completion did not follow its existing protocol/timeout failure path");
-	}
-	test_result = true;
-
-cleanup:
-	supervisor_completion_clear(&completion);
-	resolver_supervisor_destroy(supervisor);
-	resolver_cache_entry_release(entry);
-	resolver_cache_destroy(cache);
-	supervisor_fake_reset();
-	return test_result;
-}
-
-static bool supervisor_test_response_clock(void) {
-	const struct {
-		const char *name;
-		struct timespec completed_at;
-		struct timespec reading;
-		bool fail;
-		resolver_supervisor_event_status expected_event;
-		resolver_supervisor_helper_failure expected_failure;
-		size_t expected_reads;
-	} cases[] = {
-		{
-			"clock syscall failure", { 800, 10000000 }, { 800, 20000000 }, true,
-			RESOLVER_SUPERVISOR_EVENT_TIME, RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE, 1
-		},
-		{
-			"invalid clock sample", { 800, 10000000 }, { 800, 1000000000L }, false,
-			RESOLVER_SUPERVISOR_EVENT_TIME, RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE, 1
-		},
-		{
-			"backward clock sample", { 800, 10000000 }, { 799, 999999999 }, false,
-			RESOLVER_SUPERVISOR_EVENT_TIME, RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE, 1
-		},
-		{
-			"completion after actual receipt time", { 800, 20000000 }, { 800, 10000000 }, false,
-			RESOLVER_SUPERVISOR_EVENT_OK, RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL, 1
-		},
-		{
-			"completion before dispatch", { 799, 999999999 }, { 800, 20000000 }, false,
-			RESOLVER_SUPERVISOR_EVENT_OK, RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL, 0
-		},
-		{
-			"completion beyond deadline", { 811, 0 }, { 900, 0 }, false,
-			RESOLVER_SUPERVISOR_EVENT_OK, RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT, 0
-		},
-		{
-			"completion at deadline", { 810, 0 }, { 810, 0 }, false,
-			RESOLVER_SUPERVISOR_EVENT_OK, RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE, 1
-		},
-		{
-			"completion at receipt time", { 800, 10000000 }, { 800, 10000000 }, false,
-			RESOLVER_SUPERVISOR_EVENT_OK, RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE, 1
-		},
-		{
-			"completion at dispatch and batch time", { 800, 0 }, { 800, 20000000 }, true,
-			RESOLVER_SUPERVISOR_EVENT_OK, RESOLVER_SUPERVISOR_HELPER_FAILURE_NONE, 0
-		}
-	};
-	for (size_t index = 0; index < sizeof(cases) / sizeof(cases[0]); index++) {
-		if (!supervisor_test_response_clock_case(&cases[index].completed_at, &cases[index].reading, cases[index].fail, cases[index].expected_event,
-			cases[index].expected_failure, cases[index].expected_reads)) {
-			fprintf(stderr, "response-clock case failed: %s\n", cases[index].name);
-			return false;
-		}
-	}
-	return true;
-}
-
-static bool supervisor_test_response_timestamps(void) {
-	bool test_result = false;
-	sigset_t signal_mask;
-	sigemptyset(&signal_mask);
-	struct timespec now = { .tv_sec = 750 };
-	resolver_supervisor *supervisor = NULL;
-	resolver_cache *cache = NULL;
-	resolver_cache_entry *entries[RESOLVER_SUPERVISOR_HELPER_COUNT] = { 0 };
-	resolver_supervisor_completion completion = { 0 };
-	pid_t helper_pids[RESOLVER_SUPERVISOR_HELPER_COUNT];
-	const uint16_t query_types[] = { ns_t_a, ns_t_aaaa };
-
-	supervisor_fake_reset();
-	supervisor = resolver_supervisor_create(&signal_mask, &now);
-	cache = resolver_cache_create();
-	CHECK(supervisor != NULL && cache != NULL && RESOLVER_SUPERVISOR_HELPER_COUNT == 2, "response timestamp state could not be created");
-	for (size_t index = 0; index < RESOLVER_SUPERVISOR_HELPER_COUNT; index++) {
-		entries[index] = supervisor_cache_entry_create(cache, "response-time.supervisor.test", query_types[index]);
-		CHECK(entries[index] != NULL && resolver_supervisor_entry_schedule(supervisor, entries[index], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED,
-			"response timestamp job could not be dispatched");
-		resolver_supervisor_helper_view helper;
-		CHECK(resolver_supervisor_helper_view_get(supervisor, index, &helper) && helper.state == RESOLVER_SUPERVISOR_HELPER_BUSY, "response timestamp helper did not dispatch");
-		helper_pids[index] = helper.process_id;
-		int peer_fd = supervisor_fake_peer(supervisor, index);
-		resolver_ipc_request request;
-		CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "response timestamp request was not received");
-		if (request.query_type != query_types[index]) {
-			fprintf(stderr, "response timestamp query index=%zu actual=%u expected=%u\n", index, (unsigned int)request.query_type, (unsigned int)query_types[index]);
-			goto cleanup;
-		}
-		struct timespec completed_at = supervisor_time_add(&now, 0, 5000000 + (long)index * 10000000);
-		CHECK(supervisor_response_address_send(peer_fd, &request, &completed_at, index == 0 ? 0 : 30), "response timestamp reply could not be sent");
-	}
-	/* Each helper completes after the caller's sample, and the second also
-	 * completes after the first helper's receipt sample. */
-	supervisor_clock_controlled = true;
-	supervisor_clock_value = supervisor_time_add(&now, 0, 10000000);
-	supervisor_clock_step = 10000000;
-	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK, "response timestamp batch could not be processed");
-	bool seen[RESOLVER_SUPERVISOR_HELPER_COUNT] = { false };
-	for (size_t count = 0; count < RESOLVER_SUPERVISOR_HELPER_COUNT; count++) {
-		CHECK(resolver_supervisor_completion_take(supervisor, &completion), "valid completion after the batch time sample was rejected");
-		size_t index = completion.entry == entries[0] ? 0 : 1;
-		struct timespec expected = supervisor_time_add(&now, 0, 5000000 + (long)index * 10000000);
-		CHECK(completion.entry == entries[index] && !seen[index] && completion.response.completed_at.tv_sec == expected.tv_sec
-			&& completion.response.completed_at.tv_nsec == expected.tv_nsec, "response timestamp was clamped or associated with the wrong job");
-		CHECK(completion.publication == (index == 0 ? RESOLVER_CACHE_PUBLISH_TRANSIENT : RESOLVER_CACHE_PUBLISH_STORED), "response timestamp changed TTL publication semantics");
-		seen[index] = true;
-		supervisor_completion_clear(&completion);
-	}
-	CHECK(supervisor_clock_reads == 2 && supervisor_helper_count == RESOLVER_SUPERVISOR_HELPER_COUNT
-		&& !resolver_supervisor_completion_take(supervisor, &completion), "response timestamp processing did not refresh each late result or produced extra work");
-	for (size_t index = 0; index < RESOLVER_SUPERVISOR_HELPER_COUNT; index++) {
-		resolver_supervisor_helper_view helper;
-		CHECK(resolver_supervisor_helper_view_get(supervisor, index, &helper) && helper.process_id == helper_pids[index] && helper.failure_count == 0,
-			"valid response timestamps restarted or degraded a helper");
-	}
-	resolver_supervisor_metrics_snapshot metrics;
-	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics) && metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] == 0
-		&& metrics.attempt[METRICS_QUERY_TYPE_A].response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == 1
-		&& metrics.attempt[METRICS_QUERY_TYPE_AAAA].response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == 1
-		&& metrics.attempt_duration[METRICS_QUERY_TYPE_A].count == 1 && metrics.attempt_duration[METRICS_QUERY_TYPE_AAAA].count == 1,
-		"valid response timestamps contaminated response, failure or duration metrics");
-	test_result = true;
-
-cleanup:
-	supervisor_completion_clear(&completion);
-	resolver_supervisor_destroy(supervisor);
-	for (size_t index = 0; index < RESOLVER_SUPERVISOR_HELPER_COUNT; index++) {
-		resolver_cache_entry_release(entries[index]);
 	}
 	resolver_cache_destroy(cache);
 	supervisor_fake_reset();
@@ -1658,227 +1850,17 @@ cleanup:
 	return test_result;
 }
 
-static bool supervisor_test_shutdown(void) {
-	bool test_result = false;
-	sigset_t signal_mask;
-	sigemptyset(&signal_mask);
-	struct timespec now = { .tv_sec = 600 };
-	resolver_supervisor *supervisor = NULL;
-	supervisor_test_helper *helpers[RESOLVER_SUPERVISOR_HELPER_COUNT];
-	memset(helpers, 0, sizeof(helpers));
-	supervisor_fake_reset();
-	supervisor = resolver_supervisor_create(&signal_mask, &now);
-	CHECK(supervisor != NULL, "shutdown-test supervisor could not be created");
-	for (size_t helper_index = 0; helper_index < RESOLVER_SUPERVISOR_HELPER_COUNT; helper_index++) {
-		resolver_supervisor_helper_view view;
-		CHECK(resolver_supervisor_helper_view_get(supervisor, helper_index, &view), "shutdown helper could not be prepared");
-		helpers[helper_index] = supervisor_fake_find(view.process_id);
-		CHECK(helpers[helper_index] != NULL, "shutdown fake helper was unavailable");
-		char expected_process_name[SUPERVISOR_TEST_PROCESS_NAME_CAPACITY];
-		snprintf(expected_process_name, sizeof(expected_process_name), "resolver-%zu", helper_index);
-		CHECK(strcmp(helpers[helper_index]->process_name, expected_process_name) == 0, "resolver helper process name was incorrect");
-	}
-	helpers[RESOLVER_SUPERVISOR_HELPER_COUNT - 1U]->close_on_sigterm = false;
-	CHECK(resolver_supervisor_shutdown(supervisor, &now), "orderly shutdown could not start");
-	for (size_t helper_index = 0; helper_index < RESOLVER_SUPERVISOR_HELPER_COUNT; helper_index++) {
-		CHECK(helpers[helper_index]->last_signal == SIGTERM, "orderly shutdown did not send SIGTERM");
-	}
-	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && !resolver_supervisor_shutdown_complete(supervisor),
-		"shutdown grace was not retained for the surviving helper");
-	now = supervisor_time_add(&now, 1, 0);
-	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_shutdown_complete(supervisor)
-		&& helpers[RESOLVER_SUPERVISOR_HELPER_COUNT - 1U]->last_signal == SIGKILL, "shutdown grace did not fall back to SIGKILL");
-	test_result = true;
-
-cleanup:
-	resolver_supervisor_destroy(supervisor);
-	supervisor_fake_reset();
-	return test_result;
-}
-
-static bool supervisor_test_shutdown_release_case(bool stopping, bool sending, bool queued, bool background, int signal_number) {
-	bool test_result = false;
-	sigset_t signal_mask;
-	sigemptyset(&signal_mask);
-	struct timespec now = { .tv_sec = 650 };
-	resolver_cache *cache = NULL;
-	resolver_cache_entry *entries[3] = { 0 };
-	resolver_supervisor *supervisor = NULL;
-	supervisor_fake_reset();
-	cache = resolver_cache_create();
-	supervisor = resolver_supervisor_create(&signal_mask, &now);
-	CHECK(cache != NULL && supervisor != NULL, "shutdown-release state could not be created");
-	for (size_t index = 0; index < 3; index++) {
-		char name[64];
-		snprintf(name, sizeof(name), "shutdown-release-%zu.supervisor.test", index);
-		entries[index] = supervisor_cache_entry_create(cache, name, ns_t_a);
-		CHECK(entries[index] != NULL, "shutdown-release cache entry could not be created");
-	}
-	supervisor_send_blocked = sending;
-	for (size_t index = 0; index < 2; index++) {
-		resolver_supervisor_schedule_status status = background ? resolver_supervisor_entry_schedule(supervisor, entries[index], &now)
-			: resolver_supervisor_entry_schedule_interactive(supervisor, entries[index], &now);
-		CHECK(status == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "shutdown-release helper job could not be scheduled");
-	}
-	if (queued) {
-		CHECK(resolver_supervisor_entry_schedule(supervisor, entries[2], &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "shutdown-release queued job could not be scheduled");
-	}
-	resolver_supervisor_job_view job;
-	CHECK(resolver_supervisor_entry_view(supervisor, entries[0], &job)
-		&& job.state == (sending ? RESOLVER_SUPERVISOR_JOB_SENDING : RESOLVER_SUPERVISOR_JOB_DISPATCHED), "shutdown-release initial job state was incorrect");
-	if (stopping) {
-		for (size_t index = 0; index < RESOLVER_SUPERVISOR_HELPER_COUNT; index++) {
-			resolver_supervisor_helper_view helper;
-			CHECK(resolver_supervisor_helper_view_get(supervisor, index, &helper) && kill(helper.process_id, signal_number) == 0,
-				"shutdown-release helper peer could not be closed");
-		}
-		resolver_supervisor_shutdown_prepare(NULL);
-		resolver_supervisor_shutdown_prepare(supervisor);
-		resolver_supervisor_shutdown_prepare(supervisor);
-		CHECK(!resolver_supervisor_shutdown_complete(supervisor), "shutdown preparation completed shutdown prematurely");
-		CHECK(resolver_supervisor_entry_schedule(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT
-			&& resolver_supervisor_entry_schedule_interactive(supervisor, entries[0], &now) == RESOLVER_SUPERVISOR_SCHEDULE_BAD_ARGUMENT
-			&& resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_BAD_ARGUMENT,
-			"shutdown preparation allowed new scheduling or normal event processing");
-	}
-	supervisor_send_blocked = false;
-	resolver_supervisor_release_status released = background ? resolver_supervisor_entry_background_release(supervisor, entries[0], &now)
-		: resolver_supervisor_entry_interactive_release(supervisor, entries[0], &now);
-	CHECK(released == RESOLVER_SUPERVISOR_RELEASE_OK, "shutdown-release interest could not be released");
-	if (queued) {
-		CHECK(resolver_supervisor_entry_view(supervisor, entries[2], &job)
-			&& job.state == (stopping ? RESOLVER_SUPERVISOR_JOB_QUEUED : RESOLVER_SUPERVISOR_JOB_DISPATCHED), "interest release dispatched work during shutdown or stalled normal dispatch");
-		if (!stopping) {
-			resolver_ipc_request request;
-			CHECK(supervisor_request_receive(supervisor_fake_peer(supervisor, 0), &request), "normal interest release did not send the queued request");
-		}
-	}
-	CHECK(resolver_supervisor_shutdown(supervisor, &now) && resolver_supervisor_shutdown(supervisor, &now), "shutdown-release orderly shutdown could not start");
-	resolver_supervisor_shutdown_prepare(supervisor);
-	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_shutdown_complete(supervisor),
-		"shutdown-release helpers did not finish orderly shutdown");
-	resolver_supervisor_metrics_snapshot metrics;
-	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics) && supervisor_helper_count == RESOLVER_SUPERVISOR_HELPER_COUNT && metrics.jobs_current == 0,
-		"shutdown-release leaked jobs or restarted a helper");
-	for (size_t failure = 0; failure < RESOLVER_SUPERVISOR_HELPER_FAILURE_COUNT; failure++) {
-		CHECK(metrics.helper.failure[failure] == 0 && metrics.attempt[METRICS_QUERY_TYPE_A].failure[failure] == 0, "shutdown release recorded a helper or attempt failure");
-	}
-	resolver_supervisor_observation observation;
-	CHECK(!resolver_supervisor_observation_take(supervisor, &observation), "shutdown release generated a helper observation");
-	test_result = true;
-
-cleanup:
-	resolver_supervisor_destroy(supervisor);
-	for (size_t index = 0; index < 3; index++) {
-		resolver_cache_entry_release(entries[index]);
-	}
-	resolver_cache_destroy(cache);
-	supervisor_fake_reset();
-	return test_result;
-}
-
-static bool supervisor_test_shutdown_release(void) {
-	const int signals[] = { SIGINT, SIGTERM };
-	for (size_t index = 0; index < sizeof(signals) / sizeof(signals[0]); index++) {
-		for (unsigned int background = 0; background < 2; background++) {
-			for (unsigned int sending = 0; sending < 2; sending++) {
-				for (unsigned int queued = 0; queued < 2; queued++) {
-					if (!supervisor_test_shutdown_release_case(true, sending != 0, queued != 0, background != 0, signals[index])) {
-						return false;
-					}
-				}
-			}
-			if (!supervisor_test_shutdown_release_case(false, true, true, background != 0, signals[index])) {
-				return false;
-			}
-		}
-	}
-	return true;
-}
-
-static bool supervisor_test_timeout_and_order(void) {
-	bool test_result = false;
-	sigset_t signal_mask;
-	sigemptyset(&signal_mask);
-	struct timespec now = { .tv_sec = 500 };
-	resolver_supervisor *supervisor = NULL;
-	resolver_cache *cache = NULL;
-	resolver_cache_entry *entry = NULL;
-	resolver_cache_entry *future_entry = NULL;
-	resolver_cache_entry *late_entry = NULL;
-	resolver_supervisor_completion completion = { 0 };
-	supervisor_fake_reset();
-	supervisor = resolver_supervisor_create(&signal_mask, &now);
-	cache = resolver_cache_create();
-	entry = supervisor_cache_entry_create(cache, "deadline.supervisor.test", ns_t_a);
-	future_entry = supervisor_cache_entry_create(cache, "future.supervisor.test", ns_t_a);
-	late_entry = supervisor_cache_entry_create(cache, "late.supervisor.test", ns_t_a);
-	CHECK(supervisor != NULL && cache != NULL && entry != NULL && future_entry != NULL && late_entry != NULL, "deadline-test state could not be created");
-	CHECK(resolver_supervisor_entry_schedule(supervisor, entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "deadline job could not be scheduled");
-	resolver_supervisor_job_view job_view;
-	CHECK(resolver_supervisor_entry_view(supervisor, entry, &job_view), "deadline job could not be inspected");
-	int peer_fd = supervisor_fake_peer(supervisor, 0);
-	resolver_ipc_request request;
-	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "deadline request was not received");
-	CHECK(supervisor_response_address_send(peer_fd, &request, &job_view.deadline, 10), "deadline-boundary response could not be sent");
-	now = supervisor_time_add(&job_view.deadline, 1, 0);
-	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK && resolver_supervisor_completion_take(supervisor, &completion)
-		&& completion.publication == RESOLVER_CACHE_PUBLISH_STORED, "response ready with the timer was not drained first");
-	supervisor_completion_clear(&completion);
-	CHECK(resolver_supervisor_entry_schedule(supervisor, late_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED, "late job could not be scheduled");
-	CHECK(resolver_supervisor_entry_view(supervisor, late_entry, &job_view), "late job could not be inspected");
-	peer_fd = supervisor_fake_peer(supervisor, 0);
-	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "late request was not received");
-	struct timespec late_completed = supervisor_time_add(&job_view.deadline, 1, 0);
-	CHECK(supervisor_response_address_send(peer_fd, &request, &late_completed, 10), "late response could not be sent");
-	now = late_completed;
-	CHECK(resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK, "late response processing failed");
-	resolver_supervisor_job_view retry_view;
-	CHECK(resolver_supervisor_entry_view(supervisor, late_entry, &retry_view) && retry_view.state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT
-		&& !resolver_supervisor_completion_take(supervisor, &completion), "late helper result was accepted");
-	resolver_supervisor_helper_view helper_view;
-	CHECK(resolver_supervisor_helper_view_get(supervisor, 0, &helper_view) && helper_view.failure_count == 1 && helper_view.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT,
-		"late helper was not retired as timed out");
-	CHECK(resolver_supervisor_entry_schedule(supervisor, future_entry, &now) == RESOLVER_SUPERVISOR_SCHEDULE_STARTED
-		&& resolver_supervisor_entry_view(supervisor, future_entry, &job_view), "future-timestamp job could not be dispatched");
-	peer_fd = supervisor_fake_peer(supervisor, 0);
-	CHECK(peer_fd != -1 && supervisor_request_receive(peer_fd, &request), "future-timestamp request was not received");
-	struct timespec future_completed = supervisor_time_add(&job_view.dispatched_at, 5, 0);
-	now = supervisor_time_add(&job_view.dispatched_at, 1, 0);
-	supervisor_clock_controlled = true;
-	supervisor_clock_value = now;
-	CHECK(supervisor_response_address_send(peer_fd, &request, &future_completed, 10) && resolver_supervisor_events_process(supervisor, &now) == RESOLVER_SUPERVISOR_EVENT_OK,
-		"future-timestamp response could not be processed");
-	CHECK(resolver_supervisor_entry_view(supervisor, future_entry, &retry_view) && retry_view.state == RESOLVER_SUPERVISOR_JOB_RETRY_WAIT
-		&& resolver_supervisor_helper_view_get(supervisor, 0, &helper_view) && helper_view.last_failure == RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL,
-		"future helper completion timestamp was accepted");
-	resolver_supervisor_metrics_snapshot metrics;
-	CHECK(resolver_supervisor_metrics_get(supervisor, &metrics), "deadline metrics could not be read");
-	const resolver_supervisor_metrics_attempt *attempt = &metrics.attempt[METRICS_QUERY_TYPE_A];
-	CHECK(attempt->dispatched == 4 && attempt->jobs_dispatched_current == 1, "deadline dispatch metrics were incorrect");
-	CHECK(attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] == 1, "deadline response metrics were incorrect");
-	CHECK(attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT] == 1 && attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] == 1
-		&& attempt->retry_scheduled == 2 && metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT] == 1
-		&& metrics.helper.failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] == 1, "deadline failure or retry metrics were incorrect");
-	CHECK(attempt->completion_enqueued == 1 && attempt->completion_taken == 1, "deadline completion metrics were incorrect");
-	CHECK(metrics.attempt_duration[METRICS_QUERY_TYPE_A].count == 3, "deadline duration metrics were incorrect");
-	CHECK(attempt->dispatched == attempt->response[RESOLVER_SUPERVISOR_DNS_OUTCOME_OK] + attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_TIMEOUT]
-		+ attempt->failure[RESOLVER_SUPERVISOR_HELPER_FAILURE_PROTOCOL] + attempt->jobs_dispatched_current,
-		"deadline attempt conservation did not hold");
-	test_result = true;
-
-cleanup:
-	supervisor_completion_clear(&completion);
-	resolver_supervisor_destroy(supervisor);
-	resolver_cache_entry_release(entry);
-	resolver_cache_entry_release(future_entry);
-	resolver_cache_entry_release(late_entry);
-	resolver_cache_destroy(cache);
-	supervisor_fake_reset();
-	return test_result;
-}
-
 /* section: functions (exported) */
+void *__real_calloc(size_t count, size_t size);
+int __real_clock_gettime(clockid_t clock, struct timespec *value);
+int __real_epoll_ctl(int epoll_fd, int operation, int fd, struct epoll_event *event);
+int __real_kill(pid_t process_id, int signal_number);
+bool __real_resolver_cache_entry_retain(resolver_cache_entry *entry);
+int __real_resolver_helper_process_start(const sigset_t *signal_mask, const char *process_name, pid_t *process_id, int *socket_fd);
+ssize_t __real_send(int socket_fd, const void *buffer, size_t length, int flags);
+int __real_timerfd_settime(int fd, int flags, const struct itimerspec *new_value, struct itimerspec *old_value);
+pid_t __real_waitpid(pid_t process_id, int *status, int options);
+
 void *__wrap_calloc(size_t count, size_t size) {
 	if (supervisor_calloc_failures > 0) {
 		supervisor_calloc_failures--;

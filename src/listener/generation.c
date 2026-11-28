@@ -143,10 +143,7 @@ bool listener_generation_initial_publish(listener_context *context) {
 	listener_route_prepare_status resolution_status = listener_route_resolution_prepare(context, context->route_bindings, context->hosts, MKSYS_LEVEL_CRITICAL, "", &context->route_resolution);
 	if (resolution_status != LISTENER_ROUTE_PREPARE_OK) {
 		if (resolution_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-				"Cannot sample the monotonic clock while preparing proxy route resolution: %s",
-				strerror(errno)
-			);
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock while preparing proxy route resolution: %s", strerror(errno));
 		}
 		return false;
 	}
@@ -156,10 +153,7 @@ bool listener_generation_initial_publish(listener_context *context) {
 	}
 	route_generation_registry_publish_status initial_publish_status = listener_generation_publish(context, &initial_generation);
 	if (initial_publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-			"Cannot publish the initial proxy route generation: %s.",
-			listener_generation_publish_error(initial_publish_status)
-		);
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot publish the initial proxy route generation: %s.", listener_generation_publish_error(initial_publish_status));
 		route_generation_release(initial_generation);
 		listener_generation_active_set(context, NULL);
 		return false;
@@ -167,8 +161,7 @@ bool listener_generation_initial_publish(listener_context *context) {
 	return true;
 }
 
-listener_route_prepare_status listener_generation_prepare(listener_context *context, conf **config, hosts_table **hosts, mksys_level failure_level,
-	const char *failure_action, route_generation **result) {
+listener_route_prepare_status listener_generation_prepare(listener_context *context, conf **config, hosts_table **hosts, mksys_level failure_level, const char *failure_action, route_generation **result) {
 	if (config == NULL || *config == NULL || hosts == NULL || *hosts == NULL || result == NULL || *result != NULL) {
 		return LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR;
 	}

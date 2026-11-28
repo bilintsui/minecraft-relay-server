@@ -1,11 +1,9 @@
 # Operational metrics
-
 mcrelay can periodically write bounded aggregate metrics and resolver-helper state events through its existing logger. This first interface is log based: it does not open a metrics socket, add an HTTP endpoint or change resolver, routing or health policy.
 
 Use the [offline report tool](metrics-report.md) to validate and summarize saved plain/gzip logs and rotations without connecting to the daemon.
 
 ## Enabling aggregate snapshots
-
 Add the optional top-level object below to the runtime configuration:
 
 ```json
@@ -23,7 +21,6 @@ Aggregate output is effectively enabled only while `interval` is nonzero and `lo
 Resolver-helper `degraded` and `event_loss` WARNING records and `recovered` INFORMATION records do not depend on `metrics.interval`, although the normal log-level filter still applies to them.
 
 ## Output lifecycle
-
 At process startup, an INFORMATION record `Starting mcrelay <full-version> on PID <pid>...` identifies the build, using the same version string as `mcrelay version`. It precedes `Binding on ...`, is written once independently of `metrics.interval`, and uses both the configured log and standard output (captured by systemd in the journal). The normal INFORMATION log-level filter applies. Match its PID to later metrics instances in input order; retain the startup record with rotated logs. Historical logs without this record have an unknown version. Version information is not repeated in metrics snapshots.
 
 Every aggregate snapshot contains one sequence number and one reason:
@@ -39,7 +36,6 @@ Reload does not reset counters, histograms, high-water marks or sequence. A relo
 Sequence begins at 1 and is consumed whenever snapshot preparation starts. A gap can therefore mean a missing or partial delivery rather than a process restart. A new process has a different `instance` and starts its measurements again from zero.
 
 ## Log transport and operational cautions
-
 Metrics use the configured log file and are interleaved with access records. With the supplied logrotate configurations, that file is created mode `0644`; aggregate capacity/failure data and resolver-helper PIDs are consequently readable wherever the access log is readable. Configure filesystem access accordingly. A dedicated metrics file is not part of schema 1.
 
 The logger reopens the file for each physical line, so rotation or a sink failure can split or truncate one snapshot. Output is not atomic. A complete schema-1 snapshot has 48 lines, but `lines=48` in the meta record describes the expected shape and does not prove that all lines reached the sink.
@@ -49,7 +45,6 @@ Use absent or late `family=meta` records as the real-time delivery alert. `logge
 No metrics failure changes routing, resolver or reload outcomes. A permanent metrics-timer failure disables later periodic output for that process, while helper event logs and the final normal shutdown snapshot remain available on a functioning log sink.
 
 ## Record recognition and batching
-
 The logger writes physical records separated by LF. Message content has CR and LF escaped as printable text. Consumers must split only on LF and recognize records only at the beginning of a physical line; they must never search for a metrics-looking prefix in the middle of an access record.
 
 The logger prefix is either:
@@ -66,7 +61,6 @@ A schema-1 consumer parses only `metrics schema=1`. It must not interpret anothe
 Within a schema-1 line, baseline keys are unique and ordered. A compatible future extension may append unique optional `key=value` tokens only after the complete baseline. An older consumer ignores such unknown trailing tokens. A newer consumer must accept an older baseline record that lacks optional extension keys. Missing baseline keys, duplicate keys, known keys out of order, or an extension inserted before baseline completion invalidate the line.
 
 ## Aggregate schema 1
-
 Every line begins with this message prefix, before family-specific dimensions and measurements:
 
 ```text
@@ -112,7 +106,6 @@ The fixed baseline measurement keys, in output order, are:
 The row enumeration order is `background` then `interactive`, and `a`, `aaaa`, `srv`, then `other` where applicable. `other` represents operations that fail before a real query type is available; attempts, assemblies and histograms never have an `other` row. Histogram rows appear as dispatch wait (`background`, then `interactive`, each with `a/aaaa/srv`), attempt (`a/aaaa/srv`), TTL (`a/aaaa/srv`, each with `positive/nxdomain/nodata`), assembly size (`a/aaaa/srv`), then route duration (`short/worker`).
 
 ### Histograms
-
 Histogram `le_*` values are cumulative and bounds are inclusive. `count` equals `le_inf`. Duration sums use microseconds even though bucket names use milliseconds.
 
 | Name | Dimensions | Fixed keys after dimensions |
@@ -126,7 +119,6 @@ Histogram `le_*` values are cumulative and bounds are inclusive. `count` equals 
 Only duration histograms contain `sample_errors`. TTL measures the effective payload TTL before storage, including zero. Assembly size measures the dynamically owned result size, not the whole process.
 
 ## Helper event grammar
-
 Helper observations have three closed, ordered forms:
 
 ```text
@@ -140,7 +132,6 @@ These are complete grammars, not examples that permit extra fields. A missing, u
 `degraded` is rate limited independently per helper slot to at most one eligible log attempt per 10 seconds. `suppressed` is the cumulative number of degraded observations withheld by that limiter in the same degradation cycle; values from multiple event lines must not be added. Log-level filtering and logger failure do not add to `suppressed`. `recovered` is not rate limited. Ring overflow is reported separately through the aggregate `observation_dropped` value and rate-limited `event_loss` records.
 
 ## Interpreting values
-
 - Gauges are current at snapshot time and can rise or fall. Cross-owner collection is sequential in the listener loop, not a global atomic transaction.
 - Counters and histograms are lifetime cumulative and saturating. Compute deltas only between snapshots with the same `instance`; a process restart resets them.
 - High-water marks mean the maximum since process start, not the maximum since the previous snapshot. Use current gauges and rejection/failure counter deltas to assess recent pressure.
@@ -165,7 +156,6 @@ route.requests_started = sum(route.outcome_*) + route.pending_current
 The last route identity is evaluated separately for `request_mode=short` and `request_mode=worker`. There is deliberately no corresponding identity between `requests_started` and `resolution_*`: failures before waiter creation have an outcome but no resolution classification.
 
 ## Resource measurements and production baselines
-
 Assess CPU and memory for the entire service, including resolver helpers and long workers. A listener's own CPU time or a service-status sample taken just after startup does not describe steady-state usage. For CPU, divide the service's CPU-time delta by the elapsed observation time; 100% represents one fully occupied CPU. Compare equal completed work, cache occupancy and live-worker counts, using repeated measurements and matching build options.
 
 Setting `metrics.interval` to zero stops aggregate output while accumulation continues. Comparing intervals `0` and `900` therefore measures the additional output cost; it does not isolate all Metrics storage and counter-update costs. The opt-in [resource measurement tools](../../tests/metrics_cost/README.md) describe the separate control needed for that comparison. Keep experimental controls and their original results with the exact source and executable identities.

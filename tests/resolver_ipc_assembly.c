@@ -37,8 +37,6 @@
 /* section: global variables */
 static size_t assembly_calloc_failures;
 
-void *__real_calloc(size_t count, size_t size);
-
 /* section: functions (local) */
 static resolver_ipc_assembly_status assembly_address_send(resolver_ipc_assembly *assembly, const resolver_ipc_response_address *response) {
 	uint8_t packet[RESOLVER_IPC_PACKET_BYTE_LIMIT];
@@ -149,14 +147,12 @@ static bool assembly_test_address(void) {
 	CHECK(assembly_end_send(assembly, &end) == RESOLVER_IPC_ASSEMBLY_PROTOCOL, "packet after transferred response was accepted");
 	dns_address_lookup_status lookup_status;
 	CHECK(resolver_ipc_lookup_status_to_address(result.status, &lookup_status), "address result status could not be converted");
-	CHECK(resolver_cache_entry_publish_address(entry, lookup_status, &result.completed_at, &result.payload.address) == RESOLVER_CACHE_PUBLISH_STORED,
-		"assembled address result could not be published");
+	CHECK(resolver_cache_entry_publish_address(entry, lookup_status, &result.completed_at, &result.payload.address) == RESOLVER_CACHE_PUBLISH_STORED, "assembled address result could not be published");
 	resolver_ipc_assembly_result_destroy(&result);
 	CHECK(assembly_budget_owned_bytes(budget) < owned_before_take, "destroyed address result remained charged to the assembly budget");
 	resolver_cache_view view;
 	struct timespec now = { .tv_sec = 119 };
-	CHECK(resolver_cache_entry_view(entry, &now, &view) && view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE && view.address_count == 2,
-		"published address result was not available from the cache");
+	CHECK(resolver_cache_entry_view(entry, &now, &view) && view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE && view.address_count == 2, "published address result was not available from the cache");
 	test_result = true;
 
 cleanup:
@@ -218,8 +214,7 @@ static bool assembly_test_budget(void) {
 	CHECK(assembly_budget_owned_bytes(budget) <= RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT, "assembly metadata exceeded its budget");
 	resolver_ipc_assembly_destroy(assemblies[--assembly_count]);
 	assemblies[assembly_count] = NULL;
-	CHECK(resolver_ipc_assembly_create(budget, "capacity.test", ns_c_in, ns_t_a, 1000, &assembly) == RESOLVER_IPC_ASSEMBLY_OK && assembly != NULL,
-		"released assembly capacity was not reusable");
+	CHECK(resolver_ipc_assembly_create(budget, "capacity.test", ns_c_in, ns_t_a, 1000, &assembly) == RESOLVER_IPC_ASSEMBLY_OK && assembly != NULL, "released assembly capacity was not reusable");
 	resolver_ipc_response_begin begin = {
 		.canonical_name = "target.capacity.test",
 		.cname_count = 1,
@@ -271,8 +266,7 @@ static bool assembly_test_metrics(void) {
 	CHECK(budget != NULL && resolver_ipc_assembly_metrics_get(budget, &metrics), "assembly metrics budget could not be created or read");
 	uint64_t baseline_bytes = metrics.owned_bytes_current;
 	CHECK(baseline_bytes > 0 && metrics.owned_bytes_high_water == baseline_bytes, "initial assembly metrics gauges were incorrect");
-	CHECK(resolver_ipc_assembly_create(budget, NULL, ns_c_in, ns_t_a, 1, &assembly) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT && assembly == NULL,
-		"attributable bad assembly create was accepted");
+	CHECK(resolver_ipc_assembly_create(budget, NULL, ns_c_in, ns_t_a, 1, &assembly) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT && assembly == NULL, "attributable bad assembly create was accepted");
 	CHECK(resolver_ipc_assembly_create(budget, "invalid.metrics.test", ns_c_in, ns_t_txt, 1, &assembly) == RESOLVER_IPC_ASSEMBLY_BAD_ARGUMENT && assembly == NULL,
 		"unattributable assembly create was accepted");
 	assembly_calloc_failures = 1;
@@ -341,8 +335,7 @@ static bool assembly_test_metrics(void) {
 	CHECK(aaaa->create_ok == 1 && aaaa->create_memory == 1 && aaaa->terminal_complete == 1 && aaaa->nonterminal_current == 0
 		&& metrics.result_size[METRICS_QUERY_TYPE_AAAA].count == 1 && metrics.result_size[METRICS_QUERY_TYPE_AAAA].sum == 0,
 		"AAAA assembly metrics were incorrect");
-	CHECK(srv->create_ok == 1 && srv->limit_result_bytes == 1 && srv->terminal_limit == 1 && srv->nonterminal_current == 0,
-		"SRV assembly metrics were incorrect");
+	CHECK(srv->create_ok == 1 && srv->limit_result_bytes == 1 && srv->terminal_limit == 1 && srv->nonterminal_current == 0, "SRV assembly metrics were incorrect");
 	CHECK(metrics.nonterminal_current == 0 && metrics.owned_bytes_current == baseline_bytes && metrics.owned_bytes_high_water > baseline_bytes
 		&& metrics.saturation_total == 0, "assembly aggregate metrics were incorrect");
 	CHECK(a->create_ok == a->terminal_memory + a->abandoned + a->nonterminal_current
@@ -406,8 +399,7 @@ static bool assembly_test_negative(void) {
 	end = (resolver_ipc_response_end){ .query_id = 23 };
 	CHECK(assembly_begin_send(assembly, &begin) == RESOLVER_IPC_ASSEMBLY_OK && assembly_end_send(assembly, &end) == RESOLVER_IPC_ASSEMBLY_COMPLETE
 		&& resolver_ipc_assembly_result_take(assembly, &result), "resolver-level negative response did not complete");
-	CHECK(result.status == RESOLVER_IPC_LOOKUP_NOT_FOUND && result.payload.srv.question_name[0] == '\0' && !result.payload.srv.negative.valid,
-		"resolver-level negative result was not preserved");
+	CHECK(result.status == RESOLVER_IPC_LOOKUP_NOT_FOUND && result.payload.srv.question_name[0] == '\0' && !result.payload.srv.negative.valid, "resolver-level negative result was not preserved");
 	resolver_ipc_assembly_result_destroy(&result);
 	CHECK(assembly_reset(budget, &assembly, "temporary.error.test", ns_t_a, 24), "temporary-error assembly could not be created");
 	begin = (resolver_ipc_response_begin){ .completed_at = { .tv_sec = 600 }, .query_class = ns_c_in, .query_id = 24, .query_type = ns_t_a,
@@ -584,6 +576,8 @@ cleanup:
 }
 
 /* section: functions (exported) */
+void *__real_calloc(size_t count, size_t size);
+
 void *__wrap_calloc(size_t count, size_t size) {
 	if (assembly_calloc_failures > 0) {
 		assembly_calloc_failures--;

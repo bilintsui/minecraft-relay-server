@@ -146,8 +146,7 @@ static assembly_case_result assembly_event_apply(assembly_case_fixture *fixture,
 		return ASSEMBLY_CASE_CHANNEL;
 	}
 	if (event->kind == ASSEMBLY_TIMER_ARMED) {
-		if (event->result != 0 || event->flags != TFD_TIMER_ABSTIME || event->clock_id != CLOCK_MONOTONIC
-			|| event->setting.it_interval.tv_sec != 0 || event->setting.it_interval.tv_nsec != 0) {
+		if (event->result != 0 || event->flags != TFD_TIMER_ABSTIME || event->clock_id != CLOCK_MONOTONIC || event->setting.it_interval.tv_sec != 0 || event->setting.it_interval.tv_nsec != 0) {
 			return ASSEMBLY_CASE_FLAGS;
 		}
 		if (!state->initialized) {

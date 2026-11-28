@@ -99,24 +99,52 @@ static int listener_notify_reloading(void) {
 	return 0;
 }
 
-static int listener_route_timer_set(const listener_events *events, const struct timespec *deadline) {
-	struct itimerspec timer = { 0 };
-#ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
-	if (deadline == NULL) {
-		return listener_test_route_timer_disarm(events);
-	}
-#endif
-	if (deadline != NULL) {
-		timer.it_value = *deadline;
-	}
-	return listener_events_route_timer_set(events, &timer);
+static void listener_resolver_destroy(listener_context *context) {
+	resolver_supervisor_destroy(context->resolver);
+	context->resolver = NULL;
 }
 
-#ifdef LISTENER_READY_FLIP_TEST
-static int listener_ready_flip_test_timer_disarm(const void *context) {
-	return listener_route_timer_set(context, NULL);
+static int listener_resolver_events_process(listener_context *context, listener_connection *connections, const struct timespec *now) {
+	resolver_supervisor_event_status status = resolver_supervisor_events_process(context->resolver, now);
+	if (status != RESOLVER_SUPERVISOR_EVENT_OK) {
+		errno = status == RESOLVER_SUPERVISOR_EVENT_TIME ? EOVERFLOW : status == RESOLVER_SUPERVISOR_EVENT_IO ? EIO : EINVAL;
+		return -1;
+	}
+	resolver_supervisor_completion completion = { 0 };
+	while (resolver_supervisor_completion_take(context->resolver, &completion)) {
+		route_resolution_completion_status completion_status = route_generation_registry_completion_observe(context->generations, &completion, context->resolver, now);
+		bool waiter_invalid = false;
+		for (listener_connection *connection = connections; connection != NULL; connection = connection->next) {
+			if (connection->waiter == NULL || connection->closing) {
+				continue;
+			}
+			route_waiter_completion_status waiter_status = route_waiter_completion_observe(connection->waiter, &completion);
+			if (waiter_status == ROUTE_WAITER_COMPLETION_BAD_ARGUMENT) {
+				waiter_invalid = true;
+			}
+		}
+		resolver_supervisor_completion_destroy(&completion);
+		if (completion_status == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT || completion_status == ROUTE_RESOLUTION_COMPLETION_IO
+			|| completion_status == ROUTE_RESOLUTION_COMPLETION_TIME || waiter_invalid) {
+			errno = completion_status == ROUTE_RESOLUTION_COMPLETION_IO ? EIO : completion_status == ROUTE_RESOLUTION_COMPLETION_TIME ? EOVERFLOW : EINVAL;
+			return -1;
+		}
+	}
+	return 0;
 }
-#endif
+
+static int listener_resolver_init(listener_context *context, listener_events *events) {
+	struct timespec now;
+	context->dns_cache = resolver_cache_create();
+	if (context->dns_cache == NULL || clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+		return -1;
+	}
+	context->resolver = resolver_supervisor_create(&events->previous_signal_mask, &now);
+	if (context->resolver == NULL || listener_events_resolver_add(events, resolver_supervisor_event_fd(context->resolver)) == -1) {
+		return -1;
+	}
+	return 0;
+}
 
 static int listener_route_runtime_ready(listener_context *context, listener_route_runtime *runtime, listener_events *events, const listener_socket *listener, bool warmup_complete, const struct timespec *now) {
 	if (listener_events_socket_add(events, listener->fd) == -1) {
@@ -153,6 +181,25 @@ static int listener_route_runtime_ready(listener_context *context, listener_rout
 	}
 	return 0;
 }
+
+static int listener_route_timer_set(const listener_events *events, const struct timespec *deadline) {
+	struct itimerspec timer = { 0 };
+#ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
+	if (deadline == NULL) {
+		return listener_test_route_timer_disarm(events);
+	}
+#endif
+	if (deadline != NULL) {
+		timer.it_value = *deadline;
+	}
+	return listener_events_route_timer_set(events, &timer);
+}
+
+#ifdef LISTENER_READY_FLIP_TEST
+static int listener_ready_flip_test_timer_disarm(const void *context) {
+	return listener_route_timer_set(context, NULL);
+}
+#endif
 
 static int listener_route_runtime_schedule(listener_context *context, listener_route_runtime *runtime, listener_events *events, const listener_socket *listener, const struct timespec *now) {
 	route_prewarm_status status = route_resolution_schedule(context->route_resolution, context->resolver, now, LISTENER_ROUTE_PREWARM_BATCH_LIMIT);
@@ -206,53 +253,6 @@ static int listener_route_runtime_start(listener_route_runtime *runtime, const l
 	return listener_route_timer_set(events, &runtime->deadline);
 }
 
-static void listener_resolver_destroy(listener_context *context) {
-	resolver_supervisor_destroy(context->resolver);
-	context->resolver = NULL;
-}
-
-static int listener_resolver_events_process(listener_context *context, listener_connection *connections, const struct timespec *now) {
-	resolver_supervisor_event_status status = resolver_supervisor_events_process(context->resolver, now);
-	if (status != RESOLVER_SUPERVISOR_EVENT_OK) {
-		errno = status == RESOLVER_SUPERVISOR_EVENT_TIME ? EOVERFLOW : status == RESOLVER_SUPERVISOR_EVENT_IO ? EIO : EINVAL;
-		return -1;
-	}
-	resolver_supervisor_completion completion = { 0 };
-	while (resolver_supervisor_completion_take(context->resolver, &completion)) {
-		route_resolution_completion_status completion_status = route_generation_registry_completion_observe(context->generations, &completion, context->resolver, now);
-		bool waiter_invalid = false;
-		for (listener_connection *connection = connections; connection != NULL; connection = connection->next) {
-			if (connection->waiter == NULL || connection->closing) {
-				continue;
-			}
-			route_waiter_completion_status waiter_status = route_waiter_completion_observe(connection->waiter, &completion);
-			if (waiter_status == ROUTE_WAITER_COMPLETION_BAD_ARGUMENT) {
-				waiter_invalid = true;
-			}
-		}
-		resolver_supervisor_completion_destroy(&completion);
-		if (completion_status == ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT || completion_status == ROUTE_RESOLUTION_COMPLETION_IO
-			|| completion_status == ROUTE_RESOLUTION_COMPLETION_TIME || waiter_invalid) {
-			errno = completion_status == ROUTE_RESOLUTION_COMPLETION_IO ? EIO : completion_status == ROUTE_RESOLUTION_COMPLETION_TIME ? EOVERFLOW : EINVAL;
-			return -1;
-		}
-	}
-	return 0;
-}
-
-static int listener_resolver_init(listener_context *context, listener_events *events) {
-	struct timespec now;
-	context->dns_cache = resolver_cache_create();
-	if (context->dns_cache == NULL || clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
-		return -1;
-	}
-	context->resolver = resolver_supervisor_create(&events->previous_signal_mask, &now);
-	if (context->resolver == NULL || listener_events_resolver_add(events, resolver_supervisor_event_fd(context->resolver)) == -1) {
-		return -1;
-	}
-	return 0;
-}
-
 static int listener_shutdown_begin(listener_context *context, listener_events *events, listener_connection **connections) {
 	resolver_supervisor_shutdown_prepare(context->resolver);
 	listener_metrics_timer_set(context, events, 0, context->log_filename, context->config->log.level);
@@ -298,28 +298,20 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 	exit_code exitcode = EXITCODE_INTERNAL;
 	listener_events events;
 	if (listener_events_init(&events) == -1) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-			"Cannot initialize listener event loop: %s",
-			strerror(errno)
-		);
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize listener event loop: %s", strerror(errno));
 		goto release_resources;
 	}
 	listener_hosts_watch_retry(context, &events);
 	context->generations = route_generation_registry_create();
 	if (context->generations == NULL) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-			"Cannot initialize proxy route generation ownership: memory allocation failed."
-		);
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize proxy route generation ownership: memory allocation failed.");
 		goto release_resources;
 	}
 	if (!listener_hosts_prepare(context, MKSYS_LEVEL_CRITICAL, "", &context->hosts)) {
 		goto release_resources;
 	}
 	if (listener_resolver_init(context, &events) == -1) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-			"Cannot initialize resolver runtime: %s",
-			strerror(errno)
-		);
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot initialize resolver runtime: %s", strerror(errno));
 		goto release_resources;
 	}
 	if (!listener_generation_initial_publish(context)) {
@@ -346,10 +338,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 	while (1) {
 		listener_requests requests;
 		if (listener_events_wait(&events, &requests) == -1) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-				"Listener event loop failed: %s",
-				strerror(errno)
-			);
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Listener event loop failed: %s", strerror(errno));
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
@@ -361,45 +350,30 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		/* Release connection interests and enter supervisor shutdown before processing helper exits from the same stop batch. */
 		if ((!requests.stop || shutting_down) && (requests.resolver_ready || requests.route_timer_ready)) {
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Cannot sample the monotonic clock for route resolution: %s",
-					strerror(errno)
-				);
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock for route resolution: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 			if (requests.resolver_ready && listener_resolver_events_process(context, connections, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Resolver event processing failed: %s",
-					strerror(errno)
-				);
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Resolver event processing failed: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 			if (requests.route_timer_ready && listener_events_route_timer_drain(&events) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Cannot consume the route warm-up timer: %s",
-					strerror(errno)
-				);
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot consume the route warm-up timer: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 #ifdef LISTENER_READY_FLIP_TEST
 			if (requests.route_timer_ready && listener_test_ready_flip_timer_event() == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Cannot notify the ready-flip timer test: %s",
-					strerror(errno)
-				);
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the ready-flip timer test: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 #endif
 		}
 		if (requests.child_ready && listener_workers_reap(context) == -1) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-				"Cannot reap a worker process: %s",
-				strerror(errno)
-			);
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot reap a worker process: %s", strerror(errno));
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
@@ -421,30 +395,21 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			reload_pending = true;
 #ifdef LISTENER_READY_FLIP_TEST
 			if (listener_test_ready_flip_release() == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Cannot notify the ready-flip reload test: %s",
-					strerror(errno)
-				);
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the ready-flip reload test: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 #endif
 #ifdef LISTENER_EARLY_COLLECT_TEST
 			if (listener_test_early_collect_reload_ack() == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Cannot notify the early-collect reload test: %s",
-					strerror(errno)
-				);
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the early-collect reload test: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 #endif
 		}
 		if (requests.resolver_ready && listener_dispatch_route_waiters(connections, listener, &events, listener_pid, context, &route_now) == -1) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-				"Connection route resolution failed: %s",
-				strerror(errno)
-			);
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Connection route resolution failed: %s", strerror(errno));
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
@@ -452,10 +417,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		bool retired_before_collect = route_generation_registry_retired(context->generations) != NULL;
 #endif
 		if (!listener_generation_collect(context, &route_now)) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-				"Cannot collect a retired proxy route generation: %s",
-				strerror(errno)
-			);
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot collect a retired proxy route generation: %s", strerror(errno));
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
@@ -466,10 +428,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		bool ready_flip_timer_ready = listener_test_ready_flip_timer_ready();
 		if (!route_runtime.ready && reload_pending) {
 			if (listener_test_ready_flip_reload_blocked() == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Cannot notify the ready-flip reload test: %s",
-					strerror(errno)
-				);
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the ready-flip reload test: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
@@ -482,19 +441,13 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		) {
 #ifdef LISTENER_EARLY_COLLECT_TEST
 			if (listener_test_early_collect_observe(requests.resolver_ready, retired_before_collect) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Cannot notify the early-collect test: %s",
-					strerror(errno)
-				);
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the early-collect test: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 #endif
 			if (listener_notify_reloading() == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Cannot create systemd reload timestamp: %s",
-					strerror(errno)
-				);
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot create systemd reload timestamp: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
@@ -526,10 +479,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		bool route_activity = requests.accept_ready || requests.ready_count > 0 || requests.reload || requests.resolver_ready || requests.route_timer_ready || reload_processed;
 		if (route_activity) {
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1 || listener_route_runtime_schedule(context, &route_runtime, &events, listener, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Proxy route prewarming failed: %s",
-					strerror(errno)
-				);
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Proxy route prewarming failed: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
@@ -540,44 +490,30 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		}
 		size_t destroyed_count;
 		if (!listener_connections_destroy_closed(&connections, &events, &context->metrics, context->resolver, &route_now, &destroyed_count)) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-				"Cannot release closed connection route interests: %s",
-				strerror(errno)
-			);
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot release closed connection route interests: %s", strerror(errno));
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
 		if (destroyed_count > connection_count) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-				"Listener connection accounting failed."
-			);
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Listener connection accounting failed.");
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
 		connection_count -= destroyed_count;
 		if (!listener_generation_collect(context, &route_now)) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-				"Cannot collect a retired proxy route generation after connection processing: %s",
-				strerror(errno)
-			);
+			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot collect a retired proxy route generation after connection processing: %s", strerror(errno));
 			exitcode = EXITCODE_INTERNAL;
 			break;
 		}
 		if (route_runtime.ready && (hosts_reload_pending || reload_pending) && route_generation_registry_retired(context->generations) == NULL) {
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1 || listener_route_timer_set(&events, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Cannot resume a deferred route-generation reload: %s",
-					strerror(errno)
-				);
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot resume a deferred route-generation reload: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
 #ifdef LISTENER_READY_FLIP_TEST
 			if (listener_test_ready_flip_timer_arm() == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Cannot notify the ready-flip late-wake test: %s",
-					strerror(errno)
-				);
+				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot notify the ready-flip late-wake test: %s", strerror(errno));
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}

@@ -363,8 +363,7 @@ dns_srv_parse_status dns_srv_response_parse(const void *message, size_t message_
 			status = DNS_SRV_PARSE_MALFORMED;
 		} else if (status == DNS_SRV_PARSE_ALIAS_ONLY || status == DNS_SRV_PARSE_NODATA) {
 			dns_negative_parse_status negative_status = dns_negative_response_parse(&response, result->canonical_name, result->cnames, result->cname_count, &result->negative);
-			status = negative_status == DNS_NEGATIVE_PARSE_OK ? DNS_SRV_PARSE_NXDOMAIN
-				: (negative_status == DNS_NEGATIVE_PARSE_LIMIT ? DNS_SRV_PARSE_LIMIT : DNS_SRV_PARSE_MALFORMED);
+			status = negative_status == DNS_NEGATIVE_PARSE_OK ? DNS_SRV_PARSE_NXDOMAIN : (negative_status == DNS_NEGATIVE_PARSE_LIMIT ? DNS_SRV_PARSE_LIMIT : DNS_SRV_PARSE_MALFORMED);
 		}
 	} else if (status == DNS_SRV_PARSE_NODATA) {
 		dns_negative_parse_status negative_status = dns_negative_response_parse(&response, result->canonical_name, result->cnames, result->cname_count, &result->negative);

@@ -214,8 +214,7 @@ static bool connection_setup_short_test_modern_connect(void) {
 		CHECK(plan.request != NULL && plan.request_size > 0 && plan.response != NULL && plan.response_size > 0, "modern STATUS plan buffers missing");
 		CHECK(protocol_packet_length(plan.request, plan.request_size, &request_packet_size) == PROTOCOL_PACKET_COMPLETE && request_packet_size < plan.request_size,
 			"modern STATUS trailing request bytes were lost");
-		CHECK(memcmp(plan.request + request_packet_size, initial + initial_packet_size, initial_size - initial_packet_size) == 0,
-			"modern STATUS trailing request bytes changed");
+		CHECK(memcmp(plan.request + request_packet_size, initial + initial_packet_size, initial_size - initial_packet_size) == 0, "modern STATUS trailing request bytes changed");
 		p_handshake request = packet_read(plan.request, plan.request + request_packet_size);
 		CHECK(request.address != NULL && strcmp(request.address, "backend.example") == 0 && request.port == 25570 && request.nextstate == CLIENT_INTENT_STATUS
 			&& request.address_extra_length == address_extras[index].length && request.address_extra != NULL

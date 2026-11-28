@@ -276,46 +276,6 @@ static bool relay_shutdown_write(int socket_fd) {
 	return shutdown(socket_fd, SHUT_WR) == 0;
 }
 
-static bool relay_write_all(int socket_fd, const void *buffer, size_t size, int timeout_ms) {
-	size_t offset = 0;
-	while (offset < size) {
-		ssize_t sent = send(socket_fd, (const uint8_t *)buffer + offset, size - offset, MSG_DONTWAIT | MSG_NOSIGNAL);
-		if (sent > 0) {
-			offset += (size_t)sent;
-			continue;
-		}
-		if ((sent < 0) && ((errno == EINTR) || (errno == EAGAIN) || (errno == EWOULDBLOCK))) {
-			struct pollfd event = { .fd = socket_fd, .events = POLLOUT };
-			if (poll(&event, 1, timeout_ms) != 1) {
-				return false;
-			}
-			continue;
-		}
-		return false;
-	}
-	return true;
-}
-
-static bool relay_test_activity(void) {
-	relay_test_session session = { .client_fd = -1, .upstream_fd = -1, .relay_pid = -1 };
-	bool test_result = false;
-	static const uint8_t bytes[] = { 'a', 'b', 'c', 'd', 'e' };
-	CHECK(relay_session_start(&session, NULL, 0, false), "could not start activity relay");
-	CHECK(relay_set_nonblocking(session.client_fd) && relay_set_nonblocking(session.upstream_fd), "could not make activity sockets nonblocking");
-	for (size_t index = 0; index < sizeof(bytes); index++) {
-		uint8_t received;
-		CHECK(relay_write_all(session.client_fd, &bytes[index], sizeof(bytes[index]), RELAY_TEST_IO_TIMEOUT_MS), "could not send activity byte");
-		CHECK(relay_read_exact(session.upstream_fd, &received, sizeof(received), RELAY_TEST_IO_TIMEOUT_MS) && received == bytes[index], "activity byte was not relayed");
-		poll(NULL, 0, 250);
-	}
-	CHECK(relay_session_wait(&session, NET_RELAY_IDLE, RELAY_TEST_IO_TIMEOUT_MS), "positive-byte activity did not refresh idle timeout");
-	test_result = true;
-
-cleanup:
-	relay_session_cleanup(&session);
-	return test_result;
-}
-
 static bool relay_test_arguments(void) {
 	int pair[2] = { -1, -1 };
 	uint8_t byte = 0;
@@ -339,45 +299,6 @@ cleanup:
 	if (pair[1] >= 0) {
 		close(pair[1]);
 	}
-	return test_result;
-}
-
-static bool relay_test_half_close(bool client_first) {
-	relay_test_session session = { .client_fd = -1, .upstream_fd = -1, .relay_pid = -1 };
-	static const uint8_t request[] = "request";
-	static const uint8_t response[] = "response";
-	uint8_t received[sizeof(request)];
-	uint8_t returned[sizeof(response)];
-	bool test_result = false;
-	CHECK(relay_session_start(&session, NULL, 0, false), "could not start half-close relay");
-	if (client_first) {
-		CHECK(relay_write_all(session.client_fd, request, sizeof(request), RELAY_TEST_IO_TIMEOUT_MS), "could not send client half-close request");
-		CHECK(relay_shutdown_write(session.client_fd), "could not half-close client");
-		CHECK(relay_read_exact(session.upstream_fd, received, sizeof(received), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(received, request, sizeof(request)) == 0,
-			"client half-close request was truncated");
-		CHECK(relay_expect_eof(session.upstream_fd, RELAY_TEST_IO_TIMEOUT_MS), "client half-close was not propagated upstream");
-		CHECK(relay_write_all(session.upstream_fd, response, sizeof(response), RELAY_TEST_IO_TIMEOUT_MS), "could not send upstream half-close response");
-		CHECK(relay_shutdown_write(session.upstream_fd), "could not half-close upstream");
-		CHECK(relay_read_exact(session.client_fd, returned, sizeof(returned), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(returned, response, sizeof(response)) == 0,
-			"upstream half-close response was truncated");
-		CHECK(relay_expect_eof(session.client_fd, RELAY_TEST_IO_TIMEOUT_MS), "upstream half-close was not propagated to client");
-	} else {
-		CHECK(relay_write_all(session.upstream_fd, response, sizeof(response), RELAY_TEST_IO_TIMEOUT_MS), "could not send upstream-first response");
-		CHECK(relay_shutdown_write(session.upstream_fd), "could not half-close upstream first");
-		CHECK(relay_read_exact(session.client_fd, returned, sizeof(returned), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(returned, response, sizeof(response)) == 0,
-			"upstream-first response was truncated");
-		CHECK(relay_expect_eof(session.client_fd, RELAY_TEST_IO_TIMEOUT_MS), "upstream-first half-close was not propagated");
-		CHECK(relay_write_all(session.client_fd, request, sizeof(request), RELAY_TEST_IO_TIMEOUT_MS), "could not send client response after half-close");
-		CHECK(relay_shutdown_write(session.client_fd), "could not half-close client second");
-		CHECK(relay_read_exact(session.upstream_fd, received, sizeof(received), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(received, request, sizeof(request)) == 0,
-			"client second half-close request was truncated");
-		CHECK(relay_expect_eof(session.upstream_fd, RELAY_TEST_IO_TIMEOUT_MS), "client second half-close was not propagated");
-	}
-	CHECK(relay_session_wait(&session, NET_RELAY_CLOSED, RELAY_TEST_IO_TIMEOUT_MS), "half-close relay did not close cleanly");
-	test_result = true;
-
-cleanup:
-	relay_session_cleanup(&session);
 	return test_result;
 }
 
@@ -431,54 +352,11 @@ cleanup:
 	return test_result;
 }
 
-static bool relay_test_hup_unread(void) {
-	relay_test_session session = { .client_fd = -1, .upstream_fd = -1, .relay_pid = -1 };
-	static const uint8_t payload[] = "data before hangup";
-	uint8_t received[sizeof(payload)];
-	bool test_result = false;
-	CHECK(relay_session_start(&session, NULL, 0, false), "could not start HUP relay");
-	CHECK(relay_write_all(session.client_fd, payload, sizeof(payload), RELAY_TEST_IO_TIMEOUT_MS), "could not send HUP payload");
-	close(session.client_fd);
-	session.client_fd = -1;
-	CHECK(relay_read_exact(session.upstream_fd, received, sizeof(received), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(received, payload, sizeof(payload)) == 0, "HUP discarded unread payload");
-	CHECK(relay_expect_eof(session.upstream_fd, RELAY_TEST_IO_TIMEOUT_MS), "HUP did not propagate EOF after unread payload");
-	CHECK(relay_shutdown_write(session.upstream_fd), "could not close reverse HUP test direction");
-	CHECK(relay_session_wait(&session, NET_RELAY_CLOSED, RELAY_TEST_IO_TIMEOUT_MS), "HUP relay did not close cleanly");
-	test_result = true;
-
-cleanup:
-	relay_session_cleanup(&session);
-	return test_result;
-}
-
 static bool relay_test_idle(void) {
 	relay_test_session session = { .client_fd = -1, .upstream_fd = -1, .relay_pid = -1 };
 	bool test_result = false;
 	CHECK(relay_session_start(&session, NULL, 0, false), "could not start idle relay");
 	CHECK(relay_session_wait(&session, NET_RELAY_IDLE, RELAY_TEST_IO_TIMEOUT_MS), "idle relay did not expire");
-	test_result = true;
-
-cleanup:
-	relay_session_cleanup(&session);
-	return test_result;
-}
-
-static bool relay_test_seed(void) {
-	relay_test_session session = { .client_fd = -1, .upstream_fd = -1, .relay_pid = -1 };
-	static const uint8_t seed[] = { 's', 'e', 'e', 'd' };
-	static const uint8_t client_bytes[] = { 'c', 'l', 'i', 'e', 'n', 't' };
-	static const uint8_t expected[] = { 's', 'e', 'e', 'd', 'c', 'l', 'i', 'e', 'n', 't' };
-	static const uint8_t response[] = { 'r', 'e', 'p', 'l', 'y' };
-	uint8_t received[sizeof(expected)];
-	uint8_t returned[sizeof(response)];
-	bool test_result = false;
-	CHECK(relay_session_start(&session, seed, sizeof(seed), false), "could not start seed relay");
-	CHECK(relay_write_all(session.client_fd, client_bytes, sizeof(client_bytes), RELAY_TEST_IO_TIMEOUT_MS), "could not send seeded client bytes");
-	CHECK(relay_read_exact(session.upstream_fd, received, sizeof(received), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(received, expected, sizeof(expected)) == 0, "seed was not sent before client bytes");
-	CHECK(relay_write_all(session.upstream_fd, response, sizeof(response), RELAY_TEST_IO_TIMEOUT_MS), "could not send seed response");
-	CHECK(relay_read_exact(session.client_fd, returned, sizeof(returned), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(returned, response, sizeof(response)) == 0, "seed relay reverse traffic failed");
-	CHECK(relay_shutdown_write(session.client_fd) && relay_shutdown_write(session.upstream_fd), "could not close seed relay");
-	CHECK(relay_session_wait(&session, NET_RELAY_CLOSED, RELAY_TEST_IO_TIMEOUT_MS), "seed relay did not close cleanly");
 	test_result = true;
 
 cleanup:
@@ -549,6 +427,126 @@ static bool relay_test_stream(void) {
 cleanup:
 	free(payload);
 	free(received);
+	relay_session_cleanup(&session);
+	return test_result;
+}
+
+static bool relay_write_all(int socket_fd, const void *buffer, size_t size, int timeout_ms) {
+	size_t offset = 0;
+	while (offset < size) {
+		ssize_t sent = send(socket_fd, (const uint8_t *)buffer + offset, size - offset, MSG_DONTWAIT | MSG_NOSIGNAL);
+		if (sent > 0) {
+			offset += (size_t)sent;
+			continue;
+		}
+		if ((sent < 0) && ((errno == EINTR) || (errno == EAGAIN) || (errno == EWOULDBLOCK))) {
+			struct pollfd event = { .fd = socket_fd, .events = POLLOUT };
+			if (poll(&event, 1, timeout_ms) != 1) {
+				return false;
+			}
+			continue;
+		}
+		return false;
+	}
+	return true;
+}
+
+static bool relay_test_activity(void) {
+	relay_test_session session = { .client_fd = -1, .upstream_fd = -1, .relay_pid = -1 };
+	bool test_result = false;
+	static const uint8_t bytes[] = { 'a', 'b', 'c', 'd', 'e' };
+	CHECK(relay_session_start(&session, NULL, 0, false), "could not start activity relay");
+	CHECK(relay_set_nonblocking(session.client_fd) && relay_set_nonblocking(session.upstream_fd), "could not make activity sockets nonblocking");
+	for (size_t index = 0; index < sizeof(bytes); index++) {
+		uint8_t received;
+		CHECK(relay_write_all(session.client_fd, &bytes[index], sizeof(bytes[index]), RELAY_TEST_IO_TIMEOUT_MS), "could not send activity byte");
+		CHECK(relay_read_exact(session.upstream_fd, &received, sizeof(received), RELAY_TEST_IO_TIMEOUT_MS) && received == bytes[index], "activity byte was not relayed");
+		poll(NULL, 0, 250);
+	}
+	CHECK(relay_session_wait(&session, NET_RELAY_IDLE, RELAY_TEST_IO_TIMEOUT_MS), "positive-byte activity did not refresh idle timeout");
+	test_result = true;
+
+cleanup:
+	relay_session_cleanup(&session);
+	return test_result;
+}
+
+static bool relay_test_half_close(bool client_first) {
+	relay_test_session session = { .client_fd = -1, .upstream_fd = -1, .relay_pid = -1 };
+	static const uint8_t request[] = "request";
+	static const uint8_t response[] = "response";
+	uint8_t received[sizeof(request)];
+	uint8_t returned[sizeof(response)];
+	bool test_result = false;
+	CHECK(relay_session_start(&session, NULL, 0, false), "could not start half-close relay");
+	if (client_first) {
+		CHECK(relay_write_all(session.client_fd, request, sizeof(request), RELAY_TEST_IO_TIMEOUT_MS), "could not send client half-close request");
+		CHECK(relay_shutdown_write(session.client_fd), "could not half-close client");
+		CHECK(relay_read_exact(session.upstream_fd, received, sizeof(received), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(received, request, sizeof(request)) == 0, "client half-close request was truncated");
+		CHECK(relay_expect_eof(session.upstream_fd, RELAY_TEST_IO_TIMEOUT_MS), "client half-close was not propagated upstream");
+		CHECK(relay_write_all(session.upstream_fd, response, sizeof(response), RELAY_TEST_IO_TIMEOUT_MS), "could not send upstream half-close response");
+		CHECK(relay_shutdown_write(session.upstream_fd), "could not half-close upstream");
+		CHECK(relay_read_exact(session.client_fd, returned, sizeof(returned), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(returned, response, sizeof(response)) == 0,
+			"upstream half-close response was truncated");
+		CHECK(relay_expect_eof(session.client_fd, RELAY_TEST_IO_TIMEOUT_MS), "upstream half-close was not propagated to client");
+	} else {
+		CHECK(relay_write_all(session.upstream_fd, response, sizeof(response), RELAY_TEST_IO_TIMEOUT_MS), "could not send upstream-first response");
+		CHECK(relay_shutdown_write(session.upstream_fd), "could not half-close upstream first");
+		CHECK(relay_read_exact(session.client_fd, returned, sizeof(returned), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(returned, response, sizeof(response)) == 0, "upstream-first response was truncated");
+		CHECK(relay_expect_eof(session.client_fd, RELAY_TEST_IO_TIMEOUT_MS), "upstream-first half-close was not propagated");
+		CHECK(relay_write_all(session.client_fd, request, sizeof(request), RELAY_TEST_IO_TIMEOUT_MS), "could not send client response after half-close");
+		CHECK(relay_shutdown_write(session.client_fd), "could not half-close client second");
+		CHECK(relay_read_exact(session.upstream_fd, received, sizeof(received), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(received, request, sizeof(request)) == 0,
+			"client second half-close request was truncated");
+		CHECK(relay_expect_eof(session.upstream_fd, RELAY_TEST_IO_TIMEOUT_MS), "client second half-close was not propagated");
+	}
+	CHECK(relay_session_wait(&session, NET_RELAY_CLOSED, RELAY_TEST_IO_TIMEOUT_MS), "half-close relay did not close cleanly");
+	test_result = true;
+
+cleanup:
+	relay_session_cleanup(&session);
+	return test_result;
+}
+
+static bool relay_test_hup_unread(void) {
+	relay_test_session session = { .client_fd = -1, .upstream_fd = -1, .relay_pid = -1 };
+	static const uint8_t payload[] = "data before hangup";
+	uint8_t received[sizeof(payload)];
+	bool test_result = false;
+	CHECK(relay_session_start(&session, NULL, 0, false), "could not start HUP relay");
+	CHECK(relay_write_all(session.client_fd, payload, sizeof(payload), RELAY_TEST_IO_TIMEOUT_MS), "could not send HUP payload");
+	close(session.client_fd);
+	session.client_fd = -1;
+	CHECK(relay_read_exact(session.upstream_fd, received, sizeof(received), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(received, payload, sizeof(payload)) == 0, "HUP discarded unread payload");
+	CHECK(relay_expect_eof(session.upstream_fd, RELAY_TEST_IO_TIMEOUT_MS), "HUP did not propagate EOF after unread payload");
+	CHECK(relay_shutdown_write(session.upstream_fd), "could not close reverse HUP test direction");
+	CHECK(relay_session_wait(&session, NET_RELAY_CLOSED, RELAY_TEST_IO_TIMEOUT_MS), "HUP relay did not close cleanly");
+	test_result = true;
+
+cleanup:
+	relay_session_cleanup(&session);
+	return test_result;
+}
+
+static bool relay_test_seed(void) {
+	relay_test_session session = { .client_fd = -1, .upstream_fd = -1, .relay_pid = -1 };
+	static const uint8_t seed[] = { 's', 'e', 'e', 'd' };
+	static const uint8_t client_bytes[] = { 'c', 'l', 'i', 'e', 'n', 't' };
+	static const uint8_t expected[] = { 's', 'e', 'e', 'd', 'c', 'l', 'i', 'e', 'n', 't' };
+	static const uint8_t response[] = { 'r', 'e', 'p', 'l', 'y' };
+	uint8_t received[sizeof(expected)];
+	uint8_t returned[sizeof(response)];
+	bool test_result = false;
+	CHECK(relay_session_start(&session, seed, sizeof(seed), false), "could not start seed relay");
+	CHECK(relay_write_all(session.client_fd, client_bytes, sizeof(client_bytes), RELAY_TEST_IO_TIMEOUT_MS), "could not send seeded client bytes");
+	CHECK(relay_read_exact(session.upstream_fd, received, sizeof(received), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(received, expected, sizeof(expected)) == 0, "seed was not sent before client bytes");
+	CHECK(relay_write_all(session.upstream_fd, response, sizeof(response), RELAY_TEST_IO_TIMEOUT_MS), "could not send seed response");
+	CHECK(relay_read_exact(session.client_fd, returned, sizeof(returned), RELAY_TEST_IO_TIMEOUT_MS) && memcmp(returned, response, sizeof(response)) == 0, "seed relay reverse traffic failed");
+	CHECK(relay_shutdown_write(session.client_fd) && relay_shutdown_write(session.upstream_fd), "could not close seed relay");
+	CHECK(relay_session_wait(&session, NET_RELAY_CLOSED, RELAY_TEST_IO_TIMEOUT_MS), "seed relay did not close cleanly");
+	test_result = true;
+
+cleanup:
 	relay_session_cleanup(&session);
 	return test_result;
 }

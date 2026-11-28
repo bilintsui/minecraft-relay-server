@@ -351,8 +351,7 @@ dns_address_parse_status dns_address_response_parse(const void *message, size_t 
 			status = DNS_ADDRESS_PARSE_MALFORMED;
 		} else if (status == DNS_ADDRESS_PARSE_ALIAS_ONLY || status == DNS_ADDRESS_PARSE_NODATA) {
 			dns_negative_parse_status negative_status = dns_negative_response_parse(&response, result->canonical_name, result->cnames, result->cname_count, &result->negative);
-			status = negative_status == DNS_NEGATIVE_PARSE_OK ? DNS_ADDRESS_PARSE_NXDOMAIN
-				: (negative_status == DNS_NEGATIVE_PARSE_LIMIT ? DNS_ADDRESS_PARSE_LIMIT : DNS_ADDRESS_PARSE_MALFORMED);
+			status = negative_status == DNS_NEGATIVE_PARSE_OK ? DNS_ADDRESS_PARSE_NXDOMAIN : (negative_status == DNS_NEGATIVE_PARSE_LIMIT ? DNS_ADDRESS_PARSE_LIMIT : DNS_ADDRESS_PARSE_MALFORMED);
 		}
 	} else if (status == DNS_ADDRESS_PARSE_NODATA) {
 		dns_negative_parse_status negative_status = dns_negative_response_parse(&response, result->canonical_name, result->cnames, result->cname_count, &result->negative);

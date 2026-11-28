@@ -36,17 +36,39 @@
 typedef struct route_resolution_dependency route_resolution_dependency;
 typedef struct route_resolution_destination route_resolution_destination;
 typedef struct route_resolution_entry route_resolution_entry;
+struct route_resolution_dependency {
+	bool address_source;
+	route_resolution_destination *destination;
+	route_resolution_entry *entry;
+	route_resolution_dependency *entry_next;
+	route_resolution_dependency *entry_previous;
+	bool pending;
+	bool positive;
+};
+struct route_resolution_entry {
+	bool background_interest;
+	resolver_cache_entry *cache_entry;
+	route_resolution_dependency *dependencies;
+	route_resolution_entry *hash_next;
+	bool owned;
+	bool positive;
+	bool queued;
+	route_resolution_entry *queue_next;
+	route_resolution_entry *queue_previous;
+	bool terminal;
+	size_t use_count;
+};
+typedef struct {
+	bool release_background;
+	resolver_supervisor *supervisor;
+	const struct timespec *now;
+} route_resolution_operation_context;
 typedef enum {
 	ROUTE_RESOLUTION_OPERATION_OK,
 	ROUTE_RESOLUTION_OPERATION_BAD_ARGUMENT,
 	ROUTE_RESOLUTION_OPERATION_IO,
 	ROUTE_RESOLUTION_OPERATION_TIME
 } route_resolution_operation_status;
-typedef struct {
-	bool release_background;
-	resolver_supervisor *supervisor;
-	const struct timespec *now;
-} route_resolution_operation_context;
 typedef struct route_resolution_target {
 	uint64_t hash;
 	struct route_resolution_target *hash_next;
@@ -58,17 +80,6 @@ typedef struct route_resolution_target {
 	route_resolution_target_source source;
 	size_t use_count;
 } route_resolution_target;
-typedef struct {
-	route_resolution_dependency *dependencies;
-	size_t dependency_count;
-	size_t immediate_positive_count;
-	size_t pending_count;
-	size_t positive_count;
-	dns_srv_record *records;
-	size_t record_count;
-	route_resolution_target **targets;
-	size_t target_count;
-} route_resolution_target_set;
 struct route_resolution {
 	size_t bucket_count;
 	route_resolution_entry **buckets;
@@ -83,15 +94,17 @@ struct route_resolution {
 	route_resolution_target **target_buckets;
 	size_t terminal_destination_count;
 };
-struct route_resolution_dependency {
-	bool address_source;
-	route_resolution_destination *destination;
-	route_resolution_entry *entry;
-	route_resolution_dependency *entry_next;
-	route_resolution_dependency *entry_previous;
-	bool pending;
-	bool positive;
-};
+typedef struct {
+	route_resolution_dependency *dependencies;
+	size_t dependency_count;
+	size_t immediate_positive_count;
+	size_t pending_count;
+	size_t positive_count;
+	dns_srv_record *records;
+	size_t record_count;
+	route_resolution_target **targets;
+	size_t target_count;
+} route_resolution_target_set;
 struct route_resolution_destination {
 	bool expanded;
 	bool first_terminal;
@@ -102,19 +115,6 @@ struct route_resolution_destination {
 	route_resolution_destination_result result;
 	bool srv;
 	route_resolution_target_set targets;
-};
-struct route_resolution_entry {
-	bool background_interest;
-	resolver_cache_entry *cache_entry;
-	route_resolution_dependency *dependencies;
-	route_resolution_entry *hash_next;
-	bool owned;
-	bool positive;
-	bool queued;
-	route_resolution_entry *queue_next;
-	route_resolution_entry *queue_previous;
-	bool terminal;
-	size_t use_count;
 };
 
 /* section: functions (local) */
@@ -130,25 +130,6 @@ static route_resolution_completion_status route_resolution_completion_from_opera
 		default:
 			return ROUTE_RESOLUTION_COMPLETION_BAD_ARGUMENT;
 	}
-}
-
-static route_resolution_operation_status route_resolution_operation_from_release(resolver_supervisor_release_status status) {
-	switch (status) {
-		case RESOLVER_SUPERVISOR_RELEASE_OK:
-		case RESOLVER_SUPERVISOR_RELEASE_SATISFIED:
-			return ROUTE_RESOLUTION_OPERATION_OK;
-		case RESOLVER_SUPERVISOR_RELEASE_IO:
-			return ROUTE_RESOLUTION_OPERATION_IO;
-		case RESOLVER_SUPERVISOR_RELEASE_TIME:
-			return ROUTE_RESOLUTION_OPERATION_TIME;
-		case RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT:
-		default:
-			return ROUTE_RESOLUTION_OPERATION_BAD_ARGUMENT;
-	}
-}
-
-static route_resolution_operation_status route_resolution_operation_merge(route_resolution_operation_status current, route_resolution_operation_status update) {
-	return current == ROUTE_RESOLUTION_OPERATION_OK ? update : current;
 }
 
 static void route_resolution_dependency_link(route_resolution_entry *entry, route_resolution_dependency *dependency) {
@@ -174,20 +155,6 @@ static void route_resolution_destination_update(route_resolution *resolution, ro
 		destination->first_terminal = true;
 		resolution->terminal_destination_count++;
 	}
-}
-
-static route_resolution_operation_status route_resolution_entry_background_release(route_resolution_entry *entry, const route_resolution_operation_context *context) {
-	if (entry == NULL || !entry->background_interest) {
-		return ROUTE_RESOLUTION_OPERATION_OK;
-	}
-	entry->background_interest = false;
-	if (context == NULL || !context->release_background) {
-		return ROUTE_RESOLUTION_OPERATION_OK;
-	}
-	if (context->supervisor == NULL || context->now == NULL) {
-		return ROUTE_RESOLUTION_OPERATION_BAD_ARGUMENT;
-	}
-	return route_resolution_operation_from_release(resolver_supervisor_entry_background_release(context->supervisor, entry->cache_entry, context->now));
 }
 
 static size_t route_resolution_entry_bucket(const route_resolution *resolution, const resolver_cache_entry *entry) {
@@ -273,6 +240,44 @@ static void route_resolution_entry_queue_remove(route_resolution *resolution, ro
 	entry->queued = false;
 }
 
+static uint64_t route_resolution_name_hash(const char *name) {
+	uint64_t hash = ROUTE_RESOLUTION_HASH_OFFSET;
+	for (const unsigned char *character = (const unsigned char *)name; *character != '\0'; character++) {
+		hash ^= *character;
+		hash *= ROUTE_RESOLUTION_HASH_PRIME;
+	}
+	return hash;
+}
+
+static route_resolution_operation_status route_resolution_operation_from_release(resolver_supervisor_release_status status) {
+	switch (status) {
+		case RESOLVER_SUPERVISOR_RELEASE_OK:
+		case RESOLVER_SUPERVISOR_RELEASE_SATISFIED:
+			return ROUTE_RESOLUTION_OPERATION_OK;
+		case RESOLVER_SUPERVISOR_RELEASE_IO:
+			return ROUTE_RESOLUTION_OPERATION_IO;
+		case RESOLVER_SUPERVISOR_RELEASE_TIME:
+			return ROUTE_RESOLUTION_OPERATION_TIME;
+		case RESOLVER_SUPERVISOR_RELEASE_BAD_ARGUMENT:
+		default:
+			return ROUTE_RESOLUTION_OPERATION_BAD_ARGUMENT;
+	}
+}
+
+static route_resolution_operation_status route_resolution_entry_background_release(route_resolution_entry *entry, const route_resolution_operation_context *context) {
+	if (entry == NULL || !entry->background_interest) {
+		return ROUTE_RESOLUTION_OPERATION_OK;
+	}
+	entry->background_interest = false;
+	if (context == NULL || !context->release_background) {
+		return ROUTE_RESOLUTION_OPERATION_OK;
+	}
+	if (context->supervisor == NULL || context->now == NULL) {
+		return ROUTE_RESOLUTION_OPERATION_BAD_ARGUMENT;
+	}
+	return route_resolution_operation_from_release(resolver_supervisor_entry_background_release(context->supervisor, entry->cache_entry, context->now));
+}
+
 static route_resolution_operation_status route_resolution_entry_remove(route_resolution *resolution, route_resolution_entry *entry, const route_resolution_operation_context *context) {
 	if (entry == NULL || entry->use_count != 0 || entry->dependencies != NULL) {
 		return ROUTE_RESOLUTION_OPERATION_OK;
@@ -317,13 +322,8 @@ static route_resolution_operation_status route_resolution_dependency_unlink(rout
 	return ROUTE_RESOLUTION_OPERATION_OK;
 }
 
-static uint64_t route_resolution_name_hash(const char *name) {
-	uint64_t hash = ROUTE_RESOLUTION_HASH_OFFSET;
-	for (const unsigned char *character = (const unsigned char *)name; *character != '\0'; character++) {
-		hash ^= *character;
-		hash *= ROUTE_RESOLUTION_HASH_PRIME;
-	}
-	return hash;
+static route_resolution_operation_status route_resolution_operation_merge(route_resolution_operation_status current, route_resolution_operation_status update) {
+	return current == ROUTE_RESOLUTION_OPERATION_OK ? update : current;
 }
 
 static route_prewarm_status route_resolution_prewarm_from_operation(route_resolution_operation_status status) {
@@ -709,21 +709,6 @@ static route_resolution_operation_status route_resolution_entry_terminal_observe
 	return status;
 }
 
-static route_resolution_operation_status route_resolution_entry_fresh_observe(route_resolution *resolution, route_resolution_entry *entry, const struct timespec *now,
-	const route_resolution_operation_context *context) {
-	resolver_cache_view view;
-	if (!resolver_cache_entry_view(entry->cache_entry, now, &view)) {
-		return ROUTE_RESOLUTION_OPERATION_BAD_ARGUMENT;
-	}
-	if (view.status == RESOLVER_CACHE_VIEW_EMPTY) {
-		return ROUTE_RESOLUTION_OPERATION_OK;
-	}
-	bool positive = view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE;
-	const dns_srv_record *srv_records = resolver_cache_entry_query_type(entry->cache_entry) == ns_t_srv && positive ? view.srv_records : NULL;
-	size_t srv_record_count = srv_records == NULL ? 0 : view.srv_record_count;
-	return route_resolution_entry_terminal_observe(resolution, entry, positive, srv_records, srv_record_count, true, context);
-}
-
 static route_resolution_completion_status route_resolution_completion_observe_internal(route_resolution *resolution,
 	const route_resolution_operation_context *context, const resolver_supervisor_completion *completion, const struct timespec *now) {
 	if (resolution == NULL || completion == NULL || completion->entry == NULL || now == NULL) {
@@ -762,8 +747,9 @@ static route_resolution_completion_status route_resolution_completion_observe_in
 		if (view.status != RESOLVER_CACHE_VIEW_EMPTY) {
 			bool positive = view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE;
 			const dns_srv_record *srv_records = resolver_cache_entry_query_type(entry->cache_entry) == ns_t_srv && positive ? view.srv_records : NULL;
-			return route_resolution_completion_from_operation(route_resolution_entry_terminal_observe(resolution, entry, positive, srv_records,
-				srv_records == NULL ? 0 : view.srv_record_count, true, context));
+			return route_resolution_completion_from_operation(
+				route_resolution_entry_terminal_observe(resolution, entry, positive, srv_records, srv_records == NULL ? 0 : view.srv_record_count, true, context)
+			);
 		}
 	}
 	bool positive = completion->publication == RESOLVER_CACHE_PUBLISH_TRANSIENT && completion->response.status == RESOLVER_IPC_LOOKUP_OK;
@@ -777,7 +763,23 @@ static route_resolution_completion_status route_resolution_completion_observe_in
 		}
 	}
 	return route_resolution_completion_from_operation(
-		route_resolution_entry_terminal_observe(resolution, entry, positive, srv_records, srv_record_count, false, context));
+		route_resolution_entry_terminal_observe(resolution, entry, positive, srv_records, srv_record_count, false, context)
+	);
+}
+
+static route_resolution_operation_status route_resolution_entry_fresh_observe(route_resolution *resolution, route_resolution_entry *entry, const struct timespec *now,
+	const route_resolution_operation_context *context) {
+	resolver_cache_view view;
+	if (!resolver_cache_entry_view(entry->cache_entry, now, &view)) {
+		return ROUTE_RESOLUTION_OPERATION_BAD_ARGUMENT;
+	}
+	if (view.status == RESOLVER_CACHE_VIEW_EMPTY) {
+		return ROUTE_RESOLUTION_OPERATION_OK;
+	}
+	bool positive = view.status == RESOLVER_CACHE_VIEW_FRESH_POSITIVE;
+	const dns_srv_record *srv_records = resolver_cache_entry_query_type(entry->cache_entry) == ns_t_srv && positive ? view.srv_records : NULL;
+	size_t srv_record_count = srv_records == NULL ? 0 : view.srv_record_count;
+	return route_resolution_entry_terminal_observe(resolution, entry, positive, srv_records, srv_record_count, true, context);
 }
 
 /* section: functions (exported) */

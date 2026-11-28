@@ -3,15 +3,12 @@
 % July 2026
 
 # NAME
-
 mcrelay-version - print the mcrelay version
 
 # SYNOPSIS
-
 **mcrelay version**
 
 # DESCRIPTION
-
 Print the installed **mcrelay** version in a single line, in the form
 `v<display>[+<commit>[-dirty]][-debug][(<internal>)]`. Builds from a clean tagged
 commit omit the suffix; clean untagged commits include their abbreviated
@@ -25,7 +22,6 @@ suffix. A surrounding unrelated Git checkout does not supply version information
 The startup log uses the same version string as this command.
 
 # SEE ALSO
-
 **mcrelay**(1)
 
 Documentation and source: <https://github.com/bilintsui/minecraft-relay-server>

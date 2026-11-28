@@ -186,6 +186,245 @@ cleanup:
 	return test_result;
 }
 
+static bool dns_test_malformed(void) {
+	dns_message_builder builder;
+	dns_address_result result = { 0 };
+	uint8_t address[16] = { 192, 0, 2, 1 };
+	uint8_t wire_name[NS_MAXCDNAME];
+	size_t wire_name_size;
+	int test_result = false;
+	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot start malformed address response");
+	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_a, ns_c_in, 30, address, 3, NULL), "cannot add malformed address");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "short A record was accepted");
+
+	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_aaaa), "cannot start malformed IPv6 response");
+	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_aaaa, ns_c_in, 30, address, 15, NULL), "cannot add malformed IPv6 address");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET6, &result) == DNS_ADDRESS_PARSE_MALFORMED, "short AAAA record was accepted");
+
+	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot restart malformed alias response");
+	CHECK(dns_builder_wire_name_create("target.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode malformed alias target");
+	wire_name[wire_name_size++] = 0;
+	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add alias with trailing data");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "CNAME with trailing data was accepted");
+
+	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot restart malformed pointer response");
+	uint8_t bad_pointer[2] = { 0xFF, 0xFF };
+	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, bad_pointer, sizeof(bad_pointer), NULL), "cannot add invalid compression pointer");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result)
+		== DNS_ADDRESS_PARSE_MALFORMED, "out-of-range compression pointer was accepted");
+
+	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot restart self-pointer response");
+	size_t self_pointer_offset = builder.size + 2 + 10;
+	uint8_t self_pointer[2] = { (uint8_t)(0xC0 | (self_pointer_offset >> 8)), (uint8_t)self_pointer_offset };
+	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, self_pointer, sizeof(self_pointer), NULL), "cannot add self compression pointer");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "self compression pointer was accepted");
+
+	CHECK(dns_builder_response_start(&builder, "a.example", ns_t_a), "cannot start semantic alias loop");
+	CHECK(dns_builder_wire_name_create("b.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode loop target b");
+	CHECK(dns_builder_record_add(&builder, "a.example", DNS_TEST_NO_POINTER, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add loop alias a");
+	CHECK(dns_builder_wire_name_create("a.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode loop target a");
+	CHECK(dns_builder_record_add(&builder, "b.example", DNS_TEST_NO_POINTER, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add loop alias b");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "semantic CNAME loop was accepted");
+
+	CHECK(dns_builder_response_start(&builder, "conflict.example", ns_t_a), "cannot start conflicting alias response");
+	CHECK(dns_builder_wire_name_create("first.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode first conflicting target");
+	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add first conflicting alias");
+	CHECK(dns_builder_wire_name_create("second.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode second conflicting target");
+	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add second conflicting alias");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "conflicting CNAME targets were accepted");
+
+	CHECK(dns_builder_response_start(&builder, "mixed.example", ns_t_a), "cannot start mixed alias response");
+	CHECK(dns_builder_wire_name_create("target.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode mixed alias target");
+	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add mixed alias");
+	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_a, ns_c_in, 30, address, sizeof(uint32_t), NULL), "cannot add mixed address");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result)
+		== DNS_ADDRESS_PARSE_MALFORMED, "CNAME and address at the same owner were accepted");
+
+	CHECK(dns_builder_response_start(&builder, "n0.example", ns_t_a), "cannot start excessive alias chain");
+	for (size_t index = 0; index <= DNS_CNAME_DEPTH_LIMIT; index++) {
+		char owner[32];
+		char target[32];
+		CHECK(snprintf(owner, sizeof(owner), "n%zu.example", index) > 0, "cannot format excessive alias owner");
+		CHECK(snprintf(target, sizeof(target), "n%zu.example", index + 1) > 0, "cannot format excessive alias target");
+		CHECK(dns_builder_wire_name_create(target, wire_name, sizeof(wire_name), &wire_name_size), "cannot encode excessive alias target");
+		CHECK(dns_builder_record_add(&builder, owner, DNS_TEST_NO_POINTER, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add excessive alias");
+		if (index + 1 == DNS_CNAME_DEPTH_LIMIT) {
+			CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_ALIAS_ONLY, "CNAME depth limit rejected");
+			CHECK(result.cname_count == DNS_CNAME_DEPTH_LIMIT && strcmp(result.canonical_name, target) == 0, "CNAME chain at the limit lost its final target");
+			dns_address_result_destroy(&result);
+			dns_message_builder answered = builder;
+			CHECK(dns_builder_record_add(&answered, target, DNS_TEST_NO_POINTER, ns_t_a, ns_c_in, 60, address, sizeof(struct in_addr), NULL), "cannot add an address at the CNAME depth limit");
+			CHECK(dns_address_response_parse(answered.data, answered.size, answered.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "A rejected at depth limit");
+			CHECK(result.cname_count == DNS_CNAME_DEPTH_LIMIT && result.address_count == 1 && result.addresses[0].effective_ttl == 30, "address at the CNAME depth limit lost its chain or TTL");
+			dns_address_result_destroy(&result);
+		}
+	}
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_LIMIT, "excessive CNAME chain was accepted");
+
+	CHECK(dns_builder_response_start(&builder, "limit.example", ns_t_a), "cannot start excessive answer response");
+	for (size_t index = 0; index <= DNS_ADDRESS_RECORD_LIMIT; index++) {
+		CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_txt, ns_c_in, 1, NULL, 0, NULL), "cannot add excessive answer");
+	}
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_LIMIT, "excessive answer count was accepted");
+
+	CHECK(dns_builder_response_start(&builder, "negative.example", ns_t_a), "cannot start short SOA response");
+	uint8_t short_soa[19] = { 0 };
+	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, short_soa, sizeof(short_soa)), "cannot add short SOA record");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "short SOA record was accepted");
+
+	CHECK(dns_builder_response_start(&builder, "negative.example", ns_t_a), "cannot start invalid-pointer SOA response");
+	uint8_t invalid_soa[24] = { 0xFF, 0xFF };
+	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, invalid_soa, sizeof(invalid_soa)), "cannot add invalid-pointer SOA record");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "invalid SOA compression pointer was accepted");
+
+	CHECK(dns_builder_response_start(&builder, "negative.example", ns_t_a), "cannot start trailing-data SOA response");
+	uint8_t wire_soa[NS_MAXCDNAME * 2 + 21];
+	size_t soa_size;
+	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 30, wire_soa, sizeof(wire_soa) - 1, &soa_size), "cannot encode SOA record");
+	wire_soa[soa_size] = 0;
+	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, wire_soa, soa_size + 1), "cannot add trailing-data SOA record");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "SOA record with trailing data was accepted");
+
+	CHECK(dns_builder_response_start(&builder, "negative.example", ns_t_a), "cannot start authority count response");
+	for (size_t index = 0; index < DNS_AUTHORITY_RECORD_LIMIT - 1; index++) {
+		CHECK(dns_builder_authority_add(&builder, NULL, builder.question_name_offset, ns_t_txt, ns_c_in, 1, "", 1), "cannot fill authority section");
+	}
+	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 60, wire_soa, soa_size), "cannot add final authority SOA");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "NODATA at the authority limit failed");
+	CHECK(result.negative.valid && result.negative.effective_ttl == 30 && strcmp(result.negative.owner, "example") == 0, "last authority SOA was lost");
+	dns_address_result_destroy(&result);
+	CHECK(dns_builder_authority_add(&builder, NULL, builder.question_name_offset, ns_t_txt, ns_c_in, 1, "", 1), "cannot append authority record past the limit");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_LIMIT, "excessive authority count was accepted");
+
+	CHECK(dns_builder_response_start(&builder, "contradictory.example", ns_t_a), "cannot start contradictory NXDOMAIN response");
+	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_a, ns_c_in, 30, address, sizeof(uint32_t), NULL), "cannot add contradictory NXDOMAIN address");
+	builder.data[3] = (uint8_t)((builder.data[3] & 0xF0) | ns_r_nxdomain);
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result)
+		== DNS_ADDRESS_PARSE_MALFORMED, "NXDOMAIN response with terminal address data was accepted");
+
+	/* Responses are bound to their queries: TXID, question name, and question count must match exactly. */
+	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot start TXID response");
+	CHECK(dns_builder_record_add(&builder, "bad.example", builder.question_name_offset, ns_t_a, ns_c_in, 30, address, 4, NULL), "cannot add TXID response address");
+	builder.data[1] ^= 0xFF;
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "wrong TXID was accepted");
+	builder.data[1] ^= 0xFF;
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "correct TXID response failed");
+	dns_address_result_destroy(&result);
+	CHECK(dns_address_response_parse(builder.data, builder.size, "other.example", DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "wrong question name was accepted");
+	CHECK(dns_address_response_parse(builder.data, builder.size, "bad.example.", DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "trailing-dot question name failed");
+	dns_address_result_destroy(&result);
+	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot restart qdcount response");
+	builder.data[5] = 0;
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "zero question count was accepted");
+	builder.data[5] = 2;
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "two question count was accepted");
+
+	test_result = true;
+
+cleanup:
+	dns_address_result_destroy(&result);
+	return test_result;
+}
+
+static bool dns_test_negative(void) {
+	dns_message_builder builder;
+	dns_address_result result = { 0 };
+	uint8_t wire_name[NS_MAXCDNAME];
+	uint8_t wire_soa[NS_MAXCDNAME * 2 + 20];
+	size_t wire_name_size;
+	size_t wire_soa_size;
+	int test_result = false;
+	CHECK(dns_builder_response_start(&builder, "nodata.example", ns_t_a), "cannot start NODATA SOA response");
+	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 120, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode NODATA SOA record");
+	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 300, wire_soa, wire_soa_size), "cannot add NODATA SOA record");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse authoritative NODATA response");
+	CHECK(result.negative.valid && strcmp(result.negative.owner, "example") == 0 && result.negative.record_ttl == 300 && result.negative.minimum == 120 && result.negative.effective_ttl == 120,
+		"NODATA negative metadata was parsed incorrectly");
+	dns_address_result_destroy(&result);
+	for (size_t prefix_size = 0; prefix_size < builder.size; prefix_size++) {
+		dns_address_parse_status status = dns_address_response_parse(builder.data, prefix_size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result);
+		CHECK(status == DNS_ADDRESS_PARSE_MALFORMED, "short authoritative NODATA message returned the wrong status");
+		dns_address_result_destroy(&result);
+	}
+
+	CHECK(dns_builder_response_start(&builder, "absent.example", ns_t_a), "cannot start NODATA response without SOA");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse NODATA response without SOA");
+	CHECK(!result.negative.valid, "NODATA response without SOA produced authoritative negative metadata");
+	dns_address_result_destroy(&result);
+
+	CHECK(dns_builder_response_start(&builder, "missing.example", ns_t_a), "cannot start NODATA response with unrelated SOA");
+	CHECK(dns_builder_wire_soa_create("ns.other.example", "hostmaster.other.example", 1, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode unrelated-only SOA record");
+	CHECK(dns_builder_authority_add(&builder, "other.example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 1, wire_soa, wire_soa_size), "cannot add unrelated-only SOA record");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse NODATA response with unrelated SOA");
+	CHECK(!result.negative.valid, "unrelated SOA produced authoritative negative metadata");
+	dns_address_result_destroy(&result);
+
+	CHECK(dns_builder_response_start(&builder, "alias.negative.example", ns_t_a), "cannot start aliased NXDOMAIN response");
+	CHECK(dns_builder_wire_name_create("missing.sub.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode negative alias target");
+	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 20, wire_name, wire_name_size, NULL), "cannot add negative alias");
+	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 120, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode NXDOMAIN SOA record");
+	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 300, wire_soa, wire_soa_size), "cannot add NXDOMAIN SOA record");
+	builder.data[3] = (uint8_t)((builder.data[3] & 0xF0) | ns_r_nxdomain);
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NXDOMAIN, "cannot parse aliased NXDOMAIN response");
+	CHECK(result.cname_count == 1 && strcmp(result.canonical_name, "missing.sub.example") == 0, "NXDOMAIN response lost its CNAME chain");
+	CHECK(result.negative.valid && result.negative.effective_ttl == 20, "NXDOMAIN negative TTL did not include the CNAME TTL");
+	dns_address_result_destroy(&result);
+
+	CHECK(dns_builder_response_start(&builder, "missing.sub.example", ns_t_a), "cannot start closest-zone NODATA response");
+	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 5, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode root SOA record");
+	CHECK(dns_builder_authority_add(&builder, ".", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 5, wire_soa, wire_soa_size), "cannot add root SOA record");
+	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 150, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode parent SOA record");
+	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 200, wire_soa, wire_soa_size), "cannot add parent SOA record");
+	CHECK(dns_builder_wire_soa_create("ns.sub.example", "hostmaster.sub.example", 80, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode closest SOA record");
+	CHECK(dns_builder_authority_add(&builder, "sub.example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 100, wire_soa, wire_soa_size), "cannot add closest SOA record");
+	CHECK(dns_builder_wire_soa_create("ns.sub.example", "hostmaster.sub.example", 200, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode duplicate SOA record");
+	CHECK(dns_builder_authority_add(&builder, "SUB.EXAMPLE.", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, wire_soa, wire_soa_size), "cannot add duplicate SOA record");
+	CHECK(dns_builder_wire_soa_create("ns.other.example", "hostmaster.other.example", 1, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode unrelated SOA record");
+	CHECK(dns_builder_authority_add(&builder, "other.example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 1, wire_soa, wire_soa_size), "cannot add unrelated SOA record");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse closest-zone NODATA response");
+	CHECK(result.negative.valid && strcmp(result.negative.owner, "sub.example") == 0 && result.negative.record_ttl == 30 && result.negative.minimum == 80 && result.negative.effective_ttl == 30,
+		"closest or duplicate SOA selection was incorrect");
+	dns_address_result_destroy(&result);
+
+	CHECK(dns_builder_wire_soa_create("ns.x", "hostmaster.x", 80, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode one-letter zone SOA");
+	for (size_t family = 0; family < 2; family++) {
+		for (size_t root_index = 0; root_index < 2; root_index++) {
+			CHECK(dns_builder_response_start(&builder, "missing.x", family == 0 ? ns_t_a : ns_t_aaaa), "cannot start one-letter zone NODATA response");
+			for (size_t index = 0; index < 2; index++) {
+				CHECK(dns_builder_authority_add(&builder, index == root_index ? "." : "x", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, index == root_index ? 5 : 100, wire_soa, wire_soa_size),
+					"cannot add root or one-letter zone SOA");
+			}
+			CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, family == 0 ? AF_INET : AF_INET6, &result) == DNS_ADDRESS_PARSE_NODATA,
+				"cannot parse one-letter zone NODATA response");
+			CHECK(result.negative.valid && strcmp(result.negative.owner, "x") == 0 && result.negative.effective_ttl == 80, "root displaced one-letter zone SOA");
+			dns_address_result_destroy(&result);
+		}
+	}
+
+	CHECK(dns_builder_response_start(&builder, "zero.example", ns_t_a), "cannot start zero-TTL NODATA response");
+	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 0, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode zero-TTL SOA record");
+	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 300, wire_soa, wire_soa_size), "cannot add zero-TTL SOA record");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse zero-TTL NODATA response");
+	CHECK(result.negative.valid && result.negative.effective_ttl == 0, "valid zero negative TTL was not distinguished from absent metadata");
+	dns_address_result_destroy(&result);
+
+	CHECK(dns_builder_response_start(&builder, "compressed.example", ns_t_a), "cannot start compressed SOA response");
+	wire_soa[0] = (uint8_t)(0xC0 | (builder.question_name_offset >> 8));
+	wire_soa[1] = (uint8_t)builder.question_name_offset;
+	wire_soa[2] = wire_soa[0];
+	wire_soa[3] = wire_soa[1];
+	memset(wire_soa + 4, 0, 20);
+	wire_soa[23] = 40;
+	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 50, wire_soa, 24), "cannot add compressed SOA record");
+	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse compressed SOA response");
+	CHECK(result.negative.valid && result.negative.minimum == 40 && result.negative.effective_ttl == 40, "compressed SOA names or fields were parsed incorrectly");
+	test_result = true;
+
+cleanup:
+	dns_address_result_destroy(&result);
+	return test_result;
+}
+
 static void dns_test_query_reset(void) {
 	memset(dns_query_fixtures, 0, sizeof(dns_query_fixtures));
 	dns_query_fixture_count = 0;
@@ -374,245 +613,6 @@ cleanup:
 	return test_result;
 }
 
-static bool dns_test_malformed(void) {
-	dns_message_builder builder;
-	dns_address_result result = { 0 };
-	uint8_t address[16] = { 192, 0, 2, 1 };
-	uint8_t wire_name[NS_MAXCDNAME];
-	size_t wire_name_size;
-	int test_result = false;
-	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot start malformed address response");
-	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_a, ns_c_in, 30, address, 3, NULL), "cannot add malformed address");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "short A record was accepted");
-
-	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_aaaa), "cannot start malformed IPv6 response");
-	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_aaaa, ns_c_in, 30, address, 15, NULL), "cannot add malformed IPv6 address");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET6, &result) == DNS_ADDRESS_PARSE_MALFORMED, "short AAAA record was accepted");
-
-	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot restart malformed alias response");
-	CHECK(dns_builder_wire_name_create("target.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode malformed alias target");
-	wire_name[wire_name_size++] = 0;
-	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add alias with trailing data");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "CNAME with trailing data was accepted");
-
-	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot restart malformed pointer response");
-	uint8_t bad_pointer[2] = { 0xFF, 0xFF };
-	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, bad_pointer, sizeof(bad_pointer), NULL), "cannot add invalid compression pointer");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result)
-		 == DNS_ADDRESS_PARSE_MALFORMED, "out-of-range compression pointer was accepted");
-
-	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot restart self-pointer response");
-	size_t self_pointer_offset = builder.size + 2 + 10;
-	uint8_t self_pointer[2] = { (uint8_t)(0xC0 | (self_pointer_offset >> 8)), (uint8_t)self_pointer_offset };
-	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, self_pointer, sizeof(self_pointer), NULL), "cannot add self compression pointer");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "self compression pointer was accepted");
-
-	CHECK(dns_builder_response_start(&builder, "a.example", ns_t_a), "cannot start semantic alias loop");
-	CHECK(dns_builder_wire_name_create("b.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode loop target b");
-	CHECK(dns_builder_record_add(&builder, "a.example", DNS_TEST_NO_POINTER, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add loop alias a");
-	CHECK(dns_builder_wire_name_create("a.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode loop target a");
-	CHECK(dns_builder_record_add(&builder, "b.example", DNS_TEST_NO_POINTER, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add loop alias b");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "semantic CNAME loop was accepted");
-
-	CHECK(dns_builder_response_start(&builder, "conflict.example", ns_t_a), "cannot start conflicting alias response");
-	CHECK(dns_builder_wire_name_create("first.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode first conflicting target");
-	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add first conflicting alias");
-	CHECK(dns_builder_wire_name_create("second.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode second conflicting target");
-	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add second conflicting alias");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "conflicting CNAME targets were accepted");
-
-	CHECK(dns_builder_response_start(&builder, "mixed.example", ns_t_a), "cannot start mixed alias response");
-	CHECK(dns_builder_wire_name_create("target.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode mixed alias target");
-	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add mixed alias");
-	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_a, ns_c_in, 30, address, sizeof(uint32_t), NULL), "cannot add mixed address");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result)
-		 == DNS_ADDRESS_PARSE_MALFORMED, "CNAME and address at the same owner were accepted");
-
-	CHECK(dns_builder_response_start(&builder, "n0.example", ns_t_a), "cannot start excessive alias chain");
-	for (size_t index = 0; index <= DNS_CNAME_DEPTH_LIMIT; index++) {
-		char owner[32];
-		char target[32];
-		CHECK(snprintf(owner, sizeof(owner), "n%zu.example", index) > 0, "cannot format excessive alias owner");
-		CHECK(snprintf(target, sizeof(target), "n%zu.example", index + 1) > 0, "cannot format excessive alias target");
-		CHECK(dns_builder_wire_name_create(target, wire_name, sizeof(wire_name), &wire_name_size), "cannot encode excessive alias target");
-		CHECK(dns_builder_record_add(&builder, owner, DNS_TEST_NO_POINTER, ns_t_cname, ns_c_in, 30, wire_name, wire_name_size, NULL), "cannot add excessive alias");
-		if (index + 1 == DNS_CNAME_DEPTH_LIMIT) {
-			CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_ALIAS_ONLY, "CNAME depth limit rejected");
-			CHECK(result.cname_count == DNS_CNAME_DEPTH_LIMIT && strcmp(result.canonical_name, target) == 0, "CNAME chain at the limit lost its final target");
-			dns_address_result_destroy(&result);
-			dns_message_builder answered = builder;
-			CHECK(dns_builder_record_add(&answered, target, DNS_TEST_NO_POINTER, ns_t_a, ns_c_in, 60, address, sizeof(struct in_addr), NULL), "cannot add an address at the CNAME depth limit");
-			CHECK(dns_address_response_parse(answered.data, answered.size, answered.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "A rejected at depth limit");
-			CHECK(result.cname_count == DNS_CNAME_DEPTH_LIMIT && result.address_count == 1 && result.addresses[0].effective_ttl == 30, "address at the CNAME depth limit lost its chain or TTL");
-			dns_address_result_destroy(&result);
-		}
-	}
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_LIMIT, "excessive CNAME chain was accepted");
-
-	CHECK(dns_builder_response_start(&builder, "limit.example", ns_t_a), "cannot start excessive answer response");
-	for (size_t index = 0; index <= DNS_ADDRESS_RECORD_LIMIT; index++) {
-		CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_txt, ns_c_in, 1, NULL, 0, NULL), "cannot add excessive answer");
-	}
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_LIMIT, "excessive answer count was accepted");
-
-	CHECK(dns_builder_response_start(&builder, "negative.example", ns_t_a), "cannot start short SOA response");
-	uint8_t short_soa[19] = { 0 };
-	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, short_soa, sizeof(short_soa)), "cannot add short SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "short SOA record was accepted");
-
-	CHECK(dns_builder_response_start(&builder, "negative.example", ns_t_a), "cannot start invalid-pointer SOA response");
-	uint8_t invalid_soa[24] = { 0xFF, 0xFF };
-	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, invalid_soa, sizeof(invalid_soa)), "cannot add invalid-pointer SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "invalid SOA compression pointer was accepted");
-
-	CHECK(dns_builder_response_start(&builder, "negative.example", ns_t_a), "cannot start trailing-data SOA response");
-	uint8_t wire_soa[NS_MAXCDNAME * 2 + 21];
-	size_t soa_size;
-	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 30, wire_soa, sizeof(wire_soa) - 1, &soa_size), "cannot encode SOA record");
-	wire_soa[soa_size] = 0;
-	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, wire_soa, soa_size + 1), "cannot add trailing-data SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "SOA record with trailing data was accepted");
-
-	CHECK(dns_builder_response_start(&builder, "negative.example", ns_t_a), "cannot start authority count response");
-	for (size_t index = 0; index < DNS_AUTHORITY_RECORD_LIMIT - 1; index++) {
-		CHECK(dns_builder_authority_add(&builder, NULL, builder.question_name_offset, ns_t_txt, ns_c_in, 1, "", 1), "cannot fill authority section");
-	}
-	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 60, wire_soa, soa_size), "cannot add final authority SOA");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "NODATA at the authority limit failed");
-	CHECK(result.negative.valid && result.negative.effective_ttl == 30 && strcmp(result.negative.owner, "example") == 0, "last authority SOA was lost");
-	dns_address_result_destroy(&result);
-	CHECK(dns_builder_authority_add(&builder, NULL, builder.question_name_offset, ns_t_txt, ns_c_in, 1, "", 1), "cannot append authority record past the limit");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_LIMIT, "excessive authority count was accepted");
-
-	CHECK(dns_builder_response_start(&builder, "contradictory.example", ns_t_a), "cannot start contradictory NXDOMAIN response");
-	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_a, ns_c_in, 30, address, sizeof(uint32_t), NULL), "cannot add contradictory NXDOMAIN address");
-	builder.data[3] = (uint8_t)((builder.data[3] & 0xF0) | ns_r_nxdomain);
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result)
-		 == DNS_ADDRESS_PARSE_MALFORMED, "NXDOMAIN response with terminal address data was accepted");
-
-	/* Responses are bound to their queries: TXID, question name, and question count must match exactly. */
-	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot start TXID response");
-	CHECK(dns_builder_record_add(&builder, "bad.example", builder.question_name_offset, ns_t_a, ns_c_in, 30, address, 4, NULL), "cannot add TXID response address");
-	builder.data[1] ^= 0xFF;
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "wrong TXID was accepted");
-	builder.data[1] ^= 0xFF;
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "correct TXID response failed");
-	dns_address_result_destroy(&result);
-	CHECK(dns_address_response_parse(builder.data, builder.size, "other.example", DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "wrong question name was accepted");
-	CHECK(dns_address_response_parse(builder.data, builder.size, "bad.example.", DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "trailing-dot question name failed");
-	dns_address_result_destroy(&result);
-	CHECK(dns_builder_response_start(&builder, "bad.example", ns_t_a), "cannot restart qdcount response");
-	builder.data[5] = 0;
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "zero question count was accepted");
-	builder.data[5] = 2;
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_MALFORMED, "two question count was accepted");
-
-	test_result = true;
-
-cleanup:
-	dns_address_result_destroy(&result);
-	return test_result;
-}
-
-static bool dns_test_negative(void) {
-	dns_message_builder builder;
-	dns_address_result result = { 0 };
-	uint8_t wire_name[NS_MAXCDNAME];
-	uint8_t wire_soa[NS_MAXCDNAME * 2 + 20];
-	size_t wire_name_size;
-	size_t wire_soa_size;
-	int test_result = false;
-	CHECK(dns_builder_response_start(&builder, "nodata.example", ns_t_a), "cannot start NODATA SOA response");
-	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 120, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode NODATA SOA record");
-	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 300, wire_soa, wire_soa_size), "cannot add NODATA SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse authoritative NODATA response");
-	CHECK(result.negative.valid && strcmp(result.negative.owner, "example") == 0 && result.negative.record_ttl == 300 && result.negative.minimum == 120 && result.negative.effective_ttl == 120,
-		"NODATA negative metadata was parsed incorrectly");
-	dns_address_result_destroy(&result);
-	for (size_t prefix_size = 0; prefix_size < builder.size; prefix_size++) {
-		dns_address_parse_status status = dns_address_response_parse(builder.data, prefix_size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result);
-		CHECK(status == DNS_ADDRESS_PARSE_MALFORMED, "short authoritative NODATA message returned the wrong status");
-		dns_address_result_destroy(&result);
-	}
-
-	CHECK(dns_builder_response_start(&builder, "absent.example", ns_t_a), "cannot start NODATA response without SOA");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse NODATA response without SOA");
-	CHECK(!result.negative.valid, "NODATA response without SOA produced authoritative negative metadata");
-	dns_address_result_destroy(&result);
-
-	CHECK(dns_builder_response_start(&builder, "missing.example", ns_t_a), "cannot start NODATA response with unrelated SOA");
-	CHECK(dns_builder_wire_soa_create("ns.other.example", "hostmaster.other.example", 1, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode unrelated-only SOA record");
-	CHECK(dns_builder_authority_add(&builder, "other.example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 1, wire_soa, wire_soa_size), "cannot add unrelated-only SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse NODATA response with unrelated SOA");
-	CHECK(!result.negative.valid, "unrelated SOA produced authoritative negative metadata");
-	dns_address_result_destroy(&result);
-
-	CHECK(dns_builder_response_start(&builder, "alias.negative.example", ns_t_a), "cannot start aliased NXDOMAIN response");
-	CHECK(dns_builder_wire_name_create("missing.sub.example", wire_name, sizeof(wire_name), &wire_name_size), "cannot encode negative alias target");
-	CHECK(dns_builder_record_add(&builder, NULL, builder.question_name_offset, ns_t_cname, ns_c_in, 20, wire_name, wire_name_size, NULL), "cannot add negative alias");
-	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 120, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode NXDOMAIN SOA record");
-	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 300, wire_soa, wire_soa_size), "cannot add NXDOMAIN SOA record");
-	builder.data[3] = (uint8_t)((builder.data[3] & 0xF0) | ns_r_nxdomain);
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NXDOMAIN, "cannot parse aliased NXDOMAIN response");
-	CHECK(result.cname_count == 1 && strcmp(result.canonical_name, "missing.sub.example") == 0, "NXDOMAIN response lost its CNAME chain");
-	CHECK(result.negative.valid && result.negative.effective_ttl == 20, "NXDOMAIN negative TTL did not include the CNAME TTL");
-	dns_address_result_destroy(&result);
-
-	CHECK(dns_builder_response_start(&builder, "missing.sub.example", ns_t_a), "cannot start closest-zone NODATA response");
-	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 5, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode root SOA record");
-	CHECK(dns_builder_authority_add(&builder, ".", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 5, wire_soa, wire_soa_size), "cannot add root SOA record");
-	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 150, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode parent SOA record");
-	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 200, wire_soa, wire_soa_size), "cannot add parent SOA record");
-	CHECK(dns_builder_wire_soa_create("ns.sub.example", "hostmaster.sub.example", 80, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode closest SOA record");
-	CHECK(dns_builder_authority_add(&builder, "sub.example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 100, wire_soa, wire_soa_size), "cannot add closest SOA record");
-	CHECK(dns_builder_wire_soa_create("ns.sub.example", "hostmaster.sub.example", 200, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode duplicate SOA record");
-	CHECK(dns_builder_authority_add(&builder, "SUB.EXAMPLE.", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 30, wire_soa, wire_soa_size), "cannot add duplicate SOA record");
-	CHECK(dns_builder_wire_soa_create("ns.other.example", "hostmaster.other.example", 1, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode unrelated SOA record");
-	CHECK(dns_builder_authority_add(&builder, "other.example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 1, wire_soa, wire_soa_size), "cannot add unrelated SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse closest-zone NODATA response");
-	CHECK(result.negative.valid && strcmp(result.negative.owner, "sub.example") == 0 && result.negative.record_ttl == 30 && result.negative.minimum == 80 && result.negative.effective_ttl == 30,
-		"closest or duplicate SOA selection was incorrect");
-	dns_address_result_destroy(&result);
-
-	CHECK(dns_builder_wire_soa_create("ns.x", "hostmaster.x", 80, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode one-letter zone SOA");
-	for (size_t family = 0; family < 2; family++) {
-		for (size_t root_index = 0; root_index < 2; root_index++) {
-			CHECK(dns_builder_response_start(&builder, "missing.x", family == 0 ? ns_t_a : ns_t_aaaa), "cannot start one-letter zone NODATA response");
-			for (size_t index = 0; index < 2; index++) {
-				CHECK(dns_builder_authority_add(&builder, index == root_index ? "." : "x", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, index == root_index ? 5 : 100, wire_soa, wire_soa_size),
-					"cannot add root or one-letter zone SOA");
-			}
-			CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, family == 0 ? AF_INET : AF_INET6, &result) == DNS_ADDRESS_PARSE_NODATA,
-				"cannot parse one-letter zone NODATA response");
-			CHECK(result.negative.valid && strcmp(result.negative.owner, "x") == 0 && result.negative.effective_ttl == 80, "root displaced one-letter zone SOA");
-			dns_address_result_destroy(&result);
-		}
-	}
-
-	CHECK(dns_builder_response_start(&builder, "zero.example", ns_t_a), "cannot start zero-TTL NODATA response");
-	CHECK(dns_builder_wire_soa_create("ns.example", "hostmaster.example", 0, wire_soa, sizeof(wire_soa), &wire_soa_size), "cannot encode zero-TTL SOA record");
-	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 300, wire_soa, wire_soa_size), "cannot add zero-TTL SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse zero-TTL NODATA response");
-	CHECK(result.negative.valid && result.negative.effective_ttl == 0, "valid zero negative TTL was not distinguished from absent metadata");
-	dns_address_result_destroy(&result);
-
-	CHECK(dns_builder_response_start(&builder, "compressed.example", ns_t_a), "cannot start compressed SOA response");
-	wire_soa[0] = (uint8_t)(0xC0 | (builder.question_name_offset >> 8));
-	wire_soa[1] = (uint8_t)builder.question_name_offset;
-	wire_soa[2] = wire_soa[0];
-	wire_soa[3] = wire_soa[1];
-	memset(wire_soa + 4, 0, 20);
-	wire_soa[23] = 40;
-	CHECK(dns_builder_authority_add(&builder, "example", DNS_TEST_NO_POINTER, ns_t_soa, ns_c_in, 50, wire_soa, 24), "cannot add compressed SOA record");
-	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_NODATA, "cannot parse compressed SOA response");
-	CHECK(result.negative.valid && result.negative.minimum == 40 && result.negative.effective_ttl == 40, "compressed SOA names or fields were parsed incorrectly");
-	test_result = true;
-
-cleanup:
-	dns_address_result_destroy(&result);
-	return test_result;
-}
-
 static int dns_test_query_response(res_state resolver, const unsigned char *query, int query_size, unsigned char *answer, int answer_size) {
 	if (!dns_query_pending || dns_query_fixture_index >= dns_query_fixture_count || resolver == NULL || query == NULL || query_size != DNS_TEST_QUERY_SIZE || answer == NULL || answer_size < 0
 		|| resolver->retrans != dns_resolver.expected_retrans || resolver->retry != dns_resolver.expected_retry || query[0] != DNS_TEST_QUERY_TOKEN_FIRST || query[1] != DNS_TEST_QUERY_TOKEN_SECOND
@@ -747,7 +747,7 @@ static bool dns_test_statuses(void) {
 	CHECK(dns_builder_response_start(&builder, "status.example", ns_t_a), "cannot start request-shaped response");
 	builder.data[2] &= 0x7F;
 	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result)
-		 == DNS_ADDRESS_PARSE_MALFORMED, "request-shaped message was accepted as a response");
+		== DNS_ADDRESS_PARSE_MALFORMED, "request-shaped message was accepted as a response");
 
 	CHECK(dns_builder_response_start(&builder, "status.example", ns_t_a), "cannot start opcode response");
 	builder.data[2] |= 0x08;

@@ -1,9 +1,7 @@
 # Offline Metrics reports
-
 `tools/metrics-report.py` is a standalone, read-only consumer of mcrelay schema-1 logs. It requires Python 3.8 or later and uses only the standard library. It does not connect to or control mcrelay, open a network endpoint, or change the server's metrics output. Python is not a dependency of the daemon.
 
 ## Run it
-
 Read the current log and all numbered rotations from a directory:
 
 ```sh
@@ -28,7 +26,6 @@ The default text report summarizes delivery health, per-instance counter deltas,
 Debian packages also include the optional script at `/usr/share/doc/mcrelay/examples/metrics-report.py`; use that path with `python3` when running the packaged copy.
 
 ## Validation and exit status
-
 The consumer recognizes metrics/helper records only after an exact logger prefix at the start of a physical LF-delimited line. Text embedded in an ordinary access record is ignored. It validates schema 1's required key order, unique keys, dimensions, unsigned values, row order, all 48 rows, and the documented gauge/route/histogram relationships. Unique optional trailing keys are accepted; unknown schema versions are reported without being interpreted as schema 1. Helper events use their separate closed grammar.
 
 Duplicate/missing rows, invalid records, out-of-order sequences, sequence gaps, counter decreases, changed limits, and invalid histogram deltas are reported. A malformed row matching the currently assembled instance/sequence invalidates that batch even if its other 48 valid rows are present. Only complete batches passing row structure and snapshot consistency checks enter the report. Late records for earlier sequences are reported and ignored. Cross-snapshot failures are reported separately, with affected counter deltas made unknown where applicable.
@@ -44,7 +41,6 @@ Counter saturation is a warning. A saturated or decreasing field has a JSON `nul
 The reader streams input without retaining whole files or every snapshot. It retains baseline/latest/current batches and spacing extrema per instance, plus bounded diagnostic examples. `--max-instances` bounds retained instance and unmatched-startup state (default 1024); exceeding it is an input error. Physical records longer than 64 KiB are drained as one record, and metrics/helper messages still have their independent 2048-byte limit. Input files are never modified.
 
 ## Interpret the result
-
 - Deltas use the first complete snapshot of each instance as its baseline. Instances are never subtracted from each other. Data before the first available complete snapshot is outside that observation window. JSON `aggregate_counter_deltas` sums only those independent window deltas.
 - Lifetime high-water marks are reported separately and never summed across instances. They can reflect activity before the observation window. Sampled gauge peaks describe only sampled values; module-owned bytes are not RSS.
 - Duration sums are recorded in microseconds, while reported duration means and histogram bounds are in milliseconds. TTL stays in seconds and assembly size in bytes. Percentiles are inclusive bucket upper bounds, not exact measurements.
@@ -53,5 +49,4 @@ The reader streams input without retaining whole files or every snapshot. It ret
 - This report supplies observation evidence. It does not automatically accept production CPU/RSS cost, authorize DNS/health policy changes, or prove behavior under a load absent from the sample.
 
 ## Regression coverage
-
 `tests/fixtures/metrics/` contains anonymized excerpts from the supplied production archive. Run the standard-library regression suite directly with `python3 tests/metrics_report.py`, or use CTest's `metrics_report` case. CMake registers the Python consumer/startup-version tests when Python 3.8+ is available; the C-only build remains available without it.

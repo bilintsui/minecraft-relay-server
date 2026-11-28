@@ -63,6 +63,12 @@ typedef enum {
 	ROUTE_PREWARM_MEMORY,
 	ROUTE_PREWARM_TIME
 } route_prewarm_status;
+typedef enum {
+	ROUTE_RESOLUTION_RELEASE_OK,
+	ROUTE_RESOLUTION_RELEASE_BAD_ARGUMENT,
+	ROUTE_RESOLUTION_RELEASE_IO,
+	ROUTE_RESOLUTION_RELEASE_TIME
+} route_resolution_release_status;
 typedef struct {
 	const net_addr *addresses;
 	size_t address_count;
@@ -72,12 +78,6 @@ typedef struct {
 	net_addr numeric_address;
 	route_resolution_target_source source;
 } route_resolution_target_view;
-typedef enum {
-	ROUTE_RESOLUTION_RELEASE_OK,
-	ROUTE_RESOLUTION_RELEASE_BAD_ARGUMENT,
-	ROUTE_RESOLUTION_RELEASE_IO,
-	ROUTE_RESOLUTION_RELEASE_TIME
-} route_resolution_release_status;
 
 /* section: functions (exported) */
 /* Release every background interest still owned by this live generation. Each local ownership marker is cleared even when supervisor I/O fails. */

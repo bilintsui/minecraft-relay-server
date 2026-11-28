@@ -143,8 +143,7 @@ static bool generation_registry_test_collect(void) {
 	struct timespec now = { .tv_sec = 10, .tv_nsec = 20 };
 	CHECK(registry != NULL, "collect-test generation registry could not be created");
 	generation_fixtures_reset();
-	CHECK(route_generation_registry_collect(registry, generation_registry_supervisor(), &now) == ROUTE_GENERATION_REGISTRY_COLLECT_NONE,
-		"empty generation registry did not report NONE");
+	CHECK(route_generation_registry_collect(registry, generation_registry_supervisor(), &now) == ROUTE_GENERATION_REGISTRY_COLLECT_NONE, "empty generation registry did not report NONE");
 	route_generation *first = generation_fixture_get(0);
 	route_generation *second = generation_fixture_get(1);
 	CHECK(route_generation_registry_publish(registry, &first, generation_registry_supervisor(), &now) == ROUTE_GENERATION_REGISTRY_PUBLISH_OK

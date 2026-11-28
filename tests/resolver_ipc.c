@@ -95,18 +95,6 @@ static bool ipc_packet_prefixes_rejected(const uint8_t *packet, size_t packet_si
 	return true;
 }
 
-static void ipc_u16_write(uint8_t *target, uint16_t value) {
-	target[0] = (uint8_t)(value >> 8);
-	target[1] = (uint8_t)value;
-}
-
-static void ipc_u32_write(uint8_t *target, uint32_t value) {
-	target[0] = (uint8_t)(value >> 24);
-	target[1] = (uint8_t)(value >> 16);
-	target[2] = (uint8_t)(value >> 8);
-	target[3] = (uint8_t)value;
-}
-
 static bool ipc_test_arguments(void) {
 	int test_result = false;
 	uint8_t packet[RESOLVER_IPC_PACKET_BYTE_LIMIT] = { 0 };
@@ -128,6 +116,146 @@ static bool ipc_test_arguments(void) {
 
 cleanup:
 	return test_result;
+}
+
+static bool ipc_test_request(void) {
+	static const uint8_t expected[] = {
+		0x4D, 0x52, 0x53, 0x50, 0x00, 0x01, 0x00, 0x01, 0x00, 0x26, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x00, 0x01, 0x00, 0x01, 0x00, 0x0C, 'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 't', 'e', 's', 't'
+	};
+	int test_result = false;
+	uint8_t packet[RESOLVER_IPC_PACKET_BYTE_LIMIT] = { 0 };
+	size_t packet_size = 0;
+	resolver_ipc_packet_header header = { 0 };
+	resolver_ipc_request decoded = { 0 };
+	resolver_ipc_request request = { .query_name = "example.test", .query_class = ns_c_in, .query_id = UINT64_C(0x0102030405060708), .query_type = ns_t_a };
+	CHECK(resolver_ipc_request_encode(&request, packet, sizeof(packet), &packet_size) == RESOLVER_IPC_CODEC_OK, "request could not be encoded");
+	CHECK(packet_size == sizeof(expected) && memcmp(packet, expected, sizeof(expected)) == 0, "request wire encoding is not stable");
+	CHECK(resolver_ipc_packet_inspect(packet, packet_size, &header) == RESOLVER_IPC_CODEC_OK && header.kind == RESOLVER_IPC_PACKET_REQUEST && header.query_id == request.query_id,
+		"request header inspection failed");
+	CHECK(ipc_packet_prefixes_rejected(packet, packet_size, ipc_decode_request), "truncated request packet was accepted");
+	CHECK(resolver_ipc_request_decode(packet, packet_size, &decoded) == RESOLVER_IPC_CODEC_OK && decoded.query_id == request.query_id && decoded.query_class == ns_c_in
+		&& decoded.query_type == ns_t_a && strcmp(decoded.query_name, "example.test") == 0, "request did not round-trip");
+	CHECK(resolver_ipc_request_encode(&request, packet, packet_size - 1, &packet_size) == RESOLVER_IPC_CODEC_LIMIT && packet_size == 0, "undersized request buffer was accepted");
+	request.query_id = 0;
+	CHECK(resolver_ipc_request_encode(&request, packet, sizeof(packet), &packet_size) == RESOLVER_IPC_CODEC_BAD_ARGUMENT, "zero request query ID was accepted");
+	request.query_id = 1;
+	request.query_type = ns_t_txt;
+	CHECK(resolver_ipc_request_encode(&request, packet, sizeof(packet), &packet_size) == RESOLVER_IPC_CODEC_BAD_ARGUMENT, "unsupported request query type was accepted");
+	request.query_type = ns_t_a;
+	memset(request.query_name, 'a', sizeof(request.query_name));
+	request.query_name[sizeof(request.query_name) - 1] = '\0';
+	CHECK(resolver_ipc_request_encode(&request, packet, sizeof(packet), &packet_size) == RESOLVER_IPC_CODEC_OK
+		&& resolver_ipc_request_decode(packet, packet_size, &decoded) == RESOLVER_IPC_CODEC_OK && strcmp(decoded.query_name, request.query_name) == 0,
+		"maximum-sized request name did not round-trip");
+	memset(request.query_name, 'a', sizeof(request.query_name));
+	CHECK(resolver_ipc_request_encode(&request, packet, sizeof(packet), &packet_size) == RESOLVER_IPC_CODEC_BAD_ARGUMENT, "unterminated request name was accepted");
+	test_result = true;
+
+cleanup:
+	return test_result;
+}
+
+static bool ipc_test_statuses(void) {
+	static const dns_address_lookup_status address_statuses[] = {
+		DNS_ADDRESS_LOOKUP_OK, DNS_ADDRESS_LOOKUP_BAD_ARGUMENT, DNS_ADDRESS_LOOKUP_LIMIT, DNS_ADDRESS_LOOKUP_MALFORMED, DNS_ADDRESS_LOOKUP_MEMORY,
+		DNS_ADDRESS_LOOKUP_NODATA, DNS_ADDRESS_LOOKUP_NOT_FOUND, DNS_ADDRESS_LOOKUP_PERMANENT_ERROR, DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR, DNS_ADDRESS_LOOKUP_TRUNCATED
+	};
+	static const resolver_ipc_lookup_status ipc_statuses[] = {
+		RESOLVER_IPC_LOOKUP_OK, RESOLVER_IPC_LOOKUP_BAD_ARGUMENT, RESOLVER_IPC_LOOKUP_LIMIT, RESOLVER_IPC_LOOKUP_MALFORMED, RESOLVER_IPC_LOOKUP_MEMORY,
+		RESOLVER_IPC_LOOKUP_NODATA, RESOLVER_IPC_LOOKUP_NOT_FOUND, RESOLVER_IPC_LOOKUP_PERMANENT_ERROR, RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR, RESOLVER_IPC_LOOKUP_TRUNCATED
+	};
+	static const dns_srv_lookup_status srv_statuses[] = {
+		DNS_SRV_LOOKUP_OK, DNS_SRV_LOOKUP_BAD_ARGUMENT, DNS_SRV_LOOKUP_LIMIT, DNS_SRV_LOOKUP_MALFORMED, DNS_SRV_LOOKUP_MEMORY,
+		DNS_SRV_LOOKUP_NODATA, DNS_SRV_LOOKUP_NOT_FOUND, DNS_SRV_LOOKUP_PERMANENT_ERROR, DNS_SRV_LOOKUP_TEMPORARY_ERROR, DNS_SRV_LOOKUP_TRUNCATED
+	};
+	int test_result = false;
+	CHECK(sizeof(address_statuses) / sizeof(address_statuses[0]) == sizeof(ipc_statuses) / sizeof(ipc_statuses[0])
+		&& sizeof(srv_statuses) / sizeof(srv_statuses[0]) == sizeof(ipc_statuses) / sizeof(ipc_statuses[0]), "status test tables have different sizes");
+	for (size_t index = 0; index < sizeof(ipc_statuses) / sizeof(ipc_statuses[0]); index++) {
+		resolver_ipc_lookup_status encoded_address = 0;
+		resolver_ipc_lookup_status encoded_srv = 0;
+		dns_address_lookup_status decoded_address = 0;
+		dns_srv_lookup_status decoded_srv = 0;
+		CHECK(resolver_ipc_lookup_status_from_address(address_statuses[index], &encoded_address) && encoded_address == ipc_statuses[index], "address lookup status encoded incorrectly");
+		CHECK(resolver_ipc_lookup_status_from_srv(srv_statuses[index], &encoded_srv) && encoded_srv == ipc_statuses[index], "SRV lookup status encoded incorrectly");
+		CHECK(resolver_ipc_lookup_status_to_address(ipc_statuses[index], &decoded_address) && decoded_address == address_statuses[index], "address lookup status decoded incorrectly");
+		CHECK(resolver_ipc_lookup_status_to_srv(ipc_statuses[index], &decoded_srv) && decoded_srv == srv_statuses[index], "SRV lookup status decoded incorrectly");
+	}
+	resolver_ipc_lookup_status encoded = 0;
+	dns_address_lookup_status decoded_address = 0;
+	dns_srv_lookup_status decoded_srv = 0;
+	CHECK(!resolver_ipc_lookup_status_from_address((dns_address_lookup_status)-1, &encoded), "invalid address lookup status was encoded");
+	CHECK(!resolver_ipc_lookup_status_from_srv((dns_srv_lookup_status)-1, &encoded), "invalid SRV lookup status was encoded");
+	CHECK(!resolver_ipc_lookup_status_to_address((resolver_ipc_lookup_status)0, &decoded_address), "invalid address IPC status was decoded");
+	CHECK(!resolver_ipc_lookup_status_to_srv((resolver_ipc_lookup_status)0, &decoded_srv), "invalid SRV IPC status was decoded");
+	test_result = true;
+
+cleanup:
+	return test_result;
+}
+
+static void ipc_u16_write(uint8_t *target, uint16_t value) {
+	target[0] = (uint8_t)(value >> 8);
+	target[1] = (uint8_t)value;
+}
+
+static bool ipc_test_corruption(void) {
+	int test_result = false;
+	uint8_t packet[RESOLVER_IPC_PACKET_BYTE_LIMIT + 1] = { 0 };
+	uint8_t original[RESOLVER_IPC_PACKET_BYTE_LIMIT] = { 0 };
+	size_t packet_size = 0;
+	resolver_ipc_packet_header header = { 0 };
+	resolver_ipc_request decoded = { 0 };
+	resolver_ipc_request request = { .query_name = "corruption.test", .query_class = ns_c_in, .query_id = 9, .query_type = ns_t_a };
+	CHECK(resolver_ipc_request_encode(&request, packet, sizeof(packet), &packet_size) == RESOLVER_IPC_CODEC_OK, "corruption request could not be encoded");
+	memcpy(original, packet, packet_size);
+	packet[0] ^= 0xFF;
+	CHECK(resolver_ipc_packet_inspect(packet, packet_size, &header) == RESOLVER_IPC_CODEC_MALFORMED, "invalid packet magic was accepted");
+	memcpy(packet, original, packet_size);
+	ipc_u16_write(packet + IPC_TEST_HEADER_VERSION_OFFSET, RESOLVER_IPC_PROTOCOL_VERSION + 1);
+	header.kind = RESOLVER_IPC_PACKET_RESPONSE_END;
+	header.query_id = UINT64_MAX;
+	CHECK(resolver_ipc_packet_inspect(packet, packet_size, &header) == RESOLVER_IPC_CODEC_UNSUPPORTED && header.kind == 0 && header.query_id == 0,
+		"unsupported protocol version was accepted or left a partial header");
+	memcpy(packet, original, packet_size);
+	ipc_u16_write(packet + IPC_TEST_HEADER_KIND_OFFSET, UINT16_MAX);
+	CHECK(resolver_ipc_packet_inspect(packet, packet_size, &header) == RESOLVER_IPC_CODEC_UNSUPPORTED, "unknown packet kind was accepted");
+	memcpy(packet, original, packet_size);
+	ipc_u16_write(packet + IPC_TEST_HEADER_SIZE_OFFSET, (uint16_t)(packet_size - 1));
+	CHECK(resolver_ipc_packet_inspect(packet, packet_size, &header) == RESOLVER_IPC_CODEC_MALFORMED, "mismatched packet size was accepted");
+	memcpy(packet, original, packet_size);
+	packet[IPC_TEST_HEADER_RESERVED_OFFSET] = 1;
+	CHECK(resolver_ipc_packet_inspect(packet, packet_size, &header) == RESOLVER_IPC_CODEC_MALFORMED, "nonzero reserved field was accepted");
+	memcpy(packet, original, packet_size);
+	memset(packet + IPC_TEST_HEADER_QUERY_ID_OFFSET, 0, sizeof(uint64_t));
+	CHECK(resolver_ipc_packet_inspect(packet, packet_size, &header) == RESOLVER_IPC_CODEC_MALFORMED, "zero query ID was accepted");
+	memcpy(packet, original, packet_size);
+	ipc_u16_write(packet + IPC_TEST_PAYLOAD_OFFSET, ns_c_chaos);
+	CHECK(resolver_ipc_request_decode(packet, packet_size, &decoded) == RESOLVER_IPC_CODEC_MALFORMED && decoded.query_id == 0, "unsupported request class was accepted");
+	memcpy(packet, original, packet_size);
+	ipc_u16_write(packet + IPC_TEST_PAYLOAD_OFFSET + sizeof(uint16_t), ns_t_txt);
+	CHECK(resolver_ipc_request_decode(packet, packet_size, &decoded) == RESOLVER_IPC_CODEC_MALFORMED && decoded.query_id == 0, "unsupported request type was accepted");
+	memcpy(packet, original, packet_size);
+	packet[IPC_TEST_PAYLOAD_OFFSET + sizeof(uint16_t) * 3] = '\0';
+	CHECK(resolver_ipc_request_decode(packet, packet_size, &decoded) == RESOLVER_IPC_CODEC_MALFORMED && decoded.query_id == 0, "embedded request-name NUL was accepted");
+	memcpy(packet, original, packet_size);
+	packet[packet_size] = 0;
+	ipc_u16_write(packet + IPC_TEST_HEADER_SIZE_OFFSET, (uint16_t)(packet_size + 1));
+	CHECK(resolver_ipc_request_decode(packet, packet_size + 1, &decoded) == RESOLVER_IPC_CODEC_MALFORMED, "request trailing data was accepted");
+	CHECK(resolver_ipc_response_end_decode(original, packet_size, &(resolver_ipc_response_end){ 0 }) == RESOLVER_IPC_CODEC_MALFORMED, "request packet was decoded as a response end");
+	CHECK(resolver_ipc_packet_inspect(packet, RESOLVER_IPC_PACKET_BYTE_LIMIT + 1, &header) == RESOLVER_IPC_CODEC_LIMIT, "oversized packet was accepted");
+	test_result = true;
+
+cleanup:
+	return test_result;
+}
+
+static void ipc_u32_write(uint8_t *target, uint32_t value) {
+	target[0] = (uint8_t)(value >> 24);
+	target[1] = (uint8_t)(value >> 16);
+	target[2] = (uint8_t)(value >> 8);
+	target[3] = (uint8_t)value;
 }
 
 static bool ipc_test_begin(void) {
@@ -183,8 +311,7 @@ static bool ipc_test_begin(void) {
 	packet[IPC_TEST_PAYLOAD_OFFSET + 42] = '\0';
 	CHECK(resolver_ipc_response_begin_decode(packet, packet_size, &decoded) == RESOLVER_IPC_CODEC_MALFORMED, "embedded response-name NUL was accepted");
 	memcpy(packet, original, packet_size);
-	CHECK(resolver_ipc_response_begin_encode(&response, packet, packet_size - 1, &packet_size) == RESOLVER_IPC_CODEC_LIMIT && packet_size == 0,
-		"undersized response-begin buffer was accepted");
+	CHECK(resolver_ipc_response_begin_encode(&response, packet, packet_size - 1, &packet_size) == RESOLVER_IPC_CODEC_LIMIT && packet_size == 0, "undersized response-begin buffer was accepted");
 	response.completed_at.tv_nsec = 1000000000L;
 	CHECK(resolver_ipc_response_begin_encode(&response, packet, sizeof(packet), &packet_size) == RESOLVER_IPC_CODEC_BAD_ARGUMENT, "invalid response completion time was accepted");
 	response.completed_at.tv_nsec = 0;
@@ -193,57 +320,6 @@ static bool ipc_test_begin(void) {
 	response.negative.effective_ttl = 20;
 	response.cname_count = DNS_CNAME_DEPTH_LIMIT + 1;
 	CHECK(resolver_ipc_response_begin_encode(&response, packet, sizeof(packet), &packet_size) == RESOLVER_IPC_CODEC_BAD_ARGUMENT, "oversized CNAME count was accepted");
-	test_result = true;
-
-cleanup:
-	return test_result;
-}
-
-static bool ipc_test_corruption(void) {
-	int test_result = false;
-	uint8_t packet[RESOLVER_IPC_PACKET_BYTE_LIMIT + 1] = { 0 };
-	uint8_t original[RESOLVER_IPC_PACKET_BYTE_LIMIT] = { 0 };
-	size_t packet_size = 0;
-	resolver_ipc_packet_header header = { 0 };
-	resolver_ipc_request decoded = { 0 };
-	resolver_ipc_request request = { .query_name = "corruption.test", .query_class = ns_c_in, .query_id = 9, .query_type = ns_t_a };
-	CHECK(resolver_ipc_request_encode(&request, packet, sizeof(packet), &packet_size) == RESOLVER_IPC_CODEC_OK, "corruption request could not be encoded");
-	memcpy(original, packet, packet_size);
-	packet[0] ^= 0xFF;
-	CHECK(resolver_ipc_packet_inspect(packet, packet_size, &header) == RESOLVER_IPC_CODEC_MALFORMED, "invalid packet magic was accepted");
-	memcpy(packet, original, packet_size);
-	ipc_u16_write(packet + IPC_TEST_HEADER_VERSION_OFFSET, RESOLVER_IPC_PROTOCOL_VERSION + 1);
-	header.kind = RESOLVER_IPC_PACKET_RESPONSE_END;
-	header.query_id = UINT64_MAX;
-	CHECK(resolver_ipc_packet_inspect(packet, packet_size, &header) == RESOLVER_IPC_CODEC_UNSUPPORTED && header.kind == 0 && header.query_id == 0,
-		"unsupported protocol version was accepted or left a partial header");
-	memcpy(packet, original, packet_size);
-	ipc_u16_write(packet + IPC_TEST_HEADER_KIND_OFFSET, UINT16_MAX);
-	CHECK(resolver_ipc_packet_inspect(packet, packet_size, &header) == RESOLVER_IPC_CODEC_UNSUPPORTED, "unknown packet kind was accepted");
-	memcpy(packet, original, packet_size);
-	ipc_u16_write(packet + IPC_TEST_HEADER_SIZE_OFFSET, (uint16_t)(packet_size - 1));
-	CHECK(resolver_ipc_packet_inspect(packet, packet_size, &header) == RESOLVER_IPC_CODEC_MALFORMED, "mismatched packet size was accepted");
-	memcpy(packet, original, packet_size);
-	packet[IPC_TEST_HEADER_RESERVED_OFFSET] = 1;
-	CHECK(resolver_ipc_packet_inspect(packet, packet_size, &header) == RESOLVER_IPC_CODEC_MALFORMED, "nonzero reserved field was accepted");
-	memcpy(packet, original, packet_size);
-	memset(packet + IPC_TEST_HEADER_QUERY_ID_OFFSET, 0, sizeof(uint64_t));
-	CHECK(resolver_ipc_packet_inspect(packet, packet_size, &header) == RESOLVER_IPC_CODEC_MALFORMED, "zero query ID was accepted");
-	memcpy(packet, original, packet_size);
-	ipc_u16_write(packet + IPC_TEST_PAYLOAD_OFFSET, ns_c_chaos);
-	CHECK(resolver_ipc_request_decode(packet, packet_size, &decoded) == RESOLVER_IPC_CODEC_MALFORMED && decoded.query_id == 0, "unsupported request class was accepted");
-	memcpy(packet, original, packet_size);
-	ipc_u16_write(packet + IPC_TEST_PAYLOAD_OFFSET + sizeof(uint16_t), ns_t_txt);
-	CHECK(resolver_ipc_request_decode(packet, packet_size, &decoded) == RESOLVER_IPC_CODEC_MALFORMED && decoded.query_id == 0, "unsupported request type was accepted");
-	memcpy(packet, original, packet_size);
-	packet[IPC_TEST_PAYLOAD_OFFSET + sizeof(uint16_t) * 3] = '\0';
-	CHECK(resolver_ipc_request_decode(packet, packet_size, &decoded) == RESOLVER_IPC_CODEC_MALFORMED && decoded.query_id == 0, "embedded request-name NUL was accepted");
-	memcpy(packet, original, packet_size);
-	packet[packet_size] = 0;
-	ipc_u16_write(packet + IPC_TEST_HEADER_SIZE_OFFSET, (uint16_t)(packet_size + 1));
-	CHECK(resolver_ipc_request_decode(packet, packet_size + 1, &decoded) == RESOLVER_IPC_CODEC_MALFORMED, "request trailing data was accepted");
-	CHECK(resolver_ipc_response_end_decode(original, packet_size, &(resolver_ipc_response_end){ 0 }) == RESOLVER_IPC_CODEC_MALFORMED, "request packet was decoded as a response end");
-	CHECK(resolver_ipc_packet_inspect(packet, RESOLVER_IPC_PACKET_BYTE_LIMIT + 1, &header) == RESOLVER_IPC_CODEC_LIMIT, "oversized packet was accepted");
 	test_result = true;
 
 cleanup:
@@ -353,83 +429,6 @@ static bool ipc_test_records(void) {
 	end.cname_count = 3;
 	end.record_count = DNS_ADDRESS_RECORD_LIMIT + 1;
 	CHECK(resolver_ipc_response_end_encode(&end, packet, sizeof(packet), &packet_size) == RESOLVER_IPC_CODEC_BAD_ARGUMENT, "response end with an oversized record count was accepted");
-	test_result = true;
-
-cleanup:
-	return test_result;
-}
-
-static bool ipc_test_request(void) {
-	static const uint8_t expected[] = {
-		0x4D, 0x52, 0x53, 0x50, 0x00, 0x01, 0x00, 0x01, 0x00, 0x26, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-		0x00, 0x01, 0x00, 0x01, 0x00, 0x0C, 'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 't', 'e', 's', 't'
-	};
-	int test_result = false;
-	uint8_t packet[RESOLVER_IPC_PACKET_BYTE_LIMIT] = { 0 };
-	size_t packet_size = 0;
-	resolver_ipc_packet_header header = { 0 };
-	resolver_ipc_request decoded = { 0 };
-	resolver_ipc_request request = { .query_name = "example.test", .query_class = ns_c_in, .query_id = UINT64_C(0x0102030405060708), .query_type = ns_t_a };
-	CHECK(resolver_ipc_request_encode(&request, packet, sizeof(packet), &packet_size) == RESOLVER_IPC_CODEC_OK, "request could not be encoded");
-	CHECK(packet_size == sizeof(expected) && memcmp(packet, expected, sizeof(expected)) == 0, "request wire encoding is not stable");
-	CHECK(resolver_ipc_packet_inspect(packet, packet_size, &header) == RESOLVER_IPC_CODEC_OK && header.kind == RESOLVER_IPC_PACKET_REQUEST && header.query_id == request.query_id,
-		"request header inspection failed");
-	CHECK(ipc_packet_prefixes_rejected(packet, packet_size, ipc_decode_request), "truncated request packet was accepted");
-	CHECK(resolver_ipc_request_decode(packet, packet_size, &decoded) == RESOLVER_IPC_CODEC_OK && decoded.query_id == request.query_id && decoded.query_class == ns_c_in
-		&& decoded.query_type == ns_t_a && strcmp(decoded.query_name, "example.test") == 0, "request did not round-trip");
-	CHECK(resolver_ipc_request_encode(&request, packet, packet_size - 1, &packet_size) == RESOLVER_IPC_CODEC_LIMIT && packet_size == 0, "undersized request buffer was accepted");
-	request.query_id = 0;
-	CHECK(resolver_ipc_request_encode(&request, packet, sizeof(packet), &packet_size) == RESOLVER_IPC_CODEC_BAD_ARGUMENT, "zero request query ID was accepted");
-	request.query_id = 1;
-	request.query_type = ns_t_txt;
-	CHECK(resolver_ipc_request_encode(&request, packet, sizeof(packet), &packet_size) == RESOLVER_IPC_CODEC_BAD_ARGUMENT, "unsupported request query type was accepted");
-	request.query_type = ns_t_a;
-	memset(request.query_name, 'a', sizeof(request.query_name));
-	request.query_name[sizeof(request.query_name) - 1] = '\0';
-	CHECK(resolver_ipc_request_encode(&request, packet, sizeof(packet), &packet_size) == RESOLVER_IPC_CODEC_OK
-		&& resolver_ipc_request_decode(packet, packet_size, &decoded) == RESOLVER_IPC_CODEC_OK && strcmp(decoded.query_name, request.query_name) == 0,
-		"maximum-sized request name did not round-trip");
-	memset(request.query_name, 'a', sizeof(request.query_name));
-	CHECK(resolver_ipc_request_encode(&request, packet, sizeof(packet), &packet_size) == RESOLVER_IPC_CODEC_BAD_ARGUMENT, "unterminated request name was accepted");
-	test_result = true;
-
-cleanup:
-	return test_result;
-}
-
-static bool ipc_test_statuses(void) {
-	static const dns_address_lookup_status address_statuses[] = {
-		DNS_ADDRESS_LOOKUP_OK, DNS_ADDRESS_LOOKUP_BAD_ARGUMENT, DNS_ADDRESS_LOOKUP_LIMIT, DNS_ADDRESS_LOOKUP_MALFORMED, DNS_ADDRESS_LOOKUP_MEMORY,
-		DNS_ADDRESS_LOOKUP_NODATA, DNS_ADDRESS_LOOKUP_NOT_FOUND, DNS_ADDRESS_LOOKUP_PERMANENT_ERROR, DNS_ADDRESS_LOOKUP_TEMPORARY_ERROR, DNS_ADDRESS_LOOKUP_TRUNCATED
-	};
-	static const resolver_ipc_lookup_status ipc_statuses[] = {
-		RESOLVER_IPC_LOOKUP_OK, RESOLVER_IPC_LOOKUP_BAD_ARGUMENT, RESOLVER_IPC_LOOKUP_LIMIT, RESOLVER_IPC_LOOKUP_MALFORMED, RESOLVER_IPC_LOOKUP_MEMORY,
-		RESOLVER_IPC_LOOKUP_NODATA, RESOLVER_IPC_LOOKUP_NOT_FOUND, RESOLVER_IPC_LOOKUP_PERMANENT_ERROR, RESOLVER_IPC_LOOKUP_TEMPORARY_ERROR, RESOLVER_IPC_LOOKUP_TRUNCATED
-	};
-	static const dns_srv_lookup_status srv_statuses[] = {
-		DNS_SRV_LOOKUP_OK, DNS_SRV_LOOKUP_BAD_ARGUMENT, DNS_SRV_LOOKUP_LIMIT, DNS_SRV_LOOKUP_MALFORMED, DNS_SRV_LOOKUP_MEMORY,
-		DNS_SRV_LOOKUP_NODATA, DNS_SRV_LOOKUP_NOT_FOUND, DNS_SRV_LOOKUP_PERMANENT_ERROR, DNS_SRV_LOOKUP_TEMPORARY_ERROR, DNS_SRV_LOOKUP_TRUNCATED
-	};
-	int test_result = false;
-	CHECK(sizeof(address_statuses) / sizeof(address_statuses[0]) == sizeof(ipc_statuses) / sizeof(ipc_statuses[0])
-		&& sizeof(srv_statuses) / sizeof(srv_statuses[0]) == sizeof(ipc_statuses) / sizeof(ipc_statuses[0]), "status test tables have different sizes");
-	for (size_t index = 0; index < sizeof(ipc_statuses) / sizeof(ipc_statuses[0]); index++) {
-		resolver_ipc_lookup_status encoded_address = 0;
-		resolver_ipc_lookup_status encoded_srv = 0;
-		dns_address_lookup_status decoded_address = 0;
-		dns_srv_lookup_status decoded_srv = 0;
-		CHECK(resolver_ipc_lookup_status_from_address(address_statuses[index], &encoded_address) && encoded_address == ipc_statuses[index], "address lookup status encoded incorrectly");
-		CHECK(resolver_ipc_lookup_status_from_srv(srv_statuses[index], &encoded_srv) && encoded_srv == ipc_statuses[index], "SRV lookup status encoded incorrectly");
-		CHECK(resolver_ipc_lookup_status_to_address(ipc_statuses[index], &decoded_address) && decoded_address == address_statuses[index], "address lookup status decoded incorrectly");
-		CHECK(resolver_ipc_lookup_status_to_srv(ipc_statuses[index], &decoded_srv) && decoded_srv == srv_statuses[index], "SRV lookup status decoded incorrectly");
-	}
-	resolver_ipc_lookup_status encoded = 0;
-	dns_address_lookup_status decoded_address = 0;
-	dns_srv_lookup_status decoded_srv = 0;
-	CHECK(!resolver_ipc_lookup_status_from_address((dns_address_lookup_status)-1, &encoded), "invalid address lookup status was encoded");
-	CHECK(!resolver_ipc_lookup_status_from_srv((dns_srv_lookup_status)-1, &encoded), "invalid SRV lookup status was encoded");
-	CHECK(!resolver_ipc_lookup_status_to_address((resolver_ipc_lookup_status)0, &decoded_address), "invalid address IPC status was decoded");
-	CHECK(!resolver_ipc_lookup_status_to_srv((resolver_ipc_lookup_status)0, &decoded_srv), "invalid SRV IPC status was decoded");
 	test_result = true;
 
 cleanup:
