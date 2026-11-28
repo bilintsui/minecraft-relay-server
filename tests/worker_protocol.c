@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 /* section: headers (project) */
+#include "daemon_fixture.h"
 #include "handshake_origin_fixtures.h"
 
 /* section: defines */
@@ -108,56 +109,6 @@ static int child_count_wait(pid_t parent, int expected, int timeout_ms) {
 	}
 	errno = ETIMEDOUT;
 	return -1;
-}
-
-static pid_t child_start(const char *binary, const char *config_filename, const char *notify_socket) {
-	pid_t child = fork();
-	if (child != 0) {
-		return child;
-	}
-	int devnull_fd = open("/dev/null", O_WRONLY);
-	if (devnull_fd == -1 || dup2(devnull_fd, STDOUT_FILENO) == -1 || dup2(devnull_fd, STDERR_FILENO) == -1 || setenv("NOTIFY_SOCKET", notify_socket, 1) == -1) {
-		_exit(EXIT_FAILURE);
-	}
-	close(devnull_fd);
-	execl(binary, binary, "run", "-c", config_filename, (char *)NULL);
-	_exit(EXIT_FAILURE);
-}
-
-static int child_wait(pid_t child, int timeout_ms) {
-	const struct timespec interval = { .tv_nsec = 10000000 };
-	for (int elapsed_ms = 0; elapsed_ms < timeout_ms; elapsed_ms += 10) {
-		int status;
-		pid_t wait_result = waitpid(child, &status, WNOHANG);
-		if (wait_result == child) {
-			return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-		}
-		if (wait_result == -1) {
-			return -1;
-		}
-		nanosleep(&interval, NULL);
-	}
-	errno = ETIMEDOUT;
-	return -1;
-}
-
-static int client_connect(in_port_t port) {
-	int fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd == -1) {
-		return -1;
-	}
-	struct sockaddr_in address = {
-		.sin_family = AF_INET,
-		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
-		.sin_port = htons(port)
-	};
-	if (connect(fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
-		return -1;
-	}
-	return fd;
 }
 
 static ssize_t file_read(const char *filename, void *data, size_t capacity) {
@@ -315,39 +266,6 @@ static int server_accept(int server_fd, int timeout_ms) {
 	return accept(server_fd, NULL, NULL);
 }
 
-static int server_open(in_port_t *port) {
-	int fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd == -1) {
-		return -1;
-	}
-	int reuse_address = 1;
-	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(reuse_address)) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
-		return -1;
-	}
-	struct sockaddr_in address = {
-		.sin_family = AF_INET,
-		.sin_addr.s_addr = htonl(INADDR_LOOPBACK)
-	};
-	if (bind(fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
-		return -1;
-	}
-	socklen_t address_length = sizeof(address);
-	if (getsockname(fd, (struct sockaddr *)&address, &address_length) == -1 || listen(fd, 1) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
-		return -1;
-	}
-	*port = ntohs(address.sin_port);
-	return fd;
-}
-
 static int server_open_ipv6(in_port_t *port) {
 	int fd = socket(AF_INET6, SOCK_STREAM, 0);
 	if (fd == -1) {
@@ -397,22 +315,6 @@ static ssize_t socket_receive_all(int socket_fd, void *data, size_t capacity, in
 	return -1;
 }
 
-static int socket_send_all(int socket_fd, const void *data, size_t size) {
-	const uint8_t *bytes = data;
-	size_t sent = 0;
-	while (sent < size) {
-		ssize_t send_result = send(socket_fd, bytes + sent, size - sent, MSG_NOSIGNAL);
-		if (send_result == -1 && errno == EINTR) {
-			continue;
-		}
-		if (send_result <= 0) {
-			return -1;
-		}
-		sent += (size_t)send_result;
-	}
-	return 0;
-}
-
 static int worker_packet_forward_split(in_port_t listener_port, int upstream_server_fd, const uint8_t *packet, size_t packet_size, size_t split_size,
 	const uint8_t *expected, size_t expected_size, bool expect_eof) {
 	int client_fd = -1;
@@ -422,12 +324,12 @@ static int worker_packet_forward_split(in_port_t listener_port, int upstream_ser
 		errno = EINVAL;
 		return -1;
 	}
-	client_fd = client_connect(listener_port);
+	client_fd = test_client_connect(listener_port);
 	if (client_fd == -1) {
 		goto cleanup;
 	}
 	if (split_size != 0) {
-		if (socket_send_all(client_fd, packet, split_size) == -1) {
+		if (test_socket_send_all(client_fd, packet, split_size) == -1) {
 			goto cleanup;
 		}
 		struct timespec delay = { .tv_nsec = SPLIT_DELAY_NS };
@@ -437,7 +339,7 @@ static int worker_packet_forward_split(in_port_t listener_port, int upstream_ser
 			}
 		}
 	}
-	if (socket_send_all(client_fd, packet + split_size, packet_size - split_size) == -1 || shutdown(client_fd, SHUT_WR) == -1) {
+	if (test_socket_send_all(client_fd, packet + split_size, packet_size - split_size) == -1 || shutdown(client_fd, SHUT_WR) == -1) {
 		goto cleanup;
 	}
 	upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
@@ -526,8 +428,8 @@ static int worker_packet_truncate(in_port_t listener_port, int upstream_server_f
 		errno = EINVAL;
 		return -1;
 	}
-	client_fd = client_connect(listener_port);
-	if (client_fd == -1 || socket_send_all(client_fd, packet, prefix_size) == -1 || shutdown(client_fd, SHUT_WR) == -1) {
+	client_fd = test_client_connect(listener_port);
+	if (client_fd == -1 || test_socket_send_all(client_fd, packet, prefix_size) == -1 || shutdown(client_fd, SHUT_WR) == -1) {
 		goto cleanup;
 	}
 	uint8_t response[BUFSIZ];
@@ -706,9 +608,9 @@ int main(int argc, char **argv) {
 	filename_length = snprintf(notify_filename, sizeof(notify_filename), "%s/notify.sock", temp_directory);
 	CHECK(filename_length > 0 && (size_t)filename_length < sizeof(notify_filename), "cannot format notification socket filename");
 	in_port_t listener_port, upstream_port;
-	upstream_server_fd = server_open(&upstream_port);
+	upstream_server_fd = test_server_open(&upstream_port);
 	CHECK(upstream_server_fd != -1, "cannot open fake upstream server");
-	listener_reservation_fd = server_open(&listener_port);
+	listener_reservation_fd = test_server_open(&listener_port);
 	CHECK(listener_reservation_fd != -1, "cannot reserve listener port");
 	CHECK(close(listener_reservation_fd) == 0, "cannot release listener port reservation");
 	listener_reservation_fd = -1;
@@ -723,7 +625,7 @@ int main(int argc, char **argv) {
 	strcpy(notify_address.sun_path, notify_filename);
 	CHECK(bind(notify_fd, (struct sockaddr *)&notify_address, sizeof(notify_address)) == 0, "cannot bind notification socket");
 
-	listener = child_start(argv[1], config_filename, notify_filename);
+	listener = test_child_start(argv[1], config_filename, notify_filename);
 	CHECK(listener > 0, "cannot start mcrelay listener");
 	char ready_message[64];
 	ssize_t ready_length = message_receive(notify_fd, ready_message, sizeof(ready_message) - 1, TEST_TIMEOUT_MS);
@@ -734,9 +636,9 @@ int main(int argc, char **argv) {
 	helper_child_baseline = child_count(listener);
 	CHECK(helper_child_baseline >= 0, "cannot count resolver helper children");
 
-	client_fd = client_connect(listener_port);
+	client_fd = test_client_connect(listener_port);
 	CHECK(client_fd != -1, "cannot connect malformed test client");
-	CHECK(socket_send_all(client_fd, malformed_handshake, sizeof(malformed_handshake)) == 0, "cannot send malformed handshake");
+	CHECK(test_socket_send_all(client_fd, malformed_handshake, sizeof(malformed_handshake)) == 0, "cannot send malformed handshake");
 	CHECK(shutdown(client_fd, SHUT_WR) == 0, "cannot finish malformed handshake");
 	uint8_t rejection[4096];
 	CHECK(message_receive(client_fd, rejection, sizeof(rejection), TEST_TIMEOUT_MS) == 0, "malformed handshake connection remained open");
@@ -759,9 +661,9 @@ int main(int argc, char **argv) {
 	forged_request[forged_size++] = 0x63;
 	forged_request[forged_size++] = 0xDD;
 	forged_request[forged_size++] = 0x01;
-	client_fd = client_connect(listener_port);
+	client_fd = test_client_connect(listener_port);
 	CHECK(client_fd != -1, "cannot connect log-forging test client");
-	CHECK(socket_send_all(client_fd, forged_request, forged_size) == 0, "cannot send log-forging handshake");
+	CHECK(test_socket_send_all(client_fd, forged_request, forged_size) == 0, "cannot send log-forging handshake");
 	uint8_t forged_response[BUFSIZ];
 	CHECK(message_receive(client_fd, forged_response, sizeof(forged_response), TEST_TIMEOUT_MS) > 0, "log-forging handshake was not answered");
 	CHECK(close(client_fd) == 0, "cannot close log-forging test client");
@@ -777,9 +679,9 @@ int main(int argc, char **argv) {
 	CHECK(log_content[log_size - 1] == '\n', "log file does not end with a line break");
 	CHECK(kill(listener, 0) == 0, "log-forging handshake terminated listener");
 
-	client_fd = client_connect(listener_port);
+	client_fd = test_client_connect(listener_port);
 	CHECK(client_fd != -1, "cannot connect valid test client");
-	CHECK(socket_send_all(client_fd, valid_request, sizeof(valid_request)) == 0, "cannot send valid handshake");
+	CHECK(test_socket_send_all(client_fd, valid_request, sizeof(valid_request)) == 0, "cannot send valid handshake");
 	upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
 	CHECK(upstream_client_fd >= 0, "valid handshake did not reach upstream server");
 	CHECK(child_count_wait(listener, helper_child_baseline, QUIET_TIMEOUT_MS) == 0, "short status handshake forked a worker");
@@ -798,11 +700,11 @@ int main(int argc, char **argv) {
 	client_fd = -1;
 
 	in_port_t replacement_port;
-	replacement_server_fd = server_open(&replacement_port);
+	replacement_server_fd = test_server_open(&replacement_port);
 	CHECK(replacement_server_fd != -1, "cannot open replacement upstream server");
-	client_fd = client_connect(listener_port);
+	client_fd = test_client_connect(listener_port);
 	CHECK(client_fd != -1, "cannot connect generation-pinning test client");
-	CHECK(socket_send_all(client_fd, valid_request, 1) == 0, "cannot send generation-pinning handshake prefix");
+	CHECK(test_socket_send_all(client_fd, valid_request, 1) == 0, "cannot send generation-pinning handshake prefix");
 	uint8_t quiet_response;
 	CHECK(message_receive(client_fd, &quiet_response, sizeof(quiet_response), QUIET_TIMEOUT_MS) == -1 && errno == ETIMEDOUT, "generation-pinning handshake prefix produced an unexpected response");
 	CHECK(write_config(config_filename, log_filename, listener_port, replacement_port) == 0, "cannot write replacement route generation");
@@ -815,7 +717,7 @@ int main(int argc, char **argv) {
 	CHECK(ready_length > 0, "reloaded listener READY notification is missing");
 	ready_message[ready_length] = '\0';
 	CHECK(strcmp(ready_message, "READY=1") == 0, "reloaded listener READY notification is invalid");
-	CHECK(socket_send_all(client_fd, valid_request + 1, sizeof(valid_request) - 1U) == 0, "cannot finish generation-pinning handshake");
+	CHECK(test_socket_send_all(client_fd, valid_request + 1, sizeof(valid_request) - 1U) == 0, "cannot finish generation-pinning handshake");
 	upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
 	CHECK(upstream_client_fd >= 0, "connection accepted before reload did not use its pinned route generation");
 	CHECK(child_count_wait(listener, helper_child_baseline, QUIET_TIMEOUT_MS) == 0, "generation-pinned short handshake forked a worker");
@@ -843,9 +745,9 @@ int main(int argc, char **argv) {
 		uint8_t fixture[BUFSIZ];
 		ssize_t fixture_size = file_read(fixture_filename, fixture, sizeof(fixture));
 		CHECK(fixture_size > 0, "cannot read raw packet fixture");
-		client_fd = client_connect(listener_port);
+		client_fd = test_client_connect(listener_port);
 		CHECK(client_fd != -1, "cannot connect raw packet test client");
-		CHECK(socket_send_all(client_fd, fixture, (size_t)fixture_size) == 0, "cannot send raw packet fixture");
+		CHECK(test_socket_send_all(client_fd, fixture, (size_t)fixture_size) == 0, "cannot send raw packet fixture");
 		if (!packet_fixtures[fixture_index].worker || !packet_fixtures[fixture_index].forwarded) {
 			CHECK(shutdown(client_fd, SHUT_WR) == 0, "cannot finish raw packet fixture");
 		}
@@ -951,9 +853,9 @@ int main(int argc, char **argv) {
 	size_t rewrite_input_size = rewrite_login_build(rewrite_input, sizeof(rewrite_input), "a", 25565);
 	size_t rewrite_expected_size = rewrite_login_build(rewrite_expected, sizeof(rewrite_expected), "127.0.0.1", upstream_port);
 	CHECK(rewrite_input_size == sizeof(rewrite_input) && rewrite_expected_size == sizeof(rewrite_expected), "rewrite regression packet builder produced unexpected sizes");
-	client_fd = client_connect(listener_port);
+	client_fd = test_client_connect(listener_port);
 	CHECK(client_fd != -1, "cannot connect rewrite test client");
-	CHECK(socket_send_all(client_fd, rewrite_input, rewrite_input_size) == 0, "cannot send rewrite test packet");
+	CHECK(test_socket_send_all(client_fd, rewrite_input, rewrite_input_size) == 0, "cannot send rewrite test packet");
 	upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
 	CHECK(upstream_client_fd >= 0, "rewritten connection did not reach upstream server");
 	CHECK(child_count(listener) > helper_child_baseline, "rewrite login packet did not fork a worker");
@@ -972,13 +874,13 @@ int main(int argc, char **argv) {
 	CHECK(kill(listener, 0) == 0, "rewrite regression terminated listener");
 
 	CHECK(kill(listener, SIGTERM) == 0, "cannot stop listener");
-	CHECK(child_wait(listener, TEST_TIMEOUT_MS) == 0, "listener did not exit successfully");
+	CHECK(test_child_wait(listener, TEST_TIMEOUT_MS) == 0, "listener did not exit successfully");
 	listener = -1;
 	CHECK(close(upstream_server_fd) == 0, "cannot close IPv4 upstream server");
 	upstream_server_fd = server_open_ipv6(&upstream_port);
 	CHECK(upstream_server_fd != -1, "cannot open IPv6 fake upstream server");
 	CHECK(write_proxy_config(config_filename, log_filename, listener_port, upstream_port) == 0, "cannot write PROXY-header configuration");
-	listener = child_start(argv[1], config_filename, notify_filename);
+	listener = test_child_start(argv[1], config_filename, notify_filename);
 	CHECK(listener > 0, "cannot restart mcrelay listener for PROXY-header test");
 	ready_length = message_receive(notify_fd, ready_message, sizeof(ready_message) - 1, TEST_TIMEOUT_MS);
 	CHECK(ready_length > 0, "restarted listener READY notification is missing");
@@ -987,12 +889,12 @@ int main(int argc, char **argv) {
 	CHECK(poll(NULL, 0, QUIET_TIMEOUT_MS) == 0, "cannot settle restarted resolver helper baseline");
 	helper_child_baseline = child_count(listener);
 	CHECK(helper_child_baseline >= 0, "cannot count restarted resolver helper children");
-	client_fd = client_connect(listener_port);
+	client_fd = test_client_connect(listener_port);
 	CHECK(client_fd != -1, "cannot connect PROXY-header test client");
 	struct sockaddr_in client_address;
 	socklen_t client_address_size = sizeof(client_address);
 	CHECK(getsockname(client_fd, (struct sockaddr *)&client_address, &client_address_size) == 0, "cannot read PROXY-header client endpoint");
-	CHECK(socket_send_all(client_fd, valid_request, sizeof(valid_request)) == 0, "cannot send PROXY-header test handshake");
+	CHECK(test_socket_send_all(client_fd, valid_request, sizeof(valid_request)) == 0, "cannot send PROXY-header test handshake");
 	upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
 	CHECK(upstream_client_fd >= 0, "cross-family handshake did not reach IPv6 upstream server");
 	CHECK(child_count_wait(listener, helper_child_baseline, QUIET_TIMEOUT_MS) == 0, "PROXY-header short handshake forked a worker");
@@ -1013,7 +915,7 @@ int main(int argc, char **argv) {
 	CHECK(close(client_fd) == 0, "cannot close PROXY-header client connection");
 	client_fd = -1;
 	CHECK(kill(listener, SIGTERM) == 0, "cannot stop restarted listener");
-	CHECK(child_wait(listener, TEST_TIMEOUT_MS) == 0, "restarted listener did not exit successfully");
+	CHECK(test_child_wait(listener, TEST_TIMEOUT_MS) == 0, "restarted listener did not exit successfully");
 	listener = -1;
 
 	result = EXIT_SUCCESS;

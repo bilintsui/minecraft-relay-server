@@ -503,15 +503,15 @@ if(BUILD_TESTING)
 		set_tests_properties(route_waiter_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 	endif()
 
-	add_executable(systemd_notify_test tests/systemd_notify.c)
+	add_executable(systemd_notify_test tests/systemd_notify.c tests/daemon_fixture.c)
 	target_compile_definitions(systemd_notify_test PRIVATE _GNU_SOURCE)
 	add_test(NAME systemd_notify COMMAND systemd_notify_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}>)
 
-	add_executable(worker_lifecycle_test tests/worker_lifecycle.c)
+	add_executable(worker_lifecycle_test tests/worker_lifecycle.c tests/daemon_fixture.c)
 	target_compile_definitions(worker_lifecycle_test PRIVATE _GNU_SOURCE)
 	add_test(NAME worker_lifecycle COMMAND worker_lifecycle_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}>)
 
-	add_executable(worker_protocol_test tests/worker_protocol.c)
+	add_executable(worker_protocol_test tests/worker_protocol.c tests/daemon_fixture.c)
 	target_compile_definitions(worker_protocol_test PRIVATE _GNU_SOURCE)
 	add_test(NAME worker_protocol COMMAND worker_protocol_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}> "${CMAKE_CURRENT_SOURCE_DIR}/tests/rawpackets")
 	# Observe real listener deadlines without changing production timeout defaults or adding production test hooks.

@@ -27,6 +27,9 @@
 #include <time.h>
 #include <unistd.h>
 
+/* section: headers (project) */
+#include "daemon_fixture.h"
+
 /* section: defines */
 /* assertion */
 #define CHECK(condition, message) \
@@ -50,41 +53,6 @@ typedef struct {
 } process_signal_state;
 
 /* section: functions (local) */
-static pid_t child_start(const char *binary, const char *config_filename, const char *notify_socket) {
-	pid_t child = fork();
-	if (child != 0) {
-		return child;
-	}
-	int devnull_fd = open("/dev/null", O_WRONLY);
-	if (devnull_fd == -1 || dup2(devnull_fd, STDOUT_FILENO) == -1 || dup2(devnull_fd, STDERR_FILENO) == -1 || setenv("NOTIFY_SOCKET", notify_socket, 1) == -1) {
-		_exit(EXIT_FAILURE);
-	}
-	if (devnull_fd > STDERR_FILENO) {
-		close(devnull_fd);
-	}
-	execl(binary, binary, "run", "-c", config_filename, (char *)NULL);
-	_exit(EXIT_FAILURE);
-}
-
-static int client_connect(in_port_t port) {
-	int fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd == -1) {
-		return -1;
-	}
-	struct sockaddr_in address = {
-		.sin_family = AF_INET,
-		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
-		.sin_port = htons(port)
-	};
-	if (connect(fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
-		return -1;
-	}
-	return fd;
-}
-
 static int listener_socket_probe(in_port_t port) {
 	int fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (fd == -1) {
@@ -109,55 +77,6 @@ static int listener_socket_probe(in_port_t port) {
 		return -1;
 	}
 	return fd;
-}
-
-static ssize_t message_receive(int socket_fd, char *message, size_t message_size, int timeout_ms) {
-	struct pollfd poll_fd = {
-		.fd = socket_fd,
-		.events = POLLIN
-	};
-	int poll_result;
-	do {
-		poll_result = poll(&poll_fd, 1, timeout_ms);
-	} while (poll_result == -1 && errno == EINTR);
-	if (poll_result <= 0) {
-		return poll_result;
-	}
-	if (!(poll_fd.revents & POLLIN)) {
-		errno = EIO;
-		return -1;
-	}
-	ssize_t message_length = recv(socket_fd, message, message_size - 1, 0);
-	if (message_length >= 0) {
-		message[message_length] = '\0';
-	}
-	return message_length;
-}
-
-static int port_find(in_port_t *result) {
-	int fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd == -1) {
-		return -1;
-	}
-	struct sockaddr_in address = {
-		.sin_family = AF_INET,
-		.sin_addr.s_addr = htonl(INADDR_LOOPBACK)
-	};
-	if (bind(fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
-		return -1;
-	}
-	socklen_t address_length = sizeof(address);
-	if (getsockname(fd, (struct sockaddr *)&address, &address_length) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
-		return -1;
-	}
-	*result = ntohs(address.sin_port);
-	return close(fd);
 }
 
 static int process_name_read(pid_t process, char *result, size_t result_size) {
@@ -301,55 +220,6 @@ static int server_accept(int server_fd, int timeout_ms) {
 		return -1;
 	}
 	return accept(server_fd, NULL, NULL);
-}
-
-static int server_open(in_port_t *port) {
-	int fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd == -1) {
-		return -1;
-	}
-	int reuse_address = 1;
-	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse_address, sizeof(reuse_address)) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
-		return -1;
-	}
-	struct sockaddr_in address = {
-		.sin_family = AF_INET,
-		.sin_addr.s_addr = htonl(INADDR_LOOPBACK)
-	};
-	if (bind(fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
-		return -1;
-	}
-	socklen_t address_length = sizeof(address);
-	if (getsockname(fd, (struct sockaddr *)&address, &address_length) == -1 || listen(fd, 1) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
-		return -1;
-	}
-	*port = ntohs(address.sin_port);
-	return fd;
-}
-
-static int socket_send_all(int socket_fd, const void *data, size_t size) {
-	const uint8_t *bytes = data;
-	size_t sent = 0;
-	while (sent < size) {
-		ssize_t send_result = send(socket_fd, bytes + sent, size - sent, MSG_NOSIGNAL);
-		if (send_result == -1 && errno == EINTR) {
-			continue;
-		}
-		if (send_result <= 0) {
-			return -1;
-		}
-		sent += (size_t)send_result;
-	}
-	return 0;
 }
 
 static bool worker_descriptors_valid(pid_t worker) {
@@ -529,9 +399,9 @@ int main(int argc, char **argv) {
 	filename_length = snprintf(notify_filename, sizeof(notify_filename), "%s/notify.sock", temp_directory);
 	CHECK(filename_length > 0 && (size_t)filename_length < sizeof(notify_filename), "cannot format notification socket filename");
 	in_port_t port, upstream_port;
-	upstream_server_fd = server_open(&upstream_port);
+	upstream_server_fd = test_server_open(&upstream_port);
 	CHECK(upstream_server_fd != -1, "cannot open fake upstream server");
-	CHECK(port_find(&port) == 0, "cannot find a free listener port");
+	CHECK(test_port_find(&port) == 0, "cannot find a free listener port");
 	CHECK(write_config(config_filename, log_filename, port, upstream_port) == 0, "cannot write configuration");
 
 	notify_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
@@ -543,13 +413,13 @@ int main(int argc, char **argv) {
 	strcpy(notify_address.sun_path, notify_filename);
 	CHECK(bind(notify_fd, (struct sockaddr *)&notify_address, sizeof(notify_address)) == 0, "cannot bind notification socket");
 
-	listener = child_start(argv[1], config_filename, notify_filename);
+	listener = test_child_start(argv[1], config_filename, notify_filename);
 	CHECK(listener > 0, "cannot start mcrelay listener");
-	CHECK(message_receive(notify_fd, message, sizeof(message), TEST_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "listener READY notification is missing");
+	CHECK(test_notify_receive(notify_fd, message, sizeof(message), TEST_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "listener READY notification is missing");
 	CHECK(process_name_read(listener, process_name, sizeof(process_name)) == 0 && strcmp(process_name, "mrs-listener") == 0, "listener process name was incorrect");
-	client_fd = client_connect(port);
+	client_fd = test_client_connect(port);
 	CHECK(client_fd != -1, "cannot connect test client");
-	CHECK(socket_send_all(client_fd, login_request, sizeof(login_request)) == 0, "cannot send test login request");
+	CHECK(test_socket_send_all(client_fd, login_request, sizeof(login_request)) == 0, "cannot send test login request");
 	upstream_client_fd = server_accept(upstream_server_fd, TEST_TIMEOUT_MS);
 	CHECK(upstream_client_fd != -1, "worker did not connect to fake upstream server");
 	worker = worker_find(listener, TEST_TIMEOUT_MS);

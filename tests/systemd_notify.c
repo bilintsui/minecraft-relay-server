@@ -26,6 +26,9 @@
 #include <time.h>
 #include <unistd.h>
 
+/* section: headers (project) */
+#include "daemon_fixture.h"
+
 /* section: defines */
 /* assertion */
 #define CHECK(condition, message) \
@@ -41,62 +44,6 @@
 #define QUIET_TIMEOUT_MS	500
 
 /* section: functions (local) */
-static pid_t child_start(const char *binary, const char *config_filename, const char *notify_socket) {
-	pid_t child = fork();
-	if (child != 0) {
-		return child;
-	}
-	int devnull_fd = open("/dev/null", O_WRONLY);
-	if (devnull_fd == -1 || dup2(devnull_fd, STDOUT_FILENO) == -1 || dup2(devnull_fd, STDERR_FILENO) == -1 || setenv("NOTIFY_SOCKET", notify_socket, 1) == -1) {
-		_exit(EXIT_FAILURE);
-	}
-	close(devnull_fd);
-	execl(binary, binary, "run", "-c", config_filename, (char *)NULL);
-	_exit(EXIT_FAILURE);
-}
-
-static int child_wait(pid_t child, int timeout_ms) {
-	const struct timespec interval = {
-		.tv_nsec = 10000000
-	};
-	for (int elapsed_ms = 0; elapsed_ms < timeout_ms; elapsed_ms += 10) {
-		int status;
-		pid_t wait_result = waitpid(child, &status, WNOHANG);
-		if (wait_result == child) {
-			return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-		}
-		if (wait_result == -1) {
-			return -1;
-		}
-		nanosleep(&interval, NULL);
-	}
-	errno = ETIMEDOUT;
-	return -1;
-}
-
-static ssize_t message_receive(int socket_fd, char *message, size_t message_size, int timeout_ms) {
-	struct pollfd poll_fd = {
-		.fd = socket_fd,
-		.events = POLLIN
-	};
-	int poll_result;
-	do {
-		poll_result = poll(&poll_fd, 1, timeout_ms);
-	} while (poll_result == -1 && errno == EINTR);
-	if (poll_result <= 0) {
-		return poll_result;
-	}
-	if (!(poll_fd.revents & POLLIN)) {
-		errno = EIO;
-		return -1;
-	}
-	ssize_t message_length = recv(socket_fd, message, message_size - 1, 0);
-	if (message_length >= 0) {
-		message[message_length] = '\0';
-	}
-	return message_length;
-}
-
 static bool message_reloading_valid(const char *message, uint64_t earliest_usec, uint64_t latest_usec) {
 	static const char prefix[] = "RELOADING=1\nMONOTONIC_USEC=";
 	if (strncmp(message, prefix, sizeof(prefix) - 1) != 0) {
@@ -124,32 +71,6 @@ static int monotonic_usec(uint64_t *result) {
 	}
 	*result = (uint64_t)timestamp.tv_sec * 1000000 + timestamp_subsecond_usec;
 	return 0;
-}
-
-static int port_find(in_port_t *result) {
-	int fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd == -1) {
-		return -1;
-	}
-	struct sockaddr_in address = {
-		.sin_family = AF_INET,
-		.sin_addr.s_addr = htonl(INADDR_LOOPBACK)
-	};
-	if (bind(fd, (struct sockaddr *)&address, sizeof(address)) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
-		return -1;
-	}
-	socklen_t address_length = sizeof(address);
-	if (getsockname(fd, (struct sockaddr *)&address, &address_length) == -1) {
-		int saved_errno = errno;
-		close(fd);
-		errno = saved_errno;
-		return -1;
-	}
-	*result = ntohs(address.sin_port);
-	return close(fd);
 }
 
 static int write_config(const char *filename, const char *log_filename, in_port_t port) {
@@ -204,7 +125,7 @@ int main(int argc, char **argv) {
 	filename_length = snprintf(reload_fifo_filename, sizeof(reload_fifo_filename), "%s/reload.fifo", temp_directory);
 	CHECK(filename_length > 0 && (size_t)filename_length < sizeof(reload_fifo_filename), "cannot format reload FIFO filename");
 	in_port_t port;
-	CHECK(port_find(&port) == 0, "cannot find a free listener port");
+	CHECK(test_port_find(&port) == 0, "cannot find a free listener port");
 	CHECK(write_config(config_filename, log_filename, port) == 0, "cannot write configuration");
 
 	socket_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
@@ -216,21 +137,21 @@ int main(int argc, char **argv) {
 	strcpy(notify_address.sun_path, notify_filename);
 	CHECK(bind(socket_fd, (struct sockaddr *)&notify_address, sizeof(notify_address)) == 0, "cannot bind notification socket");
 
-	child = child_start(argv[1], config_filename, notify_filename);
+	child = test_child_start(argv[1], config_filename, notify_filename);
 	CHECK(child > 0, "cannot start mcrelay");
-	CHECK(message_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "startup READY notification is missing");
+	CHECK(test_notify_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "startup READY notification is missing");
 
 	uint64_t earliest_usec, latest_usec;
 	CHECK(monotonic_usec(&earliest_usec) == 0 && kill(child, SIGUSR1) == 0, "cannot request successful reload");
-	CHECK(message_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0, "successful RELOADING notification is missing");
+	CHECK(test_notify_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0, "successful RELOADING notification is missing");
 	CHECK(monotonic_usec(&latest_usec) == 0 && message_reloading_valid(message, earliest_usec, latest_usec), "successful RELOADING notification is invalid");
-	CHECK(message_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "successful reload READY notification is missing");
+	CHECK(test_notify_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "successful reload READY notification is missing");
 
 	CHECK(unlink(config_filename) == 0, "cannot remove configuration for failure test");
 	CHECK(monotonic_usec(&earliest_usec) == 0 && kill(child, SIGUSR1) == 0, "cannot request failed reload");
-	CHECK(message_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0, "failed RELOADING notification is missing");
+	CHECK(test_notify_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0, "failed RELOADING notification is missing");
 	CHECK(monotonic_usec(&latest_usec) == 0 && message_reloading_valid(message, earliest_usec, latest_usec), "failed RELOADING notification is invalid");
-	CHECK(message_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "failed reload READY notification is missing");
+	CHECK(test_notify_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "failed reload READY notification is missing");
 
 	CHECK(monotonic_usec(&earliest_usec) == 0, "cannot read timestamp before repeated reloads");
 	for (int signal_count = 0; signal_count < 8; signal_count++) {
@@ -239,7 +160,7 @@ int main(int argc, char **argv) {
 	bool expect_reloading = true;
 	int reload_count = 0;
 	while (1) {
-		ssize_t message_length = message_receive(socket_fd, message, sizeof(message), reload_count == 0 ? MESSAGE_TIMEOUT_MS : QUIET_TIMEOUT_MS);
+		ssize_t message_length = test_notify_receive(socket_fd, message, sizeof(message), reload_count == 0 ? MESSAGE_TIMEOUT_MS : QUIET_TIMEOUT_MS);
 		CHECK(message_length >= 0, "cannot receive repeated reload notification");
 		if (message_length == 0) {
 			break;
@@ -258,30 +179,30 @@ int main(int argc, char **argv) {
 	CHECK(mkfifo(reload_fifo_filename, 0600) == 0, "cannot create reload FIFO");
 	CHECK(write_config(config_filename, reload_fifo_filename, port) == 0, "cannot write blocking reload configuration");
 	CHECK(monotonic_usec(&earliest_usec) == 0 && kill(child, SIGUSR1) == 0, "cannot request blocking reload");
-	CHECK(message_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0, "blocking RELOADING notification is missing");
+	CHECK(test_notify_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0, "blocking RELOADING notification is missing");
 	CHECK(monotonic_usec(&latest_usec) == 0 && message_reloading_valid(message, earliest_usec, latest_usec), "blocking RELOADING notification is invalid");
 	CHECK(kill(child, SIGTERM) == 0, "cannot request stop during reload");
 	fifo_fd = open(reload_fifo_filename, O_RDONLY | O_NONBLOCK);
 	CHECK(fifo_fd != -1, "cannot unblock reload FIFO");
-	CHECK(message_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "reload READY notification is missing before stop");
-	CHECK(child_wait(child, MESSAGE_TIMEOUT_MS) == 0, "listener did not exit after stop during reload");
+	CHECK(test_notify_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "reload READY notification is missing before stop");
+	CHECK(test_child_wait(child, MESSAGE_TIMEOUT_MS) == 0, "listener did not exit after stop during reload");
 	child = -1;
-	CHECK(message_receive(socket_fd, message, sizeof(message), QUIET_TIMEOUT_MS) == 0, "unexpected notification was sent after stop during reload");
+	CHECK(test_notify_receive(socket_fd, message, sizeof(message), QUIET_TIMEOUT_MS) == 0, "unexpected notification was sent after stop during reload");
 	CHECK(close(fifo_fd) == 0, "cannot close reload FIFO");
 	fifo_fd = -1;
 	CHECK(unlink(reload_fifo_filename) == 0, "cannot remove reload FIFO");
 	CHECK(write_config(config_filename, log_filename, port) == 0, "cannot restore configuration for signal-priority test");
-	child = child_start(argv[1], config_filename, notify_filename);
+	child = test_child_start(argv[1], config_filename, notify_filename);
 	CHECK(child > 0, "cannot restart mcrelay for signal-priority test");
-	CHECK(message_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "restart READY notification is missing");
+	CHECK(test_notify_receive(socket_fd, message, sizeof(message), MESSAGE_TIMEOUT_MS) > 0 && strcmp(message, "READY=1") == 0, "restart READY notification is missing");
 
 	CHECK(kill(child, SIGSTOP) == 0, "cannot stop listener for signal-priority test");
 	int child_status;
 	CHECK(waitpid(child, &child_status, WUNTRACED) == child && WIFSTOPPED(child_status), "listener did not stop for signal-priority test");
 	CHECK(kill(child, SIGUSR1) == 0 && kill(child, SIGTERM) == 0 && kill(child, SIGCONT) == 0, "cannot send simultaneous stop and reload requests");
-	CHECK(child_wait(child, MESSAGE_TIMEOUT_MS) == 0, "listener did not exit after simultaneous stop and reload requests");
+	CHECK(test_child_wait(child, MESSAGE_TIMEOUT_MS) == 0, "listener did not exit after simultaneous stop and reload requests");
 	child = -1;
-	CHECK(message_receive(socket_fd, message, sizeof(message), QUIET_TIMEOUT_MS) == 0, "reload notification was sent despite a pending stop request");
+	CHECK(test_notify_receive(socket_fd, message, sizeof(message), QUIET_TIMEOUT_MS) == 0, "reload notification was sent despite a pending stop request");
 
 	result = EXIT_SUCCESS;
 
