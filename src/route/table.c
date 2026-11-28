@@ -42,7 +42,7 @@ typedef struct {
 typedef struct {
 	char *configured_address;
 	size_t destination_index;
-	bool pheader;
+	proxy_prefix pheader_version;
 	bool rewrite;
 	char *vhost;
 } route_entry;
@@ -260,6 +260,15 @@ route_table_build_status route_table_build(const conf *source, route_table **res
 	}
 	const cJSON *proxy = NULL;
 	cJSON_ArrayForEach(proxy, source->proxy) {
+		proxy_prefix version = config_proxy_version(cJSON_GetObjectItemCaseSensitive(proxy, "pheader_version"));
+		if (version == PROXY_PREFIX_OTHER) {
+			route_table_destroy(table);
+			free(buckets);
+			return ROUTE_TABLE_BUILD_INVALID;
+		}
+		if (!route_bool_read(cJSON_GetObjectItemCaseSensitive(proxy, "pheader"))) {
+			version = PROXY_PREFIX_OTHER;
+		}
 		const cJSON *vhosts = cJSON_GetObjectItemCaseSensitive(proxy, "vhost");
 		bool has_routes = false;
 		const cJSON *vhost = NULL;
@@ -294,7 +303,7 @@ route_table_build_status route_table_build(const conf *source, route_table **res
 				return ROUTE_TABLE_BUILD_MEMORY;
 			}
 			route->destination_index = destination_index;
-			route->pheader = route_bool_read(cJSON_GetObjectItemCaseSensitive(proxy, "pheader"));
+			route->pheader_version = version;
 			route->rewrite = route_bool_read(cJSON_GetObjectItemCaseSensitive(proxy, "rewrite"));
 			table->route_count++;
 		}
@@ -356,7 +365,7 @@ bool route_table_route_get(const route_table *table, size_t route_index, route_v
 	const route_entry *route = &table->routes[route_index];
 	result->configured_address = route->configured_address;
 	result->destination_index = route->destination_index;
-	result->pheader = route->pheader;
+	result->pheader_version = route->pheader_version;
 	result->rewrite = route->rewrite;
 	result->vhost = route->vhost;
 	return true;

@@ -32,7 +32,7 @@ def unused_port():
 
 
 class Relay:
-    def __init__(self, directory, binary, listen, backend, level, pheader):
+    def __init__(self, directory, binary, listen, backend, level, pheader, pheader_version):
         self.port = unused_port()
         self.log = directory / "access.log"
         self.config = directory / "config.json"
@@ -42,6 +42,8 @@ class Relay:
             "listen": {"address": "127.0.0.1", "port": self.port, **listen},
             "proxy": [{"vhost": "game.example", "address": "127.0.0.1", "port": backend, "pheader": pheader}],
         }
+        if pheader_version is not None:
+            self.settings["proxy"][0]["pheader_version"] = pheader_version
         self.config.write_text(json.dumps(self.settings))
         with self.console.open("w") as output:
             self.process = subprocess.Popen([binary, "run", "-c", str(self.config)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=output,
@@ -59,7 +61,7 @@ class Relay:
         outcome = "[INFO] Configuration reloaded."
         if error is not None:
             field, reason = error
-            outcome = f'[WARN] Invalid configuration entry "listen.{field}". Expected {reason}, will keep your old configurations'
+            outcome = f'[WARN] Invalid configuration entry "{field}". Expected {reason}, will keep your old configurations'
         before = len(self.lines())
         self.process.send_signal(signal.SIGUSR1)
         wait_for(lambda: any(line.endswith(outcome) for line in self.lines()[before:]), outcome)
@@ -75,9 +77,9 @@ class Relay:
 
 
 @contextmanager
-def relay(binary, listen, backend=9, level=3, *, pheader=True):
+def relay(binary, listen, backend=9, level=3, *, pheader=True, pheader_version=None):
     with tempfile.TemporaryDirectory(prefix="mcrelay-inbound-") as temp:
-        server = Relay(Path(temp), binary, listen, backend, level, pheader)
+        server = Relay(Path(temp), binary, listen, backend, level, pheader, pheader_version)
         try:
             wait_for(lambda: any("accepting connections." in s for s in server.lines()), "listener readiness")
             yield server
@@ -264,7 +266,7 @@ def reload_and_errors(binary):
             ({"trusted_sources": ["::1", "127.0.0.1/8"]}, "trusted_sources[1]", "a CIDR network address with all host bits zero"),
             ({"trusted_source": []}, "trusted_source", "version, trusted_sources or untrusted_policy"),
         ]:
-            server.reload({"proxy_settings": settings}, error=(f"proxy_settings.{field}", reason))
+            server.reload({"proxy_settings": settings}, error=(f"listen.proxy_settings.{field}", reason))
         assert not candidate_log.exists(), "rejected configuration opened its log"
         server.settings["log"] = active_log
         reject(server, [], "[WARN] peer: 127.0.0.1:{port}, status: reject_proxy_exception, exception: untrusted_source")
@@ -273,7 +275,7 @@ def reload_and_errors(binary):
             actual = f"PROXY TCP4 127.0.0.1 127.0.0.1 {direct.getsockname()[1]} {server.port}\r\n".encode()
             exchange(direct, backend, b"", actual, 1)
         server.reload({"allow_proxy": True, "proxy_settings": {"version": 1}})
-        server.reload({"proxy_settings": {"version": 3}}, error=("proxy_settings.version", "the number 1 or 2"))
+        server.reload({"proxy_settings": {"version": 3}}, error=("listen.proxy_settings.version", "the number 1 or 2"))
         with server.connect() as retained:
             exchange(retained, backend, header, header, 1)
         assert "Invalid configuration entry" not in server.console.read_text()

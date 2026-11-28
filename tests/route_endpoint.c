@@ -121,7 +121,7 @@ static route_resolution_completion_status endpoint_completion_observe(route_reso
 
 static bool endpoint_fixture_build(endpoint_fixture *fixture, const hosts_table *hosts, const struct timespec *now) {
 	static const char json[] = "["
-		"{\"vhost\":[\"numeric\"],\"address\":\"192.0.2.10\",\"port\":25560,\"rewrite\":true,\"pheader\":true},"
+		"{\"vhost\":[\"numeric\"],\"address\":\"192.0.2.10\",\"port\":25560,\"rewrite\":true,\"pheader\":true,\"pheader_version\":2},"
 		"{\"vhost\":[\"hosts\"],\"address\":\"hosts.example\",\"port\":25561},"
 		"{\"vhost\":[\"dns\"],\"address\":\"dns.example\",\"port\":25562,\"rewrite\":true},"
 		"{\"vhost\":[\"srv\"],\"address\":\"service.example\",\"rewrite\":true},"
@@ -286,7 +286,7 @@ static bool endpoint_test_arguments(const hosts_table *hosts) {
 		"locally unavailable route was accepted");
 	CHECK(endpoint_select((route_generation *)&fixture, "NUMERIC.", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK
 		&& endpoint_address_equal(&snapshot.address, AF_INET, "192.0.2.10") && snapshot.port == 25560 && snapshot.generation_identity == 42
-		&& snapshot.destination_index == 0 && snapshot.pheader && snapshot.rewrite && strcmp(snapshot.configured_address, "192.0.2.10") == 0
+		&& snapshot.destination_index == 0 && snapshot.pheader_version == PROXY_PREFIX_V2 && snapshot.rewrite && strcmp(snapshot.configured_address, "192.0.2.10") == 0
 		&& strcmp(snapshot.target_name, "192.0.2.10") == 0 && strcmp(snapshot.vhost, "numeric") == 0 && snapshot.inbound_proxy.family == AF_INET6,
 		"numeric endpoint or pointer-free metadata snapshot was incorrect");
 	CHECK(endpoint_select((route_generation *)&fixture, "hosts", &now, &inbound, &snapshot) == ROUTE_ENDPOINT_SELECT_OK

@@ -526,7 +526,7 @@ static bool waiter_test_numeric(const hosts_table *hosts) {
 	CHECK(route_waiter_progress(waiter, supervisor, &now) == ROUTE_WAITER_READY && supervisor_mock.schedule_count == 0,
 		"numeric waiter did not become ready without DNS work");
 	route_endpoint_snapshot snapshot;
-	CHECK(route_waiter_snapshot_take(waiter, &snapshot) && snapshot.generation_identity == fixture.identity && snapshot.pheader && snapshot.rewrite
+	CHECK(route_waiter_snapshot_take(waiter, &snapshot) && snapshot.generation_identity == fixture.identity && snapshot.pheader_version == PROXY_PREFIX_V1 && snapshot.rewrite
 		&& waiter_address_equal(&snapshot.address, AF_INET, "192.0.2.10") && snapshot.port == 25560, "numeric waiter snapshot was incorrect");
 	test_result = true;
 

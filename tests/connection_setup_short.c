@@ -71,7 +71,7 @@ static connection_setup_snapshot connection_setup_short_test_snapshot(connection
 	result.endpoint.inbound_proxy.srcport = 40000;
 	result.endpoint.inbound_proxy.dstport = 25565;
 	result.endpoint.port = 25570;
-	result.endpoint.pheader = pheader;
+	result.endpoint.pheader_version = pheader ? PROXY_PREFIX_V1 : PROXY_PREFIX_OTHER;
 	result.endpoint.rewrite = rewrite;
 	snprintf(result.endpoint.target_name, sizeof(result.endpoint.target_name), "%s", "backend.example");
 	snprintf(result.endpoint.vhost, sizeof(result.endpoint.vhost), "%s", "status.example");

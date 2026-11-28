@@ -95,7 +95,7 @@ static exit_code load_config(const char *filename, const char *filename_full, co
 	}
 	conf_error config_error = (conf_error)errno;
 	switch (config_error) {
-		case CONF_ECINBOUND:
+		case CONF_ECFIELD:
 			return EXITCODE_BADARG;
 		case CONF_EROPENFAIL:
 		case CONF_EROPENEMPTY:

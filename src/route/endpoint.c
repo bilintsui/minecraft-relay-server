@@ -373,7 +373,7 @@ route_endpoint_select_status route_endpoint_evaluate(route_generation *generatio
 	result->destination_index = route.destination_index;
 	result->generation_identity = route_generation_identity(generation);
 	result->inbound_proxy = *inbound_proxy;
-	result->pheader = route.pheader;
+	result->pheader_version = route.pheader_version;
 	result->port = selected_port;
 	result->rewrite = route.rewrite;
 	return ROUTE_ENDPOINT_SELECT_OK;

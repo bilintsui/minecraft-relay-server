@@ -20,6 +20,7 @@
 #include "define/global.h"
 #include "log.h"
 #include "network.h"
+#include "protocol/proxy.h"
 
 /* section: defines */
 /* limit */
@@ -60,7 +61,7 @@ typedef struct {
 		char *address;
 		in_port_t port;
 		bool allow_proxy;
-		uint8_t proxy_version;
+		proxy_prefix proxy_version;
 		conf_untrusted_policy untrusted_policy;
 		conf_trusted_source *trusted_sources;
 		size_t trusted_count;
@@ -82,7 +83,7 @@ typedef enum {
 	CONF_ERPARSE,
 	CONF_ECMEMORY,
 	CONF_ECLISTENPORT,
-	CONF_ECINBOUND,
+	CONF_ECFIELD,
 	CONF_ECMETRICS,
 	CONF_ECPROXY,
 	CONF_ECPROXYDUP
@@ -103,6 +104,16 @@ const char *config_errmsg(conf_error err);
 bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const char *failure_action);
 void config_log_duplicate_error(const char *logfile, uint8_t maxlevel, mksys_level msglevel, const char *suffix);
 bool config_peer_trusted(const conf *config, net_addr address);
+/* An omitted field selects v1. OTHER flags an invalid explicit value. */
+static inline proxy_prefix config_proxy_version(const cJSON *value) {
+	if (value == NULL) {
+		return PROXY_PREFIX_V1;
+	}
+	if (cJSON_IsNumber(value) && (value->valuedouble == PROXY_PREFIX_V1 || value->valuedouble == PROXY_PREFIX_V2)) {
+		return (proxy_prefix)value->valueint;
+	}
+	return PROXY_PREFIX_OTHER;
+}
 conf_read_status config_read(const char *filename, const conf_cache *active_cache, conf_cache *candidate_cache, conf **result);
 /* Report reload field diagnostics at WARN using the active log path and level. */
 conf_read_status config_read_with_log(const char *filename, const conf_cache *active_cache, conf_cache *candidate_cache, conf **result, const char *active_log, uint8_t maxlevel);

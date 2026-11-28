@@ -35,7 +35,7 @@ typedef enum {
 typedef struct {
 	const char *configured_address;
 	size_t destination_index;
-	bool pheader;
+	proxy_prefix pheader_version;
 	bool rewrite;
 	const char *vhost;
 } route_view;

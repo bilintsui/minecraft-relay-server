@@ -104,7 +104,7 @@ static conf_error config_inbound_invalid(const conf_validation_log *log, const c
 		snprintf(subscript, sizeof(subscript), "[%d]", index);
 	}
 	MKSYS_LOG(log->filename, log->maxlevel, log->level, "Invalid configuration entry \"listen.%s%s%s\". Expected %s%s", prefix, field, subscript, expected, log->suffix);
-	return CONF_ECINBOUND;
+	return CONF_ECFIELD;
 }
 
 static conf_error config_inbound_parse(conf *result, const cJSON *listen, const conf_validation_log *log) {
@@ -123,11 +123,10 @@ static conf_error config_inbound_parse(conf *result, const cJSON *listen, const 
 			return config_inbound_invalid(log, "proxy_settings.", member->string, -1, "version, trusted_sources or untrusted_policy");
 		}
 	}
-	const cJSON *version = cJSON_GetObjectItemCaseSensitive(settings, "version");
-	if (version != NULL && (!cJSON_IsNumber(version) || (version->valuedouble != PROXY_PREFIX_V1 && version->valuedouble != PROXY_PREFIX_V2))) {
+	result->listen.proxy_version = config_proxy_version(cJSON_GetObjectItemCaseSensitive(settings, "version"));
+	if (result->listen.proxy_version == PROXY_PREFIX_OTHER) {
 		return config_inbound_invalid(log, "proxy_settings.", "version", -1, "the number 1 or 2");
 	}
-	result->listen.proxy_version = version == NULL ? PROXY_PREFIX_V1 : (uint8_t)version->valueint;
 	const cJSON *policy = cJSON_GetObjectItemCaseSensitive(settings, "untrusted_policy");
 	if (policy != NULL) {
 		size_t i = 0;
@@ -214,10 +213,17 @@ static void config_proxy_vhost_namelist_destroy(char **vhost_namelist, int vhost
 	free(vhost_namelist);
 }
 
-static cJSON *config_proxy_parse(cJSON *src) {
+static cJSON *config_proxy_parse(cJSON *src, const conf_validation_log *log) {
+	int index = 0;
 	cJSON *single = src->child;
 	while (single != NULL) {
 		cJSON *single_next = single->next;
+		if (config_proxy_version(cJSON_GetObjectItemCaseSensitive(single, "pheader_version")) == PROXY_PREFIX_OTHER) {
+			MKSYS_LOG(log->filename, log->maxlevel, log->level, "Invalid configuration entry \"proxy[%d].pheader_version\". Expected the number 1 or 2%s", index, log->suffix);
+			errno = CONF_ECFIELD;
+			return NULL;
+		}
+		index++;
 		bool single_valid = true;
 		cJSON *single_vhost = cJSON_GetObjectItemCaseSensitive(single, "vhost");
 		if (single_vhost == NULL) {
@@ -469,7 +475,7 @@ static conf *config_parse(const void *config_raw, size_t config_size, const conf
 		errno = CONF_ECPROXY;
 		return NULL;
 	}
-	cJSON *config_json_proxy_parsed = config_proxy_parse(config_json_proxy);
+	cJSON *config_json_proxy_parsed = config_proxy_parse(config_json_proxy, validation_log);
 	if (errno) {
 		cJSON_Delete(config_json_proxy);
 		config_destroy(result);
@@ -639,6 +645,7 @@ void config_dumper(conf *src) {
 		} else {
 			printf("PHeader\t\tfalse\n");
 		}
+		printf("PHeaderVersion\t%u\n", (unsigned)config_proxy_version(cJSON_GetObjectItemCaseSensitive(single, "pheader_version")));
 		proxy_count++;
 	}
 }

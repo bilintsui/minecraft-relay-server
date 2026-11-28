@@ -2712,7 +2712,7 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 			break;
 		case CONF_READ_ERROR:
 			switch (errno) {
-				case CONF_ECINBOUND:
+				case CONF_ECFIELD:
 					/* The field diagnostic was written to the active log during validation. */
 					break;
 				case CONF_EROPENFAIL:

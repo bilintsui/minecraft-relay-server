@@ -87,7 +87,33 @@ def stream_and_reload(binary):
             exchange(held, backend, wire[-1:], expected, 2, bytes(range(256)))
 
 
+def outbound(binary):
+    tail = b"\xe1\x00\x03abc\x03\x00\x04\x00\x00\x00\x00"
+    with backend_socket() as backend:
+        for enabled in (False, True):
+            with relay(binary, LISTEN, backend.getsockname()[1], pheader=enabled, pheader_version=2) as server:
+                for source, destination, expected_source, expected_destination in [
+                    ("192.0.2.4", "198.51.100.5", "192.0.2.4", "198.51.100.5"),
+                    ("2001:db8::4", "2001:db8::5", "2001:db8::4", "2001:db8::5"),
+                    ("::ffff:192.0.2.4", "::ffff:198.51.100.5", "192.0.2.4", "198.51.100.5"),
+                    ("::ffff:192.0.2.4", "2001:db8::5", "::ffff:192.0.2.4", "2001:db8::5"),
+                ]:
+                    received = tcp(source, destination, 65535, 0, tail)
+                    expected = tcp(expected_source, expected_destination, 65535, 0) if enabled else b""
+                    for intent in (1, 2, 3):
+                        with server.connect() as client:
+                            exchange(client, backend, received, expected, intent, bytes(range(256)))
+
+        with relay(binary, {}, backend.getsockname()[1], pheader_version=2) as direct:
+            direct.settings["proxy"][0]["pheader_version"] = "2"
+            direct.reload({}, error=("proxy[0].pheader_version", "the number 1 or 2"))
+            with direct.connect() as client:
+                expected = tcp("127.0.0.1", "127.0.0.1", client.getsockname()[1], direct.port)
+                exchange(client, backend, b"", expected, 2)
+
+
 if __name__ == "__main__":
     admission(sys.argv[1])
     forwarding(sys.argv[1])
+    outbound(sys.argv[1])
     stream_and_reload(sys.argv[1])

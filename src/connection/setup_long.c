@@ -47,7 +47,6 @@
 /* section: types */
 typedef struct {
 	const char *address;
-	bool pheader;
 	in_port_t port;
 	bool rewrite;
 	bool valid;
@@ -166,7 +165,6 @@ static connection_setup_long_proxy connection_setup_long_proxyinfo_prepare(const
 		return proxyinfo;
 	}
 	proxyinfo.address = connection_setup_destination(&snapshot->endpoint);
-	proxyinfo.pheader = snapshot->endpoint.pheader;
 	proxyinfo.port = snapshot->endpoint.port;
 	proxyinfo.rewrite = snapshot->endpoint.rewrite;
 	proxyinfo.valid = proxyinfo.address != NULL;
@@ -187,7 +185,7 @@ static bool connection_setup_long_seed_append(uint8_t *seed, size_t *seed_size, 
 static bool connection_setup_long_seed_proxy_header(uint8_t *seed, size_t *seed_size, const connection_setup_snapshot *snapshot) {
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1U];
 	memset(pheader, 0, sizeof(pheader));
-	size_t pheader_size = protocol_proxy_write(pheader, snapshot->endpoint.inbound_proxy, PROXY_PREFIX_V1);
+	size_t pheader_size = protocol_proxy_write(pheader, snapshot->endpoint.inbound_proxy, snapshot->endpoint.pheader_version);
 	if (pheader_size == 0 || pheader_size > PROTOPROXY_PACKETMAXLEN) {
 		return false;
 	}
@@ -269,7 +267,7 @@ static connection_setup_status connection_setup_long_handle_legacy_login(int soc
 			"type: game, vhost: %s, dst: %s:%d, status: accept, username: %s",
 			inbound_info.address, proxyinfo.address, proxyinfo.port, inbound_info.username
 		);
-		bool seed_done = !proxyinfo.pheader || connection_setup_long_seed_proxy_header(seed, seed_size, snapshot);
+		bool seed_done = snapshot->endpoint.pheader_version == PROXY_PREFIX_OTHER || connection_setup_long_seed_proxy_header(seed, seed_size, snapshot);
 		if (seed_done && proxyinfo.rewrite) {
 			int rewrite_size = snprintf(inbound_info.address, sizeof(inbound_info.address), "%s", proxyinfo.address);
 			if (rewrite_size < 0 || (size_t)rewrite_size >= sizeof(inbound_info.address)) {
@@ -349,7 +347,7 @@ static connection_setup_status connection_setup_long_handle_modern_handshake(int
 			"type: %s, vhost: %s, dst: %s:%d, status: accept, username: %s",
 			typestr, (const char *)inbound_info.address, proxyinfo.address, proxyinfo.port, (const char *)inbound_info.username
 		);
-		bool seed_done = !proxyinfo.pheader || connection_setup_long_seed_proxy_header(seed, seed_size, snapshot);
+		bool seed_done = snapshot->endpoint.pheader_version == PROXY_PREFIX_OTHER || connection_setup_long_seed_proxy_header(seed, seed_size, snapshot);
 		bool rewrite_failed = false;
 		if (seed_done && proxyinfo.rewrite) {
 			void *inbound_addr_new = realloc(inbound_info.address, strlen(proxyinfo.address) + 1U);

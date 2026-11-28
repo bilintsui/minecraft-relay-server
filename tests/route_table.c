@@ -110,7 +110,7 @@ static size_t route_test_route_count(const route_table *table) {
 static bool route_test_routes(void) {
 	static const char json[] = "["
 		"{\"vhost\":[\"Alpha.Example\",\"beta.example\",9],\"address\":\"192.0.2.1\",\"port\":25565,\"rewrite\":true},"
-		"{\"vhost\":[\"gamma.example\"],\"address\":\"192.0.2.1\",\"port\":25565,\"pheader\":1},"
+		"{\"vhost\":[\"gamma.example\"],\"address\":\"192.0.2.1\",\"port\":25565,\"pheader\":1,\"pheader_version\":2},"
 		"{\"vhost\":[\"v6-a.example\"],\"address\":\"2001:0db8::1\",\"port\":25565},"
 		"{\"vhost\":[\"v6-b.example\"],\"address\":\"2001:db8::1\",\"port\":25565},"
 		"{\"vhost\":[\"name-a.example\"],\"address\":\"Example.COM.\",\"port\":25566},"
@@ -130,8 +130,8 @@ static bool route_test_routes(void) {
 	CHECK(route_test_route_count(table) == 11 && route_table_destination_count(table) == 6, "route or deduplicated destination count was incorrect");
 	route_view route;
 	CHECK(route_table_find(table, "alpha.example.", &route) && strcmp(route.vhost, "Alpha.Example") == 0 && strcmp(route.configured_address, "192.0.2.1") == 0
-		&& route.destination_index == 0 && route.rewrite && !route.pheader, "case-insensitive route lookup or flags were incorrect");
-	CHECK(route_table_find(table, "gamma.example", &route) && route.destination_index == 0 && route.pheader && !route.rewrite, "shared numeric destination was not reused");
+		&& route.destination_index == 0 && route.rewrite && route.pheader_version == PROXY_PREFIX_OTHER, "case-insensitive route lookup or flags were incorrect");
+	CHECK(route_table_find(table, "gamma.example", &route) && route.destination_index == 0 && route.pheader_version == PROXY_PREFIX_V2 && !route.rewrite, "shared numeric destination was not reused");
 	CHECK(!route_table_find(table, "odd.", &route) && route_table_find(table, "odd..", &route), "legacy configured-vhost terminal-dot behavior changed");
 	route_destination_view destination;
 	CHECK(route_table_destination_get(table, 0, &destination) && destination.numeric && destination.numeric_address.family == AF_INET && destination.port == 25565

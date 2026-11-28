@@ -48,7 +48,7 @@ static bool connection_setup_short_plan_endpoint_valid(const connection_setup_sn
 		|| endpoint->configured_address[0] == '\0' || endpoint->vhost[0] == '\0') {
 		return false;
 	}
-	if (endpoint->pheader && (!connection_setup_address_valid(&endpoint->inbound_proxy.srcaddr) || !connection_setup_address_valid(&endpoint->inbound_proxy.dstaddr)
+	if (endpoint->pheader_version != PROXY_PREFIX_OTHER && (!connection_setup_address_valid(&endpoint->inbound_proxy.srcaddr) || !connection_setup_address_valid(&endpoint->inbound_proxy.dstaddr)
 		|| endpoint->inbound_proxy.family != endpoint->inbound_proxy.srcaddr.family || endpoint->inbound_proxy.family != endpoint->inbound_proxy.dstaddr.family)) {
 		return false;
 	}
@@ -316,8 +316,8 @@ connection_setup_short_action connection_setup_short_prepare(connection_setup_sh
 	} else {
 		return CONNECTION_SETUP_SHORT_ABORT;
 	}
-	if (snapshot->endpoint.pheader) {
-		plan->pheader_size = protocol_proxy_write(plan->pheader, snapshot->endpoint.inbound_proxy, PROXY_PREFIX_V1);
+	if (snapshot->endpoint.pheader_version != PROXY_PREFIX_OTHER) {
+		plan->pheader_size = protocol_proxy_write(plan->pheader, snapshot->endpoint.inbound_proxy, snapshot->endpoint.pheader_version);
 		if (plan->pheader_size == 0 || plan->pheader_size > PROTOPROXY_PACKETMAXLEN) {
 			return CONNECTION_SETUP_SHORT_ABORT;
 		}

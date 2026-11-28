@@ -71,7 +71,7 @@ typedef struct {
 	uint64_t generation_identity;
 	p_proxy inbound_proxy;
 	in_port_t port;
-	bool pheader;
+	proxy_prefix pheader_version;
 	bool rewrite;
 	char target_name[ROUTE_ENDPOINT_TEXT_SIZE];
 	char vhost[ROUTE_ENDPOINT_TEXT_SIZE];
