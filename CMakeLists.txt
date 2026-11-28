@@ -27,7 +27,7 @@ add_custom_target(version_header ALL
 	VERBATIM)
 add_executable(mcrelay${EXEC_SUFFIX}
 	src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c
-	src/listener.c src/listener/events.c src/listener/metrics.c
+	src/listener.c src/listener/events.c src/listener/metrics.c src/listener/socket.c
 	src/log.c src/main.c src/metrics.c src/network.c src/timeutil.c src/version_info.c
 	src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/hosts_watch.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
 	src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c src/route/table.c src/route/waiter.c

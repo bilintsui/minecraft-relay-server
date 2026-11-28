@@ -6,7 +6,6 @@
  */
 
 /* section: headers (library) */
-#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -42,6 +41,7 @@
 #include "listener/connection.h"
 #include "listener/events.h"
 #include "listener/metrics.h"
+#include "listener/socket.h"
 #if defined(LISTENER_EARLY_COLLECT_TEST) || defined(LISTENER_READY_FLIP_TEST)
 #include "listener_runtime_hooks.h"
 #endif
@@ -144,11 +144,6 @@
 
 /* section: types */
 typedef enum {
-	LISTENER_ENDPOINT_OK,
-	LISTENER_ENDPOINT_BAD_ADDRESS,
-	LISTENER_ENDPOINT_BAD_PORT
-} listener_endpoint_status;
-typedef enum {
 	LISTENER_CONNECTION_ABORT,
 	LISTENER_CONNECTION_CLOSED,
 	LISTENER_CONNECTION_FATAL,
@@ -160,17 +155,6 @@ typedef enum {
 	LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR,
 	LISTENER_ROUTE_PREPARE_TIME_ERROR
 } listener_route_prepare_status;
-typedef enum {
-	LISTENER_SOCKET_OPEN_OK,
-	LISTENER_SOCKET_OPEN_BIND_ERROR,
-	LISTENER_SOCKET_OPEN_EVENTS_ERROR
-} listener_socket_open_status;
-typedef enum {
-	LISTENER_SOCKET_REPLACE_OK,
-	LISTENER_SOCKET_REPLACE_CANDIDATE_ERROR,
-	LISTENER_SOCKET_REPLACE_ACTIVE_ERROR,
-	LISTENER_SOCKET_REPLACE_ROLLBACK_ERROR
-} listener_socket_replace_status;
 typedef enum {
 	LISTENER_METRICS_TIMER_EMPTY,
 	LISTENER_METRICS_TIMER_EXPIRED,
@@ -202,18 +186,10 @@ typedef struct {
 	listener_workers workers;
 } listener_context;
 typedef struct {
-	net_addr address;
-	in_port_t port;
-} listener_endpoint;
-typedef struct {
 	struct timespec deadline;
 	bool pressure_logged;
 	bool ready;
 } listener_route_runtime;
-typedef struct {
-	listener_endpoint endpoint;
-	int fd;
-} listener_socket;
 
 /* section: functions (local) */
 static bool listener_accept_error_retryable(int error) {
@@ -1400,53 +1376,6 @@ static bool listener_connections_destroy_closed(listener_connection **connection
 	return result;
 }
 
-static bool listener_endpoint_equal(const listener_endpoint *left, const listener_endpoint *right) {
-	if (left->address.family != right->address.family || left->port != right->port) {
-		return false;
-	}
-	switch (left->address.family) {
-		case AF_INET:
-			return left->address.addr.v4 == right->address.addr.v4;
-		case AF_INET6:
-			return memcmp(left->address.addr.v6, right->address.addr.v6, sizeof(left->address.addr.v6)) == 0;
-		default:
-			return false;
-	}
-}
-
-static bool listener_endpoint_is_wildcard(const listener_endpoint *target) {
-	switch (target->address.family) {
-		case AF_INET:
-			return target->address.addr.v4 == INADDR_ANY;
-		case AF_INET6:
-			return memcmp(target->address.addr.v6, &in6addr_any, sizeof(target->address.addr.v6)) == 0;
-		default:
-			return false;
-	}
-}
-
-static bool listener_endpoint_may_conflict(const listener_endpoint *left, const listener_endpoint *right) {
-	if (left->port != right->port) {
-		return false;
-	}
-	if (left->address.family != right->address.family) {
-		return true;
-	}
-	return listener_endpoint_is_wildcard(left) || listener_endpoint_is_wildcard(right);
-}
-
-static listener_endpoint_status listener_endpoint_prepare(const conf *source, listener_endpoint *target) {
-	target->address = net_addr_parse(source->listen.address);
-	target->port = source->listen.port;
-	if (target->address.family == 0) {
-		return LISTENER_ENDPOINT_BAD_ADDRESS;
-	}
-	if (target->port == 0) {
-		return LISTENER_ENDPOINT_BAD_PORT;
-	}
-	return LISTENER_ENDPOINT_OK;
-}
-
 static bool listener_generation_collect(listener_context *context, const struct timespec *now) {
 	route_generation_registry_collect_status status = route_generation_registry_collect(context->generations, context->resolver, now);
 	switch (status) {
@@ -2099,73 +2028,6 @@ static int listener_route_runtime_start(listener_route_runtime *runtime, const l
 		return -1;
 	}
 	return listener_route_timer_set(events, &runtime->deadline);
-}
-
-static int listener_socket_bind(listener_socket *target) {
-	target->fd = net_socket(NETSOCK_BIND, target->endpoint.address.family, &(target->endpoint.address.addr), target->endpoint.port, true);
-	return target->fd;
-}
-
-static void listener_socket_close(listener_socket *target) {
-	if (target->fd != -1) {
-		close(target->fd);
-		target->fd = -1;
-	}
-}
-
-static listener_socket_open_status listener_socket_open(listener_socket *target, const listener_events *events) {
-	if (listener_socket_bind(target) == -1) {
-		return LISTENER_SOCKET_OPEN_BIND_ERROR;
-	}
-	if (listener_events_socket_add(events, target->fd) == -1) {
-		int saved_errno = errno;
-		listener_socket_close(target);
-		errno = saved_errno;
-		return LISTENER_SOCKET_OPEN_EVENTS_ERROR;
-	}
-	return LISTENER_SOCKET_OPEN_OK;
-}
-
-static listener_socket_replace_status listener_socket_replace_conflicting(listener_socket *target, listener_socket *candidate, const listener_events *events) {
-	if (listener_events_remove(events, target->fd) == -1) {
-		return LISTENER_SOCKET_REPLACE_ACTIVE_ERROR;
-	}
-	listener_socket_close(target);
-	if (listener_socket_open(candidate, events) == LISTENER_SOCKET_OPEN_OK) {
-		*target = *candidate;
-		return LISTENER_SOCKET_REPLACE_OK;
-	}
-	int candidate_errno = errno;
-	if (listener_socket_open(target, events) != LISTENER_SOCKET_OPEN_OK) {
-		return LISTENER_SOCKET_REPLACE_ROLLBACK_ERROR;
-	}
-	errno = candidate_errno;
-	return LISTENER_SOCKET_REPLACE_CANDIDATE_ERROR;
-}
-
-static listener_socket_replace_status listener_socket_replace(listener_socket *target, const listener_endpoint *endpoint, const listener_events *events) {
-	listener_socket candidate = {
-		.endpoint = *endpoint,
-		.fd = -1
-	};
-	listener_socket_open_status open_status = listener_socket_open(&candidate, events);
-	if (open_status != LISTENER_SOCKET_OPEN_OK) {
-		/* Same-port address transitions may require closing the active socket before binding the candidate. */
-		if (open_status == LISTENER_SOCKET_OPEN_BIND_ERROR && listener_endpoint_may_conflict(&target->endpoint, &candidate.endpoint) && errno == NET_EBIND) {
-			return listener_socket_replace_conflicting(target, &candidate, events);
-		}
-		return LISTENER_SOCKET_REPLACE_CANDIDATE_ERROR;
-	}
-	if (listener_events_remove(events, target->fd) == -1) {
-		int saved_errno = errno;
-		listener_events_remove(events, candidate.fd);
-		listener_socket_close(&candidate);
-		errno = saved_errno;
-		return LISTENER_SOCKET_REPLACE_ACTIVE_ERROR;
-	}
-	listener_socket_close(target);
-	*target = candidate;
-	return LISTENER_SOCKET_REPLACE_OK;
 }
 
 static int listener_reload(listener_context *context, listener_socket *listener, listener_events *events, bool *metrics_readiness_invalidated) {
