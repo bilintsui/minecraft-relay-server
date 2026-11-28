@@ -50,13 +50,13 @@
      */
     "port": 25565,
 
-    // Optional boolean. When enabled, every connection must begin with a PROXY v1 header.
+    // Optional boolean. When enabled, every connection must begin with the selected PROXY header.
     "allow_proxy": false,
 
     // Optional object. Only the three fields below are accepted.
     // Each field is optional and validated even when allow_proxy is false.
     "proxy_settings": {
-      // Optional number. The default and only supported version is 1.
+      // Optional number, 1 (text, default) or 2 (binary). Incoming v2 TLVs are discarded.
       "version": 1,
 
       // Numeric addresses or CIDR networks of actual TCP peers. An explicit array replaces both defaults.
@@ -70,7 +70,7 @@
 
       // Case-sensitive. "reject" closes an untrusted connection immediately.
       // "ignore" consumes a valid header and uses socket endpoints.
-      // "accept" lets any peer supply endpoints. An admitted UNKNOWN header always uses socket endpoints.
+      // "accept" lets any peer supply endpoints. V1 UNKNOWN and v2 LOCAL or UNSPEC use actual socket endpoints.
       "untrusted_policy": "reject"
     }
   },
@@ -113,10 +113,12 @@
       /*
        * Optional, boolean or integer (default: false)
        *
-       * Send a PROXY v1 header with the effective client and destination endpoints.
-       * Enable only for a backend configured to receive PROXY v1.
+       * Send a PROXY header with the effective client and destination endpoints.
+       * Enable only for a backend configured to receive the selected version.
        */
-      "pheader": false
+      "pheader": false,
+      // Optional number, 1 or 2 (default 1). Selected per route and validated even when pheader is false.
+      "pheader_version": 1
     },
     {
       "vhost": [
@@ -125,14 +127,16 @@
       ],
       "address": "mc.example2.com",
       "rewrite": false,
-      "pheader": false
+      "pheader": false,
+      "pheader_version": 1
     },
     {
       "vhost": "hypixel.example.com",
       "address": "mc.hypixel.net",
       "port": 25565,
       "rewrite": true,
-      "pheader": false
+      "pheader": false,
+      "pheader_version": 1
     }
   ]
 }

@@ -8,7 +8,7 @@ Minecraft versions before 12w04a are **NOT SUPPORTED**!
 ## Features
 * Support reverse proxy for Minecraft servers by server address in the handshake packet which the client sends.
 * Support rewrite server address and server port to camouflage a connection which uses an official server address (e.g., pretend to be a normal connection to Hypixel, avoiding their server address check).
-* Preserve the original client address and port across services that send or receive PROXY protocol v1 headers.
+* Preserve client and destination addresses and ports across services that send or receive PROXY protocol v1 or v2 headers.
 * Provide optional bounded operational metrics and rate-limited resolver-helper state events through the existing log.
 
 ## Requirements
@@ -144,12 +144,13 @@ If you provide <code>srvrecord.example.com</code> to your user, you should set y
 For compatibility, it's recommended to add both of them to your configuration.
 
 ## IP Forwarding
-By default the listener accepts direct Minecraft connections. To receive the original client address and port from a service that supports PROXY v1, add the following fields to the existing `listen` object. Configure the sending service to start every connection with a v1 header (for example, `send-proxy` on an HAProxy `server` line).
+By default the listener accepts direct Minecraft connections. To accept connections from a PROXY-speaking service, enable `allow_proxy` and select the version that service sends. Every connection must start with that version's header. The default is v1. This example selects v2 in the existing `listen` object.
 
 ```json
 {
   "allow_proxy": true,
   "proxy_settings": {
+    "version": 2,
     "trusted_sources": [
       "192.0.2.10"
     ]
@@ -159,9 +160,11 @@ By default the listener accepts direct Minecraft connections. To receive the ori
 
 Replace `192.0.2.10` with the TCP source address of the service sending the header. You can also specify a CIDR network such as `192.0.2.0/24` or `2001:db8::/64` when every address in that network is trusted to supply client endpoints. An explicit list replaces both loopback defaults, `127.0.0.0/8` and `::1`. The default policy closes connections from other peers immediately. Access records for admitted connections put the actual TCP peer in `peer`, the header handling result in `proxy`, and the effective client endpoint in `src`. [All listener settings](doc/configuration/mcrelay/config.jsonc)
 
-In an incoming `TCP6` header, mcrelay accepts both `::ffff:c000:201` and `::ffff:192.0.2.1` for the same IPv4-mapped address. The dotted form is accepted only for IPv4-mapped addresses, for compatibility with dual-stack senders such as HAProxy. When forwarding a `TCP6` pair, mcrelay emits `TCP4` if both addresses are IPv4-mapped. Otherwise it emits `TCP6` with both addresses in hexadecimal IPv6 notation. [PROXY protocol v1, section 2.1](https://www.haproxy.org/download/2.9/doc/proxy-protocol.txt)
+Both versions use the supplied TCP endpoints when the trust policy accepts them. A pair of IPv4-mapped addresses is forwarded as TCP4. A mixed pair stays TCP6. In v1 text headers, mcrelay accepts both `::ffff:c000:201` and `::ffff:192.0.2.1` for a mapped address and writes IPv6 addresses in hexadecimal notation.
 
-Outgoing headers are configured per route. Set `pheader` to `true` on any route whose backend accepts PROXY v1. To chain two mcrelay instances, enable `pheader` on the route from the first to the second, then enable `allow_proxy` on the second and trust the first instance's TCP source address. Keep `rewrite` disabled on the intermediate route when both instances route by the original Minecraft hostname.
+V1 `UNKNOWN` and v2 `LOCAL` use the actual socket endpoints. A v2 `PROXY` command specifying `UNSPEC`, UDP or a UNIX socket also uses those endpoints. Incoming v2 extensions (TLVs) are skipped, including checksums, TLS metadata and vendor-specific fields. The header and the initial Minecraft packet share a 10-second deadline from acceptance. [PROXY protocol specification](https://github.com/haproxy/haproxy/blob/master/doc/proxy-protocol.txt)
+
+Outgoing headers are configured independently per route. Set `pheader` to `true` for a backend that expects a header. The default output is v1. Set `pheader_version` to `2` to generate a binary header containing only the effective addresses and ports. To chain two mcrelay instances, match the first route's `pheader_version` to the second listener's `proxy_settings.version` and trust the first instance's TCP source address on the second. Keep `rewrite` disabled on the intermediate route when both instances route by the original Minecraft hostname.
 
 ### BungeeCord
 For a BungeeCord backend, set `proxy_protocol` to `true` in its `config.yml` and enable `pheader` on the corresponding mcrelay route.

@@ -22,14 +22,17 @@ the Minecraft handshake packet.
 It can rewrite the address and port fields in the outgoing handshake packet
 to disguise a connection as one to an official server.
 
-To receive the original client address and port from a service that sends
-PROXY protocol v1, set **listen.allow_proxy** to true. Every connection
-to that listener must then start with a v1 header. The default policy accepts
+To receive original endpoints from a service that sends PROXY protocol headers,
+set **listen.allow_proxy** to true. Set **listen.proxy_settings.version** to 1
+(the default) or 2 to match the sender. Every connection to that listener
+must start with the selected header. The default policy accepts
 connections only from TCP peers in **listen.proxy_settings.trusted_sources**.
 The list accepts numeric IPv4 and IPv6 addresses and CIDR networks.
 It defaults to 127.0.0.0/8 and ::1. An explicit list replaces both defaults.
-To send a v1 header to a backend
-that accepts it, set **pheader** to true on its route.
+To send a header to a backend, set **pheader** to true on its route.
+The optional **pheader_version** selects 1 (the default) or 2 independently
+of the listener. Incoming v2 TLVs are discarded. An outgoing v2 header
+contains only the effective TCP endpoints.
 
 The program runs in the foreground. Use a service manager such as systemd
 when it should run as a background service. Multiple instances can run with

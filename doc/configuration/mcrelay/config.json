@@ -26,7 +26,8 @@
       "address": "localhost",
       "port": 25565,
       "rewrite": false,
-      "pheader": false
+      "pheader": false,
+      "pheader_version": 1
     },
     {
       "vhost": [
@@ -35,14 +36,16 @@
       ],
       "address": "mc.example2.com",
       "rewrite": false,
-      "pheader": false
+      "pheader": false,
+      "pheader_version": 1
     },
     {
       "vhost": "hypixel.example.com",
       "address": "mc.hypixel.net",
       "port": 25565,
       "rewrite": true,
-      "pheader": false
+      "pheader": false,
+      "pheader_version": 1
     }
   ]
 }
