@@ -65,8 +65,8 @@ static const log_exception log_exceptions[] = {
 	{ "config_errmsg((conf_error)errno)", "%s%s%s", "src/listener.c" },
 	{ "config_errmsg(config_error)", "%s%s", "src/main.c" },
 	{ "config_errmsg(config_error)", "%s", "src/main.c" },
-	{ "helper_line", "%s", "src/listener_metrics.c" },
-	{ "metrics_line", "%s", "src/listener_metrics.c" }
+	{ "helper_line", "%s", "src/listener/metrics.c" },
+	{ "metrics_line", "%s", "src/listener/metrics.c" }
 };
 
 static const log_symbol log_symbols[] = {

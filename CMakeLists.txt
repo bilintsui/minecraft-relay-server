@@ -26,7 +26,7 @@ add_custom_target(version_header ALL
 	BYPRODUCTS "${MCRELAY_VERSION_HEADER}"
 	VERBATIM)
 add_executable(mcrelay${EXEC_SUFFIX}
-	src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener_metrics.c src/log.c src/main.c src/metrics.c src/network.c
+	src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener/metrics.c src/log.c src/main.c src/metrics.c src/network.c
 	src/timeutil.c src/version_info.c
 	src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/hosts_watch.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
 	src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c src/route/table.c src/route/waiter.c
@@ -110,7 +110,7 @@ if(BUILD_TESTING)
 	target_include_directories(hosts_watch_test PRIVATE src)
 	target_compile_definitions(hosts_watch_test PRIVATE _GNU_SOURCE)
 	add_test(NAME hosts_watch COMMAND hosts_watch_test)
-	add_executable(listener_metrics_test tests/listener_metrics.c src/basic.c src/listener_metrics.c src/log.c src/metrics.c src/timeutil.c)
+	add_executable(listener_metrics_test tests/listener_metrics.c src/basic.c src/listener/metrics.c src/log.c src/metrics.c src/timeutil.c)
 	target_include_directories(listener_metrics_test PRIVATE src)
 	target_compile_definitions(listener_metrics_test PRIVATE _GNU_SOURCE)
 	add_test(NAME listener_metrics COMMAND listener_metrics_test)
@@ -301,7 +301,7 @@ if(BUILD_TESTING)
 		target_link_libraries(hosts_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all -lresolv)
 		add_test(NAME hosts_ubsan COMMAND hosts_ubsan_test)
 		set_tests_properties(hosts_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
-		add_executable(listener_metrics_ubsan_test tests/listener_metrics.c src/basic.c src/listener_metrics.c src/log.c src/metrics.c src/timeutil.c)
+		add_executable(listener_metrics_ubsan_test tests/listener_metrics.c src/basic.c src/listener/metrics.c src/log.c src/metrics.c src/timeutil.c)
 		target_include_directories(listener_metrics_ubsan_test PRIVATE src)
 		target_compile_definitions(listener_metrics_ubsan_test PRIVATE _GNU_SOURCE)
 		target_compile_options(listener_metrics_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
@@ -506,8 +506,8 @@ if(BUILD_TESTING)
 	target_compile_definitions(worker_protocol_test PRIVATE _GNU_SOURCE)
 	add_test(NAME worker_protocol COMMAND worker_protocol_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}> "${CMAKE_CURRENT_SOURCE_DIR}/tests/rawpackets")
 	# Observe real listener deadlines without changing production timeout defaults or adding production test hooks.
-	get_target_property(ASSEMBLY_TIMER_DAEMON_SOURCES mcrelay${EXEC_SUFFIX} SOURCES)
-	add_executable(listener_assembly_daemon ${ASSEMBLY_TIMER_DAEMON_SOURCES} tests/assembly_timer.c)
+	get_target_property(MCRELAY_DAEMON_SOURCES mcrelay${EXEC_SUFFIX} SOURCES)
+	add_executable(listener_assembly_daemon ${MCRELAY_DAEMON_SOURCES} tests/assembly_timer.c)
 	add_dependencies(listener_assembly_daemon version_header)
 	target_compile_definitions(listener_assembly_daemon PRIVATE _GNU_SOURCE DEBUG_MODE=false)
 	target_include_directories(listener_assembly_daemon PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -522,14 +522,7 @@ if(BUILD_TESTING)
 	add_test(NAME listener_assembly_log_io COMMAND listener_assembly_test $<TARGET_FILE:listener_assembly_daemon> log-delay)
 	add_test(NAME listener_assembly_controls COMMAND listener_assembly_test $<TARGET_FILE:listener_assembly_daemon> controls)
 	set_tests_properties(listener_assembly_accept listener_assembly_proxy listener_assembly_proxy_v2 listener_assembly_log_io listener_assembly_controls PROPERTIES TIMEOUT 120)
-	add_executable(worker_cap_daemon
-		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener_metrics.c src/log.c src/main.c src/metrics.c src/network.c
-		src/timeutil.c src/version_info.c
-		src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/hosts_watch.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
-		src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c
-		src/route/table.c src/route/waiter.c
-		src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c
-		tests/connect_pending.c tests/refusal_partial.c)
+	add_executable(worker_cap_daemon ${MCRELAY_DAEMON_SOURCES} tests/connect_pending.c tests/refusal_partial.c)
 	add_dependencies(worker_cap_daemon version_header)
 	target_compile_definitions(worker_cap_daemon PRIVATE _GNU_SOURCE CONNECTION_SETUP_LONG_CONNECT_TIMEOUT_SEC=1 DEBUG_MODE=false
 		LISTENER_CONNECTION_LIMIT=3 LISTENER_WORKER_LIMIT=2)
@@ -543,13 +536,7 @@ if(BUILD_TESTING)
 	target_compile_definitions(listener_shutdown_test PRIVATE _GNU_SOURCE)
 	add_test(NAME listener_shutdown COMMAND listener_shutdown_test $<TARGET_FILE:mcrelay${EXEC_SUFFIX}>)
 	set_tests_properties(listener_shutdown PROPERTIES TIMEOUT 30)
-	add_executable(listener_short_runtime_daemon
-		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener_metrics.c src/log.c src/main.c src/metrics.c src/network.c
-		src/timeutil.c src/version_info.c
-		src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/hosts_watch.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
-		src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c
-		src/route/table.c src/route/waiter.c
-		src/protocol/common.c src/protocol/handshake.c src/protocol/handshake_legacy.c src/protocol/proxy.c
+	add_executable(listener_short_runtime_daemon ${MCRELAY_DAEMON_SOURCES}
 		tests/connect_pending.c tests/dns_pending.c tests/hosts_reload_fault.c tests/listener_runtime_hooks.c tests/metrics_timer_fault.c tests/route_waiter_destroy_fault.c)
 	add_dependencies(listener_short_runtime_daemon version_header)
 	set(LISTENER_SHORT_RUNTIME_HOSTS_FILENAME "${CMAKE_CURRENT_BINARY_DIR}/listener_short_runtime.hosts")

@@ -40,7 +40,7 @@
 #include "connection/setup_long.h"
 #include "connection/setup_short.h"
 #include "define/exitcode.h"
-#include "listener_metrics.h"
+#include "listener/metrics.h"
 #if defined(LISTENER_EARLY_COLLECT_TEST) || defined(LISTENER_READY_FLIP_TEST)
 #include "listener_runtime_hooks.h"
 #endif

@@ -14,7 +14,7 @@
 #include <unistd.h>
 
 /* section: headers (project) */
-#include "listener_metrics.h"
+#include "listener/metrics.h"
 
 /* section: functions (local) */
 static uint64_t nanoseconds(clockid_t clock) {

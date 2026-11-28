@@ -1,5 +1,5 @@
 /*
- * listener_metrics.h: Listener-owned capacity and route metrics
+ * listener/metrics.h: Listener-owned capacity and route metrics
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Bilin Tsui
@@ -16,11 +16,11 @@
 #include <time.h>
 
 /* section: headers (project) */
-#include "config.h"
-#include "metrics.h"
-#include "resolver/cache.h"
-#include "resolver/ipc_assembly.h"
-#include "resolver/supervisor.h"
+#include "../config.h"
+#include "../metrics.h"
+#include "../resolver/cache.h"
+#include "../resolver/ipc_assembly.h"
+#include "../resolver/supervisor.h"
 
 /* section: defines */
 #define LISTENER_METRICS_LINE_COUNT	48U

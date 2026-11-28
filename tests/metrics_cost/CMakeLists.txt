@@ -6,7 +6,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 get_filename_component(RELAY_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 
 add_executable(snapshot_cost snapshot.c
-	"${RELAY_ROOT}/src/basic.c" "${RELAY_ROOT}/src/listener_metrics.c" "${RELAY_ROOT}/src/log.c" "${RELAY_ROOT}/src/metrics.c" "${RELAY_ROOT}/src/timeutil.c"
+	"${RELAY_ROOT}/src/basic.c" "${RELAY_ROOT}/src/listener/metrics.c" "${RELAY_ROOT}/src/log.c" "${RELAY_ROOT}/src/metrics.c" "${RELAY_ROOT}/src/timeutil.c"
 	"${RELAY_ROOT}/src/resolver/cache.c" "${RELAY_ROOT}/src/resolver/dns.c" "${RELAY_ROOT}/src/resolver/helper.c" "${RELAY_ROOT}/src/resolver/ipc.c"
 	"${RELAY_ROOT}/src/resolver/ipc_assembly.c" "${RELAY_ROOT}/src/resolver/supervisor.c" "${RELAY_ROOT}/src/resolver/util.c")
 target_include_directories(snapshot_cost PRIVATE "${RELAY_ROOT}/src")
