@@ -1,14 +1,21 @@
 # systemd configuration
 The supplied `mcrelay.service` and `mcrelay@.service` units use `Type=simple` by default. This compatibility mode works with older systemd releases and reloads through `ExecReload=/bin/kill -USR1 $MAINPID`. In this mode, `systemctl reload` waits only for the signal command, not for mcrelay to finish reloading its configuration.
 
-Use `mcrelay.service` for one server instance. Use `mcrelay@.service` for multiple named instances whose configuration files are installed as `/usr/local/etc/mcrelay/INSTANCE.json`.
+Use `mcrelay.service` for one instance or `mcrelay@INSTANCE.service` for a named instance. Choose the configuration path for the units you installed.
+
+| Installation | Service user | Default service | Named instance |
+|---|---|---|---|
+| Manual units in this directory | `nobody` | `/usr/local/etc/mcrelay/config.json` | `/usr/local/etc/mcrelay/INSTANCE.json` |
+| Debian package | `mcrelay` | `/etc/mcrelay/config.json` | `/etc/mcrelay/INSTANCE.json` |
 
 The supplied units set `TasksMax=512` as defense in depth around the program's default 256-worker limit while leaving room for the listener and resolver helpers. If `LISTENER_WORKER_LIMIT` is changed at build time, adjust `TasksMax` with equivalent headroom. Set `MemoryMax` only after measuring the deployment's worker resident set and expected concurrency; a universal memory ceiling would otherwise reject valid configurations unpredictably.
 
 ## Built-in sandboxing
-The supplied units run mcrelay inside a restrictive sandbox: `NoNewPrivileges`, an empty `CapabilityBoundingSet`, `PrivateTmp`/`PrivateDevices`, `ProtectSystem=strict` with `ProtectHome`, kernel and control-group protection, `LockPersonality`, `MemoryDenyWriteExecute`, `RestrictNamespaces`/`RestrictRealtime`/`RestrictSUIDSGID`, and a native-architecture `SystemCallFilter=@system-service` allowlist with `SystemCallErrorNumber=EPERM`. The complete sandbox requires systemd 245 or later because `ProtectClock=` was introduced in that release. This is a sandbox compatibility requirement, not a runtime dependency of mcrelay: older systemd releases may still start the service but ignore unsupported directives. Ubuntu 22.04 ships a compatible systemd 249. On systemd 252 and later you may additionally set `NoExec=true` in a drop-in: mcrelay serves connections purely through `fork()` and never executes another program.
+The supplied units enable `NoNewPrivileges`, clear `CapabilityBoundingSet`, and use `PrivateTmp`, `PrivateDevices` and `ProtectSystem=strict`. They also protect home directories, kernel settings and control groups, lock the process personality, and restrict executable memory mappings, namespaces, realtime scheduling and set-ID files. The native-architecture `SystemCallFilter=@system-service` allowlist uses `EPERM` for denied calls. The full set of directives requires systemd 245 or later for `ProtectClock=`. Ubuntu 22.04 ships a compatible systemd 249. [Service unit](mcrelay.service) · [Template unit](mcrelay@.service)
 
-Two directives need attention when you change defaults. `ReadWritePaths=/var/log/mcrelay` is the only writable path, matching the packaged log directory; if your configuration points `log.filename` elsewhere, extend `ReadWritePaths` with a drop-in (prefix a path with `-` to tolerate a missing directory), or the service will fail to open its log. `CapabilityBoundingSet=` drops every capability, so binding a listen port below 1024 fails with `EACCES`; restore only the required capability in both sets if you need a low port:
+The units allow writes to `/var/log/mcrelay`. If `log.filename` points elsewhere on the read-only host filesystem, create its parent directory, give the service user write access, and add the directory to `ReadWritePaths` in a drop-in.
+
+For a privileged listening port, grant the service `CAP_NET_BIND_SERVICE` with the following drop-in. The kernel's `net.ipv4.ip_unprivileged_port_start` sets the first unprivileged port in the network namespace and defaults to 1024. [Linux IP sysctl reference](https://docs.kernel.org/networking/ip-sysctl.html)
 
 ```ini
 [Service]

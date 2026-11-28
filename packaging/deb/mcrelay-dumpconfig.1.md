@@ -1,6 +1,6 @@
 % MCRELAY-DUMPCONFIG(1) mcrelay | User Commands
 % Bilin Tsui
-% July 2026
+% November 2026
 
 # NAME
 mcrelay-dumpconfig - parse and display an mcrelay configuration file
@@ -9,9 +9,12 @@ mcrelay-dumpconfig - parse and display an mcrelay configuration file
 **mcrelay dumpconfig** [**-c** _config_file_ | **--config** _config_file_]
 
 # DESCRIPTION
-Parse a configuration file and display its parsed values without starting a
-server instance. Useful for validating the syntax and inspecting how the
-configuration is interpreted before actually running the server.
+Parse a JSON configuration file and print its effective values, including
+defaults. The output lists the inbound PROXY settings and each route's
+outgoing header version even when header processing is disabled.
+
+The **run** command performs additional checks. For example, **dumpconfig**
+can display a listen port of 0, which **run** rejects before binding.
 
 # OPTIONS
 **-c**, **--config** _config_file_

@@ -1,7 +1,11 @@
-# LOG LEVEL DEFINITIONS, since v1.1
-# Log levels mentioned here have already been defined in the program. If a new message type is defined, this file will be changed
-Level	Type	Description
-0	Critical	When a non-ignorable error occurs, the program will output this message to STDERR.
-1	Warning	When an ignorable error occurs, the program will output this message to STDOUT.
-2	Information, rate 0	Normal information. e.g.: Incoming login request.
-3	Information, rate 1	Normal information, but annoying. e.g.: Incoming MOTD request.
+# Log levels since v1.1. log.level includes messages at that level and all lower numbers.
+Level	Prefix	Description
+0	CRIT	Critical errors, such as failure to bind the listener.
+1	WARN	Warnings, including rejected connections and resolver-helper degradation.
+2	INFO	Default. Includes the startup version, accepted game connections and enabled Metrics snapshots.
+3	INFO	Also includes successful forwarded STATUS (MOTD) requests.
+
+# Before configuration is available, startup diagnostics go to the console.
+# Critical messages use stderr. Warnings and information use stdout.
+# At readiness with non-terminal stdout (including systemd), the listener redirects
+# stdout and stderr to /dev/null. Subsequent access records go to the configured log.

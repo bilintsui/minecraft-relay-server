@@ -1,4 +1,4 @@
-// These comments are only valid in JSONC. Remove them when writing your own configuration for JSON compliance.
+// Remove the comments before loading this example with mcrelay, or use the accompanying config.json.
 {
   // Optional, log settings
   "log": {
@@ -44,9 +44,9 @@
     "address": "::",
 
     /*
-     * Optional, unsigned short integer (0-65535) (default: 25565)
+     * Optional, integer (1-65535 for a running listener, default: 25565)
      *
-     * The port that the server will listen on
+     * dumpconfig can display 0, but startup and reload reject it as a listening port.
      */
     "port": 25565,
 
@@ -70,7 +70,7 @@
 
       // Case-sensitive. "reject" closes an untrusted connection immediately.
       // "ignore" consumes a valid header and uses socket endpoints.
-      // "accept" lets any peer supply endpoints. V1 UNKNOWN and v2 LOCAL or UNSPEC use actual socket endpoints.
+      // "accept" lets any peer supply TCP endpoints. V1 UNKNOWN and v2 LOCAL, UNSPEC, UDP or UNIX use socket endpoints.
       "untrusted_policy": "reject"
     }
   },
@@ -94,10 +94,10 @@
       "address": "localhost",
 
       /*
-       * Optional, short integer
+       * Optional, integer (0-65535)
        *
        * Port of the target server
-       * When not set, this server will resolve the address as an SRV record
+       * Omit this field to look up _minecraft._tcp.<address> as an SRV record.
        */
       "port": 25565,
 

@@ -21,7 +21,7 @@ Aggregate output is effectively enabled only while `interval` is nonzero and `lo
 Resolver-helper `degraded` and `event_loss` WARNING records and `recovered` INFORMATION records do not depend on `metrics.interval`, although the normal log-level filter still applies to them.
 
 ## Output lifecycle
-At process startup, an INFORMATION record `Starting mcrelay <full-version> on PID <pid>...` identifies the build, using the same version string as `mcrelay version`. It precedes `Binding on ...`, is written once independently of `metrics.interval`, and uses both the configured log and standard output (captured by systemd in the journal). The normal INFORMATION log-level filter applies. Match its PID to later metrics instances in input order; retain the startup record with rotated logs. Historical logs without this record have an unknown version. Version information is not repeated in metrics snapshots.
+At process startup, an INFORMATION record `Starting mcrelay <full-version> on PID <pid>...` identifies the build, using the same version string as `mcrelay version`. It precedes `Binding on ...`, is written once independently of `metrics.interval`, and uses both the configured log and standard output (captured by systemd in the journal). The normal INFORMATION log-level filter applies. Keep the startup record and the first complete `seq=1 reason=startup` snapshot for the same PID together across rotations. The offline report uses that pair to identify the build. An instance first observed at a later sequence or on reconfiguration has an unknown version. [Version attribution](metrics-report.md#interpret-the-result)
 
 Every aggregate snapshot contains one sequence number and one reason:
 
@@ -80,11 +80,11 @@ One complete snapshot contains the following rows in fixed order:
 | `meta` | 1 | Instance, sequence, reason, uptime and output/scheduler errors |
 | `listener` | 1 | Accepted connections, live connections/workers, high-water marks, limits and failures |
 | `capacity` | 2 | `scope=storage` and `scope=supervisor` gauges, limits and saturation |
-| `schedule` | 8 | `priority=background|interactive` × `qtype=a|aaaa|srv|other` |
-| `attempt` | 3 | `qtype=a|aaaa|srv` response, failure, retry, orphan and completion totals |
-| `cache` | 4 | `qtype=a|aaaa|srv|other` acquisition, publication, payload and expiry totals |
-| `assembly` | 3 | `qtype=a|aaaa|srv` creation, terminal, abandonment and limit totals |
-| `route` | 2 | `request_mode=short|worker` resolution, outcome, pending and selected-family totals |
+| `schedule` | 8 | `priority=background\|interactive` × `qtype=a\|aaaa\|srv\|other` |
+| `attempt` | 3 | `qtype=a\|aaaa\|srv` response, failure, retry, orphan and completion totals |
+| `cache` | 4 | `qtype=a\|aaaa\|srv\|other` acquisition, publication, payload and expiry totals |
+| `assembly` | 3 | `qtype=a\|aaaa\|srv` creation, terminal, abandonment and limit totals |
+| `route` | 2 | `request_mode=short\|worker` resolution, outcome, pending and selected-family totals |
 | `helper` | 1 | Failure, spawn, recovery, event-drop and current-state values |
 | `histogram` | 23 | Dispatch wait 6, attempt 3, TTL 9, assembly size 3 and route duration 2 |
 
@@ -112,7 +112,7 @@ Histogram `le_*` values are cumulative and bounds are inclusive. `count` equals 
 |---|---|---|
 | `dispatch_wait_ms` | `priority`, `qtype` | `le_1 le_5 le_10 le_25 le_50 le_100 le_250 le_500 le_1000 le_2000 le_5000 le_10000 le_30000 le_inf count sum_us sample_errors` |
 | `attempt_ms` | `qtype` | `le_1 le_5 le_10 le_25 le_50 le_100 le_250 le_500 le_1000 le_2000 le_5000 le_10000 le_30000 le_inf count sum_us sample_errors` |
-| `ttl_seconds` | `qtype`, `payload_kind=positive|nxdomain|nodata` | `le_0 le_1 le_5 le_30 le_60 le_300 le_1800 le_3600 le_21600 le_86400 le_604800 le_2592000 le_inf count sum_seconds` |
+| `ttl_seconds` | `qtype`, `payload_kind=positive\|nxdomain\|nodata` | `le_0 le_1 le_5 le_30 le_60 le_300 le_1800 le_3600 le_21600 le_86400 le_604800 le_2592000 le_inf count sum_seconds` |
 | `assembly_bytes` | `qtype` | `le_0 le_64 le_256 le_1024 le_4096 le_16384 le_65536 le_262144 le_1048576 le_inf count sum_bytes` |
 | `route_ms` | `request_mode` | `le_1 le_5 le_10 le_25 le_50 le_100 le_250 le_500 le_1000 le_2000 le_5000 le_10000 le_30000 le_inf count sum_us sample_errors` |
 
@@ -138,7 +138,8 @@ These are complete grammars, not examples that permit extra fields. A missing, u
 - `cache_owned_bytes_*` and `assembly_owned_bytes_*` are module-accounted requested allocation sizes, not RSS or total heap use.
 - Resident cache payloads can include data whose expiry has not yet been discovered by a cache view; `resident` does not mean `fresh`.
 - `outcome_ready` means route resolution produced a usable local response or endpoint/worker plan. It does not mean the upstream connected, a STATUS relay completed or a player was served; `outcome_ready / requests_started` is not an end-to-end success rate.
-- Stage 1 does not observe long-worker connect/relay results, worker exit success, inbound PROXY protocol, or overall endpoint health. STATUS short-connection outcomes are also intentionally not modeled as general endpoint health.
+- `accepted_total` counts successful TCP accepts, including peers subsequently rejected by the PROXY trust policy. Individual PROXY decisions appear in access records. Schema 1 has no per-PROXY counters.
+- Stage 1 does not observe long-worker connect/relay results, worker exit success, or overall endpoint health. STATUS short-connection outcomes are also intentionally not modeled as general endpoint health.
 
 For unsaturated values within one snapshot, these relationships are useful validation checks:
 

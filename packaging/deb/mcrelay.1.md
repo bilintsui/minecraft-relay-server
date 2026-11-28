@@ -1,6 +1,6 @@
 % MCRELAY(1) mcrelay | User Commands
 % Bilin Tsui
-% July 2026
+% November 2026
 
 # NAME
 mcrelay - Minecraft reverse proxy server with server address rewrite

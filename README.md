@@ -55,7 +55,7 @@ cmake -S . -B build-debug -DCMAKE_BUILD_TYPE=Debug -DDEBUG_MODE=ON -DBUILD_TESTI
 cmake --build build-debug --parallel "$(nproc)"
 ```
 
-The executable is <code>build-debug/mcrelay</code>. <code>Debug</code> selects compiler debugging flags; the separate <code>DEBUG_MODE=ON</code> switch allows blocking FIFO configuration input during <code>dumpconfig</code>, startup and reload, and adds <code>-debug</code> only to <code>mcrelay version</code>. The help banner is unchanged. FIFO input can stall configuration loading if its writer is absent or does not close its output; icon input still requires a regular file.
+The executable is <code>build-debug/mcrelay</code>. <code>Debug</code> selects compiler debugging flags. The separate <code>DEBUG_MODE=ON</code> switch allows blocking FIFO configuration input during <code>dumpconfig</code>, startup and reload. The shared version string in <code>mcrelay version</code> and the startup log includes <code>-debug</code>. The help banner uses the base display version with its Git and internal version information. FIFO input can stall configuration loading if its writer is absent or keeps the FIFO open. Icon input requires a regular file.
 
 The marker follows <code>DEBUG_MODE</code>, not the build type. Neither setting automatically enables sanitizers, verbose logging or runtime test hooks in <code>mcrelay</code>. See the [detailed debug effects](doc/building.md#debug-mode-and-version-identification) and [Testing](#testing).
 
@@ -107,7 +107,7 @@ The program runs in the foreground. Use a service manager such as systemd when i
 Multiple instances can run with separate configuration files as long as their listening addresses do not conflict.
 
 ## Config
-See the [JSON configuration example](doc/configuration/mcrelay/config.json) or the [annotated JSONC example](doc/configuration/mcrelay/config.jsonc).
+Use a JSON configuration with at least one valid route in the top-level `proxy` array. The JSON example can be used directly. The JSONC example explains each field and must have its comments removed before use. [JSON example](doc/configuration/mcrelay/config.json) · [Annotated example](doc/configuration/mcrelay/config.jsonc)
 
 ## Operational metrics
 Aggregate operational metrics are disabled by default. Set <code>metrics.interval</code> to an integer from 300 to 86400 seconds and keep <code>log.level</code> at 2 or higher to emit them through the configured log. For example:

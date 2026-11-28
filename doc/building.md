@@ -221,7 +221,7 @@ ctest --test-dir build-tests -N
 ctest --test-dir build-tests --output-on-failure -R '^(resolver_supervisor|listener_short_runtime)$'
 ```
 
-Do not run a bare CTest command at the repository root and assume it ran the configured suite. On older CTest, change into `build-tests` before invoking it. Test availability/count depends on compiler support and Git availability; inspect the configured list rather than relying on a fixed total.
+Run CTest in the configured build directory. Git enables the version-generation test. Python 3.8+ enables the integration, packaging and reporting tests. With Python and HAProxy installed, CMake also registers `proxy_haproxy`, which checks a relay chain against a real PROXY sender. Use `ctest -N` in the build directory to see the tests available for that toolchain.
 
 ### Additional UBSan module tests
 ```sh
@@ -271,7 +271,7 @@ For an already prepared cross-build environment, for example:
 ./packaging/deb/build-deb.sh --arch arm64 --cc aarch64-linux-gnu-gcc
 ```
 
-The script always configures Release, `DEBUG_MODE=OFF` and `BUILD_TESTING=OFF`; it does not run the test suite or expose arbitrary CMake flags/toolchain-file arguments. Besides compilation dependencies, it requires Debian packaging tools, `pandoc`, `gzip` and suitable stripping tools. It expects the top Debian changelog version to match the source display version converted to Debian ordering plus package revision `-1`.
+The script configures Release with `DEBUG_MODE=OFF` and `BUILD_TESTING=OFF`. Besides compilation dependencies, it requires Debian packaging tools, `pandoc`, `gzip` and a strip tool for the selected architecture. Use a release tag that includes Debian packaging to build that release's package. The first entry in `packaging/deb/changelog` must match the source display version converted to Debian ordering plus revision `-1`. On a development checkout with a different display version, the script exits at this check before clearing the build directory.
 
 Argument values, source/changelog version consistency, required commands and a compiler/development-library compile/link probe are checked before the generated build directory is cleared. The script asks the selected compiler for its strip tool with `-print-prog-name=strip` and verifies that tool against the disposable probe binary before clearing the build. The probe is never executed, including for cross-builds. Omitting `--arch` or `--cc` uses the defaults above; specifying either option without a value is a usage error. These checks do not modify release versions or install the package.
 
@@ -280,7 +280,7 @@ It builds under `build-deb-<arch>`, outputs packages under `packaging/deb/out`, 
 The script sets its own umask to `022`, so newly created package directories and files have predictable permissions regardless of the invoking shell's umask. Explicit install modes keep ordinary files at `0644` and executables at `0755`; the invoking shell's umask is unchanged.
 
 ## Automated build and release
-The [build workflow](../.github/workflows/build.yml) runs on branch pushes. It keeps the production/Debug build and Debug+UBSan checks, adds optimized Release+UBSan tests and a separate global ASan+UBSan+LeakSanitizer job, and requires the Python integration tests to be registered. Failed test logs are stored as workflow artifacts. Tag pushes do not repeat these tests.
+Branch pushes build the production executable and run three test configurations. Debug and optimized Release include the UBSan module tests. A separate Debug job instruments all targets with ASan and UBSan and enables leak detection. All three check the required CTest registrations before running the suite. The Debug+UBSan job also installs HAProxy and requires its interoperability test. Failed test logs are stored as workflow artifacts. [Build workflow](../.github/workflows/build.yml) · [Required tests](../.github/scripts/check-registered-tests.py)
 
 The [release workflow](../.github/workflows/release.yml) runs on `v*` tag pushes. It resolves lightweight or annotated tags to a fixed commit and waits up to 30 minutes for that commit's latest `build.yml` push run and current attempt to finish successfully. Missing, queued or running CI can be awaited; failed/cancelled/skipped results and API failures block release preparation. Pushing the branch and immediately pushing its tag is supported, as is waiting for CI first. Later branch commits do not replace the tagged source or cancel its build checks.
 
