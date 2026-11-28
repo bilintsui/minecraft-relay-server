@@ -22,6 +22,7 @@
 #include "../connection/setup_short.h"
 #include "../network.h"
 #include "../protocol/proxy.h"
+#include "../resolver/supervisor.h"
 #include "../route/endpoint.h"
 #include "../route/generation.h"
 #include "../route/waiter.h"
@@ -35,6 +36,13 @@ typedef struct {
 	size_t offset;
 	size_t size;
 } listener_connection_buffer;
+typedef enum {
+	LISTENER_CONNECTION_ABORT,
+	LISTENER_CONNECTION_CLOSED,
+	LISTENER_CONNECTION_FATAL,
+	LISTENER_CONNECTION_PENDING,
+	LISTENER_CONNECTION_READY
+} listener_connection_progress;
 typedef enum {
 	LISTENER_CONNECTION_ROUTE_INVALID,
 	LISTENER_CONNECTION_ROUTE_SHORT_LOCAL,
@@ -104,5 +112,23 @@ typedef struct listener_connection {
 	route_waiter_status waiter_status;
 	char vhost[ROUTE_ENDPOINT_TEXT_SIZE];
 } listener_connection;
+
+/* section: functions (exported) */
+net_addrbundle listener_connection_client(const listener_connection *connection);
+/* Takes ownership of the accepted socket and retained route generation, including on failure. */
+listener_connection *listener_connection_create(int client_fd, const net_addr *peer_address, in_port_t peer_port, const listener_events *events, route_generation *generation);
+bool listener_connection_destroy(listener_connection **connections, listener_connection *target, const listener_events *events, listener_metrics_state *metrics,
+	listener_metrics_outcome unsettled_outcome, resolver_supervisor *supervisor, const struct timespec *now);
+void listener_connection_finish(listener_connection *connection, listener_connection_progress progress, const char *log_filename, uint8_t log_level);
+int listener_connection_interests_update(listener_connection *connection, const listener_events *events);
+size_t listener_connection_limit(void);
+bool listener_connection_route_release(listener_connection *connection, listener_metrics_state *metrics, resolver_supervisor *supervisor, const struct timespec *now);
+bool listener_connection_snapshot_prepare(const listener_connection *connection, const char *working_directory, connection_setup_snapshot *result);
+int listener_connection_timer_arm(listener_connection *connection, listener_connection_timer timer);
+int listener_connection_timer_arm_short(listener_connection *connection, listener_connection_timer timer, const struct timespec *now, uint64_t seconds);
+int listener_connection_timer_set(listener_connection *connection, listener_connection_timer timer, const struct timespec *expiration);
+void listener_connections_close_except(listener_connection *connections, const listener_connection *except);
+bool listener_connections_destroy_closed(listener_connection **connections, const listener_events *events, listener_metrics_state *metrics,
+	resolver_supervisor *supervisor, const struct timespec *now, size_t *destroyed_count);
 
 #endif

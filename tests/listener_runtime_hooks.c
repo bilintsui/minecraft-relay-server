@@ -11,13 +11,17 @@
 
 /* section: headers (library) */
 #include <errno.h>
+#include <poll.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <systemd/sd-daemon.h>
+#include <time.h>
 
 /* section: headers (project) */
 #include "connection/setup_short.h"
+#include "listener/connection.h"
 
 /* section: headers (self) */
 #include "listener_runtime_hooks.h"
@@ -84,6 +88,44 @@ int __wrap_getpeername(int fd, struct sockaddr *address, socklen_t *size) {
 	}
 	return __real_getpeername(fd, address, size);
 }
+
+#ifdef LISTENER_TIMER_REARM_TEST
+int listener_test_connection_timer_rearm(const listener_requests *requests) {
+	static bool triggered;
+	if (triggered || getenv("MCRELAY_TEST_TIMER_REARM_RACE") == NULL) {
+		return 0;
+	}
+	for (size_t ready_index = 0; ready_index < requests->ready_count; ready_index++) {
+		const listener_ready_event *ready = &requests->ready[ready_index];
+		if (ready->source == NULL || ready->source->kind != LISTENER_EVENT_TIMEOUT || ready->source->connection == NULL || ready->source->connection->closing) {
+			continue;
+		}
+		listener_connection *connection = ready->source->connection;
+		struct timespec now;
+		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+			return -1;
+		}
+		/* Replace the collected expiration with a readable newer generation before the timeout pass. */
+		connection->lifetime_deadline = now;
+		if (listener_connection_timer_set(connection, LISTENER_CONNECTION_TIMER_SHORT_LIFETIME, &now) == -1) {
+			return -1;
+		}
+		struct pollfd timer_event = { .fd = connection->timer_fd, .events = POLLIN };
+		int poll_result;
+		do {
+			poll_result = poll(&timer_event, 1, 1000);
+		} while (poll_result == -1 && errno == EINTR);
+		if (poll_result != 1 || !(timer_event.revents & POLLIN)) {
+			errno = poll_result == 0 ? ETIMEDOUT : EIO;
+			return -1;
+		}
+		sd_notify(0, "MCRELAY_TEST_TIMER_REARM=1");
+		triggered = true;
+		return 0;
+	}
+	return 0;
+}
+#endif
 
 int listener_test_early_collect_observe(bool resolver_ready, bool retired_before_collect) {
 #ifdef LISTENER_EARLY_COLLECT_TEST

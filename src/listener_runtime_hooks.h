@@ -16,10 +16,14 @@
 /* section: headers (library) */
 #include <stdbool.h>
 
+/* section: headers (project) */
+#include "listener/events.h"
+
 /* section: types */
 typedef int (*listener_test_timer_disarm_fn)(const void *context);
 
 /* section: functions (exported) */
+int listener_test_connection_timer_rearm(const listener_requests *requests);
 int listener_test_early_collect_observe(bool resolver_ready, bool retired_before_collect);
 int listener_test_early_collect_reload_ack(void);
 int listener_test_ready_flip_hold(bool runtime_ready, bool warmup_complete, listener_test_timer_disarm_fn disarm, const void *context);
