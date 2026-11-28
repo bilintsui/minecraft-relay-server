@@ -74,8 +74,8 @@ static const log_symbol log_symbols[] = {
 	{ "#defineMKSYS_LOG(logfile,maxlevel,lvl,...)mksysmsg(MKSYS_PREFIX_ON,logfile,maxlevel,lvl,MKSYS_LINE_END,__VA_ARGS__)", "src/log.h", 3, "MKSYS_LOG" },
 	{ "#defineCONNECTION_SETUP_LOG(snapshot,lvl,...)MKSYS_LOG((snapshot)->log_filename,(snapshot)->log_level,lvl,__VA_ARGS__)", "src/connection/setup.h", 2, "CONNECTION_SETUP_LOG" },
 	{ "#defineLOG(lvl,...)MKSYS_LOG(MKSYS_NOLOGFILE,MKSYS_LEVEL_ALL,lvl,__VA_ARGS__)", "src/main.c", 1, "LOG" },
-	{ "#defineLISTENER_LOG(ctx,lvl,...)MKSYS_LOG((ctx)->log_filename,(ctx)->config->log.level,lvl,__VA_ARGS__)", "src/listener.c", 2, "LISTENER_LOG" },
-	{ "#defineLISTENER_LOG_TERMINAL(ctx,lvl,...)MKSYS_LOG(MKSYS_NOLOGFILE,(ctx)->config->log.level,lvl,__VA_ARGS__)", "src/listener.c", 2, "LISTENER_LOG_TERMINAL" }
+	{ "#defineLISTENER_LOG(ctx,lvl,...)MKSYS_LOG((ctx)->log_filename,(ctx)->config->log.level,lvl,__VA_ARGS__)", "src/listener/context.h", 2, "LISTENER_LOG" },
+	{ "#defineLISTENER_LOG_TERMINAL(ctx,lvl,...)MKSYS_LOG(MKSYS_NOLOGFILE,(ctx)->config->log.level,lvl,__VA_ARGS__)", "src/listener/context.h", 2, "LISTENER_LOG_TERMINAL" }
 };
 
 static const char *const reserved_starts[] = { "metrics schema=", "resolver_helper", "Starting mcrelay " };
@@ -973,7 +973,7 @@ static bool self_tests(void) {
 	static const unsigned char nul_middle[] = { 'x', 0, '#', '#', '\n' };
 	static const unsigned char nul_end[] = { 'x', 0 };
 	if (!expect_bytes(safe_call, sizeof(safe_call) - 1U, true)
-		|| !expect_bytes_path(safe_zero_call_wrapper, sizeof(safe_zero_call_wrapper) - 1U, "src/listener.c", true)
+		|| !expect_bytes_path(safe_zero_call_wrapper, sizeof(safe_zero_call_wrapper) - 1U, "src/listener/context.h", true)
 		|| !expect_bytes_path(startup_call, sizeof(startup_call) - 1U, "src/listener.c", true)
 		|| !expect_bytes(startup_call, sizeof(startup_call) - 1U, false)
 		|| !expect_bytes(strict_splice, sizeof(strict_splice) - 1U, true) || !expect_bytes(strict_splice_crlf, sizeof(strict_splice_crlf) - 1U, true)

@@ -34,7 +34,9 @@
 #include "define/exitcode.h"
 #include "listener/connection.h"
 #include "listener/connection_route.h"
+#include "listener/context.h"
 #include "listener/events.h"
+#include "listener/generation.h"
 #include "listener/metrics.h"
 #include "listener/short.h"
 #include "listener/socket.h"
@@ -68,9 +70,6 @@
 #ifndef LISTENER_ACCEPT_BATCH
 #define LISTENER_ACCEPT_BATCH	128
 #endif
-#ifndef LISTENER_HOSTS_FILENAME
-#define LISTENER_HOSTS_FILENAME	"/etc/hosts"
-#endif
 #ifndef LISTENER_ROUTE_PREWARM_BATCH_LIMIT
 #define LISTENER_ROUTE_PREWARM_BATCH_LIMIT	64
 #endif
@@ -80,55 +79,15 @@
 #ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
 #define LISTENER_ROUTE_TIMER_ARMED_TEST_DELAY_SEC	60
 #endif
-#ifndef LISTENER_WORKER_LIMIT
-#define LISTENER_WORKER_LIMIT	256
-#endif
 #ifndef LISTENER_WORKER_LOG_INTERVAL_SEC
 #define LISTENER_WORKER_LOG_INTERVAL_SEC	10
-#endif
-#if LISTENER_WORKER_LIMIT < 1
-#error "LISTENER_WORKER_LIMIT must be positive"
 #endif
 
 /* process names */
 #define LISTENER_PROCESS_NAME	"mrs-listener"
 #define LISTENER_WORKER_PROCESS_NAME	"worker"
 
-/* logging macro */
-#define LISTENER_LOG(ctx, lvl, ...)	MKSYS_LOG((ctx)->log_filename, (ctx)->config->log.level, lvl, __VA_ARGS__)
-#define LISTENER_LOG_TERMINAL(ctx, lvl, ...)	MKSYS_LOG(MKSYS_NOLOGFILE, (ctx)->config->log.level, lvl, __VA_ARGS__)
-
 /* section: types */
-typedef enum {
-	LISTENER_ROUTE_PREPARE_OK,
-	LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR,
-	LISTENER_ROUTE_PREPARE_TIME_ERROR
-} listener_route_prepare_status;
-typedef struct {
-	size_t count;
-	bool refusal_logged;
-	struct timespec refusal_logged_at;
-	pid_t pids[LISTENER_WORKER_LIMIT];
-} listener_workers;
-typedef struct {
-	conf *config;
-	conf_cache *config_cache;
-	const char *config_filename;
-	const char *config_filename_full;
-	resolver_cache *dns_cache;
-	uint64_t generation_next_identity;
-	route_generation_registry *generations;
-	hosts_table *hosts;
-	char log_filename[PATH_MAX];
-	listener_metrics_state metrics;
-	listener_metrics_runtime metrics_runtime;
-	resolver_supervisor *resolver;
-	route_bindings *route_bindings;
-	route_resolution *route_resolution;
-	route_table *routes;
-	const char *working_directory;
-	listener_workers workers;
-} listener_context;
 typedef struct {
 	struct timespec deadline;
 	bool pressure_logged;
@@ -336,126 +295,6 @@ static listener_connection_progress listener_connection_timeout(listener_connect
 		? LISTENER_CONNECTION_READY : LISTENER_CONNECTION_ABORT;
 }
 
-static bool listener_generation_collect(listener_context *context, const struct timespec *now) {
-	route_generation_registry_collect_status status = route_generation_registry_collect(context->generations, context->resolver, now);
-	switch (status) {
-		case ROUTE_GENERATION_REGISTRY_COLLECT_NONE:
-		case ROUTE_GENERATION_REGISTRY_COLLECT_RETAINED:
-		case ROUTE_GENERATION_REGISTRY_COLLECT_COLLECTED:
-			return true;
-		case ROUTE_GENERATION_REGISTRY_COLLECT_IO:
-			errno = EIO;
-			return false;
-		case ROUTE_GENERATION_REGISTRY_COLLECT_TIME:
-			errno = EOVERFLOW;
-			return false;
-		case ROUTE_GENERATION_REGISTRY_COLLECT_BAD_ARGUMENT:
-		default:
-			errno = EINVAL;
-			return false;
-	}
-}
-
-static bool listener_generation_create(listener_context *context, conf *config, hosts_table *hosts, route_table *routes, route_bindings *bindings,
-	route_resolution *resolution, mksys_level failure_level, const char *failure_action, route_generation **result) {
-	if (result == NULL || *result != NULL) {
-		return false;
-	}
-	route_generation_create_status status = route_generation_create(context->generation_next_identity, config, hosts, routes, bindings, resolution, result);
-	if (status == ROUTE_GENERATION_CREATE_OK) {
-		return true;
-	}
-	LISTENER_LOG(context, failure_level,
-		"Cannot own prepared proxy route generation: %s%s.",
-		status == ROUTE_GENERATION_CREATE_MEMORY ? "memory allocation failed" : "invalid internal generation state", failure_action
-	);
-	return false;
-}
-
-static route_generation_registry_publish_status listener_generation_publish(listener_context *context, route_generation **candidate) {
-	if (context == NULL || candidate == NULL || *candidate == NULL || context->resolver == NULL) {
-		errno = EINVAL;
-		return ROUTE_GENERATION_REGISTRY_PUBLISH_BAD_ARGUMENT;
-	}
-	struct timespec now;
-	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
-		return ROUTE_GENERATION_REGISTRY_PUBLISH_TIME;
-	}
-	route_generation_registry_publish_status status = route_generation_registry_publish(context->generations, candidate, context->resolver, &now);
-	if (*candidate != NULL) {
-		if (status == ROUTE_GENERATION_REGISTRY_PUBLISH_BAD_ARGUMENT) {
-			errno = EINVAL;
-		} else if (status == ROUTE_GENERATION_REGISTRY_PUBLISH_IO) {
-			errno = EIO;
-		} else if (status == ROUTE_GENERATION_REGISTRY_PUBLISH_TIME) {
-			errno = EOVERFLOW;
-		}
-		return status;
-	}
-	route_generation *active = route_generation_registry_active(context->generations);
-	if (active == NULL) {
-		errno = EINVAL;
-		return ROUTE_GENERATION_REGISTRY_PUBLISH_BAD_ARGUMENT;
-	}
-	context->config = (conf *)route_generation_config(active);
-	context->hosts = (hosts_table *)route_generation_hosts(active);
-	context->route_bindings = (route_bindings *)route_generation_bindings(active);
-	context->route_resolution = route_generation_resolution(active);
-	context->routes = (route_table *)route_generation_routes(active);
-	context->generation_next_identity = context->generation_next_identity == UINT64_MAX ? 0 : context->generation_next_identity + 1U;
-	if (status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
-		errno = status == ROUTE_GENERATION_REGISTRY_PUBLISH_IO ? EIO : status == ROUTE_GENERATION_REGISTRY_PUBLISH_TIME ? EOVERFLOW : EINVAL;
-	}
-	return status;
-}
-
-static const char *listener_hosts_load_error(hosts_load_status status) {
-	switch (status) {
-		case HOSTS_LOAD_LIMIT:
-			return "entry limit reached";
-		case HOSTS_LOAD_MEMORY:
-			return "memory allocation failed";
-		case HOSTS_LOAD_BAD_ARGUMENT:
-		default:
-			return "invalid loader state";
-	}
-}
-
-static bool listener_hosts_prepare(listener_context *context, mksys_level failure_level, const char *failure_action, hosts_table **result) {
-	if (result == NULL || *result != NULL) {
-		return false;
-	}
-	size_t malformed_line_count = 0;
-	hosts_load_status status = hosts_table_load(LISTENER_HOSTS_FILENAME, result, &malformed_line_count);
-	if (status != HOSTS_LOAD_OK && status != HOSTS_LOAD_FILE_ERROR) {
-		LISTENER_LOG(context, failure_level,
-			"Cannot prepare local static host table from %s: %s%s.",
-			LISTENER_HOSTS_FILENAME, listener_hosts_load_error(status), failure_action
-		);
-		return false;
-	}
-	if (*result == NULL) {
-		LISTENER_LOG(context, failure_level,
-			"Cannot prepare local static host table from %s: loader returned no table%s.",
-			LISTENER_HOSTS_FILENAME, failure_action
-		);
-		return false;
-	}
-	if (status == HOSTS_LOAD_FILE_ERROR) {
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
-			"Cannot read local static host table from %s; using guaranteed localhost entries.",
-			LISTENER_HOSTS_FILENAME
-		);
-	}
-	if (malformed_line_count > 0) {
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
-			"Ignored %zu malformed line%s while loading local static host table from %s.",
-			malformed_line_count, malformed_line_count == 1 ? "" : "s", LISTENER_HOSTS_FILENAME
-		);
-	}
-	return true;
-}
-
 static bool listener_hosts_watch_process(listener_context *context, listener_events *events, bool failed, bool ready) {
 	bool changed = failed;
 	bool refresh = failed;
@@ -587,79 +426,6 @@ static int listener_notify_reloading(void) {
 	return 0;
 }
 
-static bool listener_route_bindings_prepare(listener_context *context, const route_table *routes, const hosts_table *hosts, mksys_level failure_level, const char *failure_action, route_bindings **result) {
-	route_bindings_build_status status = route_bindings_build(routes, hosts, context->dns_cache, result);
-	if (status == ROUTE_BINDINGS_BUILD_OK) {
-		return true;
-	}
-	const char *reason;
-	switch (status) {
-		case ROUTE_BINDINGS_BUILD_LIMIT:
-			reason = "resolver cache capacity reached";
-			break;
-		case ROUTE_BINDINGS_BUILD_MEMORY:
-			reason = "memory allocation failed";
-			break;
-		case ROUTE_BINDINGS_BUILD_BAD_ARGUMENT:
-		case ROUTE_BINDINGS_BUILD_INVALID:
-		default:
-			reason = "invalid internal binding state";
-			break;
-	}
-	LISTENER_LOG(context, failure_level, "Cannot prepare proxy resolver bindings: %s%s.", reason, failure_action);
-	return false;
-}
-
-static listener_route_prepare_status listener_route_resolution_prepare(listener_context *context, const route_bindings *bindings, const hosts_table *hosts,
-	mksys_level failure_level, const char *failure_action, route_resolution **result) {
-	struct timespec now;
-	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
-		return LISTENER_ROUTE_PREPARE_TIME_ERROR;
-	}
-	route_resolution_build_status status = route_resolution_build(bindings, hosts, context->dns_cache, &now, result);
-	if (status == ROUTE_RESOLUTION_BUILD_OK) {
-		return LISTENER_ROUTE_PREPARE_OK;
-	}
-	const char *reason = status == ROUTE_RESOLUTION_BUILD_MEMORY ? "memory allocation failed" : "invalid internal resolution state";
-	LISTENER_LOG(context, failure_level, "Cannot prepare proxy route resolution: %s%s.", reason, failure_action);
-	return LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR;
-}
-
-static listener_route_prepare_status listener_generation_prepare(listener_context *context, conf **config, hosts_table **hosts, mksys_level failure_level,
-	const char *failure_action, route_generation **result) {
-	if (config == NULL || *config == NULL || hosts == NULL || *hosts == NULL || result == NULL || *result != NULL) {
-		return LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR;
-	}
-	route_bindings *bindings = NULL;
-	route_resolution *resolution = NULL;
-	route_table *routes = NULL;
-	route_table_build_status route_status = route_table_build(*config, &routes);
-	if (route_status != ROUTE_TABLE_BUILD_OK) {
-		LISTENER_LOG(context, failure_level,
-			"Cannot prepare proxy routes: %s%s.",
-			route_status == ROUTE_TABLE_BUILD_MEMORY ? "memory allocation failed" : "invalid internal route state", failure_action
-		);
-		return LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR;
-	}
-	if (!listener_route_bindings_prepare(context, routes, *hosts, failure_level, failure_action, &bindings)) {
-		route_table_destroy(routes);
-		return LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR;
-	}
-	listener_route_prepare_status status = listener_route_resolution_prepare(context, bindings, *hosts, failure_level, failure_action, &resolution);
-	if (status == LISTENER_ROUTE_PREPARE_OK && !listener_generation_create(context, *config, *hosts, routes, bindings, resolution, failure_level, failure_action, result)) {
-		status = LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR;
-	}
-	if (status == LISTENER_ROUTE_PREPARE_OK) {
-		*config = NULL;
-		*hosts = NULL;
-		return status;
-	}
-	route_resolution_destroy(resolution);
-	route_bindings_destroy(bindings);
-	route_table_destroy(routes);
-	return status;
-}
-
 static int listener_hosts_reload(listener_context *context) {
 	conf *config_candidate = NULL;
 	hosts_table *hosts_candidate = NULL;
@@ -691,7 +457,7 @@ static int listener_hosts_reload(listener_context *context) {
 	if (publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
 		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
 			"Cannot publish the automatically reloaded local static host route generation: %s.",
-			publish_status == ROUTE_GENERATION_REGISTRY_PUBLISH_BLOCKED ? "a retired generation is still pinned" : strerror(errno)
+			listener_generation_publish_error(publish_status)
 		);
 		result = -1;
 		goto cleanup;
@@ -956,7 +722,7 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 			if (publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
 				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
 					"Cannot publish the prepared proxy route generation: %s.",
-					publish_status == ROUTE_GENERATION_REGISTRY_PUBLISH_BLOCKED ? "a retired generation is still pinned" : strerror(errno)
+					listener_generation_publish_error(publish_status)
 				);
 				result = -1;
 				break;
@@ -1067,7 +833,7 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 				if (publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
 					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
 						"Cannot publish the replacement proxy route generation: %s.",
-						publish_status == ROUTE_GENERATION_REGISTRY_PUBLISH_BLOCKED ? "a retired generation is still pinned" : strerror(errno)
+						listener_generation_publish_error(publish_status)
 					);
 					result = -1;
 				} else if (publish_hosts) {
@@ -1164,13 +930,7 @@ static void listener_worker_refusal_log(listener_context *context) {
 }
 
 static void listener_worker_route_state_dispose(listener_context *context) {
-	route_generation_registry_dispose_in_child(context->generations);
-	context->generations = NULL;
-	context->config = NULL;
-	context->hosts = NULL;
-	context->route_bindings = NULL;
-	context->route_resolution = NULL;
-	context->routes = NULL;
+	listener_generation_dispose_in_child(context);
 	resolver_cache_destroy(context->dns_cache);
 	context->dns_cache = NULL;
 }
@@ -1345,44 +1105,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		listener_socket_close(listener);
 		return EXITCODE_INTERNAL;
 	}
-	if (!listener_route_bindings_prepare(context, context->routes, context->hosts, MKSYS_LEVEL_CRITICAL, "", &context->route_bindings)) {
-		listener_resolver_destroy(context);
-		listener_events_destroy(&events);
-		listener_socket_close(listener);
-		return EXITCODE_INTERNAL;
-	}
-	listener_route_prepare_status resolution_status = listener_route_resolution_prepare(context, context->route_bindings, context->hosts, MKSYS_LEVEL_CRITICAL, "", &context->route_resolution);
-	if (resolution_status != LISTENER_ROUTE_PREPARE_OK) {
-		if (resolution_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
-			LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-				"Cannot sample the monotonic clock while preparing proxy route resolution: %s",
-				strerror(errno)
-			);
-		}
-		listener_resolver_destroy(context);
-		listener_events_destroy(&events);
-		listener_socket_close(listener);
-		return EXITCODE_INTERNAL;
-	}
-	route_generation *initial_generation = NULL;
-	if (!listener_generation_create(context, context->config, context->hosts, context->routes, context->route_bindings, context->route_resolution, MKSYS_LEVEL_CRITICAL, "", &initial_generation)) {
-		listener_resolver_destroy(context);
-		listener_events_destroy(&events);
-		listener_socket_close(listener);
-		return EXITCODE_INTERNAL;
-	}
-	route_generation_registry_publish_status initial_publish_status = listener_generation_publish(context, &initial_generation);
-	if (initial_publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-			"Cannot publish the initial proxy route generation: %s.",
-			initial_publish_status == ROUTE_GENERATION_REGISTRY_PUBLISH_BLOCKED ? "a retired generation is still pinned" : strerror(errno)
-		);
-		route_generation_release(initial_generation);
-		context->config = NULL;
-		context->hosts = NULL;
-		context->route_bindings = NULL;
-		context->route_resolution = NULL;
-		context->routes = NULL;
+	if (!listener_generation_initial_publish(context)) {
 		listener_resolver_destroy(context);
 		listener_events_destroy(&events);
 		listener_socket_close(listener);
@@ -1876,7 +1599,6 @@ exit_code listener_run(conf *config, conf_cache *config_cache, const char *confi
 	if (prctl(PR_SET_NAME, LISTENER_PROCESS_NAME) == -1) {
 		LISTENER_LOG(&context, MKSYS_LEVEL_WARNING, "Cannot set listener process name: %s", strerror(errno));
 	}
-	bool generation_owned;
 	exit_code exitcode;
 	listener_socket listener = { .fd = -1 };
 	listener_endpoint_status endpoint_status = listener_endpoint_prepare(context.config, &listener.endpoint);
@@ -1905,15 +1627,7 @@ exit_code listener_run(conf *config, conf_cache *config_cache, const char *confi
 	}
 	exitcode = listener_loop(&context, &listener);
 cleanup:
-	generation_owned = route_generation_registry_active(context.generations) != NULL;
-	route_generation_registry_destroy(context.generations);
-	if (!generation_owned) {
-		route_resolution_destroy(context.route_resolution);
-		route_bindings_destroy(context.route_bindings);
-		hosts_table_destroy(context.hosts);
-		route_table_destroy(context.routes);
-		config_destroy(context.config);
-	}
+	listener_generation_destroy(&context);
 	config_cache_destroy(context.config_cache);
 	resolver_cache_destroy(context.dns_cache);
 	return exitcode;
