@@ -2405,11 +2405,14 @@ static int listener_route_runtime_ready(listener_context *context, listener_rout
 	listener_notify_ready();
 	if (!isatty(STDOUT_FILENO)) {
 		fflush(stdout);
-		/* Configuration validation during reload still reports to stderr. */
+		fflush(stderr);
 		int null_fd = open("/dev/null", O_WRONLY | O_CLOEXEC);
 		if (null_fd != -1) {
 			dup2(null_fd, STDOUT_FILENO);
-			if (null_fd != STDOUT_FILENO) {
+			if (dup2(null_fd, STDERR_FILENO) != -1) {
+				log_stderr_prepare();
+			}
+			if (null_fd != STDOUT_FILENO && null_fd != STDERR_FILENO) {
 				close(null_fd);
 			}
 		}
@@ -2567,7 +2570,7 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 	conf *config_candidate = NULL;
 	route_generation *generation_candidate = NULL;
 	bool primary_published = false;
-	conf_read_status read_status = config_read(context->config_filename_full, context->config_cache, &config_cache_candidate, &config_candidate);
+	conf_read_status read_status = config_read_with_log(context->config_filename_full, context->config_cache, &config_cache_candidate, &config_candidate, config_logfull_old, config_maxlevel);
 	switch (read_status) {
 		case CONF_READ_CHANGED: {
 			listener_endpoint candidate_endpoint;
@@ -2695,7 +2698,7 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 		case CONF_READ_ERROR:
 			switch (errno) {
 				case CONF_ECINBOUND:
-					/* The shared validator already reported the field on stderr. */
+					/* The field diagnostic was written to the active log during validation. */
 					break;
 				case CONF_EROPENFAIL:
 				case CONF_EROPENEMPTY:
@@ -3573,6 +3576,7 @@ exit_code listener_run(conf *config, conf_cache *config_cache, const char *confi
 		.working_directory = working_directory
 	};
 	snprintf(context.log_filename, sizeof(context.log_filename), "%s", log_filename);
+	log_stderr_prepare();
 	LISTENER_LOG(&context, MKSYS_LEVEL_INFORMATION, "Starting mcrelay %s on PID %jd...", version_info_get(), (intmax_t)getpid());
 	if (prctl(PR_SET_NAME, LISTENER_PROCESS_NAME) == -1) {
 		LISTENER_LOG(&context, MKSYS_LEVEL_WARNING, "Cannot set listener process name: %s", strerror(errno));

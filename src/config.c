@@ -26,6 +26,14 @@
 /* section: headers (self) */
 #include "config.h"
 
+/* section: types */
+typedef struct {
+	const char *filename;
+	uint8_t maxlevel;
+	mksys_level level;
+	const char *suffix;
+} conf_validation_log;
+
 /* section: global variables */
 static char config_duperr[CONF_ADDRESSMAXLEN] = { 0 };
 static const char *const config_untrusted_policies[] = { [CONF_UNTRUSTED_REJECT] = "reject", [CONF_UNTRUSTED_IGNORE] = "ignore", [CONF_UNTRUSTED_ACCEPT] = "accept" };
@@ -37,38 +45,34 @@ static void config_icon_clear(conf *cfg) {
 	config_cache_destroy(&cfg->icon_cache);
 }
 
-static conf_error config_inbound_invalid(const char *field, int index, const char *expected) {
-	if (index < 0) {
-		MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "Invalid configuration entry \"listen.%s\". Expected %s.", field, expected);
-	} else {
-		MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "Invalid configuration entry \"listen.%s[%d]\". Expected %s.", field, index, expected);
+static conf_error config_inbound_invalid(const conf_validation_log *log, const char *prefix, const char *field, int index, const char *expected) {
+	char subscript[16] = "";
+	if (index >= 0) {
+		snprintf(subscript, sizeof(subscript), "[%d]", index);
 	}
+	MKSYS_LOG(log->filename, log->maxlevel, log->level, "Invalid configuration entry \"listen.%s%s%s\". Expected %s%s", prefix, field, subscript, expected, log->suffix);
 	return CONF_ECINBOUND;
 }
 
-static conf_error config_inbound_parse(conf *result, const cJSON *listen) {
+static conf_error config_inbound_parse(conf *result, const cJSON *listen, const conf_validation_log *log) {
 	const cJSON *allow = cJSON_GetObjectItemCaseSensitive(listen, "allow_proxy");
 	const cJSON *settings = cJSON_GetObjectItemCaseSensitive(listen, "proxy_settings");
 	if (allow != NULL && !cJSON_IsBool(allow)) {
-		return config_inbound_invalid("allow_proxy", -1, "a boolean");
+		return config_inbound_invalid(log, "", "allow_proxy", -1, "a boolean");
 	}
 	result->listen.allow_proxy = cJSON_IsTrue(allow);
 	if (settings != NULL && !cJSON_IsObject(settings)) {
-		return config_inbound_invalid("proxy_settings", -1, "an object");
+		return config_inbound_invalid(log, "", "proxy_settings", -1, "an object");
 	}
 	const cJSON *member;
 	cJSON_ArrayForEach(member, settings) {
 		if (strcmp(member->string, "version") != 0 && strcmp(member->string, "trusted_sources") != 0 && strcmp(member->string, "untrusted_policy") != 0) {
-			MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL,
-				"Invalid configuration entry \"listen.proxy_settings.%s\". Expected version, trusted_sources or untrusted_policy.",
-				member->string
-			);
-			return CONF_ECINBOUND;
+			return config_inbound_invalid(log, "proxy_settings.", member->string, -1, "version, trusted_sources or untrusted_policy");
 		}
 	}
 	const cJSON *version = cJSON_GetObjectItemCaseSensitive(settings, "version");
 	if (version != NULL && (!cJSON_IsNumber(version) || version->valuedouble != PROXY_PREFIX_V1)) {
-		return config_inbound_invalid("proxy_settings.version", -1, "the number 1");
+		return config_inbound_invalid(log, "proxy_settings.", "version", -1, "the number 1");
 	}
 	result->listen.proxy_version = version == NULL ? PROXY_PREFIX_V1 : (uint8_t)version->valueint;
 	const cJSON *policy = cJSON_GetObjectItemCaseSensitive(settings, "untrusted_policy");
@@ -78,13 +82,13 @@ static conf_error config_inbound_parse(conf *result, const cJSON *listen) {
 			i++;
 		}
 		if (i == sizeof(config_untrusted_policies) / sizeof(config_untrusted_policies[0])) {
-			return config_inbound_invalid("proxy_settings.untrusted_policy", -1, "\"reject\", \"ignore\" or \"accept\"");
+			return config_inbound_invalid(log, "proxy_settings.", "untrusted_policy", -1, "\"reject\", \"ignore\" or \"accept\"");
 		}
 		result->listen.untrusted_policy = (conf_untrusted_policy)i;
 	}
 	const cJSON *sources = cJSON_GetObjectItemCaseSensitive(settings, "trusted_sources");
 	if (sources != NULL && !cJSON_IsArray(sources)) {
-		return config_inbound_invalid("proxy_settings.trusted_sources", -1, "an array of IP addresses");
+		return config_inbound_invalid(log, "proxy_settings.", "trusted_sources", -1, "an array of IP addresses");
 	}
 	static const char *const defaults[] = { "127.0.0.1", "::1" };
 	int count = sources == NULL ? (int)(sizeof(defaults) / sizeof(defaults[0])) : cJSON_GetArraySize(sources);
@@ -100,11 +104,11 @@ static conf_error config_inbound_parse(conf *result, const cJSON *listen) {
 		const char *text = sources == NULL ? defaults[i] : cJSON_GetStringValue(item);
 		net_addr address = net_addr_parse(text);
 		if (address.err != NET_OK) {
-			return config_inbound_invalid("proxy_settings.trusted_sources", i, "an IPv4 or IPv6 address");
+			return config_inbound_invalid(log, "proxy_settings.", "trusted_sources", i, "an IPv4 or IPv6 address");
 		}
 		net_addr_unmap(&address);
 		if (config_peer_trusted(result, address)) {
-			return config_inbound_invalid("proxy_settings.trusted_sources", i, "a unique address");
+			return config_inbound_invalid(log, "proxy_settings.", "trusted_sources", i, "a unique address");
 		}
 		conf_trusted_source *source = &result->listen.trusted_sources[result->listen.trusted_count++];
 		source->address = address;
@@ -287,7 +291,7 @@ static cJSON *config_proxy_parse(cJSON *src) {
 	return result;
 }
 
-static conf *config_parse(const void *config_raw, size_t config_size) {
+static conf *config_parse(const void *config_raw, size_t config_size, const conf_validation_log *validation_log) {
 	cJSON *config_json = cJSON_ParseWithLength(config_raw, config_size);
 	if (config_json == NULL) {
 		errno = CONF_ERPARSE;
@@ -334,7 +338,7 @@ static conf *config_parse(const void *config_raw, size_t config_size) {
 	strcpy(result->listen.address, config_default_listen_address);
 	result->listen.port = 25565;
 	cJSON *config_json_listen = cJSON_GetObjectItemCaseSensitive(config_json, "listen");
-	conf_error inbound = config_inbound_parse(result, config_json_listen);
+	conf_error inbound = config_inbound_parse(result, config_json_listen, validation_log);
 	if (inbound != CONF_ERROR_NONE) {
 		return config_parse_failure(config_json, result, inbound);
 	}
@@ -711,6 +715,10 @@ bool config_peer_trusted(const conf *config, net_addr address) {
  * failures cannot make the active cache represent an inactive config.
  */
 conf_read_status config_read(const char *filename, const conf_cache *active_cache, conf_cache *candidate_cache, conf **result) {
+	return config_read_with_log(filename, active_cache, candidate_cache, result, NULL, MKSYS_LEVEL_ALL);
+}
+
+conf_read_status config_read_with_log(const char *filename, const conf_cache *active_cache, conf_cache *candidate_cache, conf **result, const char *active_log, uint8_t maxlevel) {
 	if (result != NULL) {
 		*result = NULL;
 	}
@@ -744,7 +752,10 @@ conf_read_status config_read(const char *filename, const conf_cache *active_cach
 		errno = 0;
 		return CONF_READ_UNCHANGED;
 	}
-	conf *config_new = config_parse(config_raw, config_size);
+	const conf_validation_log validation_log = active_log == NULL
+		? (conf_validation_log){ MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "." }
+		: (conf_validation_log){ active_log, maxlevel, MKSYS_LEVEL_WARNING, ", will keep your old configurations" };
+	conf *config_new = config_parse(config_raw, config_size, &validation_log);
 	if (config_new == NULL) {
 		int error_code = errno;
 		free(config_raw);

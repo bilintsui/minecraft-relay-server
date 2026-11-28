@@ -39,6 +39,8 @@ typedef enum {
 
 /* section: functions (exported) */
 int log_file_validate(const char *filename);
+/* Make writes to inherited daemon stderr pipes and sockets best-effort and nonblocking. */
+void log_stderr_prepare(void);
 /* Every logged message is escaped through escape_default, so the output contains only visible ASCII characters; the line end is appended by the logger, not by the format string. */
 int mksysmsg(bool noprefix, const char *logfile, uint8_t maxlevel, mksys_level msglevel, mksys_line_end line_end, const char *format, ...);
 

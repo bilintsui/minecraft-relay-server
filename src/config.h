@@ -103,5 +103,7 @@ bool config_icon_load(conf *cfg, const char *logfile, uint8_t loglevel, const ch
 void config_log_duplicate_error(const char *logfile, uint8_t maxlevel, mksys_level msglevel, const char *suffix);
 bool config_peer_trusted(const conf *config, net_addr address);
 conf_read_status config_read(const char *filename, const conf_cache *active_cache, conf_cache *candidate_cache, conf **result);
+/* Report reload field diagnostics at WARN using the active log path and level. */
+conf_read_status config_read_with_log(const char *filename, const conf_cache *active_cache, conf_cache *candidate_cache, conf **result, const char *active_log, uint8_t maxlevel);
 
 #endif

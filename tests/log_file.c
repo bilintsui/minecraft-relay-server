@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -173,6 +174,49 @@ static bool console_failure_test(void) {
 	return true;
 }
 
+static bool daemon_stderr_check(bool use_socket) {
+	int ends[2];
+	if ((use_socket ? socketpair(AF_UNIX, SOCK_STREAM, 0, ends) : pipe(ends)) == -1 || dup2(ends[1], STDERR_FILENO) == -1) {
+		return false;
+	}
+	log_stderr_prepare();
+	if ((fcntl(ends[1], F_GETFL) & O_NONBLOCK) != 0) {
+		return false;
+	}
+	close(ends[1]);
+	const char expected[] = "[CRIT] diagnostic\n\n";
+	char record[sizeof(expected)];
+	if (mksysmsg(MKSYS_PREFIX_ON, MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, MKSYS_PARAGRAPH_END, "diagnostic") != 0
+		|| read(ends[0], record, sizeof(record)) != (ssize_t)(sizeof(expected) - 1) || memcmp(record, expected, sizeof(expected) - 1) != 0) {
+		return false;
+	}
+	/* A full sink reports an unwritten record without waiting for the reader. */
+	char payload[1024];
+	memset(payload, 'x', sizeof(payload) - 1);
+	payload[sizeof(payload) - 1] = '\0';
+	while (MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "%s", payload) == 0) {}
+	close(ends[0]);
+	if (MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "closed sink") != 1) {
+		return false;
+	}
+	sigset_t mask, pending;
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGPIPE);
+	return sigprocmask(SIG_BLOCK, &mask, NULL) == 0 && raise(SIGPIPE) == 0
+		&& MKSYS_LOG(MKSYS_NOLOGFILE, MKSYS_LEVEL_ALL, MKSYS_LEVEL_CRITICAL, "closed sink with pending signal") == 1 && sigpending(&pending) == 0 && sigismember(&pending, SIGPIPE) == 1;
+}
+
+static bool daemon_stderr_test(bool use_socket) {
+	pid_t pid = fork();
+	CHECK(pid != -1, "cannot fork the daemon stderr test");
+	if (pid == 0) {
+		alarm(5);
+		signal(SIGPIPE, SIG_DFL);
+		_exit(daemon_stderr_check(use_socket) ? EXIT_SUCCESS : EXIT_FAILURE);
+	}
+	return process_wait_success(pid);
+}
+
 static bool directory_test(const char *directory) {
 	errno = 0;
 	CHECK(log_file_validate(directory) == -1 && errno == EISDIR, "validation accepted a directory path");
@@ -310,6 +354,8 @@ static bool symlink_test(const char *directory) {
 static bool run_all_tests(const char *directory) {
 	CHECK(append_test(directory), "append semantics failed");
 	CHECK(console_failure_test(), "console failure semantics failed");
+	CHECK(daemon_stderr_test(false), "daemon pipe diagnostics failed");
+	CHECK(daemon_stderr_test(true), "daemon socket diagnostics failed");
 	CHECK(directory_test(directory), "directory policy failed");
 	CHECK(fdopen_failure_test(directory), "fdopen failure semantics failed");
 	CHECK(fifo_test(directory), "FIFO policy failed");

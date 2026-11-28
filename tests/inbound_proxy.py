@@ -53,16 +53,16 @@ class Relay:
     def lines(self):
         return self.log.read_text().splitlines() if self.log.exists() else []
 
-    def reload(self, changes, valid=True):
+    def reload(self, changes, *, error=None):
         self.settings["listen"].update(changes)
         self.config.write_text(json.dumps(self.settings))
-        if valid:
-            observe = lambda: sum("Configuration reloaded." in s for s in self.lines())
-        else:
-            observe = lambda: self.console.read_text().count('Invalid configuration entry "listen.')
-        before = observe()
+        outcome = "[INFO] Configuration reloaded."
+        if error is not None:
+            field, reason = error
+            outcome = f'[WARN] Invalid configuration entry "listen.{field}". Expected {reason}, will keep your old configurations'
+        before = len(self.lines())
         self.process.send_signal(signal.SIGUSR1)
-        wait_for(lambda: observe() > before, "reload result")
+        wait_for(lambda: any(line.endswith(outcome) for line in self.lines()[before:]), outcome)
 
     def stop(self):
         try:
@@ -245,6 +245,7 @@ def reload_and_errors(binary):
         header = b"PROXY TCP4 192.0.2.10 192.0.2.11 123 456\r\n"
         # The extra accepted socket and assembly timer prove the old policy was captured before SIGUSR1.
         fd_dir = Path(f"/proc/{server.process.pid}/fd")
+        assert (fd_dir / "2").samefile(os.devnull), "listener retained the startup error stream after readiness"
         baseline = len(list(fd_dir.iterdir()))
         with server.connect() as held:
             held.sendall(b"PRO")
@@ -254,18 +255,29 @@ def reload_and_errors(binary):
             exchange(held, backend, header[3:], header, 2)
         server.reload({"allow_proxy": True})
         reject(server, [], "[WARN] peer: 127.0.0.1:{port}, status: reject_proxy_exception, exception: untrusted_source")
-        server.reload({"proxy_settings": {"untrusted_policy": "Accept"}}, valid=False)
-        assert all("Invalid configuration entry" not in s for s in server.lines())
+        active_log = server.settings["log"]
+        candidate_log = server.log.with_name("candidate.log")
+        server.settings["log"] = {"filename": str(candidate_log), "level": 0}
+        for settings, field, reason in [
+            ({"untrusted_policy": "Accept"}, "untrusted_policy", '"reject", "ignore" or "accept"'),
+            ({"trusted_sources": ["::1", "localhost"]}, "trusted_sources[1]", "an IPv4 or IPv6 address"),
+            ({"trusted_source": []}, "trusted_source", "version, trusted_sources or untrusted_policy"),
+        ]:
+            server.reload({"proxy_settings": settings}, error=(f"proxy_settings.{field}", reason))
+        assert not candidate_log.exists(), "rejected configuration opened its log"
+        server.settings["log"] = active_log
         reject(server, [], "[WARN] peer: 127.0.0.1:{port}, status: reject_proxy_exception, exception: untrusted_source")
         server.reload({"allow_proxy": False, "proxy_settings": {}})
         with server.connect() as direct:
             actual = f"PROXY TCP4 127.0.0.1 127.0.0.1 {direct.getsockname()[1]} {server.port}\r\n".encode()
             exchange(direct, backend, b"", actual, 1)
         server.reload({"allow_proxy": True, "proxy_settings": {"version": 1}})
-        server.reload({"proxy_settings": {"version": 2}}, valid=False)
-        assert 'Invalid configuration entry "listen.proxy_settings.version"' in server.console.read_text()
+        server.reload({"proxy_settings": {"version": 2}}, error=("proxy_settings.version", "the number 1"))
         with server.connect() as retained:
             exchange(retained, backend, header, header, 1)
+        assert "Invalid configuration entry" not in server.console.read_text()
+        warnings = [line for line in server.lines() if "Invalid configuration entry" in line or "Configuration reload rejected" in line]
+        assert len(warnings) == 4, warnings
         with server.connect() as reset:
             port = reset.getsockname()[1]
             reset.sendall(b"PROXY ")
