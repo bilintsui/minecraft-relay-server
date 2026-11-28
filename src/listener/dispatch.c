@@ -17,9 +17,6 @@
 #include <unistd.h>
 
 /* section: headers (project) */
-#ifdef LISTENER_TIMER_REARM_TEST
-#include "../listener_runtime_hooks.h"
-#endif
 #include "../log.h"
 #include "../timeutil.h"
 #include "admission.h"
@@ -27,6 +24,9 @@
 #include "connection_route.h"
 #include "context.h"
 #include "events.h"
+#ifdef LISTENER_TIMER_REARM_TEST
+#include "runtime_hooks.h"
+#endif
 #include "short.h"
 #include "socket.h"
 #include "workers.h"

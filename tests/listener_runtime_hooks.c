@@ -1,9 +1,8 @@
 /*
  * listener_runtime_hooks.c: Test-only listener runtime hooks
  *
- * The interface intentionally lives under src/ so listener.c can declare its
- * compile-time hook seams without depending on a tests/ include path. This
- * implementation is compiled only into listener_short_runtime_daemon.
+ * The listener runtime and dispatch modules include the private interface
+ * under test macros. Only listener_short_runtime_daemon links this code.
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui
@@ -22,14 +21,16 @@
 /* section: headers (project) */
 #include "connection/setup_short.h"
 #include "listener/connection.h"
+#include "timeutil.h"
 
 /* section: headers (self) */
-#include "listener_runtime_hooks.h"
+#include "listener/runtime_hooks.h"
 
 /* section: defines */
 /* environment */
 #define LISTENER_TEST_EARLY_COLLECT_ENV	"MCRELAY_TEST_EARLY_COLLECT"
 #define LISTENER_TEST_READY_FLIP_ENV	"MCRELAY_TEST_READY_FLIP"
+#define LISTENER_TEST_ROUTE_TIMER_ENV	"MCRELAY_TEST_ROUTE_TIMER_ARMED"
 
 /* marker */
 #define LISTENER_TEST_EARLY_COLLECT_MARKER	"MCRELAY_TEST_EARLY_COLLECT=1"
@@ -39,6 +40,9 @@
 #define LISTENER_TEST_READY_FLIP_RELOAD_ACK_MARKER	"MCRELAY_TEST_READY_FLIP_RELOAD_ACK=1"
 #define LISTENER_TEST_READY_FLIP_TIMER_ARM_MARKER	"MCRELAY_TEST_LATE_WAKE_ARMED=1"
 #define LISTENER_TEST_READY_FLIP_TIMER_EVENT_MARKER	"MCRELAY_TEST_ROUTE_TIMER_FIRED=1"
+#define LISTENER_TEST_ROUTE_TIMER_MARKER	"MCRELAY_TEST_ROUTE_TIMER_ARMED=1"
+
+#define LISTENER_TEST_ROUTE_TIMER_DELAY_SEC	60
 
 #ifdef LISTENER_READY_FLIP_TEST
 /* section: global variables */
@@ -50,7 +54,7 @@ static bool listener_test_ready_flip_released;
 #endif
 
 /* section: functions (local) */
-#if defined(LISTENER_EARLY_COLLECT_TEST) || defined(LISTENER_READY_FLIP_TEST)
+#if defined(LISTENER_EARLY_COLLECT_TEST) || defined(LISTENER_READY_FLIP_TEST) || defined(LISTENER_ROUTE_TIMER_ARMED_TEST)
 static int listener_test_notify(const char *environment, const char *message) {
 	if (environment == NULL || message == NULL) {
 		errno = EINVAL;
@@ -236,3 +240,31 @@ bool listener_test_ready_flip_timer_ready(void) {
 	return true;
 #endif
 }
+
+#ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
+int listener_test_route_timer_disarm(const listener_events *events) {
+	static bool notified;
+	struct itimerspec timer = { 0 };
+	if (getenv(LISTENER_TEST_ROUTE_TIMER_ENV) == NULL) {
+		return listener_events_route_timer_set(events, &timer);
+	}
+	struct timespec now;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+		return -1;
+	}
+	if (!timeutil_add_seconds(&now, LISTENER_TEST_ROUTE_TIMER_DELAY_SEC, &timer.it_value)) {
+		errno = EOVERFLOW;
+		return -1;
+	}
+	if (listener_events_route_timer_set(events, &timer) == -1) {
+		return -1;
+	}
+	if (!notified) {
+		if (listener_test_notify(LISTENER_TEST_ROUTE_TIMER_ENV, LISTENER_TEST_ROUTE_TIMER_MARKER) == -1) {
+			return -1;
+		}
+		notified = true;
+	}
+	return 0;
+}
+#endif

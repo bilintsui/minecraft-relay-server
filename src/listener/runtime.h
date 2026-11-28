@@ -1,17 +1,17 @@
 /*
- * listener.h: Header file of listener.c
+ * listener/runtime.h: Listener runtime entry point
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui
  */
 
-#ifndef _MRS_LISTENER_H_INCLUDED_
+#ifndef _MRS_LISTENER_RUNTIME_H_INCLUDED_
 
-#define _MRS_LISTENER_H_INCLUDED_
+#define _MRS_LISTENER_RUNTIME_H_INCLUDED_
 
 /* section: headers (project) */
-#include "config.h"
-#include "define/exitcode.h"
+#include "../config.h"
+#include "../define/exitcode.h"
 
 /* section: functions (exported) */
 /* Takes ownership of config and the contents of config_cache. */

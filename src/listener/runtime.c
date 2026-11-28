@@ -1,5 +1,5 @@
 /*
- * listener.c: Listener and worker process runtime
+ * listener/runtime.c: Listener startup, event loop and shutdown
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui
@@ -13,7 +13,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/prctl.h>
 #include <sys/types.h>
@@ -22,35 +21,35 @@
 #include <unistd.h>
 
 /* section: headers (project) */
-#include "config.h"
-#include "define/exitcode.h"
-#include "listener/admission.h"
-#include "listener/connection.h"
-#include "listener/context.h"
-#include "listener/dispatch.h"
-#include "listener/events.h"
-#include "listener/generation.h"
-#include "listener/metrics.h"
-#include "listener/metrics_runtime.h"
-#include "listener/reload.h"
-#include "listener/socket.h"
-#include "listener/workers.h"
-#if defined(LISTENER_EARLY_COLLECT_TEST) || defined(LISTENER_READY_FLIP_TEST)
-#include "listener_runtime_hooks.h"
+#include "../config.h"
+#include "../define/exitcode.h"
+#include "../log.h"
+#include "../network.h"
+#include "../resolver/cache.h"
+#include "../resolver/supervisor.h"
+#include "../route/generation_registry.h"
+#include "../route/resolution.h"
+#include "../route/table.h"
+#include "../route/waiter.h"
+#include "../timeutil.h"
+#include "../version_info.h"
+#include "admission.h"
+#include "connection.h"
+#include "context.h"
+#include "dispatch.h"
+#include "events.h"
+#include "generation.h"
+#include "metrics.h"
+#include "metrics_runtime.h"
+#include "reload.h"
+#if defined(LISTENER_EARLY_COLLECT_TEST) || defined(LISTENER_READY_FLIP_TEST) || defined(LISTENER_ROUTE_TIMER_ARMED_TEST)
+#include "runtime_hooks.h"
 #endif
-#include "log.h"
-#include "network.h"
-#include "resolver/cache.h"
-#include "resolver/supervisor.h"
-#include "route/generation_registry.h"
-#include "route/resolution.h"
-#include "route/table.h"
-#include "route/waiter.h"
-#include "timeutil.h"
-#include "version_info.h"
+#include "socket.h"
+#include "workers.h"
 
 /* section: headers (self) */
-#include "listener.h"
+#include "runtime.h"
 
 /* section: defines */
 /* listener */
@@ -59,9 +58,6 @@
 #endif
 #ifndef LISTENER_ROUTE_WARMUP_TIMEOUT_SEC
 #define LISTENER_ROUTE_WARMUP_TIMEOUT_SEC	10
-#endif
-#ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
-#define LISTENER_ROUTE_TIMER_ARMED_TEST_DELAY_SEC	60
 #endif
 
 /* process name */
@@ -103,58 +99,17 @@ static int listener_notify_reloading(void) {
 	return 0;
 }
 
-#ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
-static int listener_route_timer_armed_test_apply(struct itimerspec *timer) {
-	if (getenv("MCRELAY_TEST_ROUTE_TIMER_ARMED") == NULL) {
-		return 0;
-	}
-	struct timespec now;
-	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
-		return -1;
-	}
-	if (!timeutil_add_seconds(&now, LISTENER_ROUTE_TIMER_ARMED_TEST_DELAY_SEC, &timer->it_value)) {
-		errno = EOVERFLOW;
-		return -1;
-	}
-	return 1;
-}
-
-static int listener_route_timer_armed_test_notify(void) {
-	static bool notified;
-	if (notified) {
-		return 0;
-	}
-	int result = sd_notify(0, "MCRELAY_TEST_ROUTE_TIMER_ARMED=1");
-	if (result < 0) {
-		errno = -result;
-		return -1;
-	}
-	notified = true;
-	return 0;
-}
-#endif
-
 static int listener_route_timer_set(const listener_events *events, const struct timespec *deadline) {
-	struct itimerspec timer;
-	memset(&timer, 0, sizeof(timer));
+	struct itimerspec timer = { 0 };
+#ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
+	if (deadline == NULL) {
+		return listener_test_route_timer_disarm(events);
+	}
+#endif
 	if (deadline != NULL) {
 		timer.it_value = *deadline;
 	}
-#ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
-	int armed_test = deadline == NULL ? listener_route_timer_armed_test_apply(&timer) : 0;
-	if (armed_test == -1) {
-		return -1;
-	}
-#endif
-	if (listener_events_route_timer_set(events, &timer) == -1) {
-		return -1;
-	}
-#ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
-	if (armed_test == 1 && listener_route_timer_armed_test_notify() == -1) {
-		return -1;
-	}
-#endif
-	return 0;
+	return listener_events_route_timer_set(events, &timer);
 }
 
 #ifdef LISTENER_READY_FLIP_TEST
@@ -298,12 +253,45 @@ static int listener_resolver_init(listener_context *context, listener_events *ev
 	return 0;
 }
 
-static int listener_resolver_shutdown(listener_context *context) {
+static int listener_shutdown_begin(listener_context *context, listener_events *events, listener_connection **connections) {
+	resolver_supervisor_shutdown_prepare(context->resolver);
+	listener_metrics_timer_set(context, events, 0, context->log_filename, context->config->log.level);
 	struct timespec now;
-	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1 || !resolver_supervisor_shutdown(context->resolver, &now)) {
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot sample the monotonic clock while closing listener connections: %s", strerror(errno));
+		return -1;
+	}
+	int connection_destroy_errno = 0;
+	while (*connections != NULL) {
+		if (!listener_connection_destroy(connections, *connections, events, &context->metrics, LISTENER_METRICS_OUTCOME_SHUTDOWN, context->resolver, &now) && connection_destroy_errno == 0) {
+			connection_destroy_errno = errno;
+		}
+	}
+	if (connection_destroy_errno != 0) {
+		errno = connection_destroy_errno;
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot release connection route interests during shutdown: %s", strerror(errno));
+		return -1;
+	}
+	if (listener_route_timer_set(events, NULL) == -1 || clock_gettime(CLOCK_MONOTONIC, &now) == -1 || !resolver_supervisor_shutdown(context->resolver, &now)) {
+		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL, "Cannot shut down resolver runtime: %s", strerror(errno));
 		return -1;
 	}
 	return 0;
+}
+
+static bool listener_shutdown_drain(listener_context *context) {
+	struct timespec now;
+	bool time_valid = clock_gettime(CLOCK_MONOTONIC, &now) == 0;
+	if (time_valid) {
+		listener_metrics_observations_drain(context, &now);
+	}
+	if (!resolver_supervisor_shutdown_complete(context->resolver)) {
+		return false;
+	}
+	if (listener_metrics_effectively_enabled(context->config) && time_valid) {
+		listener_metrics_snapshot_output(context, LISTENER_METRICS_OUTPUT_SHUTDOWN, context->log_filename, context->config->log.level, &now);
+	}
+	return true;
 }
 
 static exit_code listener_loop(listener_context *context, listener_socket *listener) {
@@ -416,53 +404,15 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 			break;
 		}
 		if (requests.stop && !shutting_down) {
-			resolver_supervisor_shutdown_prepare(context->resolver);
-			listener_metrics_timer_set(context, &events, 0, context->log_filename, context->config->log.level);
-			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Cannot sample the monotonic clock while closing listener connections: %s",
-					strerror(errno)
-				);
+			if (listener_shutdown_begin(context, &events, &connections) == -1) {
 				exitcode = EXITCODE_INTERNAL;
 				break;
-			}
-			int connection_destroy_errno = 0;
-			while (connections != NULL) {
-				if (!listener_connection_destroy(&connections, connections, &events, &context->metrics, LISTENER_METRICS_OUTCOME_SHUTDOWN, context->resolver, &route_now)
-					&& connection_destroy_errno == 0) {
-					connection_destroy_errno = errno;
-				}
 			}
 			connection_count = 0;
-			if (connection_destroy_errno != 0) {
-				errno = connection_destroy_errno;
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Cannot release connection route interests during shutdown: %s",
-					strerror(errno)
-				);
-				exitcode = EXITCODE_INTERNAL;
-				break;
-			}
-			if (listener_route_timer_set(&events, NULL) == -1 || listener_resolver_shutdown(context) == -1) {
-				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-					"Cannot shut down resolver runtime: %s",
-					strerror(errno)
-				);
-				exitcode = EXITCODE_INTERNAL;
-				break;
-			}
 			shutting_down = true;
 		}
 		if (shutting_down) {
-			struct timespec metrics_now = { 0 };
-			bool metrics_time_valid = clock_gettime(CLOCK_MONOTONIC, &metrics_now) == 0;
-			if (metrics_time_valid) {
-				listener_metrics_observations_drain(context, &metrics_now);
-			}
-			if (resolver_supervisor_shutdown_complete(context->resolver)) {
-				if (listener_metrics_effectively_enabled(context->config) && metrics_time_valid) {
-					listener_metrics_snapshot_output(context, LISTENER_METRICS_OUTPUT_SHUTDOWN, context->log_filename, context->config->log.level, &metrics_now);
-				}
+			if (listener_shutdown_drain(context)) {
 				break;
 			}
 			continue;

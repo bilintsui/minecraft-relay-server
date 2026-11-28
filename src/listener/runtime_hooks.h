@@ -1,9 +1,8 @@
 /*
- * listener_runtime_hooks.h: Header file of listener_runtime_hooks.c
+ * listener/runtime_hooks.h: Test-only hooks for listener runtime and dispatch
  *
- * This interface lives beside listener.c because that source owns the
- * compile-time hook seams. The test-only implementation remains under tests/
- * and is linked only into listener_short_runtime_daemon.
+ * The listener includes these declarations under test macros. Only
+ * listener_short_runtime_daemon links the implementation from tests/.
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui
@@ -17,7 +16,7 @@
 #include <stdbool.h>
 
 /* section: headers (project) */
-#include "listener/events.h"
+#include "events.h"
 
 /* section: types */
 typedef int (*listener_test_timer_disarm_fn)(const void *context);
@@ -32,5 +31,6 @@ int listener_test_ready_flip_reload_blocked(void);
 int listener_test_ready_flip_timer_arm(void);
 int listener_test_ready_flip_timer_event(void);
 bool listener_test_ready_flip_timer_ready(void);
+int listener_test_route_timer_disarm(const listener_events *events);
 
 #endif

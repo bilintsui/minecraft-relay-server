@@ -634,7 +634,7 @@ static bool logging_call_audit(const char *text, size_t size, size_t open, int s
 	const char startup_format[] = "Starting mcrelay %s on PID %jd...";
 	if (format_size == sizeof(startup_format) - 1U && strcmp(format, startup_format) == 0) {
 		const char *const expected[] = { "&context", "MKSYS_LEVEL_INFORMATION", NULL, "version_info_get()", "(intmax_t)getpid()" };
-		if (!path_has_suffix(path, "src/listener.c") || strcmp(log_symbols[symbol].name, "LISTENER_LOG") != 0 || argument_count != ARRAY_SIZE(expected)) {
+		if (!path_has_suffix(path, "src/listener/runtime.c") || strcmp(log_symbols[symbol].name, "LISTENER_LOG") != 0 || argument_count != ARRAY_SIZE(expected)) {
 			return audit_error(state, path, open, "startup record appears outside its controlled emitter");
 		}
 		for (size_t index = 0; index < ARRAY_SIZE(expected); index++) {
@@ -974,7 +974,8 @@ static bool self_tests(void) {
 	static const unsigned char nul_end[] = { 'x', 0 };
 	if (!expect_bytes(safe_call, sizeof(safe_call) - 1U, true)
 		|| !expect_bytes_path(safe_zero_call_wrapper, sizeof(safe_zero_call_wrapper) - 1U, "src/listener/context.h", true)
-		|| !expect_bytes_path(startup_call, sizeof(startup_call) - 1U, "src/listener.c", true)
+		|| !expect_bytes_path(startup_call, sizeof(startup_call) - 1U, "src/listener/runtime.c", true)
+		|| !expect_bytes_path(startup_call, sizeof(startup_call) - 1U, "src/listener.c", false)
 		|| !expect_bytes(startup_call, sizeof(startup_call) - 1U, false)
 		|| !expect_bytes(strict_splice, sizeof(strict_splice) - 1U, true) || !expect_bytes(strict_splice_crlf, sizeof(strict_splice_crlf) - 1U, true)
 		|| !expect_bytes(crlf, sizeof(crlf) - 1U, true) || !expect_bytes(unsafe_alias, sizeof(unsafe_alias) - 1U, false)
@@ -1010,13 +1011,13 @@ static bool self_tests(void) {
 		"LISTENER_LOG(&context, MKSYS_LEVEL_INFORMATION, \"Starting mcrelay %s\", user_text);"
 	};
 	for (size_t index = 0; index < ARRAY_SIZE(unsafe_startup_calls); index++) {
-		if (!expect_bytes_path((const unsigned char *)unsafe_startup_calls[index], strlen(unsafe_startup_calls[index]), "src/listener.c", false)) {
+		if (!expect_bytes_path((const unsigned char *)unsafe_startup_calls[index], strlen(unsafe_startup_calls[index]), "src/listener/runtime.c", false)) {
 			fprintf(stderr, "log audit startup emitter fixture failed at index %zu\n", index);
 			return false;
 		}
 	}
-	if (!source_bytes_audit(startup_call, sizeof(startup_call) - 1U, "src/listener.c", &state)
-		|| source_bytes_audit(startup_call, sizeof(startup_call) - 1U, "src/listener.c", &state)) {
+	if (!source_bytes_audit(startup_call, sizeof(startup_call) - 1U, "src/listener/runtime.c", &state)
+		|| source_bytes_audit(startup_call, sizeof(startup_call) - 1U, "src/listener/runtime.c", &state)) {
 		fprintf(stderr, "log audit duplicate startup emitter fixture failed\n");
 		return false;
 	}
