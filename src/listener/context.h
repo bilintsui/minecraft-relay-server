@@ -68,4 +68,7 @@ typedef struct listener_context {
 	listener_workers workers;
 } listener_context;
 
+/* section: functions (exported) */
+void listener_backoff(void);
+
 #endif

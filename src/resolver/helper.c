@@ -22,6 +22,7 @@
 #include <unistd.h>
 
 /* section: headers (project) */
+#include "../process.h"
 #include "dns.h"
 #include "ipc.h"
 
@@ -141,23 +142,8 @@ static int resolver_helper_process_descriptors_prepare(int socket_fd) {
 	return RESOLVER_HELPER_PROCESS_SOCKET_FD;
 }
 
-static int resolver_helper_process_signals_restore(const sigset_t *signal_mask) {
-	struct sigaction action;
-	memset(&action, 0, sizeof(action));
-	sigemptyset(&action.sa_mask);
-	action.sa_handler = SIG_IGN;
-	if (sigaction(SIGUSR1, &action, NULL) == -1) {
-		return -1;
-	}
-	action.sa_handler = SIG_DFL;
-	if (sigaction(SIGINT, &action, NULL) == -1 || sigaction(SIGTERM, &action, NULL) == -1) {
-		return -1;
-	}
-	return sigprocmask(SIG_SETMASK, signal_mask, NULL);
-}
-
 static resolver_helper_status resolver_helper_process_child_run(int socket_fd, pid_t parent_pid, const sigset_t *signal_mask, const char *process_name) {
-	if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1 || getppid() != parent_pid || resolver_helper_process_signals_restore(signal_mask) == -1) {
+	if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1 || getppid() != parent_pid || process_child_signals_restore(signal_mask) == -1) {
 		return RESOLVER_HELPER_INTERNAL;
 	}
 	(void)prctl(PR_SET_NAME, process_name);

@@ -11,7 +11,6 @@
 #include <inttypes.h>
 #include <limits.h>
 #include <netinet/in.h>
-#include <signal.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -22,7 +21,6 @@
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <systemd/sd-daemon.h>
 #include <time.h>
 #include <unistd.h>
@@ -30,7 +28,6 @@
 /* section: headers (project) */
 #include "basic.h"
 #include "config.h"
-#include "connection/setup_long.h"
 #include "define/exitcode.h"
 #include "listener/connection.h"
 #include "listener/connection_route.h"
@@ -40,6 +37,7 @@
 #include "listener/metrics.h"
 #include "listener/short.h"
 #include "listener/socket.h"
+#include "listener/workers.h"
 #if defined(LISTENER_EARLY_COLLECT_TEST) || defined(LISTENER_READY_FLIP_TEST) || defined(LISTENER_TIMER_REARM_TEST)
 #include "listener_runtime_hooks.h"
 #endif
@@ -79,13 +77,9 @@
 #ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
 #define LISTENER_ROUTE_TIMER_ARMED_TEST_DELAY_SEC	60
 #endif
-#ifndef LISTENER_WORKER_LOG_INTERVAL_SEC
-#define LISTENER_WORKER_LOG_INTERVAL_SEC	10
-#endif
 
-/* process names */
+/* process name */
 #define LISTENER_PROCESS_NAME	"mrs-listener"
-#define LISTENER_WORKER_PROCESS_NAME	"worker"
 
 /* section: types */
 typedef struct {
@@ -110,11 +104,6 @@ static bool listener_accept_error_retryable(int error) {
 		default:
 			return false;
 	}
-}
-
-static void listener_backoff(void) {
-	struct timespec backoff = { .tv_sec = 0, .tv_nsec = 100000000 };
-	nanosleep(&backoff, NULL);
 }
 
 static void listener_bind_success_msg(const listener_context *context) {
@@ -859,11 +848,6 @@ static void listener_resolver_destroy(listener_context *context) {
 	context->resolver = NULL;
 }
 
-static void listener_resolver_dispose_in_child(listener_context *context) {
-	resolver_supervisor_dispose_in_child(context->resolver);
-	context->resolver = NULL;
-}
-
 static int listener_resolver_events_process(listener_context *context, listener_connection *connections, const struct timespec *now) {
 	resolver_supervisor_event_status status = resolver_supervisor_events_process(context->resolver, now);
 	if (status != RESOLVER_SUPERVISOR_EVENT_OK) {
@@ -914,140 +898,13 @@ static int listener_resolver_shutdown(listener_context *context) {
 	return 0;
 }
 
-static void listener_worker_refusal_log(listener_context *context) {
-	listener_workers *workers = &context->workers;
-	struct timespec now;
-	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
-		return;
-	}
-	struct timespec next_log;
-	if (workers->refusal_logged && timeutil_add_seconds(&workers->refusal_logged_at, LISTENER_WORKER_LOG_INTERVAL_SEC, &next_log) && timeutil_compare(&now, &next_log) < 0) {
-		return;
-	}
-	LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Worker process limit reached; refusing a new LOGIN or TRANSFER connection until a worker exits.");
-	workers->refusal_logged = true;
-	workers->refusal_logged_at = now;
-}
-
-static void listener_worker_route_state_dispose(listener_context *context) {
-	listener_generation_dispose_in_child(context);
-	resolver_cache_destroy(context->dns_cache);
-	context->dns_cache = NULL;
-}
-
-static int listener_worker_signals_restore(const sigset_t *signal_mask) {
-	struct sigaction action;
-	memset(&action, 0, sizeof(action));
-	sigemptyset(&action.sa_mask);
-	action.sa_handler = SIG_IGN;
-	if (sigaction(SIGUSR1, &action, NULL) == -1) {
-		return -1;
-	}
-	action.sa_handler = SIG_DFL;
-	if (sigaction(SIGINT, &action, NULL) == -1 || sigaction(SIGTERM, &action, NULL) == -1) {
-		return -1;
-	}
-	return sigprocmask(SIG_SETMASK, signal_mask, NULL);
-}
-
-static exit_code listener_worker_run(int client_fd, net_addrbundle client, const uint8_t *inbound, size_t inbound_size,
-	const connection_setup_snapshot *snapshot, listener_socket *listener, listener_events *events, pid_t listener_pid, listener_context *context) {
-	if (prctl(PR_SET_NAME, LISTENER_WORKER_PROCESS_NAME) == -1) {
-		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING, "Cannot set worker process name: %s", strerror(errno));
-	}
-	listener_events_dispose_in_child(events);
-	listener_socket_close(listener);
-	listener_resolver_dispose_in_child(context);
-	if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1) {
-		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING, "Cannot configure worker parent-death signal: %s", strerror(errno));
-		listener_worker_route_state_dispose(context);
-		return EXITCODE_INTERNAL;
-	}
-	if (getppid() != listener_pid) {
-		listener_worker_route_state_dispose(context);
-		return EXITCODE_OK;
-	}
-	if (listener_worker_signals_restore(&events->previous_signal_mask) == -1) {
-		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING, "Cannot restore worker signal state: %s", strerror(errno));
-		listener_worker_route_state_dispose(context);
-		return EXITCODE_INTERNAL;
-	}
-	listener_worker_route_state_dispose(context);
-	uint8_t seed[CONNECTION_SETUP_LONG_PENDING_MAX];
-	size_t seed_size;
-	int socket_outbound;
-	connection_setup_status setup_status = connection_setup_long_prepared(client_fd, &socket_outbound, snapshot, client, inbound, inbound_size, seed, &seed_size);
-	if (setup_status == CONNECTION_SETUP_OK) {
-		net_relay(client_fd, socket_outbound, seed, seed_size);
-	}
-	return EXITCODE_OK;
-}
-
-static int listener_workers_reap(listener_context *context) {
-	listener_workers *workers = &context->workers;
-	for (size_t index = 0; index < workers->count;) {
-		pid_t result;
-		do {
-			result = waitpid(workers->pids[index], NULL, WNOHANG);
-		} while (result == -1 && errno == EINTR);
-		if (result == workers->pids[index] || (result == -1 && errno == ECHILD)) {
-			workers->count--;
-			workers->pids[index] = workers->pids[workers->count];
-			listener_metrics_worker_remove(&context->metrics);
-			continue;
-		}
-		if (result == -1) {
-			return -1;
-		}
-		index++;
-	}
-	return 0;
-}
-
-static listener_connection_progress listener_connection_dispatch(listener_connection *connections, listener_connection *connection, listener_socket *listener, listener_events *events,
-	pid_t listener_pid, listener_context *context, const struct timespec *now) {
-	if (context->workers.count >= LISTENER_WORKER_LIMIT) {
-		listener_metrics_worker_capacity_refusal_record(&context->metrics);
-		listener_worker_refusal_log(context);
-		return listener_short_refuse(connection, events, &context->metrics, context->resolver, now);
-	}
-	connection_setup_snapshot snapshot;
-	if (!listener_connection_snapshot_prepare(connection, context->working_directory, &snapshot)) {
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot prepare a self-contained worker handoff.");
-		connection->closing = true;
-		return LISTENER_CONNECTION_PENDING;
-	}
-	if (!listener_connection_route_release(connection, &context->metrics, context->resolver, now)) {
-		return LISTENER_CONNECTION_FATAL;
-	}
-	pid_t worker_pid = fork();
-	if (worker_pid > 0) {
-		context->workers.pids[context->workers.count] = worker_pid;
-		context->workers.count++;
-		listener_metrics_worker_add(&context->metrics);
-		connection->closing = true;
-		return LISTENER_CONNECTION_PENDING;
-	}
-	if (worker_pid < 0) {
-		int saved_errno = errno;
-		listener_metrics_worker_fork_failure_record(&context->metrics);
-		connection->closing = true;
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING, "Cannot create worker process: %s", strerror(saved_errno));
-		listener_backoff();
-		return LISTENER_CONNECTION_PENDING;
-	}
-	listener_connections_close_except(connections, connection);
-	net_addrbundle client = listener_connection_client(connection);
-	_exit(listener_worker_run(connection->socket_fd, client, connection->inbound, connection->inbound_size, &snapshot, listener, events, listener_pid, context));
-}
-
 static listener_connection_progress listener_connection_ready(listener_connection *connections, listener_connection *connection, listener_socket *listener,
 	listener_events *events, pid_t listener_pid, listener_context *context, const struct timespec *now) {
 	if (connection->dispatch == LISTENER_CONNECTION_ROUTE_SHORT_LOCAL || connection->dispatch == LISTENER_CONNECTION_ROUTE_SHORT_WAIT) {
 		return listener_short_start(connection, events, context->working_directory, &context->metrics, context->resolver, now);
 	}
 	if (connection->dispatch == LISTENER_CONNECTION_ROUTE_WORKER_BYPASS || connection->dispatch == LISTENER_CONNECTION_ROUTE_WORKER_WAIT) {
-		return listener_connection_dispatch(connections, connection, listener, events, listener_pid, context, now);
+		return listener_workers_dispatch(connections, connection, listener, events, listener_pid, context, now);
 	}
 	return LISTENER_CONNECTION_ABORT;
 }
@@ -1584,6 +1441,11 @@ cleanup: {
 }
 
 /* section: functions (exported) */
+void listener_backoff(void) {
+	struct timespec backoff = { .tv_sec = 0, .tv_nsec = 100000000 };
+	nanosleep(&backoff, NULL);
+}
+
 exit_code listener_run(conf *config, conf_cache *config_cache, const char *config_filename, const char *config_filename_full, const char *working_directory, const char *log_filename) {
 	listener_context context = {
 		.config = config,

@@ -27,8 +27,9 @@ add_custom_target(version_header ALL
 	VERBATIM)
 add_executable(mcrelay${EXEC_SUFFIX}
 	src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c
-	src/listener.c src/listener/connection.c src/listener/connection_route.c src/listener/events.c src/listener/generation.c src/listener/metrics.c src/listener/short.c src/listener/socket.c
-	src/log.c src/main.c src/metrics.c src/network.c src/timeutil.c src/version_info.c
+	src/listener.c src/listener/connection.c src/listener/connection_route.c src/listener/events.c src/listener/generation.c
+	src/listener/metrics.c src/listener/short.c src/listener/socket.c src/listener/workers.c
+	src/log.c src/main.c src/metrics.c src/network.c src/process.c src/timeutil.c src/version_info.c
 	src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/hosts_watch.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
 	src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c src/route/table.c src/route/waiter.c
 	src/protocol/common.c src/protocol/handshake.c
@@ -186,7 +187,7 @@ if(BUILD_TESTING)
 	set_target_properties(resolver_cache_test PROPERTIES LINK_FLAGS "-Wl,--wrap=calloc")
 	add_test(NAME resolver_cache COMMAND resolver_cache_test)
 	add_executable(resolver_helper_test
-		tests/resolver_helper.c src/metrics.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/util.c)
+		tests/resolver_helper.c src/metrics.c src/process.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/util.c)
 	target_include_directories(resolver_helper_test PRIVATE src)
 	target_compile_definitions(resolver_helper_test PRIVATE _GNU_SOURCE)
 	target_link_libraries(resolver_helper_test -lresolv)
@@ -206,7 +207,7 @@ if(BUILD_TESTING)
 	string(APPEND RESOLVER_SUPERVISOR_TEST_LINK_FLAGS " -Wl,--wrap=resolver_cache_entry_retain -Wl,--wrap=resolver_helper_process_start -Wl,--wrap=send")
 	string(APPEND RESOLVER_SUPERVISOR_TEST_LINK_FLAGS " -Wl,--wrap=timerfd_settime -Wl,--wrap=waitpid")
 	add_executable(resolver_supervisor_test
-		tests/resolver_supervisor.c src/metrics.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c
+		tests/resolver_supervisor.c src/metrics.c src/process.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c
 		src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c)
 	target_include_directories(resolver_supervisor_test PRIVATE src)
 	target_compile_definitions(resolver_supervisor_test PRIVATE _GNU_SOURCE RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE=1 RESOLVER_SUPERVISOR_INTEREST_COUNT_LIMIT=2
@@ -385,7 +386,7 @@ if(BUILD_TESTING)
 		add_test(NAME resolver_cache_ubsan COMMAND resolver_cache_ubsan_test)
 		set_tests_properties(resolver_cache_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(resolver_helper_ubsan_test
-			tests/resolver_helper.c src/metrics.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/util.c)
+			tests/resolver_helper.c src/metrics.c src/process.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/util.c)
 		target_include_directories(resolver_helper_ubsan_test PRIVATE src)
 		target_compile_definitions(resolver_helper_ubsan_test PRIVATE _GNU_SOURCE)
 		target_compile_options(resolver_helper_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
@@ -410,7 +411,7 @@ if(BUILD_TESTING)
 		add_test(NAME resolver_ipc_assembly_ubsan COMMAND resolver_ipc_assembly_ubsan_test)
 		set_tests_properties(resolver_ipc_assembly_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(resolver_supervisor_ubsan_test
-			tests/resolver_supervisor.c src/metrics.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c
+			tests/resolver_supervisor.c src/metrics.c src/process.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c
 			src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c)
 		target_include_directories(resolver_supervisor_ubsan_test PRIVATE src)
 		target_compile_definitions(resolver_supervisor_ubsan_test PRIVATE _GNU_SOURCE RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE=1 RESOLVER_SUPERVISOR_INTEREST_COUNT_LIMIT=2
