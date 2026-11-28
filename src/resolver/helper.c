@@ -183,13 +183,31 @@ static resolver_helper_status resolver_helper_response_cname_send(int socket_fd,
 	return resolver_helper_packet_send(socket_fd, packet, packet_size);
 }
 
-static resolver_helper_status resolver_helper_response_end_send(int socket_fd, const resolver_ipc_response_end *response) {
+static resolver_helper_status resolver_helper_response_end_send(int socket_fd, const resolver_ipc_response_begin *begin) {
+	resolver_ipc_response_end end = {
+		.cname_count = begin->cname_count,
+		.query_id = begin->query_id,
+		.record_count = begin->record_count
+	};
 	uint8_t packet[RESOLVER_IPC_PACKET_BYTE_LIMIT];
 	size_t packet_size;
-	if (resolver_ipc_response_end_encode(response, packet, sizeof(packet), &packet_size) != RESOLVER_IPC_CODEC_OK) {
+	if (resolver_ipc_response_end_encode(&end, packet, sizeof(packet), &packet_size) != RESOLVER_IPC_CODEC_OK) {
 		return RESOLVER_HELPER_INTERNAL;
 	}
 	return resolver_helper_packet_send(socket_fd, packet, packet_size);
+}
+
+static resolver_helper_status resolver_helper_response_prefix_send(int socket_fd, const resolver_ipc_response_begin *begin, const dns_cname_record *cnames) {
+	resolver_helper_status status = resolver_helper_response_begin_send(socket_fd, begin);
+	for (size_t index = 0; status == RESOLVER_HELPER_OK && index < begin->cname_count; index++) {
+		resolver_ipc_response_cname cname = {
+			.index = (uint16_t)index,
+			.query_id = begin->query_id,
+			.record = cnames[index]
+		};
+		status = resolver_helper_response_cname_send(socket_fd, &cname);
+	}
+	return status;
 }
 
 static resolver_helper_status resolver_helper_response_address_send(int socket_fd, const resolver_ipc_request *request) {
@@ -215,15 +233,7 @@ static resolver_helper_status resolver_helper_response_address_send(int socket_f
 	};
 	memcpy(begin.canonical_name, result.canonical_name, sizeof(begin.canonical_name));
 	memcpy(begin.question_name, result.question_name, sizeof(begin.question_name));
-	resolver_helper_status status = resolver_helper_response_begin_send(socket_fd, &begin);
-	for (size_t index = 0; status == RESOLVER_HELPER_OK && index < result.cname_count; index++) {
-		resolver_ipc_response_cname cname = {
-			.index = (uint16_t)index,
-			.query_id = request->query_id,
-			.record = result.cnames[index]
-		};
-		status = resolver_helper_response_cname_send(socket_fd, &cname);
-	}
+	resolver_helper_status status = resolver_helper_response_prefix_send(socket_fd, &begin, result.cnames);
 	for (size_t index = 0; status == RESOLVER_HELPER_OK && index < result.address_count; index++) {
 		resolver_ipc_response_address address = {
 			.index = (uint16_t)index,
@@ -233,12 +243,7 @@ static resolver_helper_status resolver_helper_response_address_send(int socket_f
 		status = resolver_helper_response_address_packet_send(socket_fd, &address);
 	}
 	if (status == RESOLVER_HELPER_OK) {
-		resolver_ipc_response_end end = {
-			.cname_count = result.cname_count,
-			.query_id = request->query_id,
-			.record_count = result.address_count
-		};
-		status = resolver_helper_response_end_send(socket_fd, &end);
+		status = resolver_helper_response_end_send(socket_fd, &begin);
 	}
 	dns_address_result_destroy(&result);
 	return status;
@@ -275,15 +280,7 @@ static resolver_helper_status resolver_helper_response_srv_send(int socket_fd, c
 	};
 	memcpy(begin.canonical_name, result.canonical_name, sizeof(begin.canonical_name));
 	memcpy(begin.question_name, result.question_name, sizeof(begin.question_name));
-	resolver_helper_status status = resolver_helper_response_begin_send(socket_fd, &begin);
-	for (size_t index = 0; status == RESOLVER_HELPER_OK && index < result.cname_count; index++) {
-		resolver_ipc_response_cname cname = {
-			.index = (uint16_t)index,
-			.query_id = request->query_id,
-			.record = result.cnames[index]
-		};
-		status = resolver_helper_response_cname_send(socket_fd, &cname);
-	}
+	resolver_helper_status status = resolver_helper_response_prefix_send(socket_fd, &begin, result.cnames);
 	for (size_t index = 0; status == RESOLVER_HELPER_OK && index < result.record_count; index++) {
 		resolver_ipc_response_srv record = {
 			.index = (uint16_t)index,
@@ -293,12 +290,7 @@ static resolver_helper_status resolver_helper_response_srv_send(int socket_fd, c
 		status = resolver_helper_response_srv_packet_send(socket_fd, &record);
 	}
 	if (status == RESOLVER_HELPER_OK) {
-		resolver_ipc_response_end end = {
-			.cname_count = result.cname_count,
-			.query_id = request->query_id,
-			.record_count = result.record_count
-		};
-		status = resolver_helper_response_end_send(socket_fd, &end);
+		status = resolver_helper_response_end_send(socket_fd, &begin);
 	}
 	dns_srv_result_destroy(&result);
 	return status;
