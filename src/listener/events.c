@@ -27,6 +27,46 @@
 #include "events.h"
 
 /* section: functions (local) */
+static void listener_events_fd_close(int *fd) {
+	if (*fd != -1) {
+		close(*fd);
+		*fd = -1;
+	}
+}
+
+static void listener_events_descriptors_close(listener_events *events) {
+	listener_events_fd_close(&events->epoll_fd);
+	hosts_watch_destroy(events->hosts_watch);
+	events->hosts_watch = NULL;
+	events->hosts_watch_degraded = false;
+	listener_events_fd_close(&events->metrics_timer_fd);
+	events->metrics_timer_registered = false;
+	events->metrics_timer_established = false;
+	events->metrics_timer_degraded = false;
+	listener_events_fd_close(&events->signal_fd);
+	listener_events_fd_close(&events->route_timer_fd);
+	events->resolver_fd = -1;
+}
+
+static void listener_events_metrics_timer_fail(listener_events *events, int error) {
+	if (events->metrics_timer_fd != -1) {
+		if (events->metrics_timer_registered) {
+			(void)listener_events_remove(events, events->metrics_timer_fd);
+			events->metrics_timer_registered = false;
+		}
+		struct itimerspec disarmed;
+		memset(&disarmed, 0, sizeof(disarmed));
+		(void)timerfd_settime(events->metrics_timer_fd, 0, &disarmed, NULL);
+		if (events->metrics_timer_established) {
+			events->metrics_timer_degraded = true;
+		} else {
+			close(events->metrics_timer_fd);
+			events->metrics_timer_fd = -1;
+		}
+	}
+	errno = error;
+}
+
 static int listener_signals_read(int signal_fd, listener_requests *requests) {
 	while (1) {
 		struct signalfd_siginfo signal_info;
@@ -69,23 +109,78 @@ int listener_events_add(const listener_events *events, int fd, uint32_t flags, c
 }
 
 void listener_events_destroy(listener_events *events) {
-	if (events->epoll_fd != -1) {
-		close(events->epoll_fd);
+	if (events == NULL) {
+		return;
 	}
-	hosts_watch_destroy(events->hosts_watch);
-	events->hosts_watch = NULL;
-	if (events->metrics_timer_fd != -1) {
-		close(events->metrics_timer_fd);
-	}
-	if (events->signal_fd != -1) {
-		close(events->signal_fd);
-	}
-	if (events->route_timer_fd != -1) {
-		close(events->route_timer_fd);
-	}
+	listener_events_descriptors_close(events);
 	if (events->mask_blocked) {
 		sigprocmask(SIG_SETMASK, &events->previous_signal_mask, NULL);
+		events->mask_blocked = false;
 	}
+}
+
+void listener_events_dispose_in_child(listener_events *events) {
+	listener_events_descriptors_close(events);
+	events->mask_blocked = false;
+}
+
+bool listener_events_hosts_watch_active(const listener_events *events) {
+	return events->hosts_watch != NULL && !events->hosts_watch_degraded;
+}
+
+void listener_events_hosts_watch_disable(listener_events *events) {
+	if (events->hosts_watch != NULL) {
+		(void)listener_events_remove(events, hosts_watch_descriptor(events->hosts_watch));
+		hosts_watch_destroy(events->hosts_watch);
+		events->hosts_watch = NULL;
+	}
+	events->hosts_watch_degraded = true;
+}
+
+int listener_events_hosts_watch_establish(listener_events *events, const char *filename, bool *overlap_changed) {
+	hosts_watch *candidate = NULL;
+	if (overlap_changed != NULL) {
+		*overlap_changed = false;
+	}
+	if (events == NULL) {
+		errno = EINVAL;
+		return -1;
+	}
+	hosts_watch_create_status status = hosts_watch_create(filename, &candidate);
+	if (status != HOSTS_WATCH_CREATE_OK) {
+		events->hosts_watch_degraded = true;
+		if (status == HOSTS_WATCH_CREATE_BAD_ARGUMENT) {
+			errno = EINVAL;
+		} else if (status == HOSTS_WATCH_CREATE_MEMORY) {
+			errno = ENOMEM;
+		}
+		return -1;
+	}
+	if (listener_events_add(events, hosts_watch_descriptor(candidate), EPOLLIN, &events->hosts_watch_source) == -1) {
+		int saved_errno = errno;
+		hosts_watch_destroy(candidate);
+		events->hosts_watch_degraded = true;
+		errno = saved_errno;
+		return -1;
+	}
+	bool recovered = events->hosts_watch_degraded;
+	hosts_watch *previous = events->hosts_watch;
+	events->hosts_watch = candidate;
+	events->hosts_watch_degraded = false;
+	if (previous != NULL) {
+		hosts_watch_events overlap_events;
+		hosts_watch_read_status overlap_status = hosts_watch_read(previous, &overlap_events);
+		if (overlap_changed != NULL) {
+			*overlap_changed = overlap_status != HOSTS_WATCH_READ_OK || overlap_events.changed;
+		}
+		(void)listener_events_remove(events, hosts_watch_descriptor(previous));
+		hosts_watch_destroy(previous);
+	}
+	return recovered ? 1 : 0;
+}
+
+hosts_watch_read_status listener_events_hosts_watch_read(const listener_events *events, hosts_watch_events *changes) {
+	return hosts_watch_read(events->hosts_watch, changes);
 }
 
 int listener_events_init(listener_events *events) {
@@ -145,6 +240,56 @@ fail:
 	return -1;
 }
 
+bool listener_events_metrics_timer_needs_retry(const listener_events *events) {
+	return events->metrics_timer_fd == -1 && !events->metrics_timer_degraded;
+}
+
+listener_metrics_timer_read_status listener_events_metrics_timer_read(listener_events *events, bool event_failed, uint64_t *expirations) {
+	if (event_failed) {
+		listener_events_metrics_timer_fail(events, EIO);
+		return LISTENER_METRICS_TIMER_FAILED;
+	}
+	ssize_t size;
+	do {
+		size = read(events->metrics_timer_fd, expirations, sizeof(*expirations));
+	} while (size == -1 && errno == EINTR);
+	if (size == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+		return LISTENER_METRICS_TIMER_EMPTY;
+	}
+	if (size != (ssize_t)sizeof(*expirations)) {
+		int failure_errno = size == -1 ? errno : EIO;
+		listener_events_metrics_timer_fail(events, failure_errno);
+		return LISTENER_METRICS_TIMER_FAILED;
+	}
+	return LISTENER_METRICS_TIMER_EXPIRED;
+}
+
+int listener_events_metrics_timer_set(listener_events *events, uint32_t interval) {
+	if (events->metrics_timer_degraded || (interval == 0 && events->metrics_timer_fd == -1)) {
+		return 0;
+	}
+	if (events->metrics_timer_fd == -1) {
+		events->metrics_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+		if (events->metrics_timer_fd == -1 || listener_events_add(events, events->metrics_timer_fd, EPOLLIN, &events->metrics_timer_source) == -1) {
+			listener_events_metrics_timer_fail(events, errno);
+			return -1;
+		}
+		events->metrics_timer_registered = true;
+	}
+	struct itimerspec timer = {
+		.it_interval = { .tv_sec = interval },
+		.it_value = { .tv_sec = interval }
+	};
+	if (timerfd_settime(events->metrics_timer_fd, 0, &timer, NULL) == -1) {
+		listener_events_metrics_timer_fail(events, errno);
+		return -1;
+	}
+	if (interval != 0) {
+		events->metrics_timer_established = true;
+	}
+	return 0;
+}
+
 int listener_events_modify(const listener_events *events, int fd, uint32_t flags, const listener_event_source *source) {
 	struct epoll_event event;
 	memset(&event, 0, sizeof(event));
@@ -167,6 +312,25 @@ int listener_events_resolver_add(listener_events *events, int resolver_fd) {
 	}
 	events->resolver_fd = resolver_fd;
 	return 0;
+}
+
+int listener_events_route_timer_drain(const listener_events *events) {
+	uint64_t expirations;
+	ssize_t bytes;
+	do {
+		bytes = read(events->route_timer_fd, &expirations, sizeof(expirations));
+	} while (bytes == -1 && errno == EINTR);
+	if (bytes == (ssize_t)sizeof(expirations)) {
+		return 0;
+	}
+	if (bytes != -1) {
+		errno = EIO;
+	}
+	return -1;
+}
+
+int listener_events_route_timer_set(const listener_events *events, const struct itimerspec *timer) {
+	return timerfd_settime(events->route_timer_fd, TFD_TIMER_ABSTIME, timer, NULL);
 }
 
 int listener_events_socket_add(const listener_events *events, int socket_fd) {

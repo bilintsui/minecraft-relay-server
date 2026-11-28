@@ -155,11 +155,6 @@ typedef enum {
 	LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR,
 	LISTENER_ROUTE_PREPARE_TIME_ERROR
 } listener_route_prepare_status;
-typedef enum {
-	LISTENER_METRICS_TIMER_EMPTY,
-	LISTENER_METRICS_TIMER_EXPIRED,
-	LISTENER_METRICS_TIMER_FAILED
-} listener_metrics_timer_read_status;
 typedef struct {
 	size_t count;
 	bool refusal_logged;
@@ -1496,62 +1491,12 @@ static bool listener_hosts_prepare(listener_context *context, mksys_level failur
 	return true;
 }
 
-static void listener_hosts_watch_disable(listener_events *events) {
-	if (events->hosts_watch != NULL) {
-		(void)listener_events_remove(events, hosts_watch_descriptor(events->hosts_watch));
-		hosts_watch_destroy(events->hosts_watch);
-		events->hosts_watch = NULL;
-	}
-	events->hosts_watch_degraded = true;
-}
-
-static int listener_hosts_watch_establish(listener_events *events, bool *overlap_changed) {
-	hosts_watch *candidate = NULL;
-	if (overlap_changed != NULL) {
-		*overlap_changed = false;
-	}
-	if (events == NULL) {
-		errno = EINVAL;
-		return -1;
-	}
-	hosts_watch_create_status status = hosts_watch_create(LISTENER_HOSTS_FILENAME, &candidate);
-	if (status != HOSTS_WATCH_CREATE_OK) {
-		events->hosts_watch_degraded = true;
-		if (status == HOSTS_WATCH_CREATE_BAD_ARGUMENT) {
-			errno = EINVAL;
-		} else if (status == HOSTS_WATCH_CREATE_MEMORY) {
-			errno = ENOMEM;
-		}
-		return -1;
-	}
-	if (listener_events_add(events, hosts_watch_descriptor(candidate), EPOLLIN, &events->hosts_watch_source) == -1) {
-		int saved_errno = errno;
-		hosts_watch_destroy(candidate);
-		events->hosts_watch_degraded = true;
-		errno = saved_errno;
-		return -1;
-	}
-	hosts_watch *previous = events->hosts_watch;
-	events->hosts_watch = candidate;
-	events->hosts_watch_degraded = false;
-	if (previous != NULL) {
-		hosts_watch_events overlap_events;
-		hosts_watch_read_status overlap_status = hosts_watch_read(previous, &overlap_events);
-		if (overlap_changed != NULL) {
-			*overlap_changed = overlap_status != HOSTS_WATCH_READ_OK || overlap_events.changed;
-		}
-		(void)listener_events_remove(events, hosts_watch_descriptor(previous));
-		hosts_watch_destroy(previous);
-	}
-	return 0;
-}
-
 static bool listener_hosts_watch_process(listener_context *context, listener_events *events, bool failed, bool ready) {
 	bool changed = failed;
 	bool refresh = failed;
 	if (ready) {
 		hosts_watch_events watch_events;
-		hosts_watch_read_status status = hosts_watch_read(events->hosts_watch, &watch_events);
+		hosts_watch_read_status status = listener_events_hosts_watch_read(events, &watch_events);
 		if (status == HOSTS_WATCH_READ_OK) {
 			changed = changed || watch_events.changed;
 			refresh = refresh || watch_events.refresh;
@@ -1566,16 +1511,16 @@ static bool listener_hosts_watch_process(listener_context *context, listener_eve
 		}
 	}
 	if (refresh) {
-		bool was_degraded = events->hosts_watch_degraded;
 		bool overlap_changed = false;
-		if (listener_hosts_watch_establish(events, &overlap_changed) == -1) {
+		int status = listener_events_hosts_watch_establish(events, LISTENER_HOSTS_FILENAME, &overlap_changed);
+		if (status == -1) {
 			int saved_errno = errno;
-			listener_hosts_watch_disable(events);
+			listener_events_hosts_watch_disable(events);
 			LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
 				"Cannot refresh automatic monitoring for local static host table %s: %s; SIGUSR1 reload remains available.",
 				LISTENER_HOSTS_FILENAME, strerror(saved_errno)
 			);
-		} else if (was_degraded) {
+		} else if (status == 1) {
 			LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION,
 				"Automatic monitoring for local static host table %s restored.",
 				LISTENER_HOSTS_FILENAME
@@ -1587,14 +1532,14 @@ static bool listener_hosts_watch_process(listener_context *context, listener_eve
 }
 
 static void listener_hosts_watch_retry(listener_context *context, listener_events *events) {
-	bool was_degraded = events->hosts_watch_degraded;
-	if (listener_hosts_watch_establish(events, NULL) == -1) {
+	int status = listener_events_hosts_watch_establish(events, LISTENER_HOSTS_FILENAME, NULL);
+	if (status == -1) {
 		int saved_errno = errno;
 		LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
 			"Cannot monitor local static host table %s automatically: %s; SIGUSR1 reload remains available.",
 			LISTENER_HOSTS_FILENAME, strerror(saved_errno)
 		);
-	} else if (was_degraded) {
+	} else if (status == 1) {
 		LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION,
 			"Automatic monitoring for local static host table %s restored.",
 			LISTENER_HOSTS_FILENAME
@@ -1631,97 +1576,27 @@ static void listener_metrics_snapshot_output(listener_context *context, listener
 	errno = saved_errno;
 }
 
-static void listener_metrics_timer_failure(listener_context *context, listener_events *events, int failure_errno, const char *log_filename, uint8_t log_level) {
-	int saved_errno = errno;
+static void listener_metrics_timer_failure(listener_context *context, int failure_errno, const char *log_filename, uint8_t log_level) {
 	listener_metrics_scheduler_failure_record(&context->metrics_runtime);
-	if (events->metrics_timer_fd != -1) {
-		if (events->metrics_timer_registered) {
-			(void)listener_events_remove(events, events->metrics_timer_fd);
-			events->metrics_timer_registered = false;
-		}
-		struct itimerspec disarmed;
-		memset(&disarmed, 0, sizeof(disarmed));
-		(void)timerfd_settime(events->metrics_timer_fd, 0, &disarmed, NULL);
-		if (events->metrics_timer_established) {
-			events->metrics_timer_degraded = true;
-		} else {
-			close(events->metrics_timer_fd);
-			events->metrics_timer_fd = -1;
-		}
-	}
 	MKSYS_LOG(log_filename, log_level, MKSYS_LEVEL_WARNING, "Metrics timer disabled after an observation-subsystem failure: %s", strerror(failure_errno));
-	errno = saved_errno;
-}
-
-static void listener_metrics_timer_disarm(listener_context *context, listener_events *events, const char *log_filename, uint8_t log_level) {
-	int saved_errno = errno;
-	if (events->metrics_timer_fd != -1 && !events->metrics_timer_degraded) {
-		struct itimerspec disarmed;
-		memset(&disarmed, 0, sizeof(disarmed));
-		if (timerfd_settime(events->metrics_timer_fd, 0, &disarmed, NULL) == -1) {
-			listener_metrics_timer_failure(context, events, errno, log_filename, log_level);
-		}
-	}
-	errno = saved_errno;
-}
-
-static bool listener_metrics_timer_establish(listener_context *context, listener_events *events, uint32_t interval, const char *log_filename, uint8_t log_level) {
-	int saved_errno = errno;
-	if (events->metrics_timer_degraded) {
-		errno = saved_errno;
-		return false;
-	}
-	if (events->metrics_timer_fd == -1) {
-		events->metrics_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
-		if (events->metrics_timer_fd == -1) {
-			listener_metrics_timer_failure(context, events, errno, log_filename, log_level);
-			errno = saved_errno;
-			return false;
-		}
-		if (listener_events_add(events, events->metrics_timer_fd, EPOLLIN, &events->metrics_timer_source) == -1) {
-			listener_metrics_timer_failure(context, events, errno, log_filename, log_level);
-			errno = saved_errno;
-			return false;
-		}
-		events->metrics_timer_registered = true;
-	}
-	struct itimerspec timer = {
-		.it_interval = { .tv_sec = interval },
-		.it_value = { .tv_sec = interval }
-	};
-	if (timerfd_settime(events->metrics_timer_fd, 0, &timer, NULL) == -1) {
-		listener_metrics_timer_failure(context, events, errno, log_filename, log_level);
-		errno = saved_errno;
-		return false;
-	}
-	events->metrics_timer_established = true;
-	errno = saved_errno;
-	return true;
 }
 
 static listener_metrics_timer_read_status listener_metrics_timer_read(listener_context *context, listener_events *events, bool event_failed, uint64_t *expirations) {
 	int saved_errno = errno;
-	if (event_failed) {
-		listener_metrics_timer_failure(context, events, EIO, context->log_filename, context->config->log.level);
-		errno = saved_errno;
-		return LISTENER_METRICS_TIMER_FAILED;
-	}
-	ssize_t size;
-	do {
-		size = read(events->metrics_timer_fd, expirations, sizeof(*expirations));
-	} while (size == -1 && errno == EINTR);
-	if (size == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-		errno = saved_errno;
-		return LISTENER_METRICS_TIMER_EMPTY;
-	}
-	if (size != (ssize_t)sizeof(*expirations)) {
-		int failure_errno = size == -1 ? errno : EIO;
-		listener_metrics_timer_failure(context, events, failure_errno, context->log_filename, context->config->log.level);
-		errno = saved_errno;
-		return LISTENER_METRICS_TIMER_FAILED;
+	listener_metrics_timer_read_status status = listener_events_metrics_timer_read(events, event_failed, expirations);
+	if (status == LISTENER_METRICS_TIMER_FAILED) {
+		listener_metrics_timer_failure(context, errno, context->log_filename, context->config->log.level);
 	}
 	errno = saved_errno;
-	return LISTENER_METRICS_TIMER_EXPIRED;
+	return status;
+}
+
+static void listener_metrics_timer_set(listener_context *context, listener_events *events, uint32_t interval, const char *log_filename, uint8_t log_level) {
+	int saved_errno = errno;
+	if (listener_events_metrics_timer_set(events, interval) == -1) {
+		listener_metrics_timer_failure(context, errno, log_filename, log_level);
+	}
+	errno = saved_errno;
 }
 
 static void listener_notify_ready(void) {
@@ -1898,21 +1773,6 @@ static int listener_route_timer_armed_test_notify(void) {
 }
 #endif
 
-static int listener_route_timer_drain(const listener_events *events) {
-	uint64_t expirations;
-	ssize_t bytes;
-	do {
-		bytes = read(events->route_timer_fd, &expirations, sizeof(expirations));
-	} while (bytes == -1 && errno == EINTR);
-	if (bytes == (ssize_t)sizeof(expirations)) {
-		return 0;
-	}
-	if (bytes != -1) {
-		errno = EIO;
-	}
-	return -1;
-}
-
 static int listener_route_timer_set(const listener_events *events, const struct timespec *deadline) {
 	struct itimerspec timer;
 	memset(&timer, 0, sizeof(timer));
@@ -1925,7 +1785,7 @@ static int listener_route_timer_set(const listener_events *events, const struct 
 		return -1;
 	}
 #endif
-	if (timerfd_settime(events->route_timer_fd, TFD_TIMER_ABSTIME, &timer, NULL) == -1) {
+	if (listener_events_route_timer_set(events, &timer) == -1) {
 		return -1;
 	}
 #ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
@@ -1972,7 +1832,7 @@ static int listener_route_runtime_ready(listener_context *context, listener_rout
 		);
 	}
 	if (listener_metrics_effectively_enabled(context->config)) {
-		(void)listener_metrics_timer_establish(context, events, context->config->metrics.interval, context->log_filename, context->config->log.level);
+		listener_metrics_timer_set(context, events, context->config->metrics.interval, context->log_filename, context->config->log.level);
 		listener_metrics_snapshot_output(context, LISTENER_METRICS_OUTPUT_STARTUP, context->log_filename, context->config->log.level, now);
 	}
 	return 0;
@@ -2147,21 +2007,21 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 				} else {
 					listener_metrics_format_drop_record(&context->metrics_runtime);
 				}
-				listener_metrics_timer_disarm(context, events, config_logfull_old, config_maxlevel);
+				listener_metrics_timer_set(context, events, 0, config_logfull_old, config_maxlevel);
 			}
 			snprintf(context->log_filename, sizeof(context->log_filename), "%s", config_logfull_candidate);
 			config_cache_commit(context->config_cache, &config_cache_candidate);
 			primary_published = true;
 			if (metrics_effective_new && metrics_transition) {
-				(void)listener_metrics_timer_establish(context, events, context->config->metrics.interval, context->log_filename, context->config->log.level);
+				listener_metrics_timer_set(context, events, context->config->metrics.interval, context->log_filename, context->config->log.level);
 				struct timespec metrics_now;
 				if (clock_gettime(CLOCK_MONOTONIC, &metrics_now) == 0) {
 					listener_metrics_snapshot_output(context, LISTENER_METRICS_OUTPUT_RECONFIGURE, context->log_filename, context->config->log.level, &metrics_now);
 				} else {
 					listener_metrics_format_drop_record(&context->metrics_runtime);
 				}
-			} else if (metrics_effective_new && events->metrics_timer_fd == -1 && !events->metrics_timer_degraded) {
-				(void)listener_metrics_timer_establish(context, events, context->config->metrics.interval, context->log_filename, context->config->log.level);
+			} else if (metrics_effective_new && listener_events_metrics_timer_needs_retry(events)) {
+				listener_metrics_timer_set(context, events, context->config->metrics.interval, context->log_filename, context->config->log.level);
 			}
 			MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
 				"Configuration reloaded."
@@ -2253,8 +2113,8 @@ static int listener_reload(listener_context *context, listener_socket *listener,
 			}
 		}
 	}
-	if (result == 0 && read_status == CONF_READ_UNCHANGED && metrics_effective_old && events->metrics_timer_fd == -1 && !events->metrics_timer_degraded) {
-		(void)listener_metrics_timer_establish(context, events, metrics_interval_old, config_logfull_old, config_maxlevel);
+	if (result == 0 && read_status == CONF_READ_UNCHANGED && metrics_effective_old && listener_events_metrics_timer_needs_retry(events)) {
+		listener_metrics_timer_set(context, events, metrics_interval_old, config_logfull_old, config_maxlevel);
 	}
 	route_generation_release(generation_candidate);
 	config_destroy(config_candidate);
@@ -2366,19 +2226,11 @@ static int listener_worker_signals_restore(const sigset_t *signal_mask) {
 }
 
 static exit_code listener_worker_run(int client_fd, net_addrbundle client, const uint8_t *inbound, size_t inbound_size,
-	const connection_setup_snapshot *snapshot, listener_socket *listener, const listener_events *events, pid_t listener_pid, listener_context *context) {
+	const connection_setup_snapshot *snapshot, listener_socket *listener, listener_events *events, pid_t listener_pid, listener_context *context) {
 	if (prctl(PR_SET_NAME, LISTENER_WORKER_PROCESS_NAME) == -1) {
 		CONNECTION_SETUP_LOG(snapshot, MKSYS_LEVEL_WARNING, "Cannot set worker process name: %s", strerror(errno));
 	}
-	close(events->epoll_fd);
-	if (events->metrics_timer_fd != -1) {
-		close(events->metrics_timer_fd);
-	}
-	if (events->hosts_watch != NULL) {
-		close(hosts_watch_descriptor(events->hosts_watch));
-	}
-	close(events->route_timer_fd);
-	close(events->signal_fd);
+	listener_events_dispose_in_child(events);
 	listener_socket_close(listener);
 	listener_resolver_dispose_in_child(context);
 	if (prctl(PR_SET_PDEATHSIG, SIGTERM) == -1) {
@@ -2427,7 +2279,7 @@ static int listener_workers_reap(listener_context *context) {
 	return 0;
 }
 
-static listener_connection_progress listener_connection_dispatch(listener_connection *connections, listener_connection *connection, listener_socket *listener, const listener_events *events,
+static listener_connection_progress listener_connection_dispatch(listener_connection *connections, listener_connection *connection, listener_socket *listener, listener_events *events,
 	pid_t listener_pid, listener_context *context, const struct timespec *now) {
 	if (context->workers.count >= LISTENER_WORKER_LIMIT) {
 		listener_metrics_worker_capacity_refusal_record(&context->metrics);
@@ -2465,7 +2317,7 @@ static listener_connection_progress listener_connection_dispatch(listener_connec
 }
 
 static listener_connection_progress listener_connection_ready(listener_connection *connections, listener_connection *connection, listener_socket *listener,
-	const listener_events *events, pid_t listener_pid, listener_context *context, const struct timespec *now) {
+	listener_events *events, pid_t listener_pid, listener_context *context, const struct timespec *now) {
 	if (connection->dispatch == LISTENER_CONNECTION_ROUTE_SHORT_LOCAL || connection->dispatch == LISTENER_CONNECTION_ROUTE_SHORT_WAIT) {
 		return listener_connection_short_start(connection, events, context, now);
 	}
@@ -2475,7 +2327,7 @@ static listener_connection_progress listener_connection_ready(listener_connectio
 	return LISTENER_CONNECTION_ABORT;
 }
 
-static int listener_connections_route_progress(listener_connection *connections, listener_socket *listener, const listener_events *events, pid_t listener_pid,
+static int listener_connections_route_progress(listener_connection *connections, listener_socket *listener, listener_events *events, pid_t listener_pid,
 	listener_context *context, const struct timespec *now) {
 	for (listener_connection *connection = connections; connection != NULL; connection = connection->next) {
 		if (connection->closing || connection->state != LISTENER_CONNECTION_ROUTE_WAITING) {
@@ -2630,7 +2482,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
-			if (requests.route_timer_ready && listener_route_timer_drain(&events) == -1) {
+			if (requests.route_timer_ready && listener_events_route_timer_drain(&events) == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
 					"Cannot consume the route warm-up timer: %s",
 					strerror(errno)
@@ -2659,7 +2511,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 		}
 		if (requests.stop && !shutting_down) {
 			resolver_supervisor_shutdown_prepare(context->resolver);
-			listener_metrics_timer_disarm(context, &events, context->log_filename, context->config->log.level);
+			listener_metrics_timer_set(context, &events, 0, context->log_filename, context->config->log.level);
 			if (clock_gettime(CLOCK_MONOTONIC, &route_now) == -1) {
 				LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
 					"Cannot sample the monotonic clock while closing listener connections: %s",
@@ -2790,7 +2642,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				exitcode = EXITCODE_INTERNAL;
 				break;
 			}
-			if (events.hosts_watch_degraded || events.hosts_watch == NULL) {
+			if (!listener_events_hosts_watch_active(&events)) {
 				listener_hosts_watch_retry(context, &events);
 			}
 			/* Arm monitoring before the manual hosts read so changes during that read remain observable. */

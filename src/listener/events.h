@@ -14,6 +14,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <time.h>
 
 /* section: headers (project) */
 #include "../resolver/hosts_watch.h"
@@ -62,6 +63,11 @@ typedef struct {
 	int signal_fd;
 	listener_event_source signal_source;
 } listener_events;
+typedef enum {
+	LISTENER_METRICS_TIMER_EMPTY,
+	LISTENER_METRICS_TIMER_EXPIRED,
+	LISTENER_METRICS_TIMER_FAILED
+} listener_metrics_timer_read_status;
 typedef struct {
 	uint32_t flags;
 	const listener_event_source *source;
@@ -84,11 +90,25 @@ typedef struct {
 
 /* section: functions (exported) */
 int listener_events_add(const listener_events *events, int fd, uint32_t flags, const listener_event_source *source);
+/* Safe to repeat after initialization, including failed initialization. */
 void listener_events_destroy(listener_events *events);
+/* Close only inherited descriptors. The worker restores the saved signal mask after its signal handlers are ready. */
+void listener_events_dispose_in_child(listener_events *events);
+bool listener_events_hosts_watch_active(const listener_events *events);
+void listener_events_hosts_watch_disable(listener_events *events);
+/* Return 1 on recovery from degraded monitoring, 0 on other successes and -1 on error. */
+int listener_events_hosts_watch_establish(listener_events *events, const char *filename, bool *overlap_changed);
+hosts_watch_read_status listener_events_hosts_watch_read(const listener_events *events, hosts_watch_events *changes);
 int listener_events_init(listener_events *events);
+bool listener_events_metrics_timer_needs_retry(const listener_events *events);
+listener_metrics_timer_read_status listener_events_metrics_timer_read(listener_events *events, bool event_failed, uint64_t *expirations);
+int listener_events_metrics_timer_set(listener_events *events, uint32_t interval);
 int listener_events_modify(const listener_events *events, int fd, uint32_t flags, const listener_event_source *source);
 int listener_events_remove(const listener_events *events, int fd);
+/* The resolver owns this descriptor. */
 int listener_events_resolver_add(listener_events *events, int resolver_fd);
+int listener_events_route_timer_drain(const listener_events *events);
+int listener_events_route_timer_set(const listener_events *events, const struct itimerspec *timer);
 int listener_events_socket_add(const listener_events *events, int socket_fd);
 int listener_events_wait(const listener_events *events, listener_requests *requests);
 
