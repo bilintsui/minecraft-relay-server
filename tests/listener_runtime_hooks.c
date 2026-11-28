@@ -16,6 +16,9 @@
 #include <sys/socket.h>
 #include <systemd/sd-daemon.h>
 
+/* section: headers (project) */
+#include "connection/setup_short.h"
+
 /* section: headers (self) */
 #include "listener_runtime_hooks.h"
 
@@ -62,7 +65,17 @@ static int listener_test_notify(const char *environment, const char *message) {
 #endif
 
 /* section: functions (exported) */
+connection_setup_short_action __real_connection_setup_short_prepare(connection_setup_short_plan *plan, const connection_setup_snapshot *snapshot, net_addrbundle inbound_address,
+	const uint8_t *initial, size_t initial_size);
 int __real_getpeername(int fd, struct sockaddr *address, socklen_t *size);
+
+connection_setup_short_action __wrap_connection_setup_short_prepare(connection_setup_short_plan *plan, const connection_setup_snapshot *snapshot, net_addrbundle inbound_address,
+	const uint8_t *initial, size_t initial_size) {
+	if (getenv("MCRELAY_TEST_SHORT_SETUP_ABORT") != NULL) {
+		return CONNECTION_SETUP_SHORT_ABORT;
+	}
+	return __real_connection_setup_short_prepare(plan, snapshot, inbound_address, initial, initial_size);
+}
 
 int __wrap_getpeername(int fd, struct sockaddr *address, socklen_t *size) {
 	if (getenv("MCRELAY_TEST_PROXY_PEER_ERROR") != NULL) {

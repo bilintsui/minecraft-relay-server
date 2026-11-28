@@ -96,6 +96,10 @@ static bool connection_setup_short_test_arguments(void) {
 	uint8_t modern[BUFSIZ];
 	size_t modern_size = connection_setup_short_test_modern_packet(modern, sizeof(modern), CLIENT_INTENT_STATUS, 764);
 	CHECK(connection_setup_short_prepare(&plan, &snapshot, client, modern, modern_size) == CONNECTION_SETUP_SHORT_ABORT, "invalid ready endpoint accepted");
+	connection_setup_log_access(NULL, MKSYS_LEVEL_WARNING, &client, "status: abort_short");
+	snapshot.proxy.origin = (connection_proxy_origin)(CONNECTION_PROXY_UNKNOWN + 1);
+	CHECK(!connection_setup_snapshot_valid(&snapshot), "invalid PROXY origin accepted");
+	connection_setup_log_access(&snapshot, MKSYS_LEVEL_WARNING, &client, "status: abort_short");
 	return true;
 }
 

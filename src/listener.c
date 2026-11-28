@@ -750,6 +750,28 @@ static bool listener_connection_destroy(listener_connection **connections, liste
 	return result;
 }
 
+static connection_proxy_provenance listener_connection_provenance(const listener_connection *connection) {
+	connection_proxy_provenance result = { .origin = connection->prefix_checked ? connection->proxy_origin : CONNECTION_PROXY_DIRECT };
+	if (result.origin != CONNECTION_PROXY_DIRECT) {
+		result.peer = net_ntop(connection->peer_address.family, &connection->peer_address.addr, true);
+		result.peer_port = connection->peer_port;
+	}
+	return result;
+}
+
+static void listener_connection_finish(listener_connection *connection, const listener_context *context, listener_connection_progress progress) {
+	if (progress != LISTENER_CONNECTION_ABORT && progress != LISTENER_CONNECTION_CLOSED) {
+		return;
+	}
+	if (progress == LISTENER_CONNECTION_ABORT) {
+		connection_proxy_provenance proxy = listener_connection_provenance(connection);
+		net_addrbundle client = listener_connection_client(connection);
+		const char *details = connection->state == LISTENER_CONNECTION_INITIAL ? "status: abort_init" : "status: abort_short";
+		connection_setup_log_record(context->log_filename, context->config->log.level, MKSYS_LEVEL_WARNING, &proxy, &client, details);
+	}
+	connection->closing = true;
+}
+
 static bool listener_connection_snapshot_prepare(listener_connection *connection, listener_context *context, connection_setup_snapshot *result) {
 	if (connection == NULL || connection->generation == NULL || context == NULL || result == NULL) {
 		return false;
@@ -769,11 +791,7 @@ static bool listener_connection_snapshot_prepare(listener_connection *connection
 		return false;
 	}
 	result->log_level = config->log.level;
-	result->proxy_origin = connection->proxy_origin;
-	if (connection->proxy_origin != CONNECTION_PROXY_DIRECT) {
-		result->proxy_peer = net_ntop(connection->peer_address.family, &connection->peer_address.addr, true);
-		result->proxy_peer_port = connection->peer_port;
-	}
+	result->proxy = listener_connection_provenance(connection);
 	if (connection->state == LISTENER_CONNECTION_INITIAL) {
 		result->route_status = CONNECTION_SETUP_ROUTE_BYPASS;
 	} else {
@@ -2985,15 +3003,11 @@ static int listener_connections_route_progress(listener_connection *connections,
 		listener_connection_progress progress = listener_connection_route_progress(connection, &context->metrics, context->resolver, now);
 		if (progress == LISTENER_CONNECTION_READY) {
 			progress = listener_connection_ready(connections, connection, listener, events, listener_pid, context, now);
-		} else if (progress == LISTENER_CONNECTION_FATAL) {
-			return -1;
 		}
 		if (progress == LISTENER_CONNECTION_FATAL) {
 			return -1;
 		}
-		if (progress == LISTENER_CONNECTION_ABORT || progress == LISTENER_CONNECTION_CLOSED) {
-			connection->closing = true;
-		}
+		listener_connection_finish(connection, context, progress);
 	}
 	return 0;
 }
@@ -3377,16 +3391,8 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 					);
 					exitcode = EXITCODE_INTERNAL;
 					goto cleanup;
-				} else if (progress == LISTENER_CONNECTION_ABORT) {
-					net_addrbundle client = listener_client_address_format(&connection->peer_address, connection->peer_port);
-					LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
-						"src: %s:%d, status: %s",
-						(char *)&client.address, client.port, connection->state == LISTENER_CONNECTION_INITIAL ? "abort_init" : "abort_short"
-					);
-					connection->closing = true;
-				} else if (progress == LISTENER_CONNECTION_CLOSED) {
-					connection->closing = true;
 				}
+				listener_connection_finish(connection, context, progress);
 			}
 #ifdef LISTENER_TIMER_REARM_TEST
 			if (timeout_pass == 0 && listener_connection_timer_test_rearm(&requests) == -1) {

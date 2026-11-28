@@ -33,6 +33,11 @@ typedef enum {
 	CONNECTION_PROXY_UNTRUSTED_IGNORE,
 	CONNECTION_PROXY_UNKNOWN
 } connection_proxy_origin;
+typedef struct {
+	connection_proxy_origin origin;
+	net_addrp peer;
+	in_port_t peer_port;
+} connection_proxy_provenance;
 typedef enum {
 	CONNECTION_SETUP_ROUTE_BYPASS,
 	CONNECTION_SETUP_ROUTE_READY,
@@ -44,9 +49,7 @@ typedef struct {
 	char icon_b64[CONF_ICON_B64MAX + 1U];
 	char log_filename[PATH_MAX];
 	uint8_t log_level;
-	connection_proxy_origin proxy_origin;
-	net_addrp proxy_peer;
-	in_port_t proxy_peer_port;
+	connection_proxy_provenance proxy;
 	connection_setup_route_status route_status;
 } connection_setup_snapshot;
 typedef enum {
@@ -65,6 +68,7 @@ bool connection_setup_address_valid(const net_addr *address);
 bool connection_setup_bundle_valid(const net_addrbundle *address);
 const char *connection_setup_destination(const route_endpoint_snapshot *endpoint);
 void connection_setup_log_access(const connection_setup_snapshot *snapshot, mksys_level level, const net_addrbundle *source, const char *format, ...) __attribute__((format(printf, 4, 5)));
+void connection_setup_log_record(const char *filename, uint8_t maxlevel, mksys_level level, const connection_proxy_provenance *proxy, const net_addrbundle *source, const char *details);
 bool connection_setup_snapshot_valid(const connection_setup_snapshot *snapshot);
 
 #endif

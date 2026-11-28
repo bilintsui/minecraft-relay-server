@@ -214,6 +214,21 @@ def access_levels(binary):
                 assert len(records) == 1 and prefix in records[0] and "reject_vhostinvalid" in records[0], records
 
 
+def access_aborts(binary):
+    header = b"PROXY TCP6 2001:db8::7 2001:db8::8 123 456\r\n"
+    peer = "127.0.0.1:{port}"
+    with relay(binary, {}) as direct:
+        reject(direct, [], f"[WARN] src: {peer}, status: abort_init", finish=True)
+    for settings, cases in [
+        ({}, [(header, "accepted_trusted", "[2001:db8::7]:123"), (b"PROXY UNKNOWN\r\n", "unknown", peer)]),
+        ({"trusted_sources": [], "untrusted_policy": "accept"}, [(header, "accepted_untrusted", "[2001:db8::7]:123")]),
+        ({"trusted_sources": [], "untrusted_policy": "ignore"}, [(header, "ignored_untrusted", peer)]),
+    ]:
+        with relay(binary, {"allow_proxy": True, "proxy_settings": settings}) as server:
+            for wire, outcome, source in cases:
+                reject(server, [wire], f"[WARN] peer: {peer}, proxy: {outcome}, src: {source}, status: abort_init", finish=True)
+
+
 def forwarding_without_header(binary):
     header = b"PROXY TCP4 192.0.2.7 192.0.2.8 123 456\r\n"
     with backend_socket() as backend:
@@ -278,10 +293,24 @@ def socket_errors(binary):
         reject(server, [declared], reason)
 
 
+def short_abort(binary):
+    header = b"PROXY TCP4 192.0.2.7 192.0.2.8 123 456\r\n"
+    expected = "[WARN] peer: 127.0.0.1:{port}, proxy: accepted_trusted, src: 192.0.2.7:123, status: abort_short"
+    with relay(binary, {"allow_proxy": True}) as server:
+        reject(server, [header + game_request(1)], expected)
+        # Zero-TTL answers from the test resolver make the next route complete asynchronously.
+        server.settings["proxy"][0]["address"] = "backend.test"
+        server.reload({})
+        reject(server, [header + game_request(1)], expected)
+
+
 if __name__ == "__main__":
     if len(sys.argv) == 3 and sys.argv[2] == "socket-errors":
         socket_errors(sys.argv[1])
+    elif len(sys.argv) == 3 and sys.argv[2] == "short-abort":
+        short_abort(sys.argv[1])
     else:
+        access_aborts(sys.argv[1])
         access_levels(sys.argv[1])
         admission(sys.argv[1])
         forwarding(sys.argv[1])
