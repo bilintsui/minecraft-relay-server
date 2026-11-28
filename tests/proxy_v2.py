@@ -6,7 +6,7 @@ import socket
 import struct
 import sys
 
-from inbound_proxy import backend_socket, exchange, game_request, reject, relay, wait_for
+from inbound_proxy import backend_socket, exchange, game_request, reject, relay, require_close, wait_for
 
 
 SIGNATURE = b"\r\n\r\n\0\r\nQUIT\n"
@@ -64,6 +64,16 @@ def forwarding(binary):
                         assert len(entries) == 1 and f"proxy: {outcome}, src: {source}," in entries[0] and "status: accept" in entries[0], entries
 
 
+def header_timeout(binary):
+    with relay(binary, LISTEN) as server, server.connect() as partial:
+        port = partial.getsockname()[1]
+        partial.settimeout(20)
+        partial.sendall(tcp("192.0.2.1", "198.51.100.2", 1, 2, b"\xe1\x00\x01Z")[:-1])
+        require_close(partial)
+        entries = [line for line in server.lines() if f"127.0.0.1:{port}," in line]
+        assert len(entries) == 1 and entries[0].endswith(EXCEPTION.format(port=port) + "header_timeout"), entries
+
+
 def stream_and_reload(binary):
     # The 12 address bytes, TLV prefix and value together exhaust the 16-bit length field.
     value = game_request(1).ljust(65520, b"\0")
@@ -115,5 +125,6 @@ def outbound(binary):
 if __name__ == "__main__":
     admission(sys.argv[1])
     forwarding(sys.argv[1])
+    header_timeout(sys.argv[1])
     outbound(sys.argv[1])
     stream_and_reload(sys.argv[1])

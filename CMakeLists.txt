@@ -518,9 +518,10 @@ if(BUILD_TESTING)
 	target_compile_definitions(listener_assembly_test PRIVATE _GNU_SOURCE)
 	add_test(NAME listener_assembly_accept COMMAND listener_assembly_test $<TARGET_FILE:listener_assembly_daemon> accept-delay)
 	add_test(NAME listener_assembly_proxy COMMAND listener_assembly_test $<TARGET_FILE:listener_assembly_daemon> proxy)
+	add_test(NAME listener_assembly_proxy_v2 COMMAND listener_assembly_test $<TARGET_FILE:listener_assembly_daemon> proxy-v2)
 	add_test(NAME listener_assembly_log_io COMMAND listener_assembly_test $<TARGET_FILE:listener_assembly_daemon> log-delay)
 	add_test(NAME listener_assembly_controls COMMAND listener_assembly_test $<TARGET_FILE:listener_assembly_daemon> controls)
-	set_tests_properties(listener_assembly_accept listener_assembly_proxy listener_assembly_log_io listener_assembly_controls PROPERTIES TIMEOUT 120)
+	set_tests_properties(listener_assembly_accept listener_assembly_proxy listener_assembly_proxy_v2 listener_assembly_log_io listener_assembly_controls PROPERTIES TIMEOUT 120)
 	add_executable(worker_cap_daemon
 		src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c src/listener.c src/listener_metrics.c src/log.c src/main.c src/metrics.c src/network.c
 		src/timeutil.c src/version_info.c

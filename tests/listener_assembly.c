@@ -69,6 +69,7 @@ typedef struct {
 	int backend_fd, client_fd, notify_fd, channel_read, channel_write;
 	pid_t child;
 	size_t header_size;
+	unsigned int proxy_version;
 	in_port_t listen_port;
 	assembly_case_state state;
 } assembly_case_fixture;
@@ -123,9 +124,9 @@ static bool assembly_fixture_prepare(assembly_case_fixture *fixture) {
 		return false;
 	}
 	int written = fprintf(config,
-		"{\"log\":{\"filename\":\"%s\",\"level\":4},\"listen\":{\"address\":\"127.0.0.1\",\"port\":%u,\"allow_proxy\":%s},\"icon\":\"\","
+		"{\"log\":{\"filename\":\"%s\",\"level\":4},\"listen\":{\"address\":\"127.0.0.1\",\"port\":%u,\"allow_proxy\":%s,\"proxy_settings\":{\"version\":%u}},\"icon\":\"\","
 		"\"proxy\":[{\"vhost\":[\"assembly.example\"],\"address\":\"127.0.0.1\",\"port\":%u}]}\n",
-		fixture->log, (unsigned int)fixture->listen_port, fixture->header_size ? "true" : "false", (unsigned int)backend_port
+		fixture->log, (unsigned int)fixture->listen_port, fixture->header_size ? "true" : "false", fixture->proxy_version, (unsigned int)backend_port
 	);
 	int closed = fclose(config);
 	return written > 0 && closed == 0;
@@ -449,7 +450,18 @@ static bool assembly_case_run(const char *binary, const char *name, assembly_tim
 	memset(&fixture, 0, sizeof(fixture));
 	fixture.backend_fd = fixture.client_fd = fixture.notify_fd = fixture.channel_read = fixture.channel_write = -1;
 	fixture.child = -1;
-	fixture.header_size = strcmp(name, "proxy") == 0 ? sizeof(ASSEMBLY_PROXY_HEADER) - 1U : 0;
+	static const char v1_fragment[] = ASSEMBLY_PROXY_HEADER "\x7f";
+	static const char v2_fragment[] = "\r\n\r\n\0\r\nQUIT\n\x21\x00\x00\x04\xe1\x00\x01Z\x7f";
+	const char *fragment = "\x7f";
+	fixture.proxy_version = 1;
+	if (strcmp(name, "proxy") == 0) {
+		fragment = v1_fragment;
+		fixture.header_size = sizeof(v1_fragment) - 2U;
+	} else if (strcmp(name, "proxy-v2") == 0) {
+		fragment = v2_fragment;
+		fixture.header_size = sizeof(v2_fragment) - 2U;
+		fixture.proxy_version = 2;
+	}
 	assembly_case_result result = ASSEMBLY_CASE_SETUP;
 	const char *phase = "prepare";
 	if (!assembly_fixture_prepare(&fixture) || !assembly_fixture_start(&fixture, binary, fault)) goto cleanup;
@@ -465,10 +477,17 @@ static bool assembly_case_run(const char *binary, const char *name, assembly_tim
 	result = assembly_wait_arm(&fixture, 0);
 	if (result != ASSEMBLY_CASE_OK) goto cleanup;
 	phase = "first-fragment";
-	static const char proxy_fragment[] = ASSEMBLY_PROXY_HEADER "\x7f";
-	const char *fragment = fixture.header_size ? proxy_fragment : "\x7f";
 	size_t length = fixture.header_size + 1;
-	if (send(fixture.client_fd, fragment, length, MSG_NOSIGNAL) != (ssize_t)length) {
+	size_t sent = 0;
+	if (fixture.proxy_version == 2) {
+		/* Hold the final extension byte across two reads before starting Minecraft assembly. */
+		sent = fixture.header_size - 1U;
+		if (send(fixture.client_fd, fragment, sent, MSG_NOSIGNAL) != (ssize_t)sent || !assembly_sleep(ASSEMBLY_REFRESH_DELAY_SEC)) {
+			result = ASSEMBLY_CASE_PROTOCOL;
+			goto cleanup;
+		}
+	}
+	if (send(fixture.client_fd, fragment + sent, length - sent, MSG_NOSIGNAL) != (ssize_t)(length - sent)) {
 		result = ASSEMBLY_CASE_PROTOCOL;
 		goto cleanup;
 	}
@@ -530,7 +549,7 @@ int main(int argc, char **argv) {
 	bool result;
 	if (strcmp(argv[2], "accept-delay") == 0) {
 		result = assembly_case_run(argv[1], argv[2], ASSEMBLY_TIMER_NORMAL, true, ASSEMBLY_CASE_OK);
-	} else if (strcmp(argv[2], "proxy") == 0) {
+	} else if (strcmp(argv[2], "proxy") == 0 || strcmp(argv[2], "proxy-v2") == 0) {
 		result = assembly_case_run(argv[1], argv[2], ASSEMBLY_TIMER_NORMAL, false, ASSEMBLY_CASE_OK);
 	} else if (strcmp(argv[2], "log-delay") == 0) {
 		result = assembly_case_run(argv[1], argv[2], ASSEMBLY_TIMER_LOG_DELAY, false, ASSEMBLY_CASE_OK);
