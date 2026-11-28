@@ -25,7 +25,6 @@
 #include <sys/epoll.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
-#include <sys/signalfd.h>
 #include <sys/socket.h>
 #include <sys/timerfd.h>
 #include <sys/types.h>
@@ -40,6 +39,8 @@
 #include "connection/setup_long.h"
 #include "connection/setup_short.h"
 #include "define/exitcode.h"
+#include "listener/connection.h"
+#include "listener/events.h"
 #include "listener/metrics.h"
 #if defined(LISTENER_EARLY_COLLECT_TEST) || defined(LISTENER_READY_FLIP_TEST)
 #include "listener_runtime_hooks.h"
@@ -82,9 +83,6 @@
 #endif
 #ifndef LISTENER_CONNECTION_LIMIT_FALLBACK
 #define LISTENER_CONNECTION_LIMIT_FALLBACK	256
-#endif
-#ifndef LISTENER_EVENT_BATCH
-#define LISTENER_EVENT_BATCH	128
 #endif
 #ifndef LISTENER_HOSTS_FILENAME
 #define LISTENER_HOSTS_FILENAME	"/etc/hosts"
@@ -158,41 +156,6 @@ typedef enum {
 	LISTENER_CONNECTION_READY
 } listener_connection_progress;
 typedef enum {
-	LISTENER_CONNECTION_ROUTE_INVALID,
-	LISTENER_CONNECTION_ROUTE_SHORT_LOCAL,
-	LISTENER_CONNECTION_ROUTE_SHORT_WAIT,
-	LISTENER_CONNECTION_ROUTE_WORKER_BYPASS,
-	LISTENER_CONNECTION_ROUTE_WORKER_WAIT
-} listener_connection_route;
-typedef enum {
-	LISTENER_CONNECTION_INITIAL,
-	LISTENER_CONNECTION_ROUTE_WAITING,
-	LISTENER_CONNECTION_SHORT_CONNECTING,
-	LISTENER_CONNECTION_SHORT_RELAYING,
-	LISTENER_CONNECTION_SHORT_RESPONDING,
-	LISTENER_CONNECTION_WORKER_REFUSING
-} listener_connection_state;
-typedef enum {
-	LISTENER_CONNECTION_TIMER_ASSEMBLY,
-	LISTENER_CONNECTION_TIMER_GRACE,
-	LISTENER_CONNECTION_TIMER_ROUTE,
-	LISTENER_CONNECTION_TIMER_SHORT_CONNECT,
-	LISTENER_CONNECTION_TIMER_SHORT_IDLE,
-	LISTENER_CONNECTION_TIMER_SHORT_LIFETIME,
-	LISTENER_CONNECTION_TIMER_WORKER_REFUSAL
-} listener_connection_timer;
-typedef enum {
-	LISTENER_EVENT_CLIENT,
-	LISTENER_EVENT_HOSTS,
-	LISTENER_EVENT_LISTENER,
-	LISTENER_EVENT_METRICS_TIMER,
-	LISTENER_EVENT_RESOLVER,
-	LISTENER_EVENT_ROUTE_TIMER,
-	LISTENER_EVENT_SIGNAL,
-	LISTENER_EVENT_TIMEOUT,
-	LISTENER_EVENT_UPSTREAM
-} listener_event_kind;
-typedef enum {
 	LISTENER_ROUTE_PREPARE_OK,
 	LISTENER_ROUTE_PREPARE_CANDIDATE_ERROR,
 	LISTENER_ROUTE_PREPARE_TIME_ERROR
@@ -213,64 +176,6 @@ typedef enum {
 	LISTENER_METRICS_TIMER_EXPIRED,
 	LISTENER_METRICS_TIMER_FAILED
 } listener_metrics_timer_read_status;
-typedef struct listener_connection listener_connection;
-typedef struct {
-	size_t capacity;
-	uint8_t *data;
-	size_t offset;
-	size_t size;
-} listener_connection_buffer;
-typedef struct {
-	listener_connection *connection;
-	uint64_t generation;
-	listener_event_kind kind;
-} listener_event_source;
-struct listener_connection {
-	net_addr peer_address;
-	in_port_t peer_port;
-	struct timespec assembly_deadline;
-	listener_connection_buffer client_buffer;
-	uint32_t client_events;
-	bool client_read_closed;
-	bool client_read_paused;
-	listener_event_source client_source;
-	bool client_registered;
-	bool client_write_closed;
-	bool closing;
-	listener_connection_route dispatch;
-	route_endpoint_snapshot endpoint;
-	route_generation *generation;
-	uint8_t inbound[BUFSIZ];
-	size_t inbound_size;
-	p_proxy inbound_proxy;
-	bool prefix_checked;
-	uint16_t proxy_remaining;
-	connection_proxy_origin proxy_origin;
-	struct timespec lifetime_deadline;
-	struct listener_connection *next;
-	size_t request_offset;
-	listener_metrics_route_request route_metrics;
-	connection_setup_short_plan short_plan;
-	int socket_fd;
-	listener_connection_state state;
-	int timer_fd;
-	struct timespec timer_deadline;
-	uint64_t timer_generation;
-	listener_event_source timer_source;
-	listener_connection_timer timer;
-	listener_connection_buffer upstream_buffer;
-	bool upstream_buffer_owned;
-	uint32_t upstream_events;
-	int upstream_fd;
-	bool upstream_read_closed;
-	bool upstream_read_paused;
-	bool upstream_registered;
-	listener_event_source upstream_source;
-	bool upstream_write_closed;
-	route_waiter *waiter;
-	route_waiter_status waiter_status;
-	char vhost[ROUTE_ENDPOINT_TEXT_SIZE];
-};
 typedef struct {
 	size_t count;
 	bool refusal_logged;
@@ -300,46 +205,6 @@ typedef struct {
 	net_addr address;
 	in_port_t port;
 } listener_endpoint;
-typedef struct {
-	int epoll_fd;
-	hosts_watch *hosts_watch;
-	bool hosts_watch_degraded;
-	listener_event_source hosts_watch_source;
-	listener_event_source listener_source;
-	bool mask_blocked;
-	bool metrics_timer_degraded;
-	bool metrics_timer_established;
-	int metrics_timer_fd;
-	bool metrics_timer_registered;
-	listener_event_source metrics_timer_source;
-	sigset_t previous_signal_mask;
-	int resolver_fd;
-	listener_event_source resolver_source;
-	int route_timer_fd;
-	listener_event_source route_timer_source;
-	int signal_fd;
-	listener_event_source signal_source;
-} listener_events;
-typedef struct {
-	uint32_t flags;
-	const listener_event_source *source;
-	uint64_t source_generation;
-	uint64_t timer_generation;
-} listener_ready_event;
-typedef struct {
-	bool accept_ready;
-	bool child_ready;
-	bool hosts_watch_failed;
-	bool hosts_watch_ready;
-	listener_ready_event ready[LISTENER_EVENT_BATCH];
-	size_t ready_count;
-	bool reload;
-	bool metrics_timer_failed;
-	bool metrics_timer_ready;
-	bool resolver_ready;
-	bool route_timer_ready;
-	bool stop;
-} listener_requests;
 typedef struct {
 	struct timespec deadline;
 	bool pressure_logged;
@@ -387,26 +252,6 @@ static net_addrbundle listener_client_address_format(const net_addr *address, in
 	};
 }
 
-static int listener_events_add(const listener_events *events, int fd, uint32_t flags, const listener_event_source *source) {
-	struct epoll_event event;
-	memset(&event, 0, sizeof(event));
-	event.events = flags;
-	event.data.ptr = (void *)source;
-	return epoll_ctl(events->epoll_fd, EPOLL_CTL_ADD, fd, &event);
-}
-
-static int listener_events_modify(const listener_events *events, int fd, uint32_t flags, const listener_event_source *source) {
-	struct epoll_event event;
-	memset(&event, 0, sizeof(event));
-	event.events = flags;
-	event.data.ptr = (void *)source;
-	return epoll_ctl(events->epoll_fd, EPOLL_CTL_MOD, fd, &event);
-}
-
-static int listener_events_remove(const listener_events *events, int fd) {
-	return epoll_ctl(events->epoll_fd, EPOLL_CTL_DEL, fd, NULL);
-}
-
 static int listener_connection_timer_set(listener_connection *connection, listener_connection_timer timer, const struct timespec *expiration) {
 	struct timespec effective = *expiration;
 	if (timeutil_compare(&connection->lifetime_deadline, &effective) < 0) {
@@ -419,7 +264,7 @@ static int listener_connection_timer_set(listener_connection *connection, listen
 	}
 	connection->timer = timer;
 	connection->timer_deadline = effective;
-	connection->timer_generation = connection->timer_generation == UINT64_MAX ? 1 : connection->timer_generation + 1U;
+	connection->timer_source.generation = connection->timer_source.generation == UINT64_MAX ? 1 : connection->timer_source.generation + 1U;
 	return 0;
 }
 
@@ -1492,7 +1337,7 @@ static listener_connection_progress listener_connection_timeout(listener_connect
 		return LISTENER_CONNECTION_ABORT;
 	}
 	struct timespec current_now = *now;
-	if (timer_generation != connection->timer_generation && clock_gettime(CLOCK_MONOTONIC, &current_now) == -1) {
+	if (timer_generation != connection->timer_source.generation && clock_gettime(CLOCK_MONOTONIC, &current_now) == -1) {
 		return LISTENER_CONNECTION_FATAL;
 	}
 	/* A rearmed timer may have expired after epoll collected the stale readiness event. */
@@ -1600,250 +1445,6 @@ static listener_endpoint_status listener_endpoint_prepare(const conf *source, li
 		return LISTENER_ENDPOINT_BAD_PORT;
 	}
 	return LISTENER_ENDPOINT_OK;
-}
-
-static void listener_events_destroy(listener_events *events) {
-	if (events->epoll_fd != -1) {
-		close(events->epoll_fd);
-	}
-	hosts_watch_destroy(events->hosts_watch);
-	events->hosts_watch = NULL;
-	if (events->metrics_timer_fd != -1) {
-		close(events->metrics_timer_fd);
-	}
-	if (events->signal_fd != -1) {
-		close(events->signal_fd);
-	}
-	if (events->route_timer_fd != -1) {
-		close(events->route_timer_fd);
-	}
-	if (events->mask_blocked) {
-		sigprocmask(SIG_SETMASK, &events->previous_signal_mask, NULL);
-	}
-}
-
-static int listener_events_socket_add(const listener_events *events, int socket_fd) {
-	int socket_flags = fcntl(socket_fd, F_GETFL);
-	if (socket_flags == -1 || fcntl(socket_fd, F_SETFL, socket_flags | O_NONBLOCK) == -1) {
-		return -1;
-	}
-	return listener_events_add(events, socket_fd, EPOLLIN, &events->listener_source);
-}
-
-static int listener_events_init(listener_events *events) {
-	int saved_errno;
-	memset(events, 0, sizeof(*events));
-	events->epoll_fd = -1;
-	events->metrics_timer_fd = -1;
-	events->resolver_fd = -1;
-	events->route_timer_fd = -1;
-	events->signal_fd = -1;
-	events->hosts_watch_source.kind = LISTENER_EVENT_HOSTS;
-	events->listener_source.kind = LISTENER_EVENT_LISTENER;
-	events->metrics_timer_source.kind = LISTENER_EVENT_METRICS_TIMER;
-	events->resolver_source.kind = LISTENER_EVENT_RESOLVER;
-	events->route_timer_source.kind = LISTENER_EVENT_ROUTE_TIMER;
-	events->signal_source.kind = LISTENER_EVENT_SIGNAL;
-	struct sigaction child_action = { 0 };
-	sigemptyset(&child_action.sa_mask);
-	child_action.sa_flags = SA_NOCLDSTOP;
-	child_action.sa_handler = SIG_DFL;
-	if (sigaction(SIGCHLD, &child_action, NULL) == -1) {
-		return -1;
-	}
-	sigset_t signal_mask;
-	sigemptyset(&signal_mask);
-	sigaddset(&signal_mask, SIGCHLD);
-	sigaddset(&signal_mask, SIGINT);
-	sigaddset(&signal_mask, SIGTERM);
-	sigaddset(&signal_mask, SIGUSR1);
-	if (sigprocmask(SIG_BLOCK, &signal_mask, &events->previous_signal_mask) == -1) {
-		return -1;
-	}
-	events->mask_blocked = true;
-	events->signal_fd = signalfd(-1, &signal_mask, SFD_NONBLOCK | SFD_CLOEXEC);
-	if (events->signal_fd == -1) {
-		goto fail;
-	}
-	events->epoll_fd = epoll_create1(EPOLL_CLOEXEC);
-	if (events->epoll_fd == -1) {
-		goto fail;
-	}
-	if (listener_events_add(events, events->signal_fd, EPOLLIN, &events->signal_source) == -1) {
-		goto fail;
-	}
-	events->route_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
-	if (events->route_timer_fd == -1) {
-		goto fail;
-	}
-	if (listener_events_add(events, events->route_timer_fd, EPOLLIN, &events->route_timer_source) == -1) {
-		goto fail;
-	}
-	return 0;
-fail:
-	saved_errno = errno;
-	listener_events_destroy(events);
-	errno = saved_errno;
-	return -1;
-}
-
-static int listener_events_resolver_add(listener_events *events, int resolver_fd) {
-	if (events == NULL || resolver_fd < 0 || events->resolver_fd != -1) {
-		errno = EINVAL;
-		return -1;
-	}
-	if (listener_events_add(events, resolver_fd, EPOLLIN, &events->resolver_source) == -1) {
-		return -1;
-	}
-	events->resolver_fd = resolver_fd;
-	return 0;
-}
-
-static int listener_signals_read(int signal_fd, listener_requests *requests) {
-	while (1) {
-		struct signalfd_siginfo signal_info;
-		ssize_t bytes = read(signal_fd, &signal_info, sizeof(signal_info));
-		if (bytes == (ssize_t)sizeof(signal_info)) {
-			switch (signal_info.ssi_signo) {
-				case SIGCHLD:
-					requests->child_ready = true;
-					break;
-				case SIGINT:
-				case SIGTERM:
-					requests->stop = true;
-					break;
-				case SIGUSR1:
-					requests->reload = true;
-					break;
-			}
-			continue;
-		}
-		if (bytes == -1 && errno == EINTR) {
-			continue;
-		}
-		if (bytes == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-			return 0;
-		}
-		if (bytes != -1) {
-			errno = EIO;
-		}
-		return -1;
-	}
-}
-
-static int listener_events_wait(const listener_events *events, listener_requests *requests) {
-	struct epoll_event ready_events[LISTENER_EVENT_BATCH];
-	memset(requests, 0, sizeof(*requests));
-	int ready_count;
-	do {
-		ready_count = epoll_wait(events->epoll_fd, ready_events, LISTENER_EVENT_BATCH, -1);
-	} while (ready_count == -1 && errno == EINTR);
-	if (ready_count == -1) {
-		return -1;
-	}
-	for (int i = 0; i < ready_count; i++) {
-		uint32_t event_flags = ready_events[i].events;
-		const listener_event_source *source = ready_events[i].data.ptr;
-		if (source == NULL) {
-			errno = EIO;
-			return -1;
-		}
-		switch (source->kind) {
-		case LISTENER_EVENT_HOSTS:
-			if (source != &events->hosts_watch_source || events->hosts_watch == NULL) {
-				errno = EIO;
-				return -1;
-			}
-			if (event_flags & (EPOLLERR | EPOLLHUP)) {
-				requests->hosts_watch_failed = true;
-			}
-			if (event_flags & EPOLLIN) {
-				requests->hosts_watch_ready = true;
-			}
-			break;
-		case LISTENER_EVENT_SIGNAL:
-			if (source != &events->signal_source) {
-				errno = EIO;
-				return -1;
-			}
-			if ((event_flags & EPOLLIN) && listener_signals_read(events->signal_fd, requests) == -1) {
-				return -1;
-			}
-			if (event_flags & (EPOLLERR | EPOLLHUP)) {
-				errno = EIO;
-				return -1;
-			}
-			break;
-		case LISTENER_EVENT_LISTENER:
-			if (source != &events->listener_source) {
-				errno = EIO;
-				return -1;
-			}
-			if (event_flags & (EPOLLERR | EPOLLHUP)) {
-				errno = EIO;
-				return -1;
-			}
-			if (event_flags & EPOLLIN) {
-				requests->accept_ready = true;
-			}
-			break;
-		case LISTENER_EVENT_METRICS_TIMER:
-			if (source != &events->metrics_timer_source || events->metrics_timer_fd == -1 || !events->metrics_timer_registered) {
-				errno = EIO;
-				return -1;
-			}
-			if (event_flags & (EPOLLERR | EPOLLHUP)) {
-				requests->metrics_timer_failed = true;
-			}
-			if (event_flags & EPOLLIN) {
-				requests->metrics_timer_ready = true;
-			}
-			break;
-		case LISTENER_EVENT_RESOLVER:
-			if (source != &events->resolver_source || events->resolver_fd == -1) {
-				errno = EIO;
-				return -1;
-			}
-			if (event_flags & (EPOLLERR | EPOLLHUP)) {
-				errno = EIO;
-				return -1;
-			}
-			if (event_flags & EPOLLIN) {
-				requests->resolver_ready = true;
-			}
-			break;
-		case LISTENER_EVENT_ROUTE_TIMER:
-			if (source != &events->route_timer_source) {
-				errno = EIO;
-				return -1;
-			}
-			if (event_flags & (EPOLLERR | EPOLLHUP)) {
-				errno = EIO;
-				return -1;
-			}
-			if (event_flags & EPOLLIN) {
-				requests->route_timer_ready = true;
-			}
-			break;
-		case LISTENER_EVENT_CLIENT:
-		case LISTENER_EVENT_TIMEOUT:
-		case LISTENER_EVENT_UPSTREAM:
-			if (source->connection == NULL || requests->ready_count >= sizeof(requests->ready) / sizeof(requests->ready[0])) {
-				errno = EOVERFLOW;
-				return -1;
-			}
-			requests->ready[requests->ready_count].flags = event_flags;
-			requests->ready[requests->ready_count].source = source;
-			requests->ready[requests->ready_count].source_generation = source->generation;
-			requests->ready[requests->ready_count].timer_generation = source->kind == LISTENER_EVENT_TIMEOUT ? source->connection->timer_generation : 0;
-			requests->ready_count++;
-			break;
-		default:
-			errno = EIO;
-			return -1;
-		}
-	}
-	return 0;
 }
 
 static bool listener_generation_collect(listener_context *context, const struct timespec *now) {
@@ -3385,7 +2986,7 @@ static exit_code listener_loop(listener_context *context, listener_socket *liste
 				}
 				listener_connection_progress progress;
 				if (kind == LISTENER_EVENT_TIMEOUT) {
-					progress = listener_connection_timeout(connection, requests.ready[ready_index].flags, requests.ready[ready_index].timer_generation, &events, context, &route_now);
+					progress = listener_connection_timeout(connection, requests.ready[ready_index].flags, requests.ready[ready_index].source_generation, &events, context, &route_now);
 				} else if (connection->state == LISTENER_CONNECTION_INITIAL) {
 					progress = kind == LISTENER_EVENT_CLIENT ? listener_connection_receive(connection, requests.ready[ready_index].flags, context) : LISTENER_CONNECTION_PENDING;
 				} else if (connection->state == LISTENER_CONNECTION_ROUTE_WAITING) {

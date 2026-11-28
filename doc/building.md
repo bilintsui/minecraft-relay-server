@@ -170,7 +170,7 @@ Changing one budget does not remove the other checks. A larger result still need
 
 ### Listener and connection limits
 
-Defined in [`src/listener.c`](../src/listener.c), [`src/route/waiter.h`](../src/route/waiter.h), [`src/network.h`](../src/network.h) and [`src/connection/setup_long.c`](../src/connection/setup_long.c):
+Defined in [`src/listener.c`](../src/listener.c), [`src/listener/events.h`](../src/listener/events.h), [`src/route/waiter.h`](../src/route/waiter.h), [`src/network.h`](../src/network.h) and [`src/connection/setup_long.c`](../src/connection/setup_long.c):
 
 | Macro | Default | Meaning |
 |---|---|---|
