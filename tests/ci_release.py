@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from unittest import mock
+import urllib.parse
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +27,8 @@ def run(number=1, conclusion="success", status="completed", sha=SHA, event="push
 
 
 class FakeGitHub:
+    upload = RELEASE.GitHub.upload
+
     def __init__(self):
         self.calls = []
         self.observations = [[]]
@@ -65,16 +68,22 @@ class FakeGitHub:
             return list(self.assets.values())
         if endpoint.startswith("/releases/assets/") and method == "DELETE":
             identifier = int(endpoint.rsplit("/", 1)[1])
-            self.assets = {name: item for name, item in self.assets.items() if item["id"] != identifier}
+            name = next(name for name, item in self.assets.items() if item["id"] == identifier)
+            del self.assets[name]
             return None
         raise AssertionError((method, path, data))
 
-    def upload(self, url, asset):
-        self.calls.append(("UPLOAD", url, asset.name))
+    def send(self, method, url, data, content_type):
+        assert method == "POST" and content_type == "application/octet-stream"
+        requested = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["name"][0]
+        self.calls.append(("UPLOAD", url, requested))
+        name = requested.replace("~", ".")
+        if name in self.assets:
+            raise RELEASE.GitHubError("POST", 422)
         self.next_asset_id += 1
-        item = {"id": self.next_asset_id, "name": asset.name, "size": asset.stat().st_size, "state": "uploaded",
-                "digest": "sha256:" + ("bad" if self.bad_digest else hashlib.sha256(asset.read_bytes()).hexdigest())}
-        self.assets[asset.name] = item
+        item = {"id": self.next_asset_id, "name": name, "size": len(data), "state": "uploaded",
+                "digest": "sha256:" + ("bad" if self.bad_digest else hashlib.sha256(data).hexdigest())}
+        self.assets[name] = item
         return item
 
 
@@ -100,8 +109,8 @@ class ReleaseWorkflow(unittest.TestCase):
     def gate(self):
         return RELEASE.wait_for_ci(self.api, SHA, timeout=2, interval=1)
 
-    def draft(self):
-        return RELEASE.prepare_draft(self.api, SHA, "v1.0", self.directory)
+    def draft(self, tag="v1.0"):
+        return RELEASE.prepare_draft(self.api, SHA, tag, self.directory)
 
     def writes(self):
         return [call for call in self.api.calls if call[0] != "GET"]
@@ -206,6 +215,30 @@ class ReleaseWorkflow(unittest.TestCase):
         self.assertTrue(creates[0][2]["draft"])
         self.assertEqual(creates[0][2]["target_commitish"], SHA)
 
+    def test_prerelease_package_names_on_upload_and_retry(self):
+        for package in self.directory.glob("*.deb"):
+            package.rename(package.with_name(package.name.replace("1.0-1", "1.3~beta2-1")))
+        binaries = {"mcrelay-" + arch for arch in RELEASE.ARCHITECTURES}
+        public_packages = {"mcrelay_1.3.beta2-1_" + arch + ".deb" for arch in RELEASE.ARCHITECTURES}
+        for attempt in range(2):
+            with self.subTest(attempt=attempt):
+                self.api.calls.clear()
+                self.draft("v1.3-beta2")
+                self.assertEqual(set(self.api.assets), binaries | public_packages)
+                self.assertEqual({name for method, _, name in self.writes() if method == "UPLOAD"}, binaries | public_packages)
+                self.assertEqual(sum(method == "DELETE" for method, _, _ in self.writes()), 12 * attempt)
+        self.assertEqual({p.name for p in self.directory.glob("*.deb")}, {name.replace("1.3.beta2", "1.3~beta2") for name in public_packages})
+
+    def test_unexpected_upload_name_is_rejected(self):
+        send = self.api.send
+
+        def renamed(*args):
+            return {**send(*args), "name": "unexpected.deb"}
+
+        self.api.send = renamed
+        with self.assertRaisesRegex(RuntimeError, "uploaded asset verification failed"):
+            self.draft()
+
     def test_rerun_updates_draft_and_preserves_notes(self):
         self.existing_draft()
         self.draft()
@@ -218,7 +251,7 @@ class ReleaseWorkflow(unittest.TestCase):
     def test_stale_packages_removed_and_manual_assets_preserved(self):
         self.existing_draft()
         self.api.releases[0]["target_commitish"] = "previous-metadata"
-        stale = {"mcrelay_0.9-1_" + arch + ".deb" for arch in RELEASE.ARCHITECTURES}
+        stale = {"mcrelay_1.0.beta1-1_" + arch + ".deb" for arch in RELEASE.ARCHITECTURES}
         manual = {"checksums.txt", "release-notes.pdf", "other_0.9-1_amd64.deb", "mcrelay_0.9-1_custom.deb"}
         for index, name in enumerate(sorted(stale | manual)):
             self.api.assets[name] = {"id": 800 + index, "name": name, "size": 7, "state": "uploaded"}
@@ -276,15 +309,15 @@ class ReleaseWorkflow(unittest.TestCase):
         self.assertEqual(self.writes()[0][0], "DELETE")
 
     def test_final_check_rejects_unexpected_managed_asset(self):
-        original = self.api.upload
+        original = self.api.send
 
-        def upload(url, asset):
-            result = original(url, asset)
+        def upload(*args):
+            result = original(*args)
             name = "mcrelay_0.9-1_amd64.deb"
             self.api.assets[name] = {"id": 800, "name": name, "size": 7, "state": "uploaded"}
             return result
 
-        self.api.upload = upload
+        self.api.send = upload
         with self.assertRaisesRegex(RuntimeError, "managed asset set differs"):
             self.draft()
         self.assertTrue(self.api.releases[0]["draft"])
@@ -313,6 +346,14 @@ class ReleaseWorkflow(unittest.TestCase):
         (self.directory / "mcrelay_1.0-1_amd64.deb").rename(self.directory / "mcrelay_2.0-1_amd64.deb")
         with self.assertRaisesRegex(ValueError, "versions differ"):
             self.draft()
+        self.assertEqual(self.api.calls, [])
+
+    def test_distinct_package_versions_with_same_public_spelling(self):
+        for package in self.directory.glob("*.deb"):
+            version = "1.3.beta2-1" if package.name.endswith("_amd64.deb") else "1.3~beta2-1"
+            package.rename(package.with_name(package.name.replace("1.0-1", version)))
+        with self.assertRaisesRegex(ValueError, "versions differ"):
+            self.draft("v1.3-beta2")
         self.assertEqual(self.api.calls, [])
 
     def test_annotated_tag_is_peeled(self):

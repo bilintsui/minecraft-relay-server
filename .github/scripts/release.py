@@ -52,8 +52,8 @@ class GitHub:
         except urllib.error.URLError as error:
             raise RuntimeError("GitHub request failed: {}".format(error.reason)) from None
 
-    def upload(self, upload_url, asset):
-        url = upload_url.split("{", 1)[0] + "?" + urllib.parse.urlencode({"name": asset.name})
+    def upload(self, upload_url, name, asset):
+        url = upload_url.split("{", 1)[0] + "?" + urllib.parse.urlencode({"name": name})
         return self.send("POST", url, asset.read_bytes(), "application/octet-stream")
 
 
@@ -112,7 +112,7 @@ def wait_for_ci(api, sha, workflow="build.yml", timeout=1800, interval=15):
 
 
 def assets_in(directory):
-    assets, versions = [], set()
+    assets, versions = {}, set()
     for architecture in ARCHITECTURES:
         binary = directory / ("mcrelay-" + architecture)
         packages = sorted(directory.glob("mcrelay_*_" + architecture + ".deb"))
@@ -123,7 +123,8 @@ def assets_in(directory):
         for asset in (binary, package):
             if not asset.is_file() or asset.is_symlink() or asset.stat().st_size == 0:
                 raise ValueError("missing/invalid release asset: " + asset.name)
-            assets.append(asset)
+            # GitHub release assets use dots for Debian version tildes.
+            assets[asset.name.replace("~", ".")] = asset
     if len(versions) != 1:
         raise ValueError("release package versions differ across architectures")
     return assets
@@ -155,28 +156,27 @@ def prepare_draft(api, sha, tag, directory):
         release = api.request("POST", "/releases", {"tag_name": tag, "target_commitish": sha, "name": tag, "draft": True})
     release_id = release["id"]
     existing = {asset["name"]: asset for asset in pages(api, "/releases/{}/assets".format(release_id))}
-    expected = {asset.name for asset in assets}
     for name, asset in existing.items():
-        if managed_asset(name) and name not in expected:
+        if managed_asset(name) and name not in assets:
             require_draft(api, release_id, tag)
             if tag_commit(api, tag) != sha:
                 raise RuntimeError("remote tag moved during stale asset cleanup")
             api.request("DELETE", "/releases/assets/" + str(asset["id"]))
-    for asset in assets:
+    for name, asset in assets.items():
         current = require_draft(api, release_id, tag)
         if tag_commit(api, tag) != sha:
             raise RuntimeError("remote tag moved during release preparation")
-        if asset.name in existing:
-            api.request("DELETE", "/releases/assets/" + str(existing[asset.name]["id"]))
-        uploaded = api.upload(current["upload_url"], asset)
+        if name in existing:
+            api.request("DELETE", "/releases/assets/" + str(existing[name]["id"]))
+        uploaded = api.upload(current["upload_url"], name, asset)
         digest = "sha256:" + hashlib.sha256(asset.read_bytes()).hexdigest()
-        if uploaded["name"] != asset.name or uploaded["size"] != asset.stat().st_size or uploaded["state"] != "uploaded":
-            raise RuntimeError("uploaded asset verification failed: " + asset.name)
+        if uploaded["name"] != name or uploaded["size"] != asset.stat().st_size or uploaded["state"] != "uploaded":
+            raise RuntimeError("uploaded asset verification failed: " + name)
         if uploaded.get("digest") not in (None, digest):
-            raise RuntimeError("uploaded asset digest differs: " + asset.name)
+            raise RuntimeError("uploaded asset digest differs: " + name)
     current = require_draft(api, release_id, tag)
     actual = {asset["name"]: asset for asset in pages(api, "/releases/{}/assets".format(release_id))}
-    if {name for name in actual if managed_asset(name)} != expected or any(asset.name not in actual or actual[asset.name]["size"] != asset.stat().st_size for asset in assets):
+    if {name for name in actual if managed_asset(name)} != assets.keys() or any(actual[name]["size"] != asset.stat().st_size for name, asset in assets.items()):
         raise RuntimeError("draft release managed asset set differs from the expected build")
     if tag_commit(api, tag) != sha:
         raise RuntimeError("remote tag moved before release preparation completed")
