@@ -1,5 +1,5 @@
 /*
- * protocol_proxy.c: Tests for PROXY protocol v1 connection headers
+ * protocol_proxy.c: Tests for PROXY protocol connection headers
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui
@@ -163,7 +163,7 @@ static size_t proxy_socket_write(void *dst, int socket_fd) {
 	if (dst == NULL || !protocol_proxy_socket_read(socket_fd, &source)) {
 		return 0;
 	}
-	return protocol_proxy_write(dst, source);
+	return protocol_proxy_write(dst, source, PROXY_PREFIX_V1);
 }
 
 static bool proxy_header_test(sa_family_t listener_family, sa_family_t client_family, bool dual_stack, const char *protocol, const char *source, const char *destination) {
@@ -180,7 +180,7 @@ static bool proxy_header_test(sa_family_t listener_family, sa_family_t client_fa
 	CHECK(expected_size > 0 && (size_t)expected_size < sizeof(expected), "cannot format expected PROXY header");
 	p_proxy endpoints;
 	CHECK(protocol_proxy_socket_read(connection.accepted_fd, &endpoints) && endpoints.family == client_family && endpoints.srcport == connection.client_port
-		&& endpoints.dstport == connection.listener_port && protocol_proxy_write(header, endpoints) == (size_t)expected_size
+		&& endpoints.dstport == connection.listener_port && protocol_proxy_write(header, endpoints, PROXY_PREFIX_V1) == (size_t)expected_size
 		&& memcmp(header, expected, (size_t)expected_size + 1U) == 0, "accepted connection endpoints were not captured as a reusable value");
 	size_t header_size = proxy_socket_write(header, connection.accepted_fd);
 	CHECK(header_size == (size_t)expected_size && memcmp(header, expected, header_size + 1) == 0, "PROXY header did not describe the accepted connection");
@@ -280,8 +280,59 @@ static bool proxy_test_mapped_pair(void) {
 		size_t consumed;
 		size_t length = strlen(cases[i].input);
 		if (protocol_proxy_read(cases[i].input, length, &pair, &consumed) != PROXY_READ_COMPLETE || consumed != length || pair.family != cases[i].family || pair.srcaddr.family != pair.dstaddr.family
-			|| protocol_proxy_write(output, pair) != strlen(cases[i].output) || strcmp(output, cases[i].output) != 0) {
+			|| protocol_proxy_write(output, pair, PROXY_PREFIX_V1) != strlen(cases[i].output) || strcmp(output, cases[i].output) != 0) {
 			fprintf(stderr, "mapped address case %zu failed: %s", i, cases[i].input);
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool proxy_test_v2(void) {
+	static const uint8_t wire[] = {
+		13, 10, 13, 10, 0, 13, 10, 'Q', 'U', 'I', 'T', 10, 0x21, 0x11, 0, 16,
+		192, 0, 2, 1, 198, 51, 100, 2, 0, 0, 0xff, 0xff, 0xe1, 0, 1, 0xaa, 0xfe
+	};
+	uint8_t input[sizeof(wire)], output[PROTOPROXY_PACKETMAXLEN + 1];
+	p_proxy pair;
+	size_t consumed;
+	uint16_t remaining;
+	for (size_t n = 0; n < 28; n++) {
+		if (protocol_proxy_v2_prefix_read(wire, n, &pair, &consumed, &remaining) != PROXY_READ_INCOMPLETE || consumed != 0 || remaining != 0 || pair.family != AF_UNSPEC) {
+			return false;
+		}
+	}
+	if (protocol_proxy_v2_prefix_read(wire, sizeof(wire), &pair, &consumed, &remaining) != PROXY_READ_COMPLETE || consumed != 28 || remaining != 4
+		|| pair.family != AF_INET || pair.srcport != 0 || pair.dstport != 65535 || protocol_proxy_write(output, pair, PROXY_PREFIX_V2) != 28) {
+		return false;
+	}
+	memcpy(input, wire, sizeof(wire));
+	input[15] = 12;
+	if (memcmp(output, input, 28) != 0 || protocol_proxy_write(output, pair, PROXY_PREFIX_OTHER) != 0) {
+		return false;
+	}
+	static const struct {
+		uint8_t command, family;
+		uint16_t length;
+		proxy_read_status status;
+	} cases[] = {
+		{ 0x20, 0xff, 7, PROXY_READ_COMPLETE }, { 0x20, 0x31, 0, PROXY_READ_COMPLETE }, { 0x21, 0x00, 0, PROXY_READ_COMPLETE },
+		{ 0x21, 0x12, 11, PROXY_READ_MALFORMED }, { 0x21, 0x12, 12, PROXY_READ_COMPLETE }, { 0x21, 0x12, 13, PROXY_READ_COMPLETE },
+		{ 0x21, 0x22, 35, PROXY_READ_MALFORMED }, { 0x21, 0x22, 36, PROXY_READ_COMPLETE }, { 0x21, 0x22, 37, PROXY_READ_COMPLETE },
+		{ 0x21, 0x31, 215, PROXY_READ_MALFORMED }, { 0x21, 0x31, 216, PROXY_READ_COMPLETE }, { 0x21, 0x31, 217, PROXY_READ_COMPLETE },
+		{ 0x21, 0x32, 215, PROXY_READ_MALFORMED }, { 0x21, 0x32, 216, PROXY_READ_COMPLETE }, { 0x21, 0x32, 217, PROXY_READ_COMPLETE },
+		{ 0x21, 0x31, UINT16_MAX, PROXY_READ_COMPLETE },
+		{ 0x11, 0x11, 12, PROXY_READ_MALFORMED }, { 0x22, 0x00, 0, PROXY_READ_MALFORMED }, { 0x21, 0x13, 12, PROXY_READ_MALFORMED },
+		{ 0x21, 0x41, 12, PROXY_READ_MALFORMED }, { 0x21, 0x11, 11, PROXY_READ_MALFORMED }, { 0x21, 0x21, 35, PROXY_READ_MALFORMED }
+	};
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		input[12] = cases[i].command;
+		input[13] = cases[i].family;
+		uint16_t length = htons(cases[i].length);
+		memcpy(input + 14, &length, sizeof(length));
+		if (protocol_proxy_v2_prefix_read(input, 16, &pair, &consumed, &remaining) != cases[i].status || pair.family != AF_UNSPEC
+			|| (cases[i].status == PROXY_READ_COMPLETE ? consumed != 16 || remaining != cases[i].length : consumed != 0 || remaining != 0)) {
+			fprintf(stderr, "unexpected v2 prefix result for command %#x, family %#x, length %u\n", (unsigned)cases[i].command, (unsigned)cases[i].family, (unsigned)cases[i].length);
 			return false;
 		}
 	}
@@ -290,5 +341,5 @@ static bool proxy_test_mapped_pair(void) {
 
 /* section: functions (entry point) */
 int main(void) {
-	return proxy_test_arguments() && proxy_test_framing() && proxy_test_ipv4() && proxy_test_ipv4_mapped() && proxy_test_ipv6() && proxy_test_mapped_pair() ? EXIT_SUCCESS : EXIT_FAILURE;
+	return proxy_test_arguments() && proxy_test_framing() && proxy_test_ipv4() && proxy_test_ipv4_mapped() && proxy_test_ipv6() && proxy_test_mapped_pair() && proxy_test_v2() ? EXIT_SUCCESS : EXIT_FAILURE;
 }

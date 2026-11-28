@@ -187,7 +187,7 @@ static bool connection_setup_long_seed_append(uint8_t *seed, size_t *seed_size, 
 static bool connection_setup_long_seed_proxy_header(uint8_t *seed, size_t *seed_size, const connection_setup_snapshot *snapshot) {
 	char pheader[PROTOPROXY_PACKETMAXLEN + 1U];
 	memset(pheader, 0, sizeof(pheader));
-	size_t pheader_size = protocol_proxy_write(pheader, snapshot->endpoint.inbound_proxy);
+	size_t pheader_size = protocol_proxy_write(pheader, snapshot->endpoint.inbound_proxy, PROXY_PREFIX_V1);
 	if (pheader_size == 0 || pheader_size > PROTOPROXY_PACKETMAXLEN) {
 		return false;
 	}

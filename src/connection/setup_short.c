@@ -317,7 +317,7 @@ connection_setup_short_action connection_setup_short_prepare(connection_setup_sh
 		return CONNECTION_SETUP_SHORT_ABORT;
 	}
 	if (snapshot->endpoint.pheader) {
-		plan->pheader_size = protocol_proxy_write(plan->pheader, snapshot->endpoint.inbound_proxy);
+		plan->pheader_size = protocol_proxy_write(plan->pheader, snapshot->endpoint.inbound_proxy, PROXY_PREFIX_V1);
 		if (plan->pheader_size == 0 || plan->pheader_size > PROTOPROXY_PACKETMAXLEN) {
 			return CONNECTION_SETUP_SHORT_ABORT;
 		}

@@ -368,7 +368,7 @@ static bool endpoint_test_snapshot(const hosts_table *hosts) {
 	char proxy_header[PROTOPROXY_PACKETMAXLEN + 1] = { 0 };
 	CHECK(snapshot.generation_identity == 42 && endpoint_address_equal(&snapshot.address, AF_INET, "192.0.2.10") && snapshot.port == 25560
 		&& strcmp(snapshot.configured_address, "192.0.2.10") == 0 && strcmp(snapshot.target_name, "192.0.2.10") == 0 && strcmp(snapshot.vhost, "numeric") == 0
-		&& protocol_proxy_write(proxy_header, snapshot.inbound_proxy) > 0 && strstr(proxy_header, "198.51.100.10 192.0.2.1 40000 25565") != NULL,
+		&& protocol_proxy_write(proxy_header, snapshot.inbound_proxy, PROXY_PREFIX_V1) > 0 && strstr(proxy_header, "198.51.100.10 192.0.2.1 40000 25565") != NULL,
 		"snapshot retained generation pointers or lost copied connection metadata");
 	test_result = true;
 

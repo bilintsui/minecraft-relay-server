@@ -13,13 +13,14 @@
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <sys/socket.h>
 
 /* section: headers (project) */
 #include "../network.h"
 
 /* section: defines */
-/* limit */
+/* V1 wire limit including CRLF. Outgoing buffers also use this bound for v1 and v2 headers (v2 emits at most 52 bytes). */
 #define PROTOPROXY_PACKETMAXLEN	107U
 
 /* section: types */
@@ -47,6 +48,8 @@ proxy_prefix protocol_proxy_detect(const void *src, size_t n);
 /* COMPLETE consumes one header, with AF_UNSPEC for UNKNOWN. All other results consume zero bytes. */
 proxy_read_status protocol_proxy_read(const void *src, size_t n, p_proxy *result, size_t *consumed);
 bool protocol_proxy_socket_read(int socket_fd, p_proxy *result);
-size_t protocol_proxy_write(void *dst, p_proxy src);
+/* COMPLETE consumes the fixed v2 prefix and any decoded TCP addresses. Skip exactly remaining bytes before accepting the header. */
+proxy_read_status protocol_proxy_v2_prefix_read(const void *src, size_t n, p_proxy *result, size_t *consumed, uint16_t *remaining);
+size_t protocol_proxy_write(void *dst, p_proxy src, proxy_prefix version);
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * protocol/proxy.c: Functions for PROXY protocol (v1, ASCII)
+ * protocol/proxy.c: PROXY protocol endpoint headers
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui
@@ -20,6 +20,31 @@
 
 /* section: headers (self) */
 #include "proxy.h"
+
+/* section: types */
+typedef enum {
+	PROXY_V2_LOCAL = 0x20,
+	PROXY_V2_PROXY = 0x21
+} proxy_v2_command;
+typedef enum {
+	PROXY_V2_UNSPEC = 0x00,
+	PROXY_V2_TCP4 = 0x11,
+	PROXY_V2_UDP4 = 0x12,
+	PROXY_V2_TCP6 = 0x21,
+	PROXY_V2_UDP6 = 0x22,
+	PROXY_V2_UNIX_STREAM = 0x31,
+	PROXY_V2_UNIX_DGRAM = 0x32
+} proxy_v2_family;
+typedef struct {
+	uint8_t signature[12];
+	uint8_t command;
+	uint8_t family;
+	uint16_t length;
+} proxy_v2_header;
+_Static_assert(sizeof(proxy_v2_header) == 16, "PROXY v2 fixed header size");
+
+/* section: global variables */
+static const uint8_t protocol_proxy_v2_signature[] = { '\r', '\n', '\r', '\n', 0, '\r', '\n', 'Q', 'U', 'I', 'T', '\n' };
 
 /* section: functions (local) */
 static bool protocol_proxy_field_address(const char **cursor, const char *end, sa_family_t family, net_addr *address) {
@@ -96,18 +121,31 @@ static bool protocol_proxy_tcp_read(const char *cursor, const char *end, sa_fami
 	return true;
 }
 
+static size_t protocol_proxy_v2_write(void *dst, const p_proxy *src) {
+	size_t width = src->family == AF_INET ? sizeof(src->srcaddr.addr.v4) : sizeof(src->srcaddr.addr.v6);
+	uint16_t ports[] = { htons(src->srcport), htons(src->dstport) };
+	uint16_t length = (uint16_t)(2 * width + sizeof(ports));
+	proxy_v2_header header = { .command = PROXY_V2_PROXY, .family = src->family == AF_INET ? PROXY_V2_TCP4 : PROXY_V2_TCP6, .length = htons(length) };
+	memcpy(header.signature, protocol_proxy_v2_signature, sizeof(header.signature));
+	memcpy(dst, &header, sizeof(header));
+	uint8_t *block = (uint8_t *)dst + sizeof(header);
+	memcpy(block, &src->srcaddr.addr, width);
+	memcpy(block + width, &src->dstaddr.addr, width);
+	memcpy(block + 2 * width, ports, sizeof(ports));
+	return sizeof(header) + length;
+}
+
 /* section: functions (exported) */
 proxy_prefix protocol_proxy_detect(const void *src, size_t n) {
 	static const char v1[] = "PROXY ";
-	static const char v2[] = "\r\n\r\n\0\r\nQUIT\n";
 	if (n == 0) {
 		return PROXY_PREFIX_PARTIAL;
 	}
 	if (src != NULL && memcmp(src, v1, n < sizeof(v1) - 1U ? n : sizeof(v1) - 1U) == 0) {
 		return n < sizeof(v1) - 1U ? PROXY_PREFIX_PARTIAL : PROXY_PREFIX_V1;
 	}
-	if (src != NULL && memcmp(src, v2, n < sizeof(v2) - 1U ? n : sizeof(v2) - 1U) == 0) {
-		return n < sizeof(v2) - 1U ? PROXY_PREFIX_PARTIAL : PROXY_PREFIX_V2;
+	if (src != NULL && memcmp(src, protocol_proxy_v2_signature, n < sizeof(protocol_proxy_v2_signature) ? n : sizeof(protocol_proxy_v2_signature)) == 0) {
+		return n < sizeof(protocol_proxy_v2_signature) ? PROXY_PREFIX_PARTIAL : PROXY_PREFIX_V2;
 	}
 	return PROXY_PREFIX_OTHER;
 }
@@ -179,7 +217,85 @@ bool protocol_proxy_socket_read(int socket_fd, p_proxy *result) {
 	return true;
 }
 
-size_t protocol_proxy_write(void *dst, p_proxy src) {
+proxy_read_status protocol_proxy_v2_prefix_read(const void *src, size_t n, p_proxy *result, size_t *consumed, uint16_t *remaining) {
+	if (result == NULL || consumed == NULL || remaining == NULL) {
+		return PROXY_READ_MALFORMED;
+	}
+	*result = (p_proxy){ 0 };
+	*consumed = 0;
+	*remaining = 0;
+	proxy_prefix prefix = protocol_proxy_detect(src, n);
+	if (prefix != PROXY_PREFIX_V2) {
+		return prefix == PROXY_PREFIX_PARTIAL ? PROXY_READ_INCOMPLETE : PROXY_READ_MALFORMED;
+	}
+	proxy_v2_header header;
+	if (n < sizeof(header)) {
+		return PROXY_READ_INCOMPLETE;
+	}
+	memcpy(&header, src, sizeof(header));
+	uint16_t length = ntohs(header.length);
+	size_t decoded_length = 0;
+	if (header.command == PROXY_V2_PROXY) {
+		uint16_t minimum_length;
+		switch (header.family) {
+			case PROXY_V2_UNSPEC:
+				minimum_length = 0;
+				break;
+			case PROXY_V2_TCP4:
+			case PROXY_V2_UDP4:
+				minimum_length = 12;
+				break;
+			case PROXY_V2_TCP6:
+			case PROXY_V2_UDP6:
+				minimum_length = 36;
+				break;
+			case PROXY_V2_UNIX_STREAM:
+			case PROXY_V2_UNIX_DGRAM:
+				minimum_length = 216;
+				break;
+			default:
+				return PROXY_READ_MALFORMED;
+		}
+		if (length < minimum_length) {
+			return PROXY_READ_MALFORMED;
+		}
+		if (header.family == PROXY_V2_TCP4 || header.family == PROXY_V2_TCP6) {
+			decoded_length = minimum_length;
+		}
+	} else if (header.command != PROXY_V2_LOCAL) {
+		return PROXY_READ_MALFORMED;
+	}
+	if (decoded_length != 0) {
+		if (n < sizeof(header) + decoded_length) {
+			return PROXY_READ_INCOMPLETE;
+		}
+		uint16_t ports[2];
+		size_t width = (decoded_length - sizeof(ports)) / 2;
+		const uint8_t *block = (const uint8_t *)src + sizeof(header);
+		result->family = header.family == PROXY_V2_TCP4 ? AF_INET : AF_INET6;
+		result->srcaddr.family = result->dstaddr.family = result->family;
+		memcpy(&result->srcaddr.addr, block, width);
+		memcpy(&result->dstaddr.addr, block + width, width);
+		memcpy(ports, block + 2 * width, sizeof(ports));
+		result->srcport = ntohs(ports[0]);
+		result->dstport = ntohs(ports[1]);
+		protocol_proxy_normalize(result);
+	}
+	*consumed = sizeof(header) + decoded_length;
+	*remaining = (uint16_t)(length - decoded_length);
+	return PROXY_READ_COMPLETE;
+}
+
+size_t protocol_proxy_write(void *dst, p_proxy src, proxy_prefix version) {
+	if (dst == NULL || (src.family != AF_INET && src.family != AF_INET6) || src.srcaddr.family != src.family || src.dstaddr.family != src.family) {
+		return 0;
+	}
+	if (version == PROXY_PREFIX_V2) {
+		return protocol_proxy_v2_write(dst, &src);
+	}
+	if (version != PROXY_PREFIX_V1) {
+		return 0;
+	}
 	net_addrp srcaddrp = protocol_proxy_format_address(&src.srcaddr);
 	net_addrp dstaddrp = protocol_proxy_format_address(&src.dstaddr);
 	int result;
