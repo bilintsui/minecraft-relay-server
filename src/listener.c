@@ -9,7 +9,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
-#include <limits.h>
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -26,7 +25,6 @@
 #include <unistd.h>
 
 /* section: headers (project) */
-#include "basic.h"
 #include "config.h"
 #include "define/exitcode.h"
 #include "listener/connection.h"
@@ -35,6 +33,8 @@
 #include "listener/events.h"
 #include "listener/generation.h"
 #include "listener/metrics.h"
+#include "listener/metrics_runtime.h"
+#include "listener/reload.h"
 #include "listener/short.h"
 #include "listener/socket.h"
 #include "listener/workers.h"
@@ -48,10 +48,7 @@
 #include "protocol/handshake_legacy.h"
 #include "protocol/proxy.h"
 #include "resolver/cache.h"
-#include "resolver/hosts.h"
-#include "resolver/hosts_watch.h"
 #include "resolver/supervisor.h"
-#include "route/bindings.h"
 #include "route/generation.h"
 #include "route/generation_registry.h"
 #include "route/resolution.h"
@@ -284,114 +281,6 @@ static listener_connection_progress listener_connection_timeout(listener_connect
 		? LISTENER_CONNECTION_READY : LISTENER_CONNECTION_ABORT;
 }
 
-static bool listener_hosts_watch_process(listener_context *context, listener_events *events, bool failed, bool ready) {
-	bool changed = failed;
-	bool refresh = failed;
-	if (ready) {
-		hosts_watch_events watch_events;
-		hosts_watch_read_status status = listener_events_hosts_watch_read(events, &watch_events);
-		if (status == HOSTS_WATCH_READ_OK) {
-			changed = changed || watch_events.changed;
-			refresh = refresh || watch_events.refresh;
-		} else {
-			int saved_errno = errno;
-			changed = true;
-			refresh = true;
-			LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
-				"Cannot consume local static host table monitor events: %s; the latest table will still be reloaded.",
-				strerror(saved_errno)
-			);
-		}
-	}
-	if (refresh) {
-		bool overlap_changed = false;
-		int status = listener_events_hosts_watch_establish(events, LISTENER_HOSTS_FILENAME, &overlap_changed);
-		if (status == -1) {
-			int saved_errno = errno;
-			listener_events_hosts_watch_disable(events);
-			LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
-				"Cannot refresh automatic monitoring for local static host table %s: %s; SIGUSR1 reload remains available.",
-				LISTENER_HOSTS_FILENAME, strerror(saved_errno)
-			);
-		} else if (status == 1) {
-			LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION,
-				"Automatic monitoring for local static host table %s restored.",
-				LISTENER_HOSTS_FILENAME
-			);
-		}
-		changed = changed || overlap_changed;
-	}
-	return changed;
-}
-
-static void listener_hosts_watch_retry(listener_context *context, listener_events *events) {
-	int status = listener_events_hosts_watch_establish(events, LISTENER_HOSTS_FILENAME, NULL);
-	if (status == -1) {
-		int saved_errno = errno;
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
-			"Cannot monitor local static host table %s automatically: %s; SIGUSR1 reload remains available.",
-			LISTENER_HOSTS_FILENAME, strerror(saved_errno)
-		);
-	} else if (status == 1) {
-		LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION,
-			"Automatic monitoring for local static host table %s restored.",
-			LISTENER_HOSTS_FILENAME
-		);
-	}
-}
-
-static bool listener_metrics_aggregate_snapshot_get(const listener_context *context, listener_metrics_aggregate_snapshot *snapshot) {
-	return context != NULL && snapshot != NULL && listener_metrics_snapshot_get(&context->metrics, &snapshot->listener)
-		&& resolver_cache_metrics_get(context->dns_cache, &snapshot->cache)
-		&& resolver_supervisor_metrics_assembly_get(context->resolver, &snapshot->assembly)
-		&& resolver_supervisor_metrics_get(context->resolver, &snapshot->supervisor);
-}
-
-static void listener_metrics_observations_drain(listener_context *context, const struct timespec *now) {
-	if (context == NULL || context->resolver == NULL || !timeutil_valid(now)) {
-		return;
-	}
-	resolver_supervisor_observation observation;
-	while (resolver_supervisor_observation_take(context->resolver, &observation)) {
-		listener_metrics_helper_observation_log(&context->metrics_runtime, &observation, context->log_filename, context->config->log.level, now);
-	}
-	listener_metrics_helper_observation_loss_log(&context->metrics_runtime, resolver_supervisor_observation_dropped(context->resolver), context->log_filename, context->config->log.level, now);
-}
-
-static void listener_metrics_snapshot_output(listener_context *context, listener_metrics_output_reason reason, const char *log_filename, uint8_t log_level, const struct timespec *now) {
-	int saved_errno = errno;
-	listener_metrics_aggregate_snapshot snapshot;
-	if (listener_metrics_aggregate_snapshot_get(context, &snapshot)) {
-		listener_metrics_output(&context->metrics_runtime, reason, &snapshot, log_filename, log_level, now);
-	} else {
-		listener_metrics_format_drop_record(&context->metrics_runtime);
-	}
-	errno = saved_errno;
-}
-
-static void listener_metrics_timer_failure(listener_context *context, int failure_errno, const char *log_filename, uint8_t log_level) {
-	listener_metrics_scheduler_failure_record(&context->metrics_runtime);
-	MKSYS_LOG(log_filename, log_level, MKSYS_LEVEL_WARNING, "Metrics timer disabled after an observation-subsystem failure: %s", strerror(failure_errno));
-}
-
-static listener_metrics_timer_read_status listener_metrics_timer_read(listener_context *context, listener_events *events, bool event_failed, uint64_t *expirations) {
-	int saved_errno = errno;
-	listener_metrics_timer_read_status status = listener_events_metrics_timer_read(events, event_failed, expirations);
-	if (status == LISTENER_METRICS_TIMER_FAILED) {
-		listener_metrics_timer_failure(context, errno, context->log_filename, context->config->log.level);
-	}
-	errno = saved_errno;
-	return status;
-}
-
-static void listener_metrics_timer_set(listener_context *context, listener_events *events, uint32_t interval, const char *log_filename, uint8_t log_level) {
-	int saved_errno = errno;
-	if (listener_events_metrics_timer_set(events, interval) == -1) {
-		listener_metrics_timer_failure(context, errno, log_filename, log_level);
-	}
-	errno = saved_errno;
-}
-
 static void listener_notify_ready(void) {
 	sd_notify(0, "READY=1");
 }
@@ -413,53 +302,6 @@ static int listener_notify_reloading(void) {
 	uint64_t timestamp_usec = (uint64_t)timestamp.tv_sec * 1000000 + timestamp_subsecond_usec;
 	sd_notifyf(0, "RELOADING=1\nMONOTONIC_USEC=%" PRIu64, timestamp_usec);
 	return 0;
-}
-
-static int listener_hosts_reload(listener_context *context) {
-	conf *config_candidate = NULL;
-	hosts_table *hosts_candidate = NULL;
-	route_generation *generation_candidate = NULL;
-	int result = 0;
-	if (!listener_hosts_prepare(context, MKSYS_LEVEL_WARNING, ", keeping the existing table", &hosts_candidate)) {
-		return 0;
-	}
-	if (!config_clone(context->config, &config_candidate)) {
-		LISTENER_LOG(context, MKSYS_LEVEL_WARNING,
-			"Cannot clone the active configuration for an automatic local static host table reload, keeping the existing generation."
-		);
-		goto cleanup;
-	}
-	listener_route_prepare_status prepare_status = listener_generation_prepare(context, &config_candidate, &hosts_candidate, MKSYS_LEVEL_WARNING,
-		", keeping the existing generation", &generation_candidate);
-	if (prepare_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-			"Cannot sample the monotonic clock while preparing automatic local static host route resolution: %s",
-			strerror(errno)
-		);
-		result = -1;
-		goto cleanup;
-	}
-	if (prepare_status != LISTENER_ROUTE_PREPARE_OK) {
-		goto cleanup;
-	}
-	route_generation_registry_publish_status publish_status = listener_generation_publish(context, &generation_candidate);
-	if (publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
-		LISTENER_LOG(context, MKSYS_LEVEL_CRITICAL,
-			"Cannot publish the automatically reloaded local static host route generation: %s.",
-			listener_generation_publish_error(publish_status)
-		);
-		result = -1;
-		goto cleanup;
-	}
-	LISTENER_LOG(context, MKSYS_LEVEL_INFORMATION,
-		"Local static host table reloaded automatically."
-	);
-
-cleanup:
-	config_destroy(config_candidate);
-	hosts_table_destroy(hosts_candidate);
-	route_generation_release(generation_candidate);
-	return result;
 }
 
 #ifdef LISTENER_ROUTE_TIMER_ARMED_TEST
@@ -608,239 +450,6 @@ static int listener_route_runtime_start(listener_route_runtime *runtime, const l
 		return -1;
 	}
 	return listener_route_timer_set(events, &runtime->deadline);
-}
-
-static int listener_reload(listener_context *context, listener_socket *listener, listener_events *events, bool *metrics_readiness_invalidated) {
-	uint8_t config_maxlevel = context->config->log.level;
-	bool metrics_effective_old = listener_metrics_effectively_enabled(context->config);
-	uint32_t metrics_interval_old = context->config->metrics.interval;
-	int result = 0;
-	*metrics_readiness_invalidated = false;
-	char config_logfull_old[PATH_MAX];
-	snprintf(config_logfull_old, sizeof(config_logfull_old), "%s", context->log_filename);
-	MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
-		"Reloading config from file: %s",
-		context->config_filename
-	);
-	hosts_table *hosts_candidate = NULL;
-	bool hosts_prepared = listener_hosts_prepare(context, MKSYS_LEVEL_WARNING, ", keeping the existing table", &hosts_candidate);
-	conf_cache config_cache_candidate = { 0 };
-	conf *config_candidate = NULL;
-	route_generation *generation_candidate = NULL;
-	bool primary_published = false;
-	conf_read_status read_status = config_read_with_log(context->config_filename_full, context->config_cache, &config_cache_candidate, &config_candidate, config_logfull_old, config_maxlevel);
-	switch (read_status) {
-		case CONF_READ_CHANGED: {
-			listener_endpoint candidate_endpoint;
-			listener_endpoint_status endpoint_status = listener_endpoint_prepare(config_candidate, &candidate_endpoint);
-			if (endpoint_status == LISTENER_ENDPOINT_BAD_ADDRESS) {
-				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-					"Error in configurations: Invalid candidate bind address, will keep your old configurations."
-				);
-				break;
-			}
-			if (endpoint_status == LISTENER_ENDPOINT_BAD_PORT) {
-				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-					"Error in configurations: Invalid candidate bind port, will keep your old configurations."
-				);
-				break;
-			}
-			char config_logfull_candidate[PATH_MAX];
-			resolve_path(config_candidate->log.filename, context->working_directory, config_logfull_candidate, sizeof(config_logfull_candidate));
-			if (log_file_validate(config_logfull_candidate) == -1) {
-				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-					"Cannot write candidate log to \"%s\", will keep your old configurations.",
-					config_candidate->log.filename
-				);
-				break;
-			}
-			if (!config_icon_load(config_candidate, config_logfull_old, config_maxlevel, "will keep your old configurations")) {
-				break;
-			}
-			if (hosts_candidate == NULL && !hosts_table_clone(context->hosts, &hosts_candidate)) {
-				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-					"Cannot clone the existing local static host table for the candidate generation, will keep your old configurations."
-				);
-				break;
-			}
-			listener_route_prepare_status prepare_status = listener_generation_prepare(context, &config_candidate, &hosts_candidate, MKSYS_LEVEL_WARNING,
-				", will keep your old configurations", &generation_candidate);
-			if (prepare_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
-				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
-					"Cannot sample the monotonic clock while preparing candidate proxy route resolution: %s",
-					strerror(errno)
-				);
-				result = -1;
-				break;
-			}
-			if (prepare_status != LISTENER_ROUTE_PREPARE_OK) {
-				break;
-			}
-			if (!listener_endpoint_equal(&listener->endpoint, &candidate_endpoint)) {
-				net_addrp candidate_address = net_ntop(candidate_endpoint.address.family, &(candidate_endpoint.address.addr), true);
-				listener_socket_replace_status replace_status = listener_socket_replace(listener, &candidate_endpoint, events);
-				if (replace_status == LISTENER_SOCKET_REPLACE_CANDIDATE_ERROR) {
-					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-						"Cannot activate candidate listening endpoint %s:%d, will keep your old configurations.",
-						(char *)&candidate_address, candidate_endpoint.port
-					);
-					break;
-				}
-				if (replace_status == LISTENER_SOCKET_REPLACE_ACTIVE_ERROR) {
-					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
-						"Cannot replace active listening socket: %s",
-						strerror(errno)
-					);
-					result = -1;
-					break;
-				}
-				if (replace_status == LISTENER_SOCKET_REPLACE_ROLLBACK_ERROR) {
-					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
-						"Cannot activate candidate listening endpoint %s:%d or restore the active listening socket.",
-						(char *)&candidate_address, candidate_endpoint.port
-					);
-					result = -1;
-					break;
-				}
-				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
-					"Listening endpoint changed to %s:%d.",
-					(char *)&candidate_address, candidate_endpoint.port
-				);
-			}
-			route_generation_registry_publish_status publish_status = listener_generation_publish(context, &generation_candidate);
-			if (publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
-				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
-					"Cannot publish the prepared proxy route generation: %s.",
-					listener_generation_publish_error(publish_status)
-				);
-				result = -1;
-				break;
-			}
-			bool metrics_effective_new = listener_metrics_effectively_enabled(context->config);
-			bool metrics_transition = metrics_effective_old != metrics_effective_new
-				|| (metrics_effective_new && metrics_interval_old != context->config->metrics.interval);
-			*metrics_readiness_invalidated = metrics_transition;
-			if (metrics_effective_old && !metrics_effective_new) {
-				struct timespec metrics_now;
-				if (clock_gettime(CLOCK_MONOTONIC, &metrics_now) == 0) {
-					listener_metrics_snapshot_output(context, LISTENER_METRICS_OUTPUT_DISABLE, config_logfull_old, config_maxlevel, &metrics_now);
-				} else {
-					listener_metrics_format_drop_record(&context->metrics_runtime);
-				}
-				listener_metrics_timer_set(context, events, 0, config_logfull_old, config_maxlevel);
-			}
-			snprintf(context->log_filename, sizeof(context->log_filename), "%s", config_logfull_candidate);
-			config_cache_commit(context->config_cache, &config_cache_candidate);
-			primary_published = true;
-			if (metrics_effective_new && metrics_transition) {
-				listener_metrics_timer_set(context, events, context->config->metrics.interval, context->log_filename, context->config->log.level);
-				struct timespec metrics_now;
-				if (clock_gettime(CLOCK_MONOTONIC, &metrics_now) == 0) {
-					listener_metrics_snapshot_output(context, LISTENER_METRICS_OUTPUT_RECONFIGURE, context->log_filename, context->config->log.level, &metrics_now);
-				} else {
-					listener_metrics_format_drop_record(&context->metrics_runtime);
-				}
-			} else if (metrics_effective_new && listener_events_metrics_timer_needs_retry(events)) {
-				listener_metrics_timer_set(context, events, context->config->metrics.interval, context->log_filename, context->config->log.level);
-			}
-			MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
-				"Configuration reloaded."
-			);
-			break;
-		}
-		case CONF_READ_UNCHANGED:
-			MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
-				"Configuration file unchanged."
-			);
-			break;
-		case CONF_READ_ERROR:
-			switch (errno) {
-				case CONF_ECFIELD:
-					/* The field diagnostic was written to the active log during validation. */
-					break;
-				case CONF_EROPENFAIL:
-				case CONF_EROPENEMPTY:
-				case CONF_EROPENLARGE:
-				case CONF_ERMEMORY:
-				case CONF_ERPARSE:
-				case CONF_ECMEMORY:
-				case CONF_ECLISTENPORT:
-				case CONF_ECMETRICS:
-				case CONF_ECPROXY:
-					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-						"%s%s%s",
-						config_errmsg((conf_error)errno),
-						(errno == CONF_EROPENFAIL || errno == CONF_EROPENEMPTY) ? context->config_filename : "", ", will keep your old configurations"
-					);
-					break;
-				case CONF_ECPROXYDUP:
-					config_log_duplicate_error(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING, ", will keep your old configurations");
-					break;
-				default:
-					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-						"Error in processing configurations: Unknown error occurred, code: %d, will keep your old configurations",
-						errno
-					);
-					break;
-			}
-	}
-	if (generation_candidate != NULL) {
-		if (result == 0 && hosts_prepared && hosts_candidate == NULL && !hosts_table_clone(route_generation_hosts(generation_candidate), &hosts_candidate)) {
-			MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-				"Cannot preserve the candidate local static host table after route-generation activation failed."
-			);
-		}
-		route_generation_release(generation_candidate);
-		generation_candidate = NULL;
-	}
-	config_destroy(config_candidate);
-	config_candidate = NULL;
-	if (result == 0 && !primary_published && ((hosts_prepared && hosts_candidate != NULL) || read_status == CONF_READ_UNCHANGED)) {
-		bool publish_hosts = hosts_prepared && hosts_candidate != NULL;
-		if (!config_clone(context->config, &config_candidate)) {
-			MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-				"Cannot clone the active configuration for a replacement route generation, keeping the existing generation."
-			);
-		} else if (hosts_candidate == NULL && !hosts_table_clone(context->hosts, &hosts_candidate)) {
-			MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_WARNING,
-				"Cannot clone the active local static host table for a replacement route generation, keeping the existing generation."
-			);
-		} else {
-			if (read_status == CONF_READ_UNCHANGED) {
-				config_icon_load(config_candidate, config_logfull_old, config_maxlevel, "keeping existing icon");
-			}
-			listener_route_prepare_status prepare_status = listener_generation_prepare(context, &config_candidate, &hosts_candidate, MKSYS_LEVEL_WARNING,
-				", keeping the existing generation", &generation_candidate);
-			if (prepare_status == LISTENER_ROUTE_PREPARE_TIME_ERROR) {
-				MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
-					"Cannot sample the monotonic clock while preparing local static host route resolution: %s",
-					strerror(errno)
-				);
-				result = -1;
-			} else if (prepare_status == LISTENER_ROUTE_PREPARE_OK) {
-				route_generation_registry_publish_status publish_status = listener_generation_publish(context, &generation_candidate);
-				if (publish_status != ROUTE_GENERATION_REGISTRY_PUBLISH_OK) {
-					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_CRITICAL,
-						"Cannot publish the replacement proxy route generation: %s.",
-						listener_generation_publish_error(publish_status)
-					);
-					result = -1;
-				} else if (publish_hosts) {
-					MKSYS_LOG(config_logfull_old, config_maxlevel, MKSYS_LEVEL_INFORMATION,
-						"Local static host table reloaded."
-					);
-				}
-			}
-		}
-	}
-	if (result == 0 && read_status == CONF_READ_UNCHANGED && metrics_effective_old && listener_events_metrics_timer_needs_retry(events)) {
-		listener_metrics_timer_set(context, events, metrics_interval_old, config_logfull_old, config_maxlevel);
-	}
-	route_generation_release(generation_candidate);
-	config_destroy(config_candidate);
-	config_cache_destroy(&config_cache_candidate);
-	hosts_table_destroy(hosts_candidate);
-	return result;
 }
 
 static void listener_resolver_destroy(listener_context *context) {

@@ -62,7 +62,7 @@ typedef struct {
 static const log_exception log_exceptions[] = {
 	{ "base", "%s. Affected: \"%s\"%s", "src/config.c" },
 	{ "base", "%s%s", "src/config.c" },
-	{ "config_errmsg((conf_error)errno)", "%s%s%s", "src/listener.c" },
+	{ "config_errmsg((conf_error)errno)", "%s%s%s", "src/listener/reload.c" },
 	{ "config_errmsg(config_error)", "%s%s", "src/main.c" },
 	{ "config_errmsg(config_error)", "%s", "src/main.c" },
 	{ "helper_line", "%s", "src/listener/metrics.c" },
