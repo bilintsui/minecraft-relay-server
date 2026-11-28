@@ -440,6 +440,11 @@ static bool dns_test_malformed(void) {
 			CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_ALIAS_ONLY, "CNAME depth limit rejected");
 			CHECK(result.cname_count == DNS_CNAME_DEPTH_LIMIT && strcmp(result.canonical_name, target) == 0, "CNAME chain at the limit lost its final target");
 			dns_address_result_destroy(&result);
+			dns_message_builder answered = builder;
+			CHECK(dns_builder_record_add(&answered, target, DNS_TEST_NO_POINTER, ns_t_a, ns_c_in, 60, address, sizeof(struct in_addr), NULL), "cannot add an address at the CNAME depth limit");
+			CHECK(dns_address_response_parse(answered.data, answered.size, answered.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_OK, "A rejected at depth limit");
+			CHECK(result.cname_count == DNS_CNAME_DEPTH_LIMIT && result.address_count == 1 && result.addresses[0].effective_ttl == 30, "address at the CNAME depth limit lost its chain or TTL");
+			dns_address_result_destroy(&result);
 		}
 	}
 	CHECK(dns_address_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, AF_INET, &result) == DNS_ADDRESS_PARSE_LIMIT, "excessive CNAME chain was accepted");

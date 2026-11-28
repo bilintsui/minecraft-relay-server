@@ -430,6 +430,12 @@ static bool dns_test_malformed(void) {
 			CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_ALIAS_ONLY, "SRV CNAME chain at the depth limit failed");
 			CHECK(result.cname_count == DNS_CNAME_DEPTH_LIMIT && strcmp(result.canonical_name, target) == 0, "SRV CNAME chain at the limit lost its final target");
 			dns_srv_result_destroy(&result);
+			dns_message_builder answered = builder;
+			CHECK(dns_builder_wire_srv_create(0, 0, 25565, "node.example", wire_srv, sizeof(wire_srv), &wire_srv_size), "cannot encode an SRV record at the CNAME depth limit");
+			CHECK(dns_builder_record_add(&answered, target, DNS_TEST_NO_POINTER, ns_t_srv, ns_c_in, 60, wire_srv, wire_srv_size, NULL), "cannot add an SRV record at the CNAME depth limit");
+			CHECK(dns_srv_response_parse(answered.data, answered.size, answered.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_OK, "SRV record at the CNAME depth limit was rejected");
+			CHECK(result.cname_count == DNS_CNAME_DEPTH_LIMIT && result.record_count == 1 && result.records[0].effective_ttl == 30, "SRV record at the CNAME depth limit lost its chain or TTL");
+			dns_srv_result_destroy(&result);
 		}
 	}
 	CHECK(dns_srv_response_parse(builder.data, builder.size, builder.question_name, DNS_TEST_QUERY_ID, &result) == DNS_SRV_PARSE_LIMIT, "excessive SRV CNAME depth was accepted");

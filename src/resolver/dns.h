@@ -1,5 +1,5 @@
 /*
- * resolver/dns.h: Header file of resolver/dns.c
+ * resolver/dns.h: Public DNS lookup and response parsing interfaces
  *
  * SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2020-2026 Bilin Tsui

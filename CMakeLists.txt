@@ -25,12 +25,13 @@ add_custom_target(version_header ALL
 		-P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.cmake"
 	BYPRODUCTS "${MCRELAY_VERSION_HEADER}"
 	VERBATIM)
+set(RESOLVER_DNS_SOURCES src/resolver/dns.c src/resolver/dns_address.c src/resolver/dns_srv.c)
 add_executable(mcrelay${EXEC_SUFFIX}
 	src/basic.c src/config.c src/connection/setup.c src/connection/setup_long.c src/connection/setup_short.c
 	src/listener/admission.c src/listener/connection.c src/listener/connection_route.c src/listener/dispatch.c src/listener/events.c src/listener/generation.c
 	src/listener/metrics.c src/listener/metrics_runtime.c src/listener/reload.c src/listener/runtime.c src/listener/short.c src/listener/socket.c src/listener/workers.c
 	src/log.c src/main.c src/metrics.c src/network.c src/process.c src/timeutil.c src/version_info.c
-	src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/hosts.c src/resolver/hosts_watch.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
+	src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/helper.c src/resolver/hosts.c src/resolver/hosts_watch.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c
 	src/route/bindings.c src/route/endpoint.c src/route/generation.c src/route/generation_registry.c src/route/prewarmer.c src/route/resolution.c src/route/table.c src/route/waiter.c
 	src/protocol/common.c src/protocol/handshake.c
 	src/protocol/handshake_legacy.c src/protocol/proxy.c)
@@ -85,14 +86,14 @@ if(BUILD_TESTING)
 		)
 	endif()
 
-	add_executable(dns_records_test tests/dns_records.c tests/dns_message_builder.c src/resolver/dns.c src/resolver/util.c)
+	add_executable(dns_records_test tests/dns_records.c tests/dns_message_builder.c ${RESOLVER_DNS_SOURCES} src/resolver/util.c)
 	target_include_directories(dns_records_test PRIVATE src)
 	target_compile_definitions(dns_records_test PRIVATE _GNU_SOURCE)
 	target_link_libraries(dns_records_test -lresolv)
 	set_target_properties(dns_records_test PROPERTIES
 		LINK_FLAGS "-Wl,--wrap=__res_nclose -Wl,--wrap=__res_ninit -Wl,--wrap=res_nmkquery -Wl,--wrap=res_nquery -Wl,--wrap=res_nsearch -Wl,--wrap=res_nsend")
 	add_test(NAME dns_records COMMAND dns_records_test)
-	add_executable(dns_srv_records_test tests/dns_srv_records.c tests/dns_message_builder.c src/resolver/dns.c src/resolver/util.c)
+	add_executable(dns_srv_records_test tests/dns_srv_records.c tests/dns_message_builder.c ${RESOLVER_DNS_SOURCES} src/resolver/util.c)
 	target_include_directories(dns_srv_records_test PRIVATE src)
 	target_compile_definitions(dns_srv_records_test PRIVATE _GNU_SOURCE)
 	target_link_libraries(dns_srv_records_test -lresolv)
@@ -180,14 +181,14 @@ if(BUILD_TESTING)
 	target_include_directories(connection_setup_short_test PRIVATE src)
 	target_compile_definitions(connection_setup_short_test PRIVATE _GNU_SOURCE)
 	add_test(NAME connection_setup_short COMMAND connection_setup_short_test)
-	add_executable(resolver_cache_test tests/resolver_cache.c src/metrics.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/util.c)
+	add_executable(resolver_cache_test tests/resolver_cache.c src/metrics.c src/timeutil.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/util.c)
 	target_include_directories(resolver_cache_test PRIVATE src)
 	target_compile_definitions(resolver_cache_test PRIVATE _GNU_SOURCE RESOLVER_CACHE_ENTRY_LIMIT=8 RESOLVER_CACHE_OWNED_BYTE_LIMIT=65536 RESOLVER_CACHE_RESULT_BYTE_LIMIT=49152)
 	target_link_libraries(resolver_cache_test -lresolv)
 	set_target_properties(resolver_cache_test PROPERTIES LINK_FLAGS "-Wl,--wrap=calloc")
 	add_test(NAME resolver_cache COMMAND resolver_cache_test)
 	add_executable(resolver_helper_test
-		tests/resolver_helper.c src/metrics.c src/process.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/util.c)
+		tests/resolver_helper.c src/metrics.c src/process.c src/timeutil.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/helper.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/util.c)
 	target_include_directories(resolver_helper_test PRIVATE src)
 	target_compile_definitions(resolver_helper_test PRIVATE _GNU_SOURCE)
 	target_link_libraries(resolver_helper_test -lresolv)
@@ -197,7 +198,7 @@ if(BUILD_TESTING)
 	target_include_directories(resolver_ipc_test PRIVATE src)
 	target_compile_definitions(resolver_ipc_test PRIVATE _GNU_SOURCE)
 	add_test(NAME resolver_ipc COMMAND resolver_ipc_test)
-	add_executable(resolver_ipc_assembly_test tests/resolver_ipc_assembly.c src/metrics.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/util.c)
+	add_executable(resolver_ipc_assembly_test tests/resolver_ipc_assembly.c src/metrics.c src/timeutil.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/util.c)
 	target_include_directories(resolver_ipc_assembly_test PRIVATE src)
 	target_compile_definitions(resolver_ipc_assembly_test PRIVATE _GNU_SOURCE RESOLVER_CACHE_RESULT_BYTE_LIMIT=49152 RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT=65536)
 	target_link_libraries(resolver_ipc_assembly_test -lresolv)
@@ -207,7 +208,7 @@ if(BUILD_TESTING)
 	string(APPEND RESOLVER_SUPERVISOR_TEST_LINK_FLAGS " -Wl,--wrap=resolver_cache_entry_retain -Wl,--wrap=resolver_helper_process_start -Wl,--wrap=send")
 	string(APPEND RESOLVER_SUPERVISOR_TEST_LINK_FLAGS " -Wl,--wrap=timerfd_settime -Wl,--wrap=waitpid")
 	add_executable(resolver_supervisor_test
-		tests/resolver_supervisor.c src/metrics.c src/process.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c
+		tests/resolver_supervisor.c src/metrics.c src/process.c src/timeutil.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/helper.c src/resolver/ipc.c
 		src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c)
 	target_include_directories(resolver_supervisor_test PRIVATE src)
 	target_compile_definitions(resolver_supervisor_test PRIVATE _GNU_SOURCE RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE=1 RESOLVER_SUPERVISOR_INTEREST_COUNT_LIMIT=2
@@ -216,13 +217,13 @@ if(BUILD_TESTING)
 	set_target_properties(resolver_supervisor_test PROPERTIES LINK_FLAGS "${RESOLVER_SUPERVISOR_TEST_LINK_FLAGS}")
 	add_test(NAME resolver_supervisor COMMAND resolver_supervisor_test)
 	add_executable(route_bindings_test
-		tests/route_bindings.c src/metrics.c src/network.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/hosts.c src/resolver/util.c src/route/bindings.c src/route/table.c)
+		tests/route_bindings.c src/metrics.c src/network.c src/timeutil.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/hosts.c src/resolver/util.c src/route/bindings.c src/route/table.c)
 	target_include_directories(route_bindings_test PRIVATE src)
 	target_compile_definitions(route_bindings_test PRIVATE _GNU_SOURCE RESOLVER_CACHE_ENTRY_LIMIT=4)
 	target_link_libraries(route_bindings_test -lcjson -lresolv)
 	add_test(NAME route_bindings COMMAND route_bindings_test)
 	add_executable(route_endpoint_test
-		tests/route_endpoint.c src/metrics.c src/network.c src/timeutil.c src/protocol/proxy.c src/resolver/cache.c src/resolver/dns.c src/resolver/hosts.c
+		tests/route_endpoint.c src/metrics.c src/network.c src/timeutil.c src/protocol/proxy.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/hosts.c
 		src/resolver/util.c src/route/bindings.c src/route/endpoint.c src/route/prewarmer.c src/route/resolution.c src/route/table.c)
 	target_include_directories(route_endpoint_test PRIVATE src)
 	target_compile_definitions(route_endpoint_test PRIVATE _GNU_SOURCE)
@@ -243,14 +244,14 @@ if(BUILD_TESTING)
 		LINK_FLAGS "-Wl,--wrap=route_generation_dispose_in_child -Wl,--wrap=route_generation_identity -Wl,--wrap=route_generation_reference_count -Wl,--wrap=route_generation_release -Wl,--wrap=route_generation_resolution -Wl,--wrap=route_generation_retain -Wl,--wrap=route_resolution_background_release -Wl,--wrap=route_resolution_completion_observe_with_supervisor")
 	add_test(NAME route_generation_registry COMMAND route_generation_registry_test)
 	add_executable(route_prewarmer_test
-		tests/route_prewarmer.c src/metrics.c src/network.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/hosts.c src/resolver/util.c
+		tests/route_prewarmer.c src/metrics.c src/network.c src/timeutil.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/hosts.c src/resolver/util.c
 		src/route/bindings.c src/route/prewarmer.c src/route/table.c)
 	target_include_directories(route_prewarmer_test PRIVATE src)
 	target_compile_definitions(route_prewarmer_test PRIVATE _GNU_SOURCE)
 	target_link_libraries(route_prewarmer_test -lcjson -lresolv)
 	add_test(NAME route_prewarmer COMMAND route_prewarmer_test)
 	add_executable(route_resolution_test
-		tests/route_resolution.c src/metrics.c src/network.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/hosts.c
+		tests/route_resolution.c src/metrics.c src/network.c src/timeutil.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/hosts.c
 		src/resolver/util.c src/route/bindings.c src/route/prewarmer.c src/route/resolution.c src/route/table.c)
 	target_include_directories(route_resolution_test PRIVATE src)
 	target_compile_definitions(route_resolution_test PRIVATE _GNU_SOURCE)
@@ -263,7 +264,7 @@ if(BUILD_TESTING)
 	target_link_libraries(route_table_test -lcjson -lresolv)
 	add_test(NAME route_table COMMAND route_table_test)
 	add_executable(route_waiter_test
-		tests/route_waiter.c src/metrics.c src/network.c src/timeutil.c src/protocol/proxy.c src/resolver/cache.c src/resolver/dns.c src/resolver/hosts.c
+		tests/route_waiter.c src/metrics.c src/network.c src/timeutil.c src/protocol/proxy.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/hosts.c
 		src/resolver/util.c src/route/bindings.c src/route/endpoint.c src/route/prewarmer.c src/route/resolution.c src/route/table.c
 		src/route/waiter.c)
 	target_include_directories(route_waiter_test PRIVATE src)
@@ -284,7 +285,7 @@ if(BUILD_TESTING)
 		target_link_libraries(config_parse_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all -lcjson)
 		add_test(NAME config_parse_ubsan COMMAND config_parse_ubsan_test)
 		set_tests_properties(config_parse_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
-		add_executable(dns_records_ubsan_test tests/dns_records.c tests/dns_message_builder.c src/resolver/dns.c src/resolver/util.c)
+		add_executable(dns_records_ubsan_test tests/dns_records.c tests/dns_message_builder.c ${RESOLVER_DNS_SOURCES} src/resolver/util.c)
 		target_include_directories(dns_records_ubsan_test PRIVATE src)
 		target_compile_definitions(dns_records_ubsan_test PRIVATE _GNU_SOURCE)
 		target_compile_options(dns_records_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
@@ -293,7 +294,7 @@ if(BUILD_TESTING)
 			LINK_FLAGS "-Wl,--wrap=__res_nclose -Wl,--wrap=__res_ninit -Wl,--wrap=res_nmkquery -Wl,--wrap=res_nquery -Wl,--wrap=res_nsearch -Wl,--wrap=res_nsend")
 		add_test(NAME dns_records_ubsan COMMAND dns_records_ubsan_test)
 		set_tests_properties(dns_records_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
-		add_executable(dns_srv_records_ubsan_test tests/dns_srv_records.c tests/dns_message_builder.c src/resolver/dns.c src/resolver/util.c)
+		add_executable(dns_srv_records_ubsan_test tests/dns_srv_records.c tests/dns_message_builder.c ${RESOLVER_DNS_SOURCES} src/resolver/util.c)
 		target_include_directories(dns_srv_records_ubsan_test PRIVATE src)
 		target_compile_definitions(dns_srv_records_ubsan_test PRIVATE _GNU_SOURCE)
 		target_compile_options(dns_srv_records_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
@@ -377,7 +378,7 @@ if(BUILD_TESTING)
 		target_link_libraries(connection_setup_short_ubsan_test -fsanitize=undefined -fno-sanitize-recover=all)
 		add_test(NAME connection_setup_short_ubsan COMMAND connection_setup_short_ubsan_test)
 		set_tests_properties(connection_setup_short_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
-		add_executable(resolver_cache_ubsan_test tests/resolver_cache.c src/metrics.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/util.c)
+		add_executable(resolver_cache_ubsan_test tests/resolver_cache.c src/metrics.c src/timeutil.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/util.c)
 		target_include_directories(resolver_cache_ubsan_test PRIVATE src)
 		target_compile_definitions(resolver_cache_ubsan_test PRIVATE _GNU_SOURCE RESOLVER_CACHE_ENTRY_LIMIT=8 RESOLVER_CACHE_OWNED_BYTE_LIMIT=65536 RESOLVER_CACHE_RESULT_BYTE_LIMIT=49152)
 		target_compile_options(resolver_cache_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
@@ -386,7 +387,7 @@ if(BUILD_TESTING)
 		add_test(NAME resolver_cache_ubsan COMMAND resolver_cache_ubsan_test)
 		set_tests_properties(resolver_cache_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(resolver_helper_ubsan_test
-			tests/resolver_helper.c src/metrics.c src/process.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/util.c)
+			tests/resolver_helper.c src/metrics.c src/process.c src/timeutil.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/helper.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/util.c)
 		target_include_directories(resolver_helper_ubsan_test PRIVATE src)
 		target_compile_definitions(resolver_helper_ubsan_test PRIVATE _GNU_SOURCE)
 		target_compile_options(resolver_helper_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
@@ -402,7 +403,7 @@ if(BUILD_TESTING)
 		add_test(NAME resolver_ipc_ubsan COMMAND resolver_ipc_ubsan_test)
 		set_tests_properties(resolver_ipc_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(resolver_ipc_assembly_ubsan_test
-			tests/resolver_ipc_assembly.c src/metrics.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/util.c)
+			tests/resolver_ipc_assembly.c src/metrics.c src/timeutil.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/ipc.c src/resolver/ipc_assembly.c src/resolver/util.c)
 		target_include_directories(resolver_ipc_assembly_ubsan_test PRIVATE src)
 		target_compile_definitions(resolver_ipc_assembly_ubsan_test PRIVATE _GNU_SOURCE RESOLVER_CACHE_RESULT_BYTE_LIMIT=49152 RESOLVER_REPLY_ASSEMBLY_BYTE_LIMIT=65536)
 		target_compile_options(resolver_ipc_assembly_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
@@ -411,7 +412,7 @@ if(BUILD_TESTING)
 		add_test(NAME resolver_ipc_assembly_ubsan COMMAND resolver_ipc_assembly_ubsan_test)
 		set_tests_properties(resolver_ipc_assembly_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(resolver_supervisor_ubsan_test
-			tests/resolver_supervisor.c src/metrics.c src/process.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/helper.c src/resolver/ipc.c
+			tests/resolver_supervisor.c src/metrics.c src/process.c src/timeutil.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/helper.c src/resolver/ipc.c
 			src/resolver/ipc_assembly.c src/resolver/supervisor.c src/resolver/util.c)
 		target_include_directories(resolver_supervisor_ubsan_test PRIVATE src)
 		target_compile_definitions(resolver_supervisor_ubsan_test PRIVATE _GNU_SOURCE RESOLVER_SUPERVISOR_INTERACTIVE_RESERVE=1 RESOLVER_SUPERVISOR_INTEREST_COUNT_LIMIT=2
@@ -422,7 +423,7 @@ if(BUILD_TESTING)
 		add_test(NAME resolver_supervisor_ubsan COMMAND resolver_supervisor_ubsan_test)
 		set_tests_properties(resolver_supervisor_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(route_bindings_ubsan_test
-			tests/route_bindings.c src/metrics.c src/network.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/hosts.c src/resolver/util.c src/route/bindings.c src/route/table.c)
+			tests/route_bindings.c src/metrics.c src/network.c src/timeutil.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/hosts.c src/resolver/util.c src/route/bindings.c src/route/table.c)
 		target_include_directories(route_bindings_ubsan_test PRIVATE src)
 		target_compile_definitions(route_bindings_ubsan_test PRIVATE _GNU_SOURCE RESOLVER_CACHE_ENTRY_LIMIT=4)
 		target_compile_options(route_bindings_ubsan_test PRIVATE -fsanitize=undefined -fno-sanitize-recover=all)
@@ -430,7 +431,7 @@ if(BUILD_TESTING)
 		add_test(NAME route_bindings_ubsan COMMAND route_bindings_ubsan_test)
 		set_tests_properties(route_bindings_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(route_endpoint_ubsan_test
-			tests/route_endpoint.c src/metrics.c src/network.c src/timeutil.c src/protocol/proxy.c src/resolver/cache.c src/resolver/dns.c src/resolver/hosts.c
+			tests/route_endpoint.c src/metrics.c src/network.c src/timeutil.c src/protocol/proxy.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/hosts.c
 			src/resolver/util.c src/route/bindings.c src/route/endpoint.c src/route/prewarmer.c src/route/resolution.c src/route/table.c)
 		target_include_directories(route_endpoint_ubsan_test PRIVATE src)
 		target_compile_definitions(route_endpoint_ubsan_test PRIVATE _GNU_SOURCE)
@@ -459,7 +460,7 @@ if(BUILD_TESTING)
 		add_test(NAME route_generation_registry_ubsan COMMAND route_generation_registry_ubsan_test)
 		set_tests_properties(route_generation_registry_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(route_prewarmer_ubsan_test
-			tests/route_prewarmer.c src/metrics.c src/network.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/hosts.c src/resolver/util.c
+			tests/route_prewarmer.c src/metrics.c src/network.c src/timeutil.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/hosts.c src/resolver/util.c
 			src/route/bindings.c src/route/prewarmer.c src/route/table.c)
 		target_include_directories(route_prewarmer_ubsan_test PRIVATE src)
 		target_compile_definitions(route_prewarmer_ubsan_test PRIVATE _GNU_SOURCE)
@@ -468,7 +469,7 @@ if(BUILD_TESTING)
 		add_test(NAME route_prewarmer_ubsan COMMAND route_prewarmer_ubsan_test)
 		set_tests_properties(route_prewarmer_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(route_resolution_ubsan_test
-			tests/route_resolution.c src/metrics.c src/network.c src/timeutil.c src/resolver/cache.c src/resolver/dns.c src/resolver/hosts.c
+			tests/route_resolution.c src/metrics.c src/network.c src/timeutil.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/hosts.c
 			src/resolver/util.c src/route/bindings.c src/route/prewarmer.c src/route/resolution.c src/route/table.c)
 		target_include_directories(route_resolution_ubsan_test PRIVATE src)
 		target_compile_definitions(route_resolution_ubsan_test PRIVATE _GNU_SOURCE)
@@ -485,7 +486,7 @@ if(BUILD_TESTING)
 		add_test(NAME route_table_ubsan COMMAND route_table_ubsan_test)
 		set_tests_properties(route_table_ubsan PROPERTIES ENVIRONMENT "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
 		add_executable(route_waiter_ubsan_test
-			tests/route_waiter.c src/metrics.c src/network.c src/timeutil.c src/protocol/proxy.c src/resolver/cache.c src/resolver/dns.c src/resolver/hosts.c
+			tests/route_waiter.c src/metrics.c src/network.c src/timeutil.c src/protocol/proxy.c src/resolver/cache.c ${RESOLVER_DNS_SOURCES} src/resolver/hosts.c
 			src/resolver/util.c src/route/bindings.c src/route/endpoint.c src/route/prewarmer.c src/route/resolution.c src/route/table.c
 			src/route/waiter.c)
 		target_include_directories(route_waiter_ubsan_test PRIVATE src)
